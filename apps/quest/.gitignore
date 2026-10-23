@@ -1,0 +1,12 @@
+# Unity-generated, per-machine
+UserSettings/
+MemoryCaptures/
+*.csproj
+*.sln
+*.slnx
+.vs/
+.idea/
+.vscode/
+# imported Gaussian data is large; regenerate it from the bundle with Lucid Dreams > Import Dream Bundle
+Assets/Dreams/
+Assets/Dreams.meta
