@@ -1,0 +1,26 @@
+# secrets
+.env
+.env.*
+*.token
+# big binaries live on HiPerGator or a shared drive, never in git
+*.mp4
+*.mov
+*.ply
+*.spz
+*.splat
+*.ckpt
+*.pth
+*.safetensors
+*.zip
+*.npz
+# tooling
+node_modules/
+.next/
+__pycache__/
+.venv/
+.DS_Store
+apps/quest/Library/
+apps/quest/Temp/
+apps/quest/Logs/
+apps/quest/obj/
+apps/quest/Build*/
