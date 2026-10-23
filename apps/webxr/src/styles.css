@@ -54,9 +54,12 @@ a { color: var(--link); text-decoration: none; }
 .card h3 { font-size: 19px; font-weight: 600; letter-spacing: -0.015em; margin: 14px 2px 4px; }
 .card .meta { font-size: 14px; color: var(--muted); margin: 0 2px; }
 
-.empty { text-align: center; color: var(--muted); padding: 40px 22px 140px; font-size: 19px; }
-.pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); margin: 0 auto 18px; animation: breathe 2.4s ease-in-out infinite; }
-@keyframes breathe { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+.empty { text-align: center; color: var(--muted); padding: 40px 22px 140px; font-size: 19px; margin: 0; }
+.feature { max-width: 1120px; margin: 0 auto 96px; padding: 0 22px; text-align: center; }
+.feature-frame { display: block; width: min(420px, 78vw); aspect-ratio: 9 / 16; margin: 0 auto; border-radius: 28px; overflow: hidden; background: #0a0a0a; box-shadow: 0 0 0 1px var(--hairline) inset; }
+.feature-frame video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.feature-caption { font-size: 15px; color: var(--muted); margin: 18px 0 0; }
+.section-title { max-width: 1120px; margin: 0 auto 22px; padding: 0 22px; font-size: 32px; font-weight: 700; letter-spacing: -0.025em; }
 
 /* ---------- viewer ---------- */
 .stage { position: fixed; inset: 0; background: radial-gradient(120% 90% at 50% 75%, #1c1c1e 0%, #000 60%); }

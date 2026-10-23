@@ -8,13 +8,24 @@ export async function renderLibrary(root: HTMLElement) {
       <h1>Anyone from any video,<br />standing in your room.</h1>
       <p>One clip becomes a photoreal, life-size person you can walk all the way around. On any screen, or right in your room on Quest.</p>
     </header>
+    <section class="feature" id="feature" hidden></section>
+    <h2 class="section-title" id="grid-title" hidden>Dreams</h2>
     <main class="grid" id="grid"></main>`;
   const grid = root.querySelector<HTMLElement>("#grid")!;
   const dreams = await listDreams().catch(() => []);
   if (!dreams.length) {
-    grid.outerHTML = `<div class="empty"><div class="pulse"></div>The first dreams are being made.</div>`;
+    grid.outerHTML = `<p class="empty">The first dreams are being made.</p>`;
     return;
   }
+  const lead = dreams.find((d) => d.preview && !d.id.startsWith("synthetic")) ?? null;
+  if (lead) {
+    const feature = root.querySelector<HTMLElement>("#feature")!;
+    feature.hidden = false;
+    feature.innerHTML = `<a href="?dream=${encodeURIComponent(lead.id)}" class="feature-frame">
+        <video src="${dreamUrl(lead.id, lead.preview!)}" autoplay muted loop playsinline></video></a>
+      <p class="feature-caption">${escapeHtml(lead.name)}. Rebuilt from one video, walked all the way around.</p>`;
+  }
+  root.querySelector<HTMLElement>("#grid-title")!.hidden = false;
   grid.innerHTML = dreams
     .map((d) => {
       const meta = [`${d.durationS.toFixed(1)} s`, d.frames?.gaussiansPerFrame ? `${formatCount(d.frames.gaussiansPerFrame)} Gaussians` : ""]
