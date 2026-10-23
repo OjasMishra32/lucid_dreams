@@ -108,7 +108,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let t = 0; // seconds into the clip
   let shown = -1;
   const duration = Math.max(dream.durationS, 1 / dream.fps);
+  let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
   const show = (i: number) => {
+    if (frames[i]) frames[i]!.opacity = reveal;
     if (i === shown) return;
     if (shown >= 0 && frames[shown]) frames[shown]!.visible = false;
     if (frames[i]) frames[i]!.visible = true;
@@ -150,6 +152,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
   syncAudio();
 
   // ---------------- your room (WebXR passthrough) ----------------
+  const caption = spatialCaption(dream.name, "Pinch to pause  ·  Squeeze to bring them here");
+  caption.visible = false;
+  person.add(caption);
+  let captionUntil = 0;
   let placeNextFrame = false;
   const xr = new SparkXr({
     renderer,
@@ -161,12 +167,18 @@ export async function renderViewer(root: HTMLElement, id: string) {
       scene.background = null;
       placeNextFrame = true;
       const session = renderer.xr.getSession();
-      session?.addEventListener("select", () => setPlaying(!playing));
+      session?.addEventListener("select", () => {
+        setPlaying(!playing);
+        captionUntil = performance.now() + 4000;
+      });
       session?.addEventListener("squeeze", () => (placeNextFrame = true));
+      caption.visible = true;
+      captionUntil = performance.now() + 7000;
     },
     onExitXr: () => {
       person.position.set(0, 0, 0);
       person.rotation.y = Math.PI;
+      caption.visible = false;
     },
     onReady: (supported) => {
       $("#room").hidden = !supported;
@@ -202,6 +214,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
       placeNextFrame = false;
     }
     if (playing) t = (t + dt * speed) % duration;
+    reveal = Math.min(1, reveal + dt / 1.4);
+    if (renderer.xr.isPresenting) {
+      const target = !playing || performance.now() < captionUntil ? 1 : 0;
+      const m = caption.material as THREE.MeshBasicMaterial;
+      m.opacity += (target - m.opacity) * Math.min(1, dt * 4);
+    }
     show(Math.min(count - 1, Math.floor(t * dream.fps)));
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;
@@ -232,5 +250,36 @@ function floorShadow(dream: Dream): THREE.Mesh {
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.y = 0.002;
   mesh.renderOrder = -1;
+  return mesh;
+}
+
+/** A small floating label beside the person, set like system text: the name, then a hint. Faces the viewer. */
+function spatialCaption(title: string, hint: string): THREE.Mesh {
+  const w = 1024, h = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "rgba(29,29,31,0.72)";
+  const r = 72;
+  ctx.beginPath();
+  ctx.roundRect(8, 8, w - 16, h - 16, r);
+  ctx.fill();
+  ctx.fillStyle = "#f5f5f7";
+  ctx.font = '600 72px -apple-system, "SF Pro Display", "Inter", sans-serif';
+  ctx.textAlign = "center";
+  ctx.fillText(title, w / 2, 118);
+  ctx.fillStyle = "#a1a1a6";
+  ctx.font = '500 40px -apple-system, "SF Pro Text", "Inter", sans-serif';
+  ctx.fillText(hint, w / 2, 190);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.64, 0.16),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }),
+  );
+  // beside the person at chest height, turned toward the viewer (the person group faces -Z)
+  mesh.position.set(-0.62, 1.25, -0.15);
+  mesh.rotation.y = Math.PI;
   return mesh;
 }
