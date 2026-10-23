@@ -1,0 +1,19 @@
+[project]
+name = "lucid-avatars"
+version = "0.1.0"
+description = "Lucid Dreams avatars: SMPL-X motion, idle loops and avatar bundle export"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lucid_avatars"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
