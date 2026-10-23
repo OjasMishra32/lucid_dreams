@@ -33,7 +33,7 @@ for repo in ["Efficient-Large-Model/Sana_Sprint_1.6B_1024px", "mit-han-lab/dc-ae
     print(repo, snapshot_download(repo))
 PY
 mkdir -p checkpoints
-[ -f checkpoints/student.ckpt ] || gdown --fuzzy "https://drive.google.com/file/d/1r4S8JQgAT8ARrjG2VDjxxb6YS0CYwr0U/view" -O checkpoints/student.ckpt
+[ -f checkpoints/student.ckpt ] || gdown "https://drive.google.com/uc?id=1r4S8JQgAT8ARrjG2VDjxxb6YS0CYwr0U" -O checkpoints/student.ckpt
 python -c "import torch, pytorch3d, simple_knn, diff_gaussian_rasterization; print('imports OK', torch.__version__)"
 du -sh $L/envs/digs $L/cache/hf checkpoints
 echo SETUP_OK
