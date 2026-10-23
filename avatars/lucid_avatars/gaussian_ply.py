@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+SH_C0 = 0.28209479177387814  # degree-0 spherical harmonic: colour = 0.5 + SH_C0 * f_dc
+
 REQUIRED_PROPS = [
     "x", "y", "z",
     "f_dc_0", "f_dc_1", "f_dc_2",

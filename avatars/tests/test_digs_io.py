@@ -1,0 +1,73 @@
+import numpy as np
+import pytest
+
+from lucid_avatars import digs_io as D
+from lucid_avatars.gaussian_ply import SH_C0
+
+
+def test_intrinsics_from_fov_uses_the_long_side():
+    K = D.intrinsics_from_fov(1080, 1920, 55.0)
+    f = 1920 / 2 / np.tan(np.radians(55.0) / 2)
+    np.testing.assert_allclose(K, [[f, 0, 540], [0, f, 960], [0, 0, 1]])
+
+
+def test_aspect_crop_box_keeps_aspect_and_margin():
+    box = D.aspect_crop_box((400, 300, 600, 1500), aspect_wh=640 / 896, margin=0.1)
+    x0, y0, x1, y1 = box
+    assert np.isclose((x1 - x0) / (y1 - y0), 640 / 896)
+    assert (y1 - y0) == pytest.approx(1200 * 1.2)
+    assert np.isclose((x0 + x1) / 2, 500) and np.isclose((y0 + y1) / 2, 900)
+
+
+def test_crop_intrinsics_maps_points_consistently():
+    K = D.intrinsics_from_fov(1080, 1920, 55.0)
+    box = (100.0, 200.0, 740.0, 1096.0)  # 640 x 896, so scale 0.5 into 320 x 448
+    Kc = D.crop_intrinsics(K, box, out_w=320, out_h=448)
+    p = np.array([0.1, -0.3, 2.5])  # camera-space point
+    uv = (K @ p)[:2] / p[2]
+    uv_crop = (Kc @ p)[:2] / p[2]
+    np.testing.assert_allclose(uv_crop, (uv - [100, 200]) * 0.5)
+
+
+def test_digs_fit_json_layout():
+    rng = np.random.default_rng(0)
+    pose = rng.normal(size=165)
+    betas = rng.normal(size=16)
+    trans = np.array([0.1, 0.2, 3.0])
+    hand_mean = rng.normal(size=90)
+    K = D.intrinsics_from_fov(640, 896, 55.0)
+    d = D.digs_fit_json(pose, betas, trans, K, hand_mean)
+    np.testing.assert_allclose(d["root_pose"][0], pose[:3])
+    np.testing.assert_allclose(d["body_pose"][0], pose[3:66])
+    np.testing.assert_allclose(d["jaw_pose"][0], pose[66:69])
+    # NLF hands are absolute; DiGS (flat_hand_mean=False) wants them relative to the mean.
+    np.testing.assert_allclose(d["lhand_pose"][0], pose[75:120] - hand_mean[:45])
+    np.testing.assert_allclose(d["rhand_pose"][0], pose[120:165] - hand_mean[45:])
+    np.testing.assert_allclose(d["betas_save"][0], betas[:10])
+    np.testing.assert_allclose(d["trans"][0], trans)
+    cam = d["camera"]
+    assert cam["R"] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]] and cam["t"] == [0, 0, 0]
+    np.testing.assert_allclose(cam["focal"], [K[0, 0], K[1, 1]])
+    np.testing.assert_allclose(cam["princpt"], [K[0, 2], K[1, 2]])
+    assert len(d["expr"][0]) == 10 and d["scale"] == [1.0]
+
+
+def test_rendered_to_gaussians_inverts_activations():
+    rng = np.random.default_rng(1)
+    n = 50
+    rgb = rng.uniform(0, 1, size=(n, 3))
+    opacity = rng.uniform(0.1, 1.0, size=n)
+    scale = rng.uniform(0.002, 0.05, size=(n, 3))
+    rot = rng.normal(size=(n, 4))
+    g = D.rendered_to_gaussians(rng.normal(size=(n, 3)), rgb, opacity, scale, rot)
+    np.testing.assert_allclose(g.f_dc * SH_C0 + 0.5, rgb, atol=1e-9)
+    np.testing.assert_allclose(1 / (1 + np.exp(-g.opacity)), np.clip(opacity, 1e-6, 1 - 1e-6), atol=1e-9)
+    np.testing.assert_allclose(np.exp(g.scale), scale)
+    np.testing.assert_allclose(np.linalg.norm(g.rotation, axis=1), 1.0)
+    assert g.sh_degree == 0
+
+
+def test_stand_y_puts_soles_on_floor_ignoring_faint_floaters():
+    xyz = np.array([[0, -1.2, 0], [0, 0.5, 0], [0, -1.5, 0]], dtype=float)
+    opacity_logit = np.array([3.0, 3.0, -4.0])  # the lowest point is nearly transparent
+    assert D.stand_y(xyz, opacity_logit) == pytest.approx(1.2)
