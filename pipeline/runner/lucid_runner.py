@@ -54,17 +54,23 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "dream"
 
 
-def submit(clip: Path, name: str, run_id: str | None, turbo: bool, chunks: int) -> dict:
-    if not clip.exists():
+def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks: int, start_s: float = 0.0) -> dict:
+    """clip: a local file, or "hpg:/path" for a clip already on HiPerGator."""
+    on_hpg = isinstance(clip, str) and clip.startswith("hpg:")
+    if not on_hpg and not Path(clip).exists():
         raise SystemExit(f"no such clip: {clip}")
     run_id = run_id or f"{slug(name)}-{time.strftime('%m%d-%H%M%S')}"
     run = f"{REMOTE}/runs/{run_id}"
     sync_code()
     remote(f"mkdir -p {run}")
-    rsync(str(clip), f"{HOST}:{run}/input{clip.suffix.lower()}")
+    if on_hpg:
+        src = clip[4:]
+        remote(f"cp {src} {run}/input{Path(src).suffix.lower()}")
+    else:
+        rsync(str(clip), f"{HOST}:{run}/input{Path(clip).suffix.lower()}")
     job = {"id": run_id, "name": name, "kind": "replay", "turbo": turbo, "chunks": chunks,
            "viewsPerLayer": 16, "layerPitches": [-10, 15, 35], "itersFirst": 7000, "itersWarm": 1500,
-           "cap": 300000, "shDegree": 1, "fps": 25, "frames": 121, "submittedAt": time.time()}
+           "cap": 300000, "shDegree": 1, "fps": 25, "frames": 121, "startS": start_s, "submittedAt": time.time()}
     remote(f"cat > {run}/job.json <<'JSON'\n{json.dumps(job)}\nJSON")
     slurm = json.loads(remote(f"bash {REMOTE}/code/pipeline/hpg/submit.sh {run}").strip().splitlines()[-1])
     return {"id": run_id, "slurm": slurm}
@@ -92,7 +98,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("submit")
-    s.add_argument("clip", type=Path)
+    s.add_argument("clip", help='local file, or "hpg:/path" for a clip already on HiPerGator')
+    s.add_argument("--start-s", type=float, default=0.0, help="where the 5-second window starts in the clip")
     s.add_argument("--name", required=True)
     s.add_argument("--id")
     s.add_argument("--turbo", action="store_true", help="faster, slightly softer views (previews)")
@@ -106,7 +113,8 @@ def main(argv=None):
     sub.add_parser("list")
     a = p.parse_args(argv)
     if a.cmd == "submit":
-        out = submit(a.clip, a.name, a.id, a.turbo, a.chunks)
+        clip = a.clip if a.clip.startswith("hpg:") else Path(a.clip)
+        out = submit(clip, a.name, a.id, a.turbo, a.chunks, a.start_s)
     elif a.cmd == "status":
         out = status(a.id)
     elif a.cmd == "fetch":

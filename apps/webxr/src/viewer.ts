@@ -51,12 +51,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.05, 100);
   const height = dream.bounds ? dream.bounds.max[1] : 1.8;
-  camera.position.set(0, height * 0.62, Math.max(2.6, height * 1.7));
+  camera.position.set(0, height * 0.58, Math.max(3.2, height * 2.3)); // whole body in frame, eye level-ish
   const spark = new SparkRenderer({ renderer });
   scene.add(spark);
 
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, height * 0.5, 0);
+  controls.target.set(0, height * 0.47, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.minDistance = 0.8;

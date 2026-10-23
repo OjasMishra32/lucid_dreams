@@ -14,6 +14,10 @@ source "$(dirname "$0")/env.sh" 2>/dev/null || source /blue/iruchkin/vishalnavee
 cd "$RUN"
 python -m lucid.status mark "$RUN" views running
 CLIP=$(ls input.* | head -1)
+# portrait 9:16, person centred, 121+ frames (landscape clips get a fixed crop around the person)
+python -m lucid.prep_clip "$CLIP" --out prepped.mp4 --start-s "$(python -c "import json; print(json.load(open('job.json')).get('startS', 0))")" > prep.json \
+  || { python -m lucid.status mark "$RUN" views failed; exit 1; }
+CLIP=prepped.mp4
 read -r VPL PITCHES TURBO < <(python - <<'PY'
 import json; j = json.load(open("job.json"))
 print(j.get("viewsPerLayer", 16), json.dumps(j.get("layerPitches", [-10, 15, 35])).replace(" ", ""), str(j.get("turbo", False)).lower())

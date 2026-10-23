@@ -17,7 +17,7 @@ read -r ID NAME FPS < <(python - <<'PY'
 import json; j = json.load(open("job.json")); print(j["id"], json.dumps(j.get("name", j["id"])), j.get("fps", 25))
 PY
 )
-CLIP=$(ls input.* | head -1)
+CLIP=$( [ -f prepped.mp4 ] && echo prepped.mp4 || ls input.* | head -1 )
 python -m lucid.export --recon recon --out bundle --id "$ID" --name "$(python -c "import json,sys; print(json.loads(sys.argv[1]))" "$NAME")" \
   --result views --clip "$CLIP" --fps "$FPS" || { python -m lucid.status mark "$RUN" export failed; exit 1; }
 python -m lucid.status mark "$RUN" export done
