@@ -23,11 +23,11 @@ moving smoothly at full frame rate. Read `AGENTS.md` first.
 | --- | --- |
 | Fri 11 PM | A static Gaussian person (the sample bundle's first frame) standing in passthrough on the Quest |
 | Sat 10 AM | Full replay playing from a real bundle, at frame rate |
-| Sat 8 PM | Controls, library from the bridge, avatar playback, polished in-headset UI (Raami designs it, you build it) |
+| Sat 8 PM | Controls, library from the bridge, avatar playback, polished in-headset UI (Atina designs it, you build it) |
 | Sun 10 AM | Frozen, demo-proof, works offline from cached bundles |
 
 ## Talk to
 
 - Ojasva: bundle format, Gaussian counts, compression if files are too big.
 - Vishal: avatar rig and motion format.
-- Raami: in-headset UI design, matching the web app's look.
+- Atina: in-headset UI design (she matches Raami's web app look).

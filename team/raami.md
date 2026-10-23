@@ -14,7 +14,6 @@ or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first
 | Library and detail | Cards with `thumb.jpg`; detail page plays `preview.mp4` (the 360 orbit) and shows the fidelity numbers from `dream.json` |
 | The bridge API | A small server on Ojasva's Mac implementing the job API in `AGENTS.md`. Start with a **mock** that serves a sample bundle and fake progress so you, Ian and the demo never wait; Ojasva wires the real HiPerGator calls in |
 | Gemini guide (MLH prize) | Gemini watches the source clip and returns: the move's name, its steps with timestamps, and coaching tips. Shown on the detail page and spoken in the headset (Ian plays the audio) |
-| In-headset UI design | Design the Quest panels (controls, library, coaching captions) to match the web app; Ian builds them |
 
 ## Milestones
 
@@ -22,11 +21,12 @@ or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first
 | --- | --- |
 | Fri 11 PM | Mock bridge running; web app skeleton with landing, upload and library against the mock |
 | Sat 10 AM | Upload -> real job -> bundle works through the real bridge (with Ojasva) |
-| Sat 8 PM | Polished end to end; Gemini guide working; in-headset UI designs handed to Ian |
+| Sat 8 PM | Polished end to end; Gemini guide working |
 | Sun 10 AM | Frozen; screenshots for Devpost to Atina |
 
 ## Talk to
 
 - Ojasva: wiring the bridge to HiPerGator, job stages and timings.
-- Ian: library endpoint, in-headset UI.
+- Ian: the library endpoint.
+- Atina: she designs the in-headset UI to match your web app, so share your colours, type and components early.
 - Atina: copy, screenshots, the demo flow.

@@ -68,7 +68,7 @@ We do **not** enter the Twinly API prize (conflict of interest: it's Ojasva's co
 | **Vishal** | Avatars: animatable photoreal people, motion retargeting, family-photo people | `team/vishal.md` |
 | **Ian** | Quest app (Unity): photoreal people in passthrough, playback, interaction, frame rate | `team/ian.md` |
 | **Raami** | Product app: Apple-style web app, the job API bridge, Gemini guide | `team/raami.md` |
-| **Atina** | Story, data and demo: clips, consent, Devpost, video, slides, README (light compute) | `team/atina.md` |
+| **Atina** | Story, data and demo: clips, consent, in-headset UI design, Devpost, video, slides, README (light compute) | `team/atina.md` |
 
 Owners are a proposal; swap if skills fit better, but keep one owner per area.
 

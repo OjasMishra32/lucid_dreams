@@ -14,6 +14,7 @@ not for long coding sessions. Read `AGENTS.md` first.
 | Devpost | Title, tagline, description (what it does, how we built it, the new tech and why it's recent, challenges, what's next), built-with list, tracks: overall, Best AI Hack, Best Design, Best Social Impact, MLH Gemini, MLH Open Source |
 | README + LICENSE | Public-repo README: what it is, demo GIF, how it works, credits to every open-source model, MIT license |
 | Demo video (3 min max) | Script, shot list, edit. Open on the family moment, then the wow (a person appearing in the room), then how it works with real numbers, then the team |
+| In-headset UI design | Design the Quest panels to match Raami's web app: playback controls (play, freeze, 0.25x/0.5x/1x, scrub), the library of dreams, the "seen vs imagined" toggle, coaching captions. Big, calm, readable at arm's length. Mockups in Figma (or even clean slides) with exact sizes and colours; Ian builds them |
 | Slides + judge prep | A short deck with the fidelity numbers; a list of likely judge questions with answers (theme, consent, what's generated vs real, limits) |
 
 ## Milestones
@@ -21,6 +22,7 @@ not for long coding sessions. Read `AGENTS.md` first.
 | When | Done |
 | --- | --- |
 | Fri 10 PM | 3 test clips shot and handed to Ojasva; family photo picked and consent asked |
+| Sat 10 AM | In-headset UI mockups handed to Ian |
 | Sat noon | Hero clips shot; Devpost draft; video script |
 | Sat 8 PM | README done; slides drafted |
 | Sun 1 PM | Video edited; Devpost final. **Submit by 3 PM** |
@@ -28,5 +30,6 @@ not for long coding sessions. Read `AGENTS.md` first.
 ## Talk to
 
 - Ojasva: which clips work best (he'll tell you what the pipeline needs more of).
-- Raami: screenshots and copy.
+- Raami: screenshots, copy, and the web app's look so the headset UI matches it.
+- Ian: what the Quest can show (panel sizes, text sizes) before you design.
 - Everyone: two lines each about what they built, for Devpost.
