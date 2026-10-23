@@ -2,7 +2,7 @@
 #SBATCH --job-name=lucid-recon
 #SBATCH --account=iruchkin
 #SBATCH --qos=iruchkin
-#SBATCH --partition=hpg-b200,hpg-rtx6000
+#SBATCH --partition=hpg-b200,hpg-rtx6000,hpg-turin
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G

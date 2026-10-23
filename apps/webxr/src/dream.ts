@@ -10,12 +10,12 @@ export interface Dream {
   units: "meters";
   upAxis: "+Y";
   bounds: { min: [number, number, number]; max: [number, number, number] } | null;
-  frames: { dir: string; pattern: string; spz?: string; gaussiansPerFrame?: number; spzBytesTotal?: number } | null;
+  frames: { dir: string; pattern: string; spz?: string; reality?: string | null; gaussiansPerFrame?: number; spzBytesTotal?: number } | null;
   avatar: { file: string; rig: string; motion: string } | null;
   audio: string | null;
   preview: string | null;
   thumb: string | null;
-  metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null };
+  metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null; seenFraction?: number | null };
 }
 
 export const DREAMS_BASE = new URLSearchParams(location.search).get("base") ?? "/dreams";
@@ -24,8 +24,8 @@ export function dreamUrl(id: string, file: string): string {
   return `${DREAMS_BASE}/${encodeURIComponent(id)}/${file}`;
 }
 
-export function framePath(d: Dream, i: number): string {
-  const pattern = d.frames?.spz ?? d.frames?.pattern ?? "%06d.spz";
+export function framePath(d: Dream, i: number, reality = false): string {
+  const pattern = (reality ? d.frames?.reality : null) ?? d.frames?.spz ?? d.frames?.pattern ?? "%06d.spz";
   const name = pattern.replace(/%0(\d+)d/, (_, w) => String(i).padStart(Number(w), "0"));
   return `${d.frames?.dir ?? "frames"}/${name}`;
 }

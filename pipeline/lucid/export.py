@@ -70,6 +70,55 @@ def placement(first: Gaussians, result: Path | None) -> tuple[np.ndarray, np.nda
     return rot, t
 
 
+def front_cameras(result: Path) -> list[dict]:
+    """The ring cameras on the source-facing side (+Z in 4DAnyone's world): what the real camera could have seen."""
+    cams = json.loads((result / "cameras.json").read_text())["cameras"]
+    out = []
+    for c in cams:
+        pos = np.asarray(c["camera_to_world"], float)[:3, 3]
+        yaw = math.degrees(math.atan2(pos[0], pos[2]))
+        if abs(yaw) < 1e-3 or abs(yaw) < 360.0 / max(len(cams), 1):  # yaw 0 ring cameras, every pitch layer
+            out.append(c)
+    return out or cams[:1]
+
+
+def seen_mask(g: Gaussians, cams: list[dict], device: str, tol: float = 0.04) -> np.ndarray:
+    """True for Gaussians on a surface one of the front cameras saw: in frame, inside the person, not behind the
+    nearest visible surface (expected depth + tol). Everything else was imagined by the generator."""
+    import torch
+    from gsplat import rasterization
+
+    t = lambda x: torch.as_tensor(np.ascontiguousarray(x), dtype=torch.float32, device=device)  # noqa: E731
+    means = t(g.means)
+    seen = torch.zeros(len(g.means), dtype=torch.bool, device=device)
+    for c in cams:
+        K = t(np.asarray(c["K"], float))
+        w2c = t(np.linalg.inv(np.asarray(c["camera_to_world"], float)))
+        W, H = int(c["image_width"]), int(c["image_height"])
+        depth, alpha, _ = rasterization(
+            means=means, quats=t(g.quats), scales=torch.exp(t(g.scales)), opacities=torch.sigmoid(t(g.opacities)),
+            colors=t(g.sh0[:, 0] * SH_C0 + 0.5), viewmats=w2c[None], Ks=K[None], width=W, height=H, render_mode="ED",
+        )
+        cam = means @ w2c[:3, :3].T + w2c[:3, 3]
+        z = cam[:, 2]
+        uv = cam[:, :2] / z.clamp_min(1e-6)[:, None] @ K[:2, :2].T + K[:2, 2]
+        u, v = uv[:, 0].round().long(), uv[:, 1].round().long()
+        inside = (z > 0) & (u >= 0) & (u < W) & (v >= 0) & (v < H)
+        ui, vi = u.clamp(0, W - 1), v.clamp(0, H - 1)
+        d = depth[0, vi, ui, 0]
+        a = alpha[0, vi, ui, 0]
+        seen |= inside & (a > 0.5) & (z <= d + tol)
+    return seen.cpu().numpy()
+
+
+def tinted(g: Gaussians, seen: np.ndarray) -> Gaussians:
+    """Imagined Gaussians pulled toward blue, so "seen vs imagined" reads at a glance."""
+    blue = (np.array([0.0, 0.44, 0.89]) - 0.5) / SH_C0
+    sh0 = g.sh0.copy()
+    sh0[~seen, 0, :] = 0.35 * sh0[~seen, 0, :] + 0.65 * blue
+    return Gaussians(g.means, g.scales, g.quats, g.opacities, sh0.astype(np.float32), np.zeros((len(sh0), 0, 3), np.float32))
+
+
 def place(g: Gaussians, rot: np.ndarray, t: np.ndarray) -> Gaussians:
     moved = g.transformed(rot, t)
     moved.shN = rotate_sh1(g.shN, rot)
@@ -124,12 +173,19 @@ def main(argv=None):
 
     first = read_ply(frame_paths[0])
     rot, t = placement(first, a.result)
+    cams = front_cameras(a.result) if a.result and (a.result / "cameras.json").exists() else []
+    seen_fractions: list[float] = []
     counts, spz_total, bounds = [], 0, None
     placed_frames: list[Gaussians] = []
     for i, path in enumerate(frame_paths):
-        g = place(read_ply(path), rot, t)
+        raw = read_ply(path)
+        g = place(raw, rot, t)
         write_ply(out_frames / f"{i:06d}.ply", g)
         spz_total += write_spz(out_frames / f"{i:06d}.spz", g, sh_degree=0)
+        if cams:
+            seen = seen_mask(raw, cams, a.device)
+            seen_fractions.append(float(seen.mean()))
+            write_spz(out_frames / f"{i:06d}.reality.spz", tinted(g, seen), sh_degree=0)
         counts.append(g.count)
         if i == 0:
             alpha = 1 / (1 + np.exp(-g.opacities))
@@ -196,13 +252,15 @@ def main(argv=None):
             "spz": "%06d.spz",
             "gaussiansPerFrame": int(np.median(counts)),
             "spzBytesTotal": spz_total,
+            "reality": "%06d.reality.spz" if seen_fractions else None,
         },
         "avatar": None,
         "audio": audio,
         "preview": "preview.mp4",
         "thumb": "thumb.jpg",
         "source": source,
-        "metrics": {"psnr": mean("psnr"), "ssim": mean("ssim"), "lpips": None, "views": views},
+        "metrics": {"psnr": mean("psnr"), "ssim": mean("ssim"), "lpips": None, "views": views,
+                    "seenFraction": round(float(np.mean(seen_fractions)), 3) if seen_fractions else None},
         "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     (a.out / "dream.json").write_text(json.dumps(dream, indent=2))

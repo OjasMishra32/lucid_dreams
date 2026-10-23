@@ -15,7 +15,7 @@ const LOAD_CONCURRENCY = 4;
 export async function renderViewer(root: HTMLElement, id: string) {
   root.innerHTML = `
     <div class="stage" id="stage"></div>
-    <div class="topbar"><a class="back" href="./">${BACK}Dreams</a><div class="title" id="title"></div><div></div></div>
+    <div class="topbar"><a class="back" href="./">${BACK}Dreams</a><div class="title"><div id="title"></div><div class="subtitle" id="subtitle"></div></div><div></div></div>
     <div class="loader" id="loader"><div class="loader-inner">
       <svg class="ring" viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="19"/><circle class="bar" id="ring" cx="22" cy="22" r="19"/></svg>
       <h2 id="loading-title">Bringing them in</h2><p id="loading-pct">0%</p></div></div>
@@ -24,6 +24,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Scrub" />
       <span class="time" id="time">0.0 / 0.0 s</span>
       <div class="segmented" id="speeds"><button data-speed="0.25">0.25×</button><button data-speed="0.5">0.5×</button><button data-speed="1" class="on">1×</button></div>
+      <button class="pill" id="reality" hidden aria-pressed="false">Reality check</button>
       <button class="cta" id="room" hidden>View in your room</button>
     </div>`;
   const $ = <T extends HTMLElement>(s: string) => root.querySelector<T>(s)!;
@@ -73,6 +74,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
   // ---------------- frames ----------------
   const count = dream.kind === "replay" ? dream.frameCount : 1;
   const frames: (SplatMesh | null)[] = new Array(count).fill(null);
+  const realityFrames: (SplatMesh | null)[] = new Array(count).fill(null);
+  let active = frames;
   let loaded = 0;
   const ring = $<HTMLElement>("#ring") as unknown as SVGCircleElement;
   const circumference = 2 * Math.PI * 19;
@@ -84,18 +87,21 @@ export async function renderViewer(root: HTMLElement, id: string) {
     ring.style.strokeDashoffset = `${circumference * (1 - loaded / count)}`;
   };
   const queue = Array.from({ length: count }, (_, i) => i);
-  const worker = async () => {
-    for (let i = queue.shift(); i !== undefined; i = queue.shift()) {
-      const url = dream.kind === "replay" ? dreamUrl(dream.id, framePath(dream, i)) : dreamUrl(dream.id, dream.avatar!.file);
+  const loadInto = async (target: (SplatMesh | null)[], reality: boolean, q: number[], progress?: () => void) => {
+    for (let i = q.shift(); i !== undefined; i = q.shift()) {
+      const url = dream.kind === "replay" ? dreamUrl(dream.id, framePath(dream, i, reality)) : dreamUrl(dream.id, dream.avatar!.file);
       const mesh = new SplatMesh({ url });
       await mesh.initialized;
       mesh.visible = false;
       person.add(mesh);
-      frames[i] = mesh;
-      loaded++;
-      onProgress();
+      target[i] = mesh;
+      progress?.();
     }
   };
+  const worker = () => loadInto(frames, false, queue, () => {
+    loaded++;
+    onProgress();
+  });
   await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, count) }, worker));
   $("#loader").classList.add("done");
   $("#controls").hidden = false;
@@ -109,11 +115,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let shown = -1;
   const duration = Math.max(dream.durationS, 1 / dream.fps);
   let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
-  const show = (i: number) => {
-    if (frames[i]) frames[i]!.opacity = reveal;
-    if (i === shown) return;
-    if (shown >= 0 && frames[shown]) frames[shown]!.visible = false;
-    if (frames[i]) frames[i]!.visible = true;
+  const show = (i: number, force = false) => {
+    if (active[i]) active[i]!.opacity = reveal;
+    if (i === shown && !force) return;
+    for (const set of [frames, realityFrames]) if (shown >= 0 && set[shown]) set[shown]!.visible = false;
+    if (active[i]) active[i]!.visible = true;
     shown = i;
   };
   const syncAudio = () => {
@@ -150,6 +156,27 @@ export async function renderViewer(root: HTMLElement, id: string) {
     }
   });
   syncAudio();
+
+  // ---------------- reality check: what the camera really saw vs what was imagined ----------------
+  const realityBtn = $("#reality");
+  const seenPct = dream.metrics?.seenFraction != null ? Math.round(dream.metrics.seenFraction * 100) : null;
+  if (dream.kind === "replay" && dream.frames?.reality) realityBtn.hidden = false;
+  let realityLoaded: Promise<void> | null = null;
+  realityBtn.addEventListener("click", async () => {
+    const on = active === frames;
+    if (on && !realityLoaded) {
+      realityBtn.textContent = "Loading…";
+      const q = Array.from({ length: count }, (_, i) => i);
+      realityLoaded = Promise.all(Array.from({ length: LOAD_CONCURRENCY }, () => loadInto(realityFrames, true, q))).then(() => {});
+      await realityLoaded;
+    }
+    active = on ? realityFrames : frames;
+    realityBtn.textContent = "Reality check";
+    realityBtn.classList.toggle("on", on);
+    realityBtn.setAttribute("aria-pressed", String(on));
+    $("#subtitle").textContent = on && seenPct != null ? `${seenPct}% seen by the camera · blue was imagined` : "";
+    show(shown < 0 ? 0 : shown, true);
+  });
 
   // ---------------- your room (WebXR passthrough) ----------------
   const caption = spatialCaption(dream.name, "Pinch to pause  ·  Squeeze to bring them here");

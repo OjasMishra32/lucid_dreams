@@ -145,6 +145,8 @@ dreams/<id>/
 
 Every frame ships twice: `.ply` (full quality, standard 3DGS layout, SH degree 1, for Unity import) and `.spz`
 (about 10x smaller, colour only, for the web and streaming). The fetch step leaves out `.ply` unless asked.
+Replays also ship `frames.reality` (`%06d.reality.spz`): the same frame with every Gaussian the source camera could
+not have seen tinted blue, for the "seen vs imagined" toggle, and `metrics.seenFraction` (0-1, how much was really seen).
 
 For an avatar, `kind` is `"avatar"`, `frames` is null and
 `"avatar": { "file": "avatar/avatar.ply", "rig": "smplx", "motion": "avatar/motion.json" }`.

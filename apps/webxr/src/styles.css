@@ -70,6 +70,14 @@ a { color: var(--link); text-decoration: none; }
 .back { display: inline-flex; align-items: center; gap: 4px; font-size: 17px; color: var(--link); }
 .back svg { width: 12px; height: 20px; }
 .title { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; text-align: center; }
+.subtitle { font-size: 12px; font-weight: 500; color: var(--link); letter-spacing: 0; margin-top: 2px; min-height: 14px; }
+.pill {
+  flex: none; font-size: 13px; font-weight: 500; padding: 8px 13px; border-radius: 980px; color: var(--text);
+  background: rgba(255, 255, 255, 0.1); white-space: nowrap;
+}
+.pill:hover { background: rgba(255, 255, 255, 0.16); }
+.pill.on { background: rgba(41, 151, 255, 0.22); color: var(--link); }
+.pill[hidden] { display: none; }
 
 .loader {
   position: fixed; inset: 0; z-index: 15; display: grid; place-items: center; background: #000;
