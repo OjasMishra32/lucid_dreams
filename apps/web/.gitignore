@@ -1,0 +1,4 @@
+# uploads and job state written by the bridge
+.data/
+next-env.d.ts
+*.tsbuildinfo
