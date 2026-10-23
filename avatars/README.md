@@ -24,7 +24,8 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 Order: `pipeline/hpg/setup-digs.sbatch` (once), then `hpg/digs-assets.sbatch` (once, CPU), then
 `hpg/digs-sample.sbatch` per photo (RTX PRO 6000, 1 h limit; not L4, the CUDA extensions are built for sm_100/sm_120).
 
-1. Unzip `models_smplx_v1_1.zip` into `$L/models/smplx` (or pass `SMPLX_DIR=...`): it needs `SMPLX_NEUTRAL.pkl`.
+1. SMPL-X: `SMPLX_NEUTRAL.pkl` or `.npz` in `$L/models/smplx` (`pipeline/hpg/install-smplx-when-ready.sh` puts the `.npz`
+   there; pass `SMPLX_DIR=...` for elsewhere). DiGS wants the `.pkl`; the assets job converts the `.npz` if that's all there is.
 2. `sbatch avatars/hpg/digs-assets.sbatch`: clones this repo to `$L/repos/lucid_dreams`, links SMPL-X, unpacks the
    IDOL cache, fetches the diffusers AutoencoderDC, the DINOv3 code, NLF and the rembg person matte (about 1.5 GB),
    and fails if `student.ckpt` lacks DINOv3 weights while the gated `pretrained/dinov3_vitb16.pth` is absent. Ends `ASSETS_OK`.

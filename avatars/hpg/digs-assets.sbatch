@@ -10,7 +10,7 @@
 #SBATCH --output=/blue/iruchkin/vishalnaveen/lucid/jobs/%x-%j.log
 # CPU only. Run once after setup-digs: puts the assets DiGS inference reads where it reads them (about 1.5 GB),
 # fetches NLF and the rembg person matte, links SMPL-X, and checks student.ckpt carries the weights we can't download.
-# SMPLX_DIR must hold SMPLX_NEUTRAL.pkl somewhere inside (from models_smplx_v1_1.zip).
+# SMPLX_DIR must hold SMPLX_NEUTRAL.pkl or .npz somewhere inside (from models_smplx_v1_1.zip).
 set -euo pipefail
 L=/blue/iruchkin/vishalnaveen/lucid
 SMPLX_DIR=${SMPLX_DIR:-$L/models/smplx}
@@ -29,11 +29,20 @@ cd $L/repos/DiGS-Avatar
 pip install -q rembg onnxruntime-gpu imageio-ffmpeg  # imageio-ffmpeg: H.264 preview.mp4 that browsers play
 
 # SMPL-X (licensed, not downloadable here): DiGS loads lib/models/deformers/smplx/SMPLX/SMPLX_NEUTRAL.pkl.
-PKL=$(find -L "$SMPLX_DIR" -maxdepth 4 -name SMPLX_NEUTRAL.pkl | head -1)
-[ -n "$PKL" ] || { echo "no SMPLX_NEUTRAL.pkl under $SMPLX_DIR: unzip models_smplx_v1_1.zip there"; exit 1; }
-[ -f lib/models/deformers/smplx/SMPLX/SMPLX_NEUTRAL.pkl ] || ln -sfn "$(dirname "$PKL")" lib/models/deformers/smplx/SMPLX
-[ -f lib/models/deformers/smplx/SMPLX/SMPLX_NEUTRAL.pkl ] || { echo "lib/models/deformers/smplx/SMPLX is a real folder without the model: remove it and rerun"; exit 1; }
-ls -la lib/models/deformers/smplx/SMPLX/
+# Link the .pkl if SMPLX_DIR has one; otherwise convert the .npz install-smplx-when-ready.sh put there
+# (the SMPL-X loader reads both into the same struct of arrays).
+SX=lib/models/deformers/smplx/SMPLX
+if [ ! -f $SX/SMPLX_NEUTRAL.pkl ]; then
+  PKL=$(find -L "$SMPLX_DIR" -maxdepth 4 -name SMPLX_NEUTRAL.pkl | head -1)
+  NPZ=$(find -L "$SMPLX_DIR" -maxdepth 4 -name SMPLX_NEUTRAL.npz | head -1)
+  mkdir -p $SX
+  if [ -n "$PKL" ]; then ln -sfn "$PKL" $SX/SMPLX_NEUTRAL.pkl
+  elif [ -n "$NPZ" ]; then
+    python -c "import numpy as np, pickle, sys; d = dict(np.load(sys.argv[1], allow_pickle=True)); pickle.dump(d, open(sys.argv[2] + '.part', 'wb'))" "$NPZ" $SX/SMPLX_NEUTRAL.pkl
+    mv $SX/SMPLX_NEUTRAL.pkl.part $SX/SMPLX_NEUTRAL.pkl
+  else echo "no SMPLX_NEUTRAL.pkl or .npz under $SMPLX_DIR: unzip models_smplx_v1_1.zip there"; exit 1; fi
+fi
+ls -laL $SX/
 
 python - <<'PY'
 import os, shutil, zipfile
