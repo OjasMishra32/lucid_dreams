@@ -7,10 +7,13 @@ load_smplify_json): camera {R, t, focal, princpt} plus SMPL-X parts, hands relat
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 
 from .gaussian_ply import SH_C0, Gaussians
+from .motion import Motion
+from .smplx_layout import LEFT_HAND, RIGHT_HAND
 
 DIGS_W, DIGS_H = 640, 896  # DiGS input size (configs/student_inpaint.yaml image_size is [H, W])
 
@@ -45,6 +48,17 @@ def crop_intrinsics(K: np.ndarray, box, out_w: int, out_h: int) -> np.ndarray:
     Kc[1, 1] *= sy
     Kc[0, 2] = (Kc[0, 2] - x0) * sx
     Kc[1, 2] = (Kc[1, 2] - y0) * sy
+    return Kc
+
+
+def centred_crop_intrinsics(K: np.ndarray, box, out_w: int, out_h: int) -> np.ndarray:
+    """crop_intrinsics with the principal point moved to the crop's centre.
+
+    DiGS's visibility mesh renderer hard-codes a centred principal point, so an off-centre one makes visibility and
+    texture sampling disagree. Fit the body on the crop under this K (not on the photo) and everything stays consistent.
+    """
+    Kc = crop_intrinsics(K, box, out_w, out_h)
+    Kc[0, 2], Kc[1, 2] = out_w / 2, out_h / 2
     return Kc
 
 
@@ -100,3 +114,43 @@ def stand_y(xyz: np.ndarray, opacity_logit: np.ndarray, min_alpha: float = 0.5) 
     """SMPL-X transl y that puts the rest-pose soles on y = 0: minus the lowest clearly visible Gaussian."""
     visible = 1 / (1 + np.exp(-np.asarray(opacity_logit))) >= min_alpha
     return float(-np.asarray(xyz)[visible, 1].min())
+
+
+def alpha_bbox(alpha: np.ndarray, threshold: int = 32) -> tuple[int, int, int, int]:
+    """(x0, y0, x1, y1) of the pixels whose matte alpha (H, W, 0..255) is above threshold; x1 and y1 exclusive."""
+    ys, xs = np.nonzero(np.asarray(alpha) > threshold)
+    if len(xs) == 0:
+        raise ValueError("the matte has no person in it")
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+def largest_person(boxes) -> int:
+    """Index of the person to avatar-ise from NLF's (n, 5) boxes [x, y, w, h, confidence]: the biggest box.
+    With no boxes (None) it is the first detection."""
+    if boxes is None:
+        return 0
+    boxes = np.asarray(boxes, dtype=np.float64)
+    return int(np.argmax(boxes[:, 2] * boxes[:, 3]))
+
+
+def rest_pose_errors(xyz: np.ndarray, opacity_logit: np.ndarray, min_alpha: float = 0.5) -> list[str]:
+    """Reasons a captured rest-pose Gaussian cloud can't be a person in metres, for a loud failure
+    instead of a plausible-looking wrong bundle."""
+    xyz = np.asarray(xyz, dtype=np.float64)
+    visible = 1 / (1 + np.exp(-np.asarray(opacity_logit, dtype=np.float64))) >= min_alpha
+    if not visible.any():
+        return ["no Gaussian is visible (opacity below 0.5 everywhere)"]
+    height = np.ptp(xyz[visible, 1])
+    if not 0.8 <= height <= 2.4:
+        return [f"rest-pose height is {height:.2f} m; expected a person between 0.8 and 2.4 m (wrong units or scale?)"]
+    return []
+
+
+def with_hand_mean(m: Motion, hand_mean: np.ndarray) -> Motion:
+    """The motion with both hands held in DiGS's rest hand pose (hand_mean, 90 floats, absolute), so the
+    fingers match the captured avatar.ply instead of snapping flat."""
+    hand_mean = np.asarray(hand_mean, dtype=np.float64).reshape(90)
+    pose = m.pose.copy()
+    pose[:, LEFT_HAND] = hand_mean[:45].reshape(15, 3)
+    pose[:, RIGHT_HAND] = hand_mean[45:].reshape(15, 3)
+    return replace(m, pose=pose)

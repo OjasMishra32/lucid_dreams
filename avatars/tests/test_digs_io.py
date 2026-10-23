@@ -71,3 +71,50 @@ def test_stand_y_puts_soles_on_floor_ignoring_faint_floaters():
     xyz = np.array([[0, -1.2, 0], [0, 0.5, 0], [0, -1.5, 0]], dtype=float)
     opacity_logit = np.array([3.0, 3.0, -4.0])  # the lowest point is nearly transparent
     assert D.stand_y(xyz, opacity_logit) == pytest.approx(1.2)
+
+
+def test_alpha_bbox_is_the_visible_extent():
+    alpha = np.zeros((50, 40), dtype=np.uint8)
+    alpha[10:31, 5:16] = 255
+    alpha[0, 0] = 3  # matte noise below the threshold
+    assert D.alpha_bbox(alpha) == (5, 10, 16, 31)
+
+
+def test_alpha_bbox_rejects_an_empty_matte():
+    with pytest.raises(ValueError, match="no person"):
+        D.alpha_bbox(np.zeros((8, 8), dtype=np.uint8))
+
+
+def test_largest_person_picks_the_biggest_box():
+    boxes = np.array([[0, 0, 10, 10, 0.99], [5, 5, 40, 80, 0.7], [0, 0, 20, 20, 0.9]])
+    assert D.largest_person(boxes) == 1
+    assert D.largest_person(None) == 0
+
+
+def test_rest_pose_errors_flags_wrong_scale_and_empty_output():
+    rng = np.random.default_rng(1)
+    person = rng.uniform([-0.9, -0.9, -0.2], [0.9, 0.85, 0.2], size=(500, 3))
+    logit = np.full(500, 2.0)
+    assert D.rest_pose_errors(person, logit) == []
+    assert D.rest_pose_errors(person * 10, logit)  # ten times too big
+    assert D.rest_pose_errors(person, np.full(500, -9.0))  # nothing visible
+
+
+def test_with_hand_mean_sets_both_hands_and_leaves_the_rest():
+    from lucid_avatars.idle import idle_loop
+    from lucid_avatars.smplx_layout import LEFT_HAND, RIGHT_HAND
+
+    mean = np.arange(90, dtype=np.float64) / 100
+    m = D.with_hand_mean(idle_loop(np.zeros(10), seconds=1.0, fps=10), mean)
+    np.testing.assert_allclose(m.pose[0, LEFT_HAND].reshape(-1), mean[:45])
+    np.testing.assert_allclose(m.pose[-1, RIGHT_HAND].reshape(-1), mean[45:])
+    assert m.pose[:, 16:22].any()  # arms still posed
+
+
+def test_centred_crop_intrinsics_keeps_the_focal_scale_and_centres_the_principal_point():
+    K = D.intrinsics_from_fov(1000, 2000, 55.0)
+    box = (100, 300, 740, 1196)  # 640 x 896, off-centre
+    Kc = D.centred_crop_intrinsics(K, box, 640, 896)
+    np.testing.assert_allclose(Kc[0, 0], K[0, 0])  # crop is already 640 wide: no scaling
+    np.testing.assert_allclose(Kc[:2, 2], [320, 448])  # DiGS's mesh renderer assumes the centre
+    np.testing.assert_allclose(D.centred_crop_intrinsics(K, (0, 0, 320, 448), 640, 896)[1, 1], 2 * K[1, 1])
