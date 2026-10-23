@@ -102,8 +102,9 @@ Owners are a proposal; swap if skills fit better, but keep one owner per area.
 ## Contracts (build against these so everything fits)
 
 ### Coordinates
-Meters. +Y up. The person stands on the floor at y = 0, centred at x = z = 0, facing -Z (toward the viewer).
-The Quest app places that origin on the user's real floor.
+Meters. +Y up. The person stands on the floor at y = 0, centred at x = z = 0. Their front faces -Z: a viewer standing
+at (0, 1.6, -2) looking toward +Z sees their face. Never scale a person: the bundle is real size.
+The Quest app and the WebXR viewer place that origin on the user's real floor.
 
 ### Dream bundle (HiPerGator output -> Quest app and web app input)
 
@@ -131,7 +132,7 @@ dreams/<id>/
   "units": "meters",
   "upAxis": "+Y",
   "bounds": { "min": [-0.6, 0.0, -0.5], "max": [0.6, 1.95, 0.5] },
-  "frames": { "dir": "frames", "pattern": "%06d.ply", "gaussiansPerFrame": 300000 },
+  "frames": { "dir": "frames", "pattern": "%06d.ply", "spz": "%06d.spz", "gaussiansPerFrame": 300000, "spzBytesTotal": 520000000 },
   "avatar": null,
   "audio": "audio.m4a",
   "preview": "preview.mp4",
@@ -141,6 +142,9 @@ dreams/<id>/
   "createdAt": "2026-10-24T03:00:00Z"
 }
 ```
+
+Every frame ships twice: `.ply` (full quality, standard 3DGS layout, SH degree 1, for Unity import) and `.spz`
+(about 10x smaller, colour only, for the web and streaming). The fetch step leaves out `.ply` unless asked.
 
 For an avatar, `kind` is `"avatar"`, `frames` is null and
 `"avatar": { "file": "avatar/avatar.ply", "rig": "smplx", "motion": "avatar/motion.json" }`.
@@ -207,9 +211,12 @@ single video into a photoreal person that can perform any motion. We report fide
 AGENTS.md          this file (CLAUDE.md points here)
 team/              one brief per person
 pipeline/hpg/      Ojasva: sbatch scripts and stage runners for HiPerGator
+pipeline/lucid/    Ojasva: reconstruction (per-frame, warm-started Gaussians), export, status (Python, runs on HiPerGator)
+pipeline/runner/   Ojasva: lucid_runner.py, the Mac side (submit / status / fetch); the bridge calls it
 avatars/           Vishal: avatar fitting, fine-tuning, motion retargeting
 apps/quest/        Ian: Unity project
 apps/web/          Raami: web app and the bridge API
+apps/webxr/        Ojasva: WebXR viewer (Quest browser passthrough + desktop), Spark renderer
 demo/              Atina: clip list, consent notes, Devpost text, video script, slides
 samples/           a small sample dream bundle for development (kept tiny, or linked)
 ```
@@ -217,3 +224,5 @@ samples/           a small sample dream bundle for development (kept tiny, or li
 ## Status log (append newest at the bottom: time, who, what)
 
 - Fri 7:00 PM, Ojasva: HiPerGator workspace created; 4DAnyone installed (PyTorch 2.8, CUDA 12.8, for B200 / RTX PRO 6000); first GPU test run queued.
+- Fri 8:30 PM, Ojasva: reconstruction trainer works (synthetic test on a B200: 32.5 dB PSNR on held-out views, SSIM 0.98; warm-started frames 27 s vs 105 s cold). Job chain views -> reconstruct (array, one GPU per chunk) -> export written. 4DAnyone blocked only on the SMPL-X download (in progress).
+- Fri 8:45 PM, Ojasva: WebXR viewer in apps/webxr (Spark 2.4): library + viewer, life-size passthrough on the real floor via local-floor. Run: npm --prefix apps/webxr run dev, open https://<mac-ip>:5180 on the Quest.

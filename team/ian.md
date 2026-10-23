@@ -31,3 +31,17 @@ moving smoothly at full frame rate. Read `AGENTS.md` first.
 - Ojasva: bundle format, Gaussian counts, compression if files are too big.
 - Vishal: avatar rig and motion format.
 - Atina: in-headset UI design (she matches Raami's web app look).
+
+## Next chunk (added after your first push: nice work on the project setup and the first-frame importer)
+
+1. **Sequence playback.** Real bundles have about 121 frames (`frames/%06d.ply`, 25 fps). Extend `DreamBundleImport`
+   to batch-import every frame into Gaussian assets, then a `DreamSequencePlayer` that swaps the active asset at the
+   bundle's `fps` (loop, play/pause, 0.25x / 0.5x / 1x, scrub). Preload everything before play so it never stutters.
+2. **Budget.** Frames are capped at 300k Gaussians. Measure fps on the Quest 3S with a full sequence loaded; if it
+   drops under 72, tell Ojasva the number that holds 72 and he'll re-export at that cap.
+3. **Sample bundles.** A synthetic test bundle is on HiPerGator now; real people (4DAnyone's sample clips) follow as
+   soon as SMPL-X finishes downloading. Ojasva fetches them into `dreams/<id>/` on his Mac (`.ply` with `--with-ply`).
+4. **Grounding.** Add a soft contact shadow under the feet (a blurred dark disc on the floor plane). It's the single
+   biggest thing that makes a person read as standing on the floor rather than floating.
+5. The WebXR viewer in `apps/webxr` already does placement 1.8 m in front, facing you, on `local-floor`: use it as the
+   reference for how placement should feel.

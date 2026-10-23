@@ -1,0 +1,213 @@
+"""Turn reconstructed frames into a dream bundle (see AGENTS.md "Dream bundle").
+
+Places the person in bundle coordinates (meters, +Y up, feet on y = 0, centred on x = z = 0, front facing the viewer
+who stands on -Z looking toward +Z), writes every frame as PLY and as compact SPZ, renders a 360-degree orbit
+preview.mp4 and thumb.jpg, copies the clip's audio, and writes dream.json with real metrics.
+
+    python -m lucid.export --recon <recon dir> --out <bundle dir> --id curry-01 --name "Steph's jumper" \
+        [--result <4DAnyone result dir>] [--clip <source clip>] [--fps 25]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import shutil
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+
+from .gaussians import Gaussians, read_ply, write_ply, write_spz
+
+SH_C0 = 0.28209479177387814
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--recon", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--result", type=Path, help="4DAnyone result dir (cameras.json: which way the source camera looked)")
+    p.add_argument("--clip", type=Path, help="source clip, for audio and source metadata")
+    p.add_argument("--fps", type=float, default=25.0)
+    p.add_argument("--preview-size", default="720x1280")
+    p.add_argument("--preview-bg", default="0,0,0", help="r,g,b in 0-255")
+    p.add_argument("--device", default="cuda:0")
+    return p.parse_args(argv)
+
+
+def rotate_sh1(shN: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Rotate the degree-1 SH band by R; higher bands are dropped. shN [N,K-1,3] -> [N,3,3] (or [N,0,3])."""
+    if shN.shape[1] == 0:
+        return shN
+    s = shN[:, :3, :]  # coefficients for (-y, z, -x) * C1
+    v = np.stack([-s[:, 2, :], -s[:, 0, :], s[:, 1, :]], axis=1)  # linear form in (x, y, z)
+    v = np.einsum("ij,njc->nic", r, v)
+    return np.stack([-v[:, 1, :], v[:, 2, :], -v[:, 0, :]], axis=1).astype(np.float32)
+
+
+def placement(first: Gaussians, result: Path | None) -> tuple[np.ndarray, np.ndarray]:
+    """Rotation about +Y (source camera onto -Z) and translation (feet to y = 0, centre to x = z = 0)."""
+    alpha = 1 / (1 + np.exp(-first.opacities))
+    solid = first.means[alpha > 0.5] if (alpha > 0.5).sum() > 100 else first.means
+    centre = np.median(solid, axis=0)
+    yaw = 0.0
+    if result is not None and (result / "cameras.json").exists():
+        cams = sorted(json.loads((result / "cameras.json").read_text())["cameras"], key=lambda c: int(c["camera_id"]))
+        cam0 = np.asarray(cams[0]["camera_to_world"], float)[:3, 3]
+        d = cam0 - centre
+        yaw = math.atan2(d[0], d[2])  # angle of the source camera around +Y, measured from +Z
+        yaw = yaw - math.pi  # bring it to -Z
+    c, s = math.cos(-yaw), math.sin(-yaw)
+    rot = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+    rotated = (solid - centre) @ rot.T
+    floor = np.percentile(rotated[:, 1], 0.5)
+    t = -(rot @ centre) - np.array([0.0, floor, 0.0])
+    return rot, t
+
+
+def place(g: Gaussians, rot: np.ndarray, t: np.ndarray) -> Gaussians:
+    moved = g.transformed(rot, t)
+    moved.shN = rotate_sh1(g.shN, rot)
+    return moved
+
+
+def orbit_camera(angle: float, radius: float, height: float, target_y: float) -> np.ndarray:
+    pos = np.array([radius * math.sin(angle), height, -radius * math.cos(angle)])
+    f = np.array([0.0, target_y, 0.0]) - pos
+    f /= np.linalg.norm(f)
+    r = np.cross(f, [0.0, 1.0, 0.0])
+    r /= np.linalg.norm(r)
+    d = np.cross(f, r)
+    c2w = np.eye(4)
+    c2w[:3, 0], c2w[:3, 1], c2w[:3, 2], c2w[:3, 3] = r, d, f, pos
+    return np.linalg.inv(c2w)
+
+
+def render(g: Gaussians, viewmat: np.ndarray, width: int, height: int, bg: np.ndarray, device: str) -> np.ndarray:
+    import torch
+    from gsplat import rasterization
+
+    t = lambda x: torch.as_tensor(np.ascontiguousarray(x), dtype=torch.float32, device=device)  # noqa: E731
+    fy = 0.5 * height / math.tan(math.radians(40.0) / 2)
+    K = np.array([[fy, 0, width / 2], [0, fy, height / 2], [0, 0, 1.0]])
+    degree = g.sh_degree
+    colors = np.concatenate([g.sh0, g.shN], 1)
+    rgb, alpha, _ = rasterization(
+        means=t(g.means),
+        quats=t(g.quats),
+        scales=torch.exp(t(g.scales)),
+        opacities=torch.sigmoid(t(g.opacities)),
+        colors=t(colors),
+        viewmats=t(viewmat)[None],
+        Ks=t(K)[None],
+        width=width,
+        height=height,
+        sh_degree=degree,
+        rasterize_mode="antialiased",
+    )
+    out = rgb[0].clamp(0, 1) + (1 - alpha[0]) * t(bg)  # composite over the background ourselves
+    return (out.clamp(0, 1) * 255).round().byte().cpu().numpy()
+
+
+def main(argv=None):
+    a = parse_args(argv)
+    frame_paths = sorted((a.recon / "frames").glob("*.ply"))
+    if not frame_paths:
+        raise SystemExit(f"no frames in {a.recon / 'frames'}")
+    out_frames = a.out / "frames"
+    out_frames.mkdir(parents=True, exist_ok=True)
+
+    first = read_ply(frame_paths[0])
+    rot, t = placement(first, a.result)
+    counts, spz_total, bounds = [], 0, None
+    placed_frames: list[Gaussians] = []
+    for i, path in enumerate(frame_paths):
+        g = place(read_ply(path), rot, t)
+        write_ply(out_frames / f"{i:06d}.ply", g)
+        spz_total += write_spz(out_frames / f"{i:06d}.spz", g, sh_degree=0)
+        counts.append(g.count)
+        if i == 0:
+            alpha = 1 / (1 + np.exp(-g.opacities))
+            solid = g.means[alpha > 0.5] if (alpha > 0.5).sum() > 100 else g.means
+            bounds = {"min": np.percentile(solid, 0.5, 0).round(3).tolist(), "max": np.percentile(solid, 99.5, 0).round(3).tolist()}
+        placed_frames.append(g)
+
+    # preview: one orbit over the clip, looping the motion; thumbnail from the front a third of the way in
+    w, h = (int(v) for v in a.preview_size.split("x"))
+    bg = np.array([float(v) for v in a.preview_bg.split(",")]) / 255.0
+    top = bounds["max"][1] if bounds else 1.8
+    seconds = max(len(placed_frames) / a.fps, 4.0)
+    n_out = int(seconds * 30)
+    ff = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", "30", "-i", "-",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", str(a.out / "preview.mp4")],
+        stdin=subprocess.PIPE,
+    )
+    for k in range(n_out):
+        g = placed_frames[int(k / 30 * a.fps) % len(placed_frames)]
+        vm = orbit_camera(2 * math.pi * k / n_out, radius=max(2.4, top * 1.4), height=top * 0.6, target_y=top * 0.5)
+        ff.stdin.write(render(g, vm, w, h, bg, a.device).tobytes())
+    ff.stdin.close()
+    ff.wait()
+    from PIL import Image
+
+    front = placed_frames[len(placed_frames) // 3]
+    thumb = render(front, orbit_camera(0.0, max(2.4, top * 1.4), top * 0.6, top * 0.5), w, h, bg, a.device)
+    Image.fromarray(thumb).save(a.out / "thumb.jpg", quality=92)
+
+    audio = None
+    source = None
+    if a.clip and a.clip.exists():
+        probe = json.loads(subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", str(a.clip)], capture_output=True, text=True
+        ).stdout or "{}")
+        streams = probe.get("streams", [])
+        video = next((s for s in streams if s.get("codec_type") == "video"), {})
+        source = {"clip": a.clip.name, "width": video.get("width"), "height": video.get("height")}
+        if any(s.get("codec_type") == "audio" for s in streams):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(a.clip), "-vn", "-c:a", "aac", "-b:a", "160k",
+                            "-t", f"{len(placed_frames) / a.fps:.3f}", str(a.out / "audio.m4a")], check=False)
+            audio = "audio.m4a" if (a.out / "audio.m4a").exists() else None
+
+    reports = [json.loads(p.read_text()) for p in sorted(a.recon.glob("recon-*.json"))]
+    per_frame = [f for r in reports for f in r.get("frames", [])]
+    mean = lambda k: round(float(np.mean([f[k] for f in per_frame if k in f])), 2) if per_frame else None  # noqa: E731
+    views = None
+    if a.result and (a.result / "cameras.json").exists():
+        views = len(json.loads((a.result / "cameras.json").read_text())["cameras"])
+    dream = {
+        "id": a.id,
+        "name": a.name,
+        "kind": "replay",
+        "fps": a.fps,
+        "frameCount": len(placed_frames),
+        "durationS": round(len(placed_frames) / a.fps, 3),
+        "units": "meters",
+        "upAxis": "+Y",
+        "bounds": bounds,
+        "frames": {
+            "dir": "frames",
+            "pattern": "%06d.ply",
+            "spz": "%06d.spz",
+            "gaussiansPerFrame": int(np.median(counts)),
+            "spzBytesTotal": spz_total,
+        },
+        "avatar": None,
+        "audio": audio,
+        "preview": "preview.mp4",
+        "thumb": "thumb.jpg",
+        "source": source,
+        "metrics": {"psnr": mean("psnr"), "ssim": mean("ssim"), "lpips": None, "views": views},
+        "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    (a.out / "dream.json").write_text(json.dumps(dream, indent=2))
+    print("[export]", json.dumps({k: dream[k] for k in ("id", "frameCount", "metrics")}), f"spz {spz_total / 1e6:.1f} MB")
+
+
+if __name__ == "__main__":
+    main()
