@@ -30,3 +30,28 @@ or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first
 - Ian: the library endpoint.
 - Atina: she designs the in-headset UI to match your web app, so share your colours, type and components early.
 - Atina: copy, screenshots, the demo flow.
+
+## Ready for you: the pipeline side of the bridge
+
+`pipeline/runner/lucid_runner.py` (Python, stdlib only) already talks to HiPerGator. Your bridge can shell out to it,
+or `import lucid_runner` and call the functions. Every command prints one JSON object.
+
+| Bridge endpoint | Call |
+| --- | --- |
+| `POST /api/jobs` (save the upload to a temp file first) | `python3 pipeline/runner/lucid_runner.py submit <file> --name "<name>"` -> `{ "id", "slurm" }` |
+| `GET /api/jobs/:id` | `lucid_runner.py status <id>` -> `{ id, status, stage, progress, etaS, message }`, exactly the contract shape |
+| when `status` is `done` | `lucid_runner.py fetch <id>` -> copies the bundle into `<repo>/dreams/<id>/`, returns its `dream.json` |
+| `GET /api/dreams` | read `<repo>/dreams/*/dream.json` (newest first), or proxy the viewer's `/dreams/index.json` |
+| `GET /dreams/<id>/...` | serve `<repo>/dreams/` statically |
+
+- It only works on Ojasva's Mac (it uses his HiPerGator connection). For your own development, use the mock with a
+  sample bundle: `dreams/synthetic-test/` on Ojasva's Mac is a real bundle you can copy.
+- `status` messages are written for people ("Imagining every angle of them", "Building them in 3D, frame by frame"):
+  show them as-is under the progress bar.
+- Real runs take roughly 6 min (views) + 25 min (reconstruction, split across GPUs) + 2 min (export). Design the
+  progress screen for a wait of about half an hour: it should feel calm, not stuck.
+- Bundles now also carry `frames.reality` and `metrics.seenFraction` (how much of the person the camera really saw).
+  Show "62% seen by the camera" on the detail page: judges love honest numbers.
+- The 3D viewer is `apps/webxr` (Ojasva's). Link a dream's detail page to `https://<mac>:5180/?dream=<id>` for
+  "View in 3D / in your room" instead of building your own 3D view.
+
