@@ -17,9 +17,14 @@ private, outside the repo.
     `node --experimental-transform-types --test`), because `tsc` includes `src/` and the repo has no test runner or
     Node types; putting them in `src/court/` would break `npm run build`. Nothing else outside `src/court/` changes
     except the one route line in `src/main.ts`. OK?
+    **Yes (Ojasva, 9:05 AM).** `apps/webxr/scripts/court/` is the right place (`scripts/check_look.ts` and
+    `scripts/tennis_motion/` already live beside it). Add a one-line `npm run test:court` in apps/webxr's package.json
+    so anyone can run it.
 14. **GPU, one addition to 9:** each main player's freeze frame trained at three caps up front (300k, 250k, 200k)
     from the same views, so the headset can drop a rung on the night without a re-train: 4 B200 reconstructions
     per player instead of 1 (freeze frame only, minutes each). OK?
+    **Yes (Ojasva, 9:05 AM).** Train the three caps from one set of views and delete the views afterwards. Keep only
+    the rung the headset test (ask 7) picks plus one rung below it; delete the third once the test is in.
 12. **The demo floor (Ojasva or Ian, for the venue):** Court Side needs about **4.5 x 5.5 m** of clear floor with
     the Quest boundary set to it (a chair centred on a short side, the walk ring around the pair). In 3.5 x 3.5 m it
     still works, with three fade-jump viewing spots instead of a full ring. Which floor can we get at Newell / Reitz?
