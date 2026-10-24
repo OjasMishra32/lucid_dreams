@@ -14,8 +14,8 @@
 # $TMPDIR and copies one uncompressed tar (alpha/<name>/NNNNNN.png crops, index.json, report.json) to $RUN.
 # Nothing is deleted.
 set -euo pipefail
-source /blue/iruchkin/vishalnaveen/lucid/code/pipeline/hpg/env.sh
-C=$L/code/pipeline/court
+L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court  # L: court-hpg.sh passes it
+source "${ENV_SH:-$L/code/pipeline/hpg/env.sh}"
 export TMPDIR=${TMPDIR:-/tmp}
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 OUT=$TMPDIR/matte

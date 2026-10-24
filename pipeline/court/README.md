@@ -42,6 +42,13 @@ out at weight 0), `CAPS`, `METRICS`, `NGPU`. `SEEDS=N` submits N jobs per run wi
 `<L>/runs/<id>/seed<k>/`; `TAG=winner VARIANTS="up:default up:agree" CAPS="300000 250000 200000" SEED=<k>` is the
 winner's SeedVR2 job. Late other-view masks: `player_clip.py --config <cfg> --extras-only` adds them to built sets.
 
+The pick's checks where the runs are (one CPU job per run, on the login node): `[REF=stance,along,across]
+court-check-submit.sh <id>...` runs P42, the stance, the gate-2 sheet and `court_grid_report.py --pick` on
+`<L>/runs/<id>/seed*` and leaves them in `<L>/checks/<id>-<job>/` (fetch that folder; the run folders are only read).
+Fixed poses for the other real views: `court_extra_pose.py <run folder>...` writes `real/<name>/pose.json` (court
+calibration; uploaded with the run folder), and `lucid-fixed-pose.patch` (`patch -p1 -b -N` in `<L>/code`) lets
+`lucid.source_view` use them: the camera from calibration, one 1-D scale fit per recon, no 6-DoF solve.
+
 ## Tests
 
 ```bash

@@ -60,6 +60,7 @@ log "scratch $S: $FREE_S GB free"
 CPUS=${SLURM_CPUS_PER_TASK:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 12)}
 RT=$(( CPUS / NG > 0 ? CPUS / NG : 1 ))  # the recons run one per GPU at once
 log "threads: $CPUS for the views, $RT per recon on $NG GPUs"
+export NCCL_IB_DISABLE=1  # multi-GPU views: NCCL over some nodes' RoCE bonds fails ("Remote IB device is incompatible")
 source "${ENV_SH:-$L/code/pipeline/hpg/env.sh}"  # 4DAnyone and recon keep reading their model caches from there
 PY=${PY:-python}
 

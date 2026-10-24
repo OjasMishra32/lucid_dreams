@@ -40,10 +40,11 @@ import numpy as np
 JPEG_Q = 95
 
 
-def parse_prompt(v) -> dict:
-    """A prompt entry as keyword arguments for add_new_points_or_box."""
+def parse_prompt(v, size: tuple[int, int] | None = None) -> dict:
+    """A prompt entry as keyword arguments for add_new_points_or_box; with size (w, h), boxes and clicks are clipped to
+    the frame (an object at the frame's edge is often boxed past it)."""
     if isinstance(v, list):
-        return {"box": np.asarray(v, np.float32)}
+        v = {"box": v}
     out = {}
     if v.get("box") is not None:
         out["box"] = np.asarray(v["box"], np.float32)
@@ -52,6 +53,12 @@ def parse_prompt(v) -> dict:
         out["labels"] = np.asarray(v.get("labels", [1] * len(v["points"])), np.int32)
     if not out:
         raise ValueError(f"empty prompt {v}")
+    if size is not None:
+        w, h = size
+        if "box" in out:
+            out["box"] = np.clip(out["box"], 0, [w - 1, h - 1, w - 1, h - 1]).astype(np.float32)
+        if "points" in out:
+            out["points"] = np.clip(out["points"], 0, [w - 1, h - 1]).astype(np.float32)
     return out
 
 
@@ -75,11 +82,16 @@ def segment(pred, frames_dir: str, stems: list[str], prompts: dict):
     backward from ref. frames_dir holds 00000.jpg.. in the order of `stems`."""
     at = frame_index(stems)
     names = list(prompts["objects"])
-    st = pred.init_state(video_path=frames_dir, offload_video_to_cpu=True)
+    from PIL import Image
+
+    with Image.open(os.path.join(frames_dir, "00000.jpg")) as im:
+        size = im.size
+    # a long clip's per-frame memory (every object, every frame) goes to host RAM instead of the GPU
+    st = pred.init_state(video_path=frames_dir, offload_video_to_cpu=True, offload_state_to_cpu=len(stems) > 400)
     prompted = []
     for oid, name in enumerate(names, 1):
         for key, v in prompts["objects"][name].items():
-            pred.add_new_points_or_box(st, frame_idx=at(key, name), obj_id=oid, **parse_prompt(v))
+            pred.add_new_points_or_box(st, frame_idx=at(key, name), obj_id=oid, **parse_prompt(v, size))
             prompted.append(at(key, name))
     ref = at(prompts["ref"], "ref") if prompts.get("ref") is not None else min(prompted)
     seen = set()

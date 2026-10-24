@@ -12,10 +12,16 @@
 #   court-masks-hpg.sh fetch rematte <name> <dir>   masks-alpha.tar into <dir>, unpacked as <dir>/<object>-alpha/
 #   court-masks-hpg.sh fetch matte <masks dir> <staging dir>    the alpha mattes into <masks dir>/<name>-alpha/
 # Data paths are arguments (nothing about the footage lives in git). The HPG side is court-hpg.sh: it checks the upload
-# and the group quota, submits, and deletes nothing. Env: DRY=1 prints what would run; HOST (hpg); MIN_GB.
+# and the group quota, submits, and deletes nothing. Env: DRY=1 prints what would run; HOST (hpg) and L (its /blue base)
+# for another allocation, plus ACCOUNT, QOS, PARTITION, CPUS, ENV_QOS, ENV_PARTITION, QUOTA_GROUP, MIN_GB for
+# court-hpg.sh.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-HOST=${HOST:-hpg}; L=/blue/iruchkin/vishalnaveen/lucid; C=$L/code/pipeline/court
+HOST=${HOST:-hpg}; L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
+PASS=" L=$L"
+for v in ACCOUNT QOS PARTITION CPUS ENV_QOS ENV_PARTITION QUOTA_GROUP MIN_GB; do
+  [ -n "${!v:-}" ] && PASS="$PASS $v=$(printf %q "${!v}")"
+done
 SSH="ssh -o ControlMaster=no -o BatchMode=yes"
 run() { if [ "${DRY:-0}" = 1 ]; then echo "+ $*"; else "$@"; fi; }
 if [ "${DRY:-0}" != 1 ]; then
@@ -27,7 +33,7 @@ up_code() {
     "$HERE"/court-masks.sbatch "$HERE"/court-sam.sbatch "$HERE"/court-matte.sbatch "$HERE"/court_sam.py \
     "$HERE"/court_matte.py "$HOST:$C/"
 }
-submit() { run $SSH "$HOST" "${MIN_GB:+MIN_GB=$MIN_GB }bash $C/court-hpg.sh $1"; }
+submit() { run $SSH "$HOST" "env$PASS bash $C/court-hpg.sh $1"; }
 case "${1:-}" in
   env)
     up_code
@@ -41,7 +47,8 @@ case "${1:-}" in
   sam)
     N=${2:?name}; U=${3:?upload dir}
     up_code
-    run rsync -a --partial -e "$SSH" "$U/" "$HOST:$L/data/court/court-sam-$N/"
+    # -H: sets that share one clip (hard links) send it once
+    run rsync -aH --partial -e "$SSH" "$U/" "$HOST:$L/data/court/court-sam-$N/"
     submit "court-sam-$N" ;;
   rematte)
     N=${2:?name}

@@ -12,11 +12,22 @@
 #                     $L/data/court/court-matte/crops.zip (court_matte.py pack, then rsync)
 # Nothing is submitted if a file is missing, a job was submitted before, or the group quota has less than MIN_GB (5)
 # free. Login-node safe: bash, awk and sbatch only. Deletes nothing.
+# Another allocation: L (its /blue base: code/, data/, runs/, envs/, models/, repos/) reaches the jobs; ACCOUNT, QOS,
+# PARTITION and CPUS override the GPU jobs' #SBATCH lines; ENV_QOS and ENV_PARTITION the env build's (a CPU job, e.g. a
+# burst QOS); QUOTA_GROUP picks whose /blue space is checked.
 set -euo pipefail
 ID=${1:-}
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 DATA=$L/data/court/$ID; RUN=$L/runs/$ID
 source "$(dirname "$0")/court-lib.sh"
+for v in ACCOUNT QOS PARTITION ENV_QOS ENV_PARTITION; do
+  [[ -z ${!v:-} || ${!v} =~ ^[A-Za-z0-9_.,-]+$ ]] || fail "$v='${!v}'"
+done
+[[ -z ${CPUS:-} || $CPUS =~ ^[1-9][0-9]?$ ]] || fail "CPUS=$CPUS"
+SB=(${ACCOUNT:+--account=$ACCOUNT})  # both jobs: the allocation (the ${X[@]+...} forms keep bash 3 happy)
+GPU_SB=(${SB[@]+"${SB[@]}"} ${QOS:+--qos=$QOS} ${PARTITION:+--partition=$PARTITION} ${CPUS:+--cpus-per-task=$CPUS})
+EQ=${ENV_QOS:-${QOS:-}}  # the env build is CPU-only: a burst QOS fits it
+ENV_SB=(${SB[@]+"${SB[@]}"} ${EQ:+--qos=$EQ} ${ENV_PARTITION:+--partition=$ENV_PARTITION})
 (( $# == 1 )) || fail "one id: court-sam-env, court-sam-people, court-sam-<name>, court-rematte-<name> or court-matte"
 ENV_OK=$L/envs/sam2/.court-sam-ok
 # SAM sets in an upload: the folder itself or its subfolders, each prompts.json + frames.zip (or a clip it names)
@@ -61,12 +72,14 @@ FREE=$(group_free_gb)
 if [ "$ID" = court-sam-env ]; then
   mkdir -p "$L/jobs"
   cd "$L/jobs"
-  J=$(sbatch --parsable "$C/court-sam-env.sbatch")
+  J=$(sbatch --parsable ${ENV_SB[@]+"${ENV_SB[@]}"} --output="$L/jobs/%x-%j.log" --export=ALL,L=$L \
+    "$C/court-sam-env.sbatch")
   echo "SUBMITTED court-sam-env job=$J (log: $L/jobs/court-sam-env-$J.log, ends with SETUP_OK)"
   exit 0
 fi
 mkdir -p "$RUN/logs"
 cd "$RUN/logs"
-J=$(sbatch --parsable --export=ALL,RUN=$RUN,DATA=$DATA${EXTRA:-} "$C/$JOB")
+J=$(sbatch --parsable ${GPU_SB[@]+"${GPU_SB[@]}"} --job-name="$ID" --export=ALL,L=$L,RUN=$RUN,DATA=$DATA${EXTRA:-} \
+  "$C/$JOB")
 echo "job=$J" > "$RUN/logs/submitted"
-echo "SUBMITTED $ID job=$J (log: $RUN/logs/${JOB%.sbatch}-$J.log; result: $RUN/$TAR)"
+echo "SUBMITTED $ID job=$J (log: $RUN/logs/$ID-$J.log; result: $RUN/$TAR)"

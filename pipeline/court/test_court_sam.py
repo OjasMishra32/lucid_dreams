@@ -28,8 +28,9 @@ class FakePredictor:
     def __init__(self):
         self.calls, self.boxes = [], {}
 
-    def init_state(self, video_path, offload_video_to_cpu=False):
+    def init_state(self, video_path, offload_video_to_cpu=False, offload_state_to_cpu=False):
         self.n = len(list(Path(video_path).glob("*.jpg")))
+        self.calls.append(("init", offload_state_to_cpu))
         return {"n": self.n}
 
     def add_new_points_or_box(self, st, frame_idx, obj_id, box=None, points=None, labels=None):
@@ -91,6 +92,14 @@ class Segment(unittest.TestCase):
         p = cv2.imread(str(self.root / "out/prob/ball/000102.png"), cv2.IMREAD_GRAYSCALE)
         self.assertEqual(int(p[13, 33]), 253)  # round(sigmoid(5) * 255)
         self.assertEqual(rep["empty"], {"front": [], "ball": []})
+
+    def test_prompts_past_the_frame_edge_are_clipped(self):
+        d = make_set(self.root / "edge", ["000000", "000001"],
+                     {"objects": {"ball": {"000000": {"box": [50, -6, 70, 12], "points": [[61, -2]], "labels": [1]}}}})
+        pred = FakePredictor()
+        court_sam.run_set(pred, d, self.root / "out", self.root / "work")
+        self.assertIn(("prompt", 0, 1, [50.0, 0.0, 59.0, 12.0], [[59.0, 0.0]]), pred.calls)
+        self.assertIn(("init", False), pred.calls)  # a short clip keeps its state on the GPU
 
     def test_a_prompt_off_the_clip_is_an_error(self):
         d = make_set(self.root / "x", ["000000", "000001"], {"objects": {"a": {"000007": [1, 1, 5, 5]}}})
