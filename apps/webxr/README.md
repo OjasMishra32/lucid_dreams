@@ -53,6 +53,7 @@ handshake you can meet with your hand.
 | --- | --- |
 | `src/viewer.ts` | Playback, room placement, positional voice, reality check, captions |
 | `src/avatar.ts` | Live GPU skinning of avatar bundles (matches `avatars/lucid_avatars/skinning.py`) |
+| `src/look.ts` | Eye contact: in `companion` / `play` an avatar turns its head toward you (head 70%, neck 30%, ±35° yaw, ±20° pitch, 300 ms); `node scripts/check_look.ts` checks it |
 | `src/xr/hands.ts` | Fingertip buttons and depth-only hand occluders, shared by the viewer and chess |
 | `src/chess/` | Board, lathe-turned pieces, Stockfish 19 in a worker (GPL-3.0, separate file in `public/engine`) |
 | `scripts/make_test_avatar.py` | A rigged test avatar from your local SMPL-X model (never committed) |

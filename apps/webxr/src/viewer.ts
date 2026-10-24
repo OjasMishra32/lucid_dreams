@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "./avatar";
+import { HeadLook } from "./look";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
@@ -183,6 +184,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const experience = (await loadExperience(dream)) ?? fallbackExperience(dream, duration);
   const steps = (experience?.steps ?? []).map((st) => ({ ...st, end: Math.min(st.end, duration) })).filter((st) => st.end > st.start);
   const lesson = experience?.mode === "teach" && steps.length ? new Lesson(steps) : null;
+  // eye contact: someone you're with or playing against looks at you (a teacher looks at the move)
+  const look = avatar && (experience?.mode === "companion" || experience?.mode === "play") ? new HeadLook() : null;
+  const eye = new THREE.Vector3();
   if (experience?.title) $("#subtitle").textContent = experience.title;
   if (experience?.mode === "play" && experience.play?.game === "chess") {
     const a = $<HTMLAnchorElement>("#play-chess");
@@ -538,7 +542,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
     spoken.fade(!!cue && renderer.xr.isPresenting, dt);
     if (avatar) {
       const shownAvatar = avatarRealityOn && avatarReality ? avatarReality : avatar;
-      shownAvatar.pose(t);
+      if (look) {
+        // your eyes (the headset, or the laptop's camera) in the person's own space
+        (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(eye);
+        shownAvatar.mesh.worldToLocal(eye);
+        shownAvatar.pose(t, (local, rootT, skeleton) => look.apply(local, rootT, skeleton, eye, dt));
+      } else shownAvatar.pose(t);
       shownAvatar.mesh.opacity = reveal;
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
     props?.update(t, dt, reveal);

@@ -86,6 +86,13 @@ space, with each joint slerped between motion frames, so 30 fps motion is smooth
 reality check via `avatar.reality`, speed, scrub, hands) works the same as for a replay. `expr` (blinks) is ignored,
 as the README allows.
 
+**Eye contact** (`HeadLook`): in `companion` and `play` mode an avatar turns its head toward your eyes, layered on
+its motion: the head takes 70% of the turn and the neck 30%, within ±35° yaw and ±20° pitch, settling in about
+300 ms; paused or on your turn it still follows you. Walk behind them (more than 110° off their face) and they look
+ahead again rather than twist round. A teacher (`teach`) and `watch` play the motion untouched, and replays have no
+skeleton to turn. Same maths as WebXR's `look.ts`; `HeadLookCheck` checks it (below), and HandsCheck checks it in
+the scene for an avatar bundle with a `companion` or `play` plan.
+
 ## Their voice and words
 
 - **Voice** (`voice.m4a`, else `audio.m4a`): a 3D sound at mouth height (`bounds.max.y - 0.13`), 8 cm in front of the
@@ -188,6 +195,13 @@ position, shared clock, moving both, remove), then offline. For an avatar bundle
 ```
 Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.HandsCheck.Run \
   -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check        # or: -bridge http://127.0.0.1:5170
+```
+
+`HeadLookCheck` checks eye contact's maths with no bundle (faces your eyes, the yaw and pitch limits, looking ahead
+when you're behind, 300 ms, the neck's share), the same cases as `apps/webxr/scripts/check_look.ts`:
+
+```
+Unity -batchmode -nographics -projectPath apps/quest -executeMethod LucidDreams.Editor.HeadLookCheck.Run
 ```
 
 By default the person stands 1.8 m in front of you on the scanned floor, facing you. Bundle files are right-handed

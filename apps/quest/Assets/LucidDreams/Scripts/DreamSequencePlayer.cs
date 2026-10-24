@@ -3,6 +3,7 @@ using System.Collections;
 using System.IO;
 using System.Threading.Tasks;
 using Gaussians.ThreeD;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -188,6 +189,7 @@ namespace LucidDreams
 
         void Update()
         {
+            if (IsReady && rig != null) rig.StepLook(LookTarget(), time, Time.deltaTime);
             if (IsReady && follow != null)
             {
                 // the same moment as the person they're with, looping if they're shorter
@@ -214,6 +216,22 @@ namespace LucidDreams
                 }
             }
             ShowTime();
+        }
+
+        // Paused or your turn, the head still follows you; Pose does nothing when neither the time nor the look moved.
+        void LateUpdate()
+        {
+            if (IsReady && rig != null) rig.Pose(time);
+        }
+
+        // Eye contact: someone you're with (companion) or playing against looks at you; a teacher looks at the move.
+        // Your eyes in the bundle's space (this transform carries the placement and the handedness mirror).
+        float3? LookTarget()
+        {
+            if (Experience == null || (Experience.mode != "companion" && Experience.mode != "play")) return null;
+            var eyes = Camera.main;
+            if (eyes == null) return null;
+            return (float3)transform.InverseTransformPoint(eyes.transform.position);
         }
 
         void OnLessonChanged(bool again)

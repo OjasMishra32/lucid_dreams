@@ -22,6 +22,11 @@ namespace LucidDreams
         public float Duration => FrameCount / Fps;
         public bool ShowingReality => showReality && realityOut != null;
         public bool HasRealityLoaded => realityOut != null;
+        // Eye contact, layered on the motion (StepLook each frame, then Pose).
+        public HeadLook Look { get; } = new HeadLook();
+        // Where the head is and which way the face points as last posed, in the bundle's space (for checks).
+        public float3 HeadPosition => pos[HeadLook.Head] + posedRoot;
+        public float3 HeadForward => math.rotate(rot[HeadLook.Head], new float3(0f, 0f, 1f));
 
         readonly int[] parents;
         readonly float3[] rest;
@@ -38,7 +43,8 @@ namespace LucidDreams
         readonly quaternion[] blend = new quaternion[JointCount];
         bool showReality;
         uint revision = 1;
-        float posedAt = float.NaN;
+        float posedAt = float.NaN, posedYaw, posedPitch;
+        float3 posedRoot;
 
         // Parsed on a worker thread, then handed to the constructor on the main thread.
         public class Source
@@ -164,17 +170,24 @@ namespace LucidDreams
             posedAt = float.NaN; // the other output hasn't been posed yet
         }
 
+        // Eases the head toward eye (the viewer's eyes in the bundle's space, or null to look ahead) for the pose at t.
+        public void StepLook(float3? eye, float t, float dt)
+        {
+            if (eye == null && Look.Resting) return;
+            var root = Blend(t);
+            Look.Step(blend, parents, rest, root, eye, dt);
+        }
+
         // Pose at t seconds (looping), blending between the motion's frames so it's smooth at any display rate.
         public void Pose(float t)
         {
-            if (t == posedAt) return;
+            if (t == posedAt && Look.Yaw == posedYaw && Look.Pitch == posedPitch) return;
             posedAt = t;
-            int n = local.Length;
-            float f = ((t * Fps) % n + n) % n;
-            int i0 = (int)math.floor(f) % n, i1 = (i0 + 1) % n;
-            float a = f - math.floor(f);
-            for (int j = 0; j < JointCount; j++) blend[j] = math.slerp(local[i0][j], local[i1][j], a);
-            var root = math.lerp(rootT[i0], rootT[i1], a);
+            posedYaw = Look.Yaw;
+            posedPitch = Look.Pitch;
+            var root = Blend(t);
+            Look.Apply(blend);
+            posedRoot = root;
             SkinTransforms(blend, root);
 
             var target = ShowingReality ? realityOut : output;
@@ -186,6 +199,17 @@ namespace LucidDreams
             shader.SetBuffer(kernel, "_Out", target.Splats);
             shader.Dispatch(kernel, (Count + 255) / 256, 1, 1);
             revision++;
+        }
+
+        // The motion's joint rotations at t into blend; returns the root translation.
+        float3 Blend(float t)
+        {
+            int n = local.Length;
+            float f = ((t * Fps) % n + n) % n;
+            int i0 = (int)math.floor(f) % n, i1 = (i0 + 1) % n;
+            float a = f - math.floor(f);
+            for (int j = 0; j < JointCount; j++) blend[j] = math.slerp(local[i0][j], local[i1][j], a);
+            return math.lerp(rootT[i0], rootT[i1], a);
         }
 
         // G_0 = [R(root) | rest_0], G_j = G_parent [R(pose_j) | rest_j - rest_parent], M_j = G_j [I | -rest_j] + root_t,

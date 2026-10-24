@@ -392,7 +392,29 @@ namespace LucidDreams.Tests
             float most = 0f;
             for (int i = 0; i < rig.Count; i++)
                 most = Mathf.Max(most, Vector3.Distance(new Vector3(a[i * 12], a[i * 12 + 1], a[i * 12 + 2]), new Vector3(b[i * 12], b[i * 12 + 1], b[i * 12 + 2])));
-            Check(most > 0.02f, $"playing moves it ({most * 100f:F1} cm at most after 0.4 s)");
+            // An idle only breathes (about 2 cm in 0.4 s); a frozen rig moves nothing.
+            Check(most > 0.005f, $"playing moves it ({most * 100f:F1} cm at most after 0.4 s)");
+
+            var mode = player.Experience?.mode;
+            if (mode == "companion" || mode == "play")
+            {
+                // Eye contact: step to their side (paused, so only the look moves) and their face follows you.
+                var start = head.transform.position;
+                foreach (var side in new[] { 0f, 0.7f, -0.7f })
+                {
+                    head.transform.position = start + new Vector3(side, 0f, 0f);
+                    yield return new WaitForSeconds(0.6f);
+                    var t = player.transform;
+                    var at = t.TransformPoint((Vector3)rig.HeadPosition);
+                    var face = t.TransformVector((Vector3)rig.HeadForward).normalized; // TransformVector keeps the mirror
+                    float off = Vector3.Angle(face, head.transform.position - at);
+                    Check(off < 3f, $"eye contact from {side:+0.0;-0.0;0} m to the side: face {off:F1}° off your eyes (yaw {rig.Look.Yaw * Mathf.Rad2Deg:F1}°)");
+                    if (side > 0f) Render(Path.Combine(outputDir, "avatar-look.png"), head.transform.position, at);
+                }
+                head.transform.position = start;
+                yield return new WaitForSeconds(0.6f);
+            }
+            else Check(rig.Look.Resting, $"no eye contact in {mode ?? "no"} mode: the head plays the motion");
 
             player.Seek(13f / rig.Fps);
             yield return Frames(3);
