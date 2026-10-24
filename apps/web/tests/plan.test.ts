@@ -48,6 +48,7 @@ describe("the forty sentences", () => {
   });
 
   test("an avatar asked for chess plays it, whatever mode the model picked", () => {
+    // (except below: company asked for, and heard)
     for (const c of cases.filter((c) => /chess/.test(c.sentence))) {
       const e = clean(answer({ mode: "companion", place: "facing" }), plan(c));
       assert.deepEqual(compare(c.expect, fromExperience(e)), [], `${c.id}: "${c.sentence}"`);
@@ -70,6 +71,15 @@ describe("chess", () => {
     assert.equal(at("challenge me like a chess master would", "gm"), "master");
     assert.equal(at("play chess, go easy on me", "max"), "club");
     assert.equal(at("play chess against me at full strength", "club"), "max");
+    assert.equal(at("everything you’ve got at chess", "club"), "max"); // a phone's curly apostrophe
+  });
+
+  test("a level the sentence doesn't plainly name is the model's", () => {
+    const at = (intent: string, strength?: string) => clean(answer({ mode: "play", place: "facing", strength }), avatar(intent)).play?.strength;
+    assert.equal(at("play chess with me and don't go easy on me", "max"), "max");
+    assert.equal(at("play chess with me, don’t go easy", "gm"), "gm");
+    assert.equal(at("a chess game, not too casual please", "expert"), "expert");
+    assert.equal(at("play chess with me and don't go easy on me"), "club");
   });
 
   test("otherwise the model's strength, else club", () => {
@@ -87,6 +97,15 @@ describe("chess", () => {
 });
 
 describe("companions", () => {
+  test("an avatar asked for company keeps it when chess only comes up", () => {
+    const e = clean(answer({ mode: "companion", place: "facing" }), avatar("we used to play chess, I just want to sit with him"));
+    assert.equal(e.mode, "companion");
+    assert.equal(e.play, undefined);
+    assert.equal(e.environment, "room");
+    // the model heard a game: it plays
+    assert.equal(clean(answer({ mode: "watch", place: "facing" }), avatar("sit with me and play chess")).mode, "play");
+  });
+
   test("face you and stay in your room", () => {
     const e = clean(answer({ mode: "companion", place: "beside", objects: [] }), replay("sit next to me on the couch like old times"));
     assert.equal(e.place, "facing");
@@ -117,6 +136,7 @@ describe("lessons", () => {
     assert.deepEqual(e.objects, ["guitar"]);
     assert.deepEqual(lesson("teach me this piece", { category: "Piano" }).objects, ["piano", "bench"]);
     assert.deepEqual(lesson("help me learn this trumpet solo").objects, ["trumpet"]);
+    assert.deepEqual(lesson("teach me to play the sax").objects, ["saxophone"]);
   });
 
   test("'next to me' is beside, whatever the activity", () => {
@@ -134,22 +154,23 @@ describe("lessons", () => {
     assert.equal(lesson("coach me through this squat").environment, "gym");
     const serve = lesson("break down her tennis serve for me");
     assert.equal(serve.place, "ahead");
-    assert.equal(serve.environment, undefined); // the court is a basketball court
+    assert.equal(serve.environment, "room"); // the court is a basketball court: said out loud, so no player picks it from "serve"
+    assert.equal(lesson("teach me this tennis drop shot").environment, "room"); // the players' own words would say court
     assert.deepEqual(lesson("teach me this crossover dribble").objects, ["basketball"]); // no shot, no hoop
   });
 
-  test("hands-on work faces you, with no place around it", () => {
+  test("hands-on work faces you, in your room", () => {
     const e = lesson("teach me how she flips the omelette", { place: "ahead", objects: ["Frying pans", "spatula"] });
     assert.equal(e.place, "facing");
-    assert.equal(e.environment, undefined);
+    assert.equal(e.environment, "room");
     assert.deepEqual(e.objects, ["pan", "spatula"]);
   });
 
   test("words inside other activities don't count", () => {
     const box = lesson("show me how to fold this paper box", { place: "ahead" });
     assert.equal(box.place, "facing");
-    assert.equal(box.environment, undefined);
-    assert.equal(lesson("teach me to knit this jumper").environment, undefined);
+    assert.equal(box.environment, "room"); // not the ring the players would pick from "box"
+    assert.equal(lesson("teach me to knit this jumper").environment, "room"); // nor the court from "jumper"
     assert.equal(lesson("teach me to make this salsa", { place: "ahead" }).place, "ahead"); // cooking or dance: the model's call
     assert.equal(lesson("teach me to make this salsa").environment, undefined);
   });
@@ -158,6 +179,21 @@ describe("lessons", () => {
     assert.equal(lesson("teach me this jump shot", { environment: "gym" }).environment, "gym");
     assert.equal(lesson("teach me this jump shot in my driveway", { environment: "court" }).environment, "room");
     assert.equal(lesson("teach me this yoga flow in the mountains", { environment: "studio" }).environment, "mountains");
+  });
+
+  test("exercises and things named after places aren't places", () => {
+    assert.equal(lesson("coach me through these mountain climbers", { environment: "gym" }).environment, "gym");
+    assert.equal(lesson("coach me through these mountain climbers").environment, undefined);
+    assert.equal(lesson("teach me the mountain pose", { environment: "studio" }).environment, "studio");
+    assert.equal(lesson("teach me the jump shot I hit on my home court").environment, "court");
+    assert.equal(lesson("teach me this deadlift in my home gym", { environment: "gym" }).environment, "gym");
+    assert.equal(lesson("teach me this jump shot at home").environment, "room");
+  });
+
+  test("martial arts are at home in the ring, like the players say", () => {
+    const e = lesson("teach me this karate kata", { place: "facing" });
+    assert.equal(e.place, "ahead");
+    assert.equal(e.environment, "ring");
   });
 
   test("a photo can't teach, and a clip needs two steps", () => {

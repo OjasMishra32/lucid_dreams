@@ -37,8 +37,9 @@ Mode, from what the user wants to do with them:
 - teach: learn or practise what the person does ("teach me", "show me how", "help me learn", "break it down", \
 "coach me"). The move in 2 to 6 steps, each slowed down and repeated, then the learner's turn. Only when they can \
 perform it.
-- watch: see them do it at full speed, with no lesson ("let me watch", "I want to see", "show me doing it", "play \
-it back", "play this piece for me", "follow along with"). "Play" there means playback or music, never a game.
+- watch: see them do it at full speed, with no lesson ("let me watch", "I want to see", "show me doing it", "show \
+me that again", "play it back", "play this piece for me", "follow along with"). "Play" there means playback or \
+music, never a game.
 - companion: be with them, not a performance ("be with me", "sit with her", "keep me company", "I miss him", "stay \
 with me", "I want to hear her voice"). What the user does meanwhile (cooking dinner) doesn't make it a lesson.
 - play: a game of chess with them, the only game there is ("a game", "a match", "beat me" all mean chess, and so \
@@ -55,9 +56,10 @@ along or move with them.
 
 Environment, a 360-degree place around them instead of the room, only when the activity clearly has a home: an \
 instrument, singing or any music -> concert-hall; basketball -> court (it is a basketball court, nothing else); \
-boxing or kickboxing -> ring; a gym workout, weights or calisthenics -> gym; dance, ballet or yoga -> studio; the \
-user asks for the mountains -> mountains. Companions and chess stay in the user's room: room, unless they name one \
-of these places. Anything else (cooking, crafts, tennis, golf, skateboarding, a toast, a home video): leave it out.
+boxing, kickboxing or martial arts -> ring; a gym workout, weights or calisthenics -> gym; dance, ballet or yoga \
+-> studio; the user asks for the mountains -> mountains. Companions and chess stay in the user's room: room, \
+unless they name one of these places. Anything else (cooking, crafts, tennis, golf, skateboarding, a toast, a home \
+video): leave it out.
 
 Objects: the things that matter for the activity, at most 4, each a lowercase singular noun in plain words: what \
 they hold, play or use. ["basketball", "hoop"] for a shot, ["piano", "bench"] at a piano, ["guitar"] for a strum, \
@@ -248,7 +250,7 @@ const BASKETBALL = /\b(basketball|jump ?shots?|free throws?|lay-?ups?|dunk\w*|dr
 const ACTIVITIES: { words: RegExp; lesson: Place; home: Environment | null }[] = [
   { words: INSTRUMENT, lesson: "beside", home: "concert-hall" },
   { words: BASKETBALL, lesson: "ahead", home: "court" },
-  { words: /\b(boxing|boxer|shadowbox\w*|kickbox\w*|jabs?|uppercuts?|sparring|muay thai)\b/, lesson: "ahead", home: "ring" },
+  { words: /\b(boxing|boxer|shadowbox\w*|kickbox\w*|jabs?|uppercuts?|sparring|muay thai|karate|taekwondo|martial arts|mma)\b/, lesson: "ahead", home: "ring" },
   {
     words: /\b(workouts?|work out|gym|weightlifting|weights|squats?|deadlifts?|bench press|push-?ups?|pull-?ups?|burpees?|lunges?|kettlebells?|dumbbells?|crossfit|hiit|calisthenics)\b/,
     lesson: "ahead",
@@ -256,7 +258,7 @@ const ACTIVITIES: { words: RegExp; lesson: Place; home: Environment | null }[] =
   },
   { words: /\b(danc\w*|ballet|ballerina|salsa (?:steps?|basic|turns?)|tango|waltz|hip-?hop|breakdanc\w*|choreograph\w*|yoga|pilates|zumba)\b/, lesson: "ahead", home: "studio" },
   {
-    words: /\b(tennis|golf|baseball|softball|soccer|volleyball|cricket|hockey|lacrosse|skateboard\w*|karate|taekwondo|tai chi|kung fu|martial arts)\b/,
+    words: /\b(tennis|golf|baseball|softball|soccer|volleyball|cricket|hockey|lacrosse|skateboard\w*|tai chi)\b/,
     lesson: "ahead",
     home: null,
   },
@@ -266,20 +268,28 @@ const ACTIVITIES: { words: RegExp; lesson: Place; home: Environment | null }[] =
     home: null,
   },
 ];
+// Names of exercises and things ("mountain climbers", "mountain pose", "my home court") aren't places.
 const NAMED_PLACES: [RegExp, Environment][] = [
-  [/\b(mountains?|alps|hik(?:e|es|ing))\b/, "mountains"],
-  [/\b(my (?:own )?(?:living ?room|room|house|home|kitchen|bedroom|backyard|garden|driveway)|at home)\b/, "room"],
+  [/\b(mountains?(?!\s*(?:climbers?|bik\w*|pose|dew))|alps|hik(?:e|es|ing))\b/, "mountains"],
+  [
+    /\b(my (?:own )?(?:living ?room|room|house|home(?!\s+(?:court|gym|studio|team|town|run|plate|game))|kitchen|bedroom|backyard|garden|driveway)|at home(?!\s+plate))\b/,
+    "room",
+  ],
 ];
 const NEXT_TO = /\b(next to me|beside me|by my side|at my side|side by side)\b/; // a lesson copied from the same side
 const FOLLOW = /\b(follow(?:ing)? along|along with (?:him|her|them)|dance along|keep up with|do it with (?:him|her|them)|move with (?:him|her|them))\b/;
 const CHESS = /\bchess\w*/;
-const STRENGTH_WORDS: [RegExp, Strength][] = [
+// Asking for company while chess comes up ("we used to play chess, I just want to sit with him"): the model's call.
+const COMPANY = /\b(sit with|sit next to|sit beside|be with|be here with|keep me company|stay with|talk (?:to|with) me)\b/;
+// null: the sentence talks about strength but not plainly ("don't go easy on me"), so the model's level stands.
+const STRENGTH_WORDS: [RegExp, Strength | null][] = [
   [/\bcarlsen\b/, "carlsen"],
   [/\bfischer\b/, "fischer"],
   [/\b(grandmaster|gm)\b/, "gm"],
   [/\bmaster\b/, "master"],
   [/\bexpert\b/, "expert"],
   [/\b(full strength|strongest|maximum|max strength|as hard as|hardest|no mercy|everything you've got|all you've got)\b/, "max"],
+  [/\b(?:don't|dont|do not|never|not|no need to|no)\s+(?:go\s+|take it\s+|be\s+|play\s+|too\s+|so\s+)*(?:easy|casual\w*|gentl\w*|soft)\b/, null],
   [/\b(easy|casual|casually|beginners?|gentle|gently|friendly|club)\b/, "club"],
 ];
 
@@ -292,7 +302,8 @@ const INSTRUMENT_NOUN: [RegExp, string[]][] = [
   [/\bviola\b/, ["viola"]],
   [/\b(cello|cellist)\b/, ["cello"]],
   [/\b(drums|drummer|drumming)\b/, ["drum kit"]],
-  [/\b(harp|flute|clarinet|saxophone|trumpet|trombone|banjo|mandolin|accordion|harmonica)\b/, []], // filled from the match
+  [/\b(saxophone|sax)\b/, ["saxophone"]],
+  [/\b(harp|flute|clarinet|trumpet|trombone|banjo|mandolin|accordion|harmonica)\b/, []], // filled from the match
 ];
 const SHOOTING = /\b(shots?|shoot\w*|free throws?|lay-?ups?|dunk\w*|three-pointers?|hoops?)\b/; // a basketball move that needs the hoop
 
@@ -330,13 +341,15 @@ function noun(v: unknown): string {
 /**
  * Hold whatever the model returned to the contract (modes, places, steps inside the clip, sane speeds and repeats),
  * then apply the rules the sentence leaves no doubt about:
- * - chess needs an avatar across the board; an avatar asked for chess plays it, facing you, with a chessboard, at the
- *   strength the sentence names (else the model's, else club);
+ * - chess needs an avatar across the board; an avatar asked for chess plays it (unless the model chose companion for a
+ *   sentence that asks for company), facing you, with a chessboard, at the strength the sentence plainly names (else
+ *   the model's, else club);
  * - companions face you and stay in your room unless a place is named;
  * - a lesson "next to me" is beside you; otherwise a lesson whose activity is plain from the words stands where the
  *   brief says (instruments beside, whole-body moves ahead, hands-on work facing);
  * - watching to follow along puts them ahead of you;
- * - a named place (the mountains, your own room) wins; an activity with a home fills a missing environment;
+ * - a named place (the mountains, your own room) wins; an activity with a home fills a missing environment, and one
+ *   with none (cooking, crafts, tennis) says "room", so the players don't pick a place from its words;
  * - objects are lowercase singular nouns, with a named instrument and a basketball (plus the hoop for a shot) first.
  * Exported for tests/plan.test.ts.
  */
@@ -346,7 +359,7 @@ export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience,
   const D = Math.max(p.durationS, 0.1);
   let mode = (["teach", "companion", "watch", "play"].includes(str(raw.mode)) ? str(raw.mode) : "watch") as ExperienceMode;
   let place = (["facing", "beside", "ahead"].includes(str(raw.place)) ? str(raw.place) : "facing") as Place;
-  const said = (p.intent ?? "").toLowerCase();
+  const said = (p.intent ?? "").toLowerCase().replace(/[‘’]/g, "'"); // phones type curly apostrophes
   const text = `${said} ${str(raw.category).toLowerCase()}`;
 
   let steps = (Array.isArray(raw.steps) ? raw.steps : [])
@@ -372,7 +385,8 @@ export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience,
 
   // a photo, or nothing to look at: they can't perform a move (a sentence-only test of a replay still moves)
   const still = !p.video && !(p.intentOnly && p.kind === "replay");
-  if (p.kind === "avatar" && CHESS.test(said)) mode = "play"; // chess is the one thing an avatar asked for it can do
+  // chess is the one thing an avatar asked for it can do, unless the user asked for company and the model heard that
+  if (p.kind === "avatar" && CHESS.test(said) && !(mode === "companion" && COMPANY.test(said))) mode = "play";
   if (mode === "teach" && (still || steps.length < 2)) mode = still ? "companion" : "watch";
   if (mode === "play" && p.kind !== "avatar") mode = "watch"; // chess needs a rigged avatar across the board
 
@@ -389,7 +403,12 @@ export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience,
   const named = NAMED_PLACES.find(([re]) => re.test(said))?.[1];
   if (named) environment = named;
   else if (!environment && (mode === "play" || mode === "companion")) environment = "room";
-  else if (!environment) environment = agreed((a) => a.home) ?? undefined;
+  else if (!environment) {
+    // An activity with no home says "room" out loud: left out, the players pick a place from the sentence's words
+    // themselves (apps/webxr/src/places.ts, DreamPlaces.cs), and "fold this paper box" would open in the boxing ring.
+    const home = agreed((a) => a.home);
+    environment = home === null ? "room" : home;
+  }
 
   const objects: string[] = [];
   if (mode === "play") objects.push("chessboard");
@@ -402,7 +421,7 @@ export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience,
   }
   objects.push(...(Array.isArray(raw.objects) ? raw.objects : []).map(noun).filter(Boolean));
 
-  const fromSentence = STRENGTH_WORDS.find(([re]) => re.test(said))?.[1];
+  const fromSentence = STRENGTH_WORDS.find(([re]) => re.test(said))?.[1]; // null: not plain, so the model's
   const strength = fromSentence ?? ((STRENGTHS as readonly string[]).includes(str(raw.strength)) ? (str(raw.strength) as Strength) : "club");
   const things = [...new Set(objects)].slice(0, 4);
 

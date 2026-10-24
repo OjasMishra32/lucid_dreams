@@ -70,8 +70,9 @@ npm --prefix apps/web run test:intents -- play     # one mode, or any words from
 The live check plans each sentence alone (no clip: an avatar for chess, a replay otherwise), prints every miss, and
 says how many the model got right before `clean()` applied its rules. Those rules only cover what the sentence leaves
 no doubt about: chess needs an avatar; companions and chess face you in your room; a lesson "next to me" is beside you;
-instruments beside, whole-body moves ahead, hands-on work facing; a named place wins; objects are lowercase singular
-nouns. `lib/bridge/*.ts` imports `server-only`, so the scripts run with `node --conditions=react-server` (and `tsx`).
+instruments beside, whole-body moves ahead, hands-on work facing; a named place wins; an activity with no home
+(cooking, crafts, tennis) says `room`, so the players don't pick a place from words like "box" or "shot"; objects are
+lowercase singular nouns. `lib/bridge/*.ts` imports `server-only`, so the scripts run with `node --conditions=react-server` (and `tsx`).
 
 ## API (contract in AGENTS.md)
 
