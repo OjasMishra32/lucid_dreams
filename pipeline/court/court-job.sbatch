@@ -27,6 +27,11 @@
 # videos/NN.mp4 + cameras.json, e.g. a gated seed's saved from its scratch: used instead of making new ones, with the
 # prepped.mp4 beside it). COURT_DATA_L: where data/court/, runs/ and these scripts
 # live when not beside the stack at $L (e.g. /home while /blue is full); the stack is then only read.
+# FACEFIX (opt-in): a dir of the player's real face crops; right after the views, court_facefix.py gives every view's
+# face that identity (pose, light and expression kept; profiles and the back of the head untouched), before SeedVR2 and
+# every recon; the fixed ring samples come back in views-facefix/ beside the originals in views/. FACEFIX_PY and
+# FACEFIX_MODELS: its env's python and models ($L/envs/facefix/bin/python, $L/models/facefix: court-facefix-env.sbatch).
+# Checked before the views; if the swap fails the job stops (the same job without FACEFIX is the plain run).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack (env.sh, repos, envs): only read
 D=${COURT_DATA_L:-$L}; C=$D/code/pipeline/court  # these court scripts, the uploads and the results: COURT_DATA_L moves them
@@ -91,6 +96,19 @@ NX=0; [ -s "$DATA/real/extras.json" ] && NX=$(grep -c '"name"' "$DATA/real/extra
 REALS=$(for r in $REALS; do if [[ $r =~ ^[0-9]$ ]] && (( r <= NX )); then echo "$r"; else echo "REALS $r: only $NX other real view(s)" >&2; fi; done | xargs)
 log "K=$K FOCAL=$FOCAL $( ((TURBO)) && echo Turbo || echo 24-step) views${SEED:+, seed $SEED}; variants: $VARIANTS;" \
   "real views: A + {${REALS// /,}} of $NX; caps: $CAPS; results -> $OUTD"
+if [ -n "${FACEFIX:-}" ]; then  # checked now, not after the views
+  FF_PY=${FACEFIX_PY:-$L/envs/facefix/bin/python}; FF_MODELS=${FACEFIX_MODELS:-$L/models/facefix}
+  test -x "$FF_PY" || { log "FACEFIX: no $FF_PY (court-facefix-env.sh)"; exit 1; }
+  for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
+    test -s "$FF_MODELS/$m" || { log "FACEFIX: no $FF_MODELS/$m"; exit 1; }
+  done
+  compgen -G "$FACEFIX/*.jpg" > /dev/null || compgen -G "$FACEFIX/*.png" > /dev/null \
+    || { log "FACEFIX: no .jpg/.png face crops in $FACEFIX"; exit 1; }
+  # every crop has a face and the models load and run (CPU, seconds), before an hour of views
+  OMP_NUM_THREADS=$CPUS "$FF_PY" "$C/court_facefix.py" refs --cpu --ref "$FACEFIX" --models "$FF_MODELS" \
+    || { log "FACEFIX: the face crops or models in $FACEFIX / $FF_MODELS don't work"; exit 1; }
+  log "FACEFIX: the face in $FACEFIX goes onto the views before anything trains on them"
+fi
 UP=0; [[ " $VARIANTS " == *" up:"* ]] && UP=1
 if (( UP )); then  # SeedVR2's weights into scratch while the views are made
   ( export HF_HOME=$S/hf HF_HUB_DISABLE_XET=1 && source "$L/envs/seedvr2/bin/activate" \
@@ -128,6 +146,29 @@ fi
 SAMPLES=(views/videos/{00,02,04,06,08,10,12,14}.mp4)  # the first ring every 45 degrees, its back included (~12 MB)
 copy_back prep.json prepped.mp4 views/cameras.json views/metadata.json views/gvhmr "${SAMPLES[@]}"
 log "views done; gate-2 samples in $OUTD/views"
+
+# --- FACEFIX (opt-in): the player's real face on every view, one share of the views per GPU ---------------------------
+if [ -n "${FACEFIX:-}" ]; then
+  log "FACEFIX on $NG GPU(s)"
+  ALL=($(ls views/videos/*.mp4 | sort)); pids=()
+  mkdir -p views-facefix/videos
+  for ((g = 0; g < NG; g++)); do
+    mine=(); for ((i = g; i < ${#ALL[@]}; i += NG)); do mine+=("${ALL[i]}"); done
+    (( ${#mine[@]} )) || continue
+    OMP_NUM_THREADS=$RT CUDA_VISIBLE_DEVICES=$g "$FF_PY" "$C/court_facefix.py" fix --ref "$FACEFIX" --models "$FF_MODELS" \
+      --out views-facefix/videos --report "views-facefix/report-$g.json" "${mine[@]}" > "views-facefix/facefix-$g.log" 2>&1 &
+    pids+=($!)
+  done
+  FF_OK=1
+  for p in "${pids[@]}"; do wait "$p" || { FF_OK=0; kill "${pids[@]}" 2>/dev/null || true; }; done
+  cat views-facefix/facefix-*.log
+  copy_back views-facefix/report-*.json views-facefix/facefix-*.log
+  (( FF_OK )) || { log "FACEFIX FAILED (views-facefix/facefix-*.log): stopping"; exit 1; }
+  copy_back "${SAMPLES[@]/views/views-facefix}"  # the fixed ones among the samples (a view left as is isn't there)
+  FIXED=($(ls views-facefix/videos/*.mp4 2>/dev/null || true))
+  for f in ${FIXED[@]+"${FIXED[@]}"}; do mv "$f" views/videos/; done
+  log "FACEFIX: ${#FIXED[@]} of ${#ALL[@]} views got the face; samples in $OUTD/views-facefix"
+fi
 
 # --- SeedVR2 2x (on any failure the up variants are dropped and the raw ones go on) --------------------------------------
 RC=0

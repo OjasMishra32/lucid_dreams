@@ -5,7 +5,8 @@
 # The folders go to $L/data/court/<id> (or INTO=runs: $L/runs/<id>, as after a submit).
 # Env: FREE_T (the stub quota's free space in TB, default 0.2), NO_PYTHON=1 (fail on any python call), SEEDVR2=0
 # (its weights absent), QUOTA_OTHER_FIRST=1 (a full group listed before ours), STACK=0 (no 4DAnyone stack where env.sh
-# points; old / noagree: its lucid.recon predates --extra-sources / --source-agree), plus anything the
+# points; old / noagree: its lucid.recon predates --extra-sources / --source-agree), FACEFIX_STACK=1 (the facefix env
+# and models under $L; built: and marked built), plus anything the
 # script reads (VARIANTS, NGPU, DRY...). The stub sbatch refuses a script that doesn't exist in this checkout.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -27,6 +28,12 @@ if [ "${STACK:-1}" != 0 ]; then
   touch "$T/code/pipeline/lucid/prep_clip.py" "$T/code/pipeline/lucid/export.py"
   printf '#!/bin/sh\nexit 99\n' > "$T/envs/4danyone/bin/python"; chmod +x "$T/envs/4danyone/bin/python"
   echo stub > "$T/repos/4DAnyone/inference.py"
+fi
+if [ "${FACEFIX_STACK:-0}" != 0 ]; then
+  mkdir -p "$T/envs/facefix/bin" "$T/models/facefix"
+  printf '#!/bin/sh\nexit 99\n' > "$T/envs/facefix/bin/python"; chmod +x "$T/envs/facefix/bin/python"
+  for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do echo m > "$T/models/facefix/$m"; done
+  [ "$FACEFIX_STACK" = built ] && touch "$T/envs/facefix/.court-facefix-ok"
 fi
 IDS=(); ARGS=()
 for a in "$@"; do

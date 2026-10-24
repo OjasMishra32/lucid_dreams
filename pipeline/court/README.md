@@ -16,6 +16,9 @@ The `.gitignore` admits only `*.py`, `*.sbatch`, `*.sh` and `*.md`. Run Python w
 | `court-grid.sh` | From the Mac: uploads the scripts and the run folders, then runs `court-job-submit.sh` there |
 | `court_grid_report.py` | The numbers side by side (held-out PSNR/SSIM, real-frame PSNR, face, IoU, focal) |
 | `court_fetch_seedvr2.py` | SeedVR2's weights into scratch, hash-checked |
+| `court_facefix.py` | The player's real face on the generated views (court-job `FACEFIX`): SCRFD finds each view's face, inswapper_128 gives it the identity of a few real crops (their mean ArcFace embedding), a feathered paste keeps pose, light and expression; points smoothed over time, the swap fades with the face's size and turn (profiles and the back of the head untouched); `score` gives the ArcFace cosine at a frame |
+| `court-facefix-env.sbatch` | Its venv (onnxruntime-gpu on the 4danyone env) and face models, sha256-checked |
+| `court-facefix-env.sh` | Login node: checks, then submits that env build once (`ACCOUNT`, `QOS` for a burst QOS, `L`) |
 | `court-dryrun.sh` | Runs a login-node script here against a fake `$L` with `sbatch` and `blue_quota` stubbed |
 
 ## Make the clips (Mac)
@@ -48,6 +51,12 @@ The pick's checks where the runs are (one CPU job per run, on the login node): `
 Fixed poses for the other real views: `court_extra_pose.py <run folder>...` writes `real/<name>/pose.json` (court
 calibration; uploaded with the run folder), and `lucid-fixed-pose.patch` (`patch -p1 -b -N` in `<L>/code`) lets
 `lucid.source_view` use them: the camera from calibration, one 1-D scale fit per recon, no 6-DoF solve.
+
+`FACEFIX=<dir on the cluster>` (with the env built once: `court-facefix-env.sh`) swaps the player's real face
+from that dir's crops (3-8 sharp, near-frontal `.jpg`/`.png` crops of that player, one face each; kept out of git)
+into every view right after the views are made, before SeedVR2 and every recon. The original ring samples stay in
+`views/`, the fixed ones come back in `views-facefix/` with each GPU's report and log; if the swap fails the job stops.
+Unset, the job is exactly as before.
 
 ## Tests
 
