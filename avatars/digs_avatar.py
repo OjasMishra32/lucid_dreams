@@ -113,12 +113,30 @@ def nlf_fit(image: Image.Image, nlf_path: str, K: np.ndarray, dev: torch.device)
 
 # ---------------------------------------------------------------- DiGS
 
+def _rasterizer_returns_four() -> None:
+    """DiGS unpacks four values from the rasterizer (image, radii, depth, alpha: the IDOL fork's interface) but uses
+    only the image. The official diff-gaussian-rasterization returns (image, radii), so pad the rest with None."""
+    import diff_gaussian_rasterization as dgr
+
+    forward = dgr.GaussianRasterizer.forward
+    if getattr(forward, "_padded", False):
+        return
+
+    def forward4(self, *args, **kwargs):
+        out = forward(self, *args, **kwargs)
+        return tuple(out) + (None,) * (4 - len(out)) if len(out) < 4 else out
+
+    forward4._padded = True
+    dgr.GaussianRasterizer.forward = forward4
+
+
 def load_digs(config_path: str, ckpt_path: str):
     """DiGS's own model loader, plus a loud check that the weights that matter actually loaded.
 
     The DINOv3 .pth is gated; when it isn't on disk, DINOv3 is built without weights and must come
     from the student checkpoint instead.
     """
+    _rasterizer_returns_four()
     from omegaconf import OmegaConf
     import run_demo_DiGS as demo
 
