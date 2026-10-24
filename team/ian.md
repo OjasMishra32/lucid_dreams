@@ -122,3 +122,15 @@ What makes it simple, and what to do the same way in Unity:
 - Blend between motion frames (slerp per joint) so 30 fps motion is smooth at 72-90 Hz.
 - Until your skinning works, Vishal's `python -m lucid_avatars bake dreams/<id>` turns an avatar into a normal frame
   sequence your sequence player already plays.
+
+## Decisions: hands (Ian, Fri night)
+
+- Same feel as the WebXR app: pinch 1.8 cm on / 3 cm off; quick pinch = play/pause; long pinch (0.9 s) re-places,
+  pointing along your eye ray to the floor (a person can't land at arm's length); fingertip buttons fire once per push.
+- Grab = pinch on the person (within 45 cm of their axis): drag moves along the floor, two hands turn. A grab counts
+  from where the pinch began, so nothing is lost while it decides between tap and drag.
+- The control bar floats low in front of you (fingertip reach) rather than beside the person 1.5 m away; it follows
+  lazily. Placeholder glass styling (`GlassUI`) until Atina's mockups.
+- Hand occlusion: depth-only spheres and capsules on the tracked joints, drawn before the splats (which depth-test).
+- `HandsCheck` (simulated hands, real scene) passes all gestures; not yet tried with real hands on the Quest.
+

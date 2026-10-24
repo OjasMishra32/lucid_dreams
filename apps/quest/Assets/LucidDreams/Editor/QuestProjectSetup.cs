@@ -50,6 +50,7 @@ namespace LucidDreams.Editor
             ConfigurePlayer();
             ConfigureRenderPipeline();
             ConfigureXR();
+            ImportTextResources();
             BuildScene();
 
             AssetDatabase.SaveAssets();
@@ -69,6 +70,14 @@ namespace LucidDreams.Editor
             });
             Debug.Log($"[Lucid Dreams] APK build {report.summary.result}: {report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalTime:mm\\:ss}.");
             if (Application.isBatchMode && report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
+        }
+
+        // TextMesh Pro's default font and settings, used by the in-headset controls.
+        static void ImportTextResources()
+        {
+            if (AssetDatabase.IsValidFolder("Assets/TextMesh Pro")) return;
+            var pkg = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(TMPro.TMP_Text).Assembly);
+            UnityEditor.AssetPackage.Package.Import($"{pkg.resolvedPath}/Package Resources/TMP Essential Resources.unitypackage", false);
         }
 
         static void ConfigurePlayer()
@@ -233,6 +242,32 @@ namespace LucidDreams.Editor
             var controls = dreamGo.AddComponent<DreamTestControls>();
             controls.player = player;
             controls.placer = placer;
+            var shadow = dreamGo.AddComponent<ContactShadow>();
+            shadow.shader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/ContactShadow.shader");
+            shadow.player = player;
+
+            // Hands: tracked in the camera offset's space, occluding the person, driving the bar and the person.
+            var handsGo = new GameObject("Hands");
+            handsGo.transform.SetParent(originGo.transform, false);
+            var tracker = handsGo.AddComponent<HandTracker>();
+            tracker.trackingSpace = offset.transform;
+            var occluder = handsGo.AddComponent<HandOccluder>();
+            occluder.hands = tracker;
+            occluder.depthOnly = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/DepthOnly.shader");
+
+            var barGo = new GameObject("Control Bar");
+            var bar = barGo.AddComponent<DreamControlBar>();
+            bar.head = camGo.transform;
+            bar.hands = tracker;
+            bar.player = player;
+            bar.placer = placer;
+
+            var interaction = dreamGo.AddComponent<DreamHands>();
+            interaction.hands = tracker;
+            interaction.placer = placer;
+            interaction.player = player;
+            interaction.bar = bar;
+            interaction.head = camGo.transform;
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };

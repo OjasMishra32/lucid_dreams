@@ -4,8 +4,8 @@ using UnityEngine.XR.ARSubsystems;
 
 namespace LucidDreams
 {
-    // Stands the dream on the real floor, life size, facing the viewer.
-    // Bundle space (AGENTS.md): meters, +Y up, feet at y = 0, centred on x = z = 0, facing -Z.
+    // Stands the dream on the real floor, life size, facing the viewer. Never scales the person.
+    // Bundle space (AGENTS.md): meters, +Y up, feet at y = 0, centred on x = z = 0, front faces -Z.
     public class DreamPlacer : MonoBehaviour
     {
         public Transform head;
@@ -17,6 +17,9 @@ namespace LucidDreams
 
         [Tooltip("Pipeline exports are right-handed; mirror Z so the person isn't flipped in Unity's left-handed space.")]
         public bool sourceIsRightHanded = true;
+
+        public float FloorY => floorY;
+        public bool IsPlaced => placed;
 
         float floorY;
         bool placed;
@@ -33,7 +36,8 @@ namespace LucidDreams
             {
                 floorY = y;
                 floorFromPlane = true;
-                placed = false; // re-stand on the scanned floor once we know exactly where it is
+                // Keep wherever the person was put; only stand them exactly on the scanned floor.
+                if (placed) transform.position = new Vector3(transform.position.x, floorY, transform.position.z);
             }
 
             // Head pose is zero for the first frames while tracking starts.
@@ -47,11 +51,23 @@ namespace LucidDreams
         {
             Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
             if (forward.sqrMagnitude < 1e-4f) forward = Vector3.ProjectOnPlane(head.up, Vector3.up);
-            forward.Normalize();
+            PlaceAt(head.position + forward.normalized * distance);
+        }
 
-            Vector3 spot = head.position + forward * distance;
-            spot.y = floorY;
-            transform.SetPositionAndRotation(spot, Quaternion.LookRotation(-forward, Vector3.up));
+        // Stands the person on the floor below the point, turned to face the viewer.
+        public void PlaceAt(Vector3 point)
+        {
+            var spot = new Vector3(point.x, floorY, point.z);
+            Vector3 toViewer = head != null ? Vector3.ProjectOnPlane(head.position - spot, Vector3.up) : Vector3.back;
+            if (toViewer.sqrMagnitude < 1e-4f) toViewer = transform.forward;
+            transform.SetPositionAndRotation(spot, Quaternion.LookRotation(toViewer.normalized, Vector3.up));
+            placed = true;
+        }
+
+        // Moves along the floor and turns about the vertical axis; height always stays on the floor.
+        public void MoveTo(Vector3 point, float yawDegrees)
+        {
+            transform.SetPositionAndRotation(new Vector3(point.x, floorY, point.z), Quaternion.Euler(0f, yawDegrees, 0f));
             placed = true;
         }
 

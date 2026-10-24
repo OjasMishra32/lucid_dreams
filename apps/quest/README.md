@@ -33,9 +33,18 @@ GPU cost is 72 bytes per Gaussian per frame for PLY (SH degree 1) and 56 for SPZ
 about 2.5 GB or 1.9 GB.
 The player refuses bundles over `gpuBudgetMB` and logs the Gaussian count that would fit.
 
-Test controls until the in-headset UI lands (`DreamTestControls`): right controller **A** play/pause, **B** speed
-(0.25 / 0.5 / 1x), thumbstick left/right scrubs, trigger re-places the person in front of you. In the editor:
-Space, S, arrow keys, P.
+## Hands (no controllers needed)
+
+- **Quick pinch** anywhere: play / pause.
+- **Pinch the person and drag:** they slide along the floor (never lifted, never scaled). **Both hands:** turn them.
+- **Pinch and hold ~1 s pointing at the floor:** they stand there, facing you.
+- **Control bar** (floats low in front of you, follows when you turn): push a fingertip through **Play/Pause**,
+  **speed** (1 / 0.5 / 0.25x) or **Bring here**; pinch the timeline and drag to scrub. Buttons fire once per push.
+- Your real hands stay in front of the person: depth-only stand-ins (`HandOccluder`) hide what's behind them.
+- A soft contact shadow sits under the feet.
+
+Controllers still work as a fallback (`DreamTestControls`): **A** play/pause, **B** speed, thumbstick scrubs,
+trigger re-places. In the editor: Space, S, arrow keys, P.
 
 ## Checking without a headset
 
@@ -47,6 +56,14 @@ views of a few frames to PNG:
 ```
 Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.PlaybackCheck.Run \
   -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check [-format auto|ply|spz]
+```
+
+`HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
+eye view (a finger in front of the person must hide it):
+
+```
+Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.HandsCheck.Run \
+  -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check
 ```
 
 The person stands 1.5 m in front of you on the scanned floor, facing you. Bundle files are right-handed
