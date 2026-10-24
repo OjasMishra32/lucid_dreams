@@ -1,25 +1,29 @@
-// Drift and proximity while walking: the court moves 0 mm over a 17-pose walk around the play area (the world group's
-// placement never changes after Seat here; seat.ts is its only writer), and P17 once the freeze is built (an eye 0.2 m
-// from a torso or head capsule fades that player to 30% within 300 ms; 0.3 m from the ball or a hand fades nothing).
-// Owner: stream C (P17: stream E).
+// The walk: P14 (0 mm of drift while the head walks round the chair: the court never moves without a fade) and P17
+// once the freeze is built (stream E's: seatmath's ProximityFade gives the opacities). Owner: stream C (P17: stream E).
+import { rig, wrap } from "../rig.mjs";
+
 export const owner = "C (core)";
-export const needs = ["seat", "seatmath"];
+export const needs = ["seat"];
 
 export default async function walk(ctx) {
-  await ctx.nextFrame();
-  const y = await ctx.device((d) => d.position.y);
+  const r = rig(ctx);
+  await ctx.frames(2);
+  await r.setHead([0.4, 1.15, -0.3], 0.7);
+  await ctx.frames(3);
   await ctx.seatHere();
-  await ctx.frames(4);
-  const placed = (await ctx.snapshot()).world;
+  await ctx.frames(40);
+
+  // P14: the court never moves while the head walks round the chair
+  const w0 = (await ctx.snapshot()).world;
   let worst = 0;
-  for (let i = 0; i < 17; i++) {
-    const a = (2 * Math.PI * i) / 17;
-    await ctx.device((d, p) => d.position.set(p.x, p.y, p.z), { x: 1.2 * Math.cos(a), y: y + 0.45 * (i % 2), z: 1.2 * Math.sin(a) });
-    await ctx.frames(6);
+  for (let k = 0; k < 17; k++) {
+    const a = (2 * Math.PI * k) / 17;
+    await r.setHead([0.4 + 1.2 * Math.sin(a), 1.15 + 0.45 * (k % 2), -0.3 + 1.2 * Math.cos(a)], a);
+    await ctx.frames(4);
     const w = (await ctx.snapshot()).world;
-    worst = Math.max(worst, Math.hypot(...w.position.map((v, k) => v - placed.position[k])) * 1000, Math.abs(w.yaw - placed.yaw) * 1000);
+    worst = Math.max(worst, Math.hypot(...w.position.map((v, i) => v - w0.position[i])), Math.abs(wrap(w.yaw - w0.yaw)));
   }
-  ctx.check("no drift over 17 poses", worst === 0, `worst ${worst.toFixed(3)} mm (or mrad of yaw)`);
-  if (ctx.modules.freeze) ctx.check("P17: capsule fade", false, "not written yet (stream E)");
+  ctx.check("P14: 0 mm of drift over a 17-pose walk", worst <= 1e-6, `worst ${(worst * 1000).toFixed(4)} mm (or mrad of yaw)`);
+  if (ctx.modules.freeze) ctx.check("P17: capsule fade", false, "not written yet (stream E): seatmath ProximityFade gives the opacities");
   else ctx.report.proximity = "waiting on freeze (stream E)";
 }

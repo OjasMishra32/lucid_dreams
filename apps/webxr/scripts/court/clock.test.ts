@@ -1,6 +1,6 @@
 // clock.ts's curve contract (shared by the bake and the clock): the eases land exactly on F from pass 2's speed, speed changes
-// stay under 0.02 per display frame (P6, P18), and the stand-in's show obeys them. The Clock class itself is stream
-// C's: its tests (passes, ladder, cutoff, armed stop) go here when it is built.
+// stay under 0.02 per display frame (P6, P18), and the stand-in's show obeys them; then the Clock (stream C): passes,
+// the ladder, the cutoff, the armed stop, nextJump, the resume, at 72 and 90 Hz.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -90,4 +90,274 @@ test("the stand-in's show follows the contract: every ease ends on F, pass 2 run
   const real = p1.filter((f) => !f.interp).length / p1.length;
   close(real, 1 / 2, 0.01);
   assert.equal(v.cutoff, v.segments.eases[v.segments.eases.length - 1].start);
+});
+
+// ---------------- the Clock (stream C) ----------------
+import { Clock, type ClockState } from "../../src/court/clock.ts";
+import type { Court, ShowFrame } from "../../src/court/format.ts";
+
+/** A show at `hz` built from the curve contract the way the bake builds it (pass 1 at 1x, pass 2 at pass2Speed, the ladder, the resume). */
+function show(hz: number): { court: Court; frames: ShowFrame[] } {
+  const base = standinBundle().court;
+  const F = base.video.freezeSource;
+  const taus: number[] = [];
+  const range = (fill: () => void): [number, number] => {
+    const first = taus.length;
+    fill();
+    return [first, taus.length - 1];
+  };
+  const pass1 = range(() => {
+    for (let n = 0; n < Math.round(2.7 * hz); n++) taus.push(-2.4 + n / hz);
+  });
+  const sp = base.video.pass2Speed;
+  const per = base.camera.sourceFps * base.camera.slow;
+  const step2 = sp / hz;
+  const pass2 = range(() => {
+    for (let j = 0; -1.2 + j * step2 <= 1.3 + 1e-9; j++) taus.push(-1.2 + j * step2);
+  });
+  const eases = EASE_SECONDS.map((seconds) => {
+    const n = easeFrameCount(seconds, hz);
+    const j = Math.round((easeTau(0, n, hz, sp) + 1.2) / step2);
+    const frames = range(() => {
+      for (let k = 1; k <= n; k++) taus.push(easeTau(k, n, hz, sp));
+    });
+    return { start: pass2[0] + j, frames, seconds: n / hz };
+  });
+  const ramp = easeFrameCount(RESUME_RAMP_S, hz);
+  const resume = range(() => {
+    for (let k = 1; resumeTau(k, ramp, hz, sp) <= 1.3 + 1e-9; k++) taus.push(resumeTau(k, ramp, hz, sp));
+  });
+  const frames = taus.map((tau) => ({ src: F + tau * per, interp: false, q: [0, 0, 0, 1], f: 25000 }) as ShowFrame);
+  const video = { ...base.video, displayHz: hz, segments: { pass1, pass2, resume, eases }, cutoff: eases[eases.length - 1].start };
+  return { court: { ...base, video }, frames };
+}
+
+/** Run the clock n XR frames at its display rate; the state after each (copies). */
+function run(clock: Clock, n: number, dt = 1 / clock["court"].video.displayHz): ClockState[] {
+  const out: ClockState[] = [];
+  for (let i = 0; i < n; i++) out.push({ ...clock.update(dt) });
+  return out;
+}
+
+/** Frames until the clock first lands on F (segment "freeze"); null if it doesn't within `max`. */
+function framesToFreeze(clock: Clock, max = 5000): ClockState[] | null {
+  const out: ClockState[] = [];
+  for (let i = 0; i < max; i++) {
+    const s = { ...clock.update(1 / clock["court"].video.displayHz) };
+    out.push(s);
+    if (s.segment === "freeze") return out;
+  }
+  return null;
+}
+
+// the stand-in (its real frames snapped within 0.1 frame, as the bake does) and two exact bake-rule shows
+for (const [name, bundle] of [["stand-in 72 Hz", standinBundle()], ["bake-rule 72 Hz", show(72)], ["bake-rule 90 Hz", show(90)]] as const) {
+  const { court, frames } = bundle;
+  const v = court.video;
+  const hz = v.displayHz;
+  /** Real-time speed is only exact where no frame was snapped to a real one. */
+  const exact = name.startsWith("bake-rule");
+  const F = v.freezeSource;
+  const fresh = () => new Clock(court, frames);
+  const srcOf = (s: ClockState) => frames[s.frame].src;
+  /** The show's real-time speed between two consecutive states, from the frames' own source times. */
+  const realStep = (a: ClockState, b: ClockState) => ((frames[b.frame].src - frames[a.frame].src) / (court.camera.sourceFps * court.camera.slow)) * hz;
+
+  test(`${name}: unpressed, pass 1 plays at 1x, pass 2 at 0.6x through its end, then pass 2 repeats`, () => {
+    const c = fresh();
+    assert.equal(c.state.frame, v.segments.pass1[0]);
+    assert.equal(c.state.segment, "pass1");
+    const states = run(c, v.segments.pass1[1] - v.segments.pass1[0] + (v.segments.pass2[1] - v.segments.pass2[0] + 1) + 3);
+    let k = 0;
+    for (let f = v.segments.pass1[0] + 1; f <= v.segments.pass1[1]; f++, k++) {
+      assert.equal(states[k].frame, f);
+      assert.equal(states[k].segment, "pass1");
+      assert.equal(states[k].speed, 1);
+    }
+    for (let f = v.segments.pass2[0]; f <= v.segments.pass2[1]; f++, k++) {
+      assert.equal(states[k].frame, f, `pass 2 frame ${f}`);
+      assert.equal(states[k].segment, "pass2");
+      close(states[k].speed, v.pass2Speed);
+      assert.equal(states[k].pass, 1);
+    }
+    assert.equal(states[k].frame, v.segments.pass2[0], "repeat from pass 2's start");
+    assert.equal(states[k].pass, 2);
+  });
+
+  test(`${name}: a press in pass 1 arms the stop; pass 1 plays out and pass 2 takes the first (longest) ease onto F`, () => {
+    for (const at of [0, 10, v.segments.pass1[1] - v.segments.pass1[0]]) {
+      const c = fresh();
+      run(c, at);
+      c.press();
+      assert.equal(c.state.armed, true);
+      assert.equal(c.state.nextEase, 0);
+      const path = framesToFreeze(c)!;
+      assert.ok(path, "lands");
+      // pass 1 was played out
+      const pass1Left = v.segments.pass1[1] - v.segments.pass1[0] - at;
+      assert.ok(path.slice(0, pass1Left).every((s) => s.segment === "pass1"));
+      const easeFrames = path.filter((s) => s.segment === "ease");
+      assert.equal(easeFrames[0].ease, 0);
+      assert.equal(easeFrames[0].frame, v.segments.eases[0].frames[0]);
+      const last = path[path.length - 1];
+      assert.equal(srcOf(last), F, "0 frames off F");
+      assert.equal(last.frame, v.segments.eases[0].frames[1]);
+      assert.equal(last.speed, 0);
+    }
+  });
+
+  test(`${name}: every press in pass 2 up to the cutoff lands exactly on F through the next ease start ahead`, () => {
+    const [p2a] = v.segments.pass2;
+    for (let f = p2a; f <= v.cutoff; f++) {
+      const c = fresh();
+      run(c, f - v.segments.pass1[0]);
+      assert.equal(c.state.frame, f);
+      const want = v.segments.eases.findIndex((e) => e.start >= f);
+      assert.equal(c.state.nextEase, want, `nextEase at ${f}`);
+      c.press();
+      const path = framesToFreeze(c)!;
+      const last = path[path.length - 1];
+      assert.equal(srcOf(last), F, `press at ${f}`);
+      assert.equal(path.find((s) => s.segment === "ease")!.ease, want);
+      // pass 2 ran on to the ease start, then the ease's own frames: never a skipped or held show frame
+      const pre = path.filter((s) => s.segment === "pass2");
+      assert.equal(pre.length, v.segments.eases[want].start - f);
+    }
+  });
+
+  test(`${name}: a press after the cutoff plays pass 2 through the make, and the next pass stops by itself`, () => {
+    const c = fresh();
+    run(c, v.cutoff + 1 - v.segments.pass1[0]);
+    assert.equal(c.state.frame, v.cutoff + 1);
+    assert.equal(c.state.nextEase, null);
+    c.press();
+    assert.equal(c.state.armed, true);
+    const path = framesToFreeze(c)!;
+    const reachedEnd = path.findIndex((s) => s.frame === v.segments.pass2[1]);
+    assert.ok(reachedEnd >= 0, "pass 2 played to its end");
+    assert.equal(path[reachedEnd + 1].frame, v.segments.pass2[0]);
+    assert.equal(path[reachedEnd + 1].pass, 2);
+    assert.equal(path.find((s) => s.segment === "ease")!.ease, 0);
+    assert.equal(srcOf(path[path.length - 1]), F);
+  });
+
+  test(`${name}: every way into F changes speed by <= 0.02 per display frame, in real show time too`, () => {
+    for (let f = v.segments.pass2[0]; f <= v.cutoff; f += 3) {
+      const c = fresh();
+      run(c, f - v.segments.pass1[0]);
+      c.press();
+      const path = [{ ...c.state }, ...framesToFreeze(c)!];
+      for (let i = 1; i < path.length; i++) {
+        assert.ok(Math.abs(path[i].speed - path[i - 1].speed) <= 0.02, `state speed ${path[i - 1].speed} -> ${path[i].speed}`);
+        if (exact && i >= 2) {
+          const a = realStep(path[i - 2], path[i - 1]);
+          const b = realStep(path[i - 1], path[i]);
+          assert.ok(Math.abs(a - b) <= 0.02, `real speed ${a} -> ${b} at show frame ${path[i].frame}`);
+        }
+      }
+    }
+  });
+
+  test(`${name}: F holds until resume(); the resume ramps 0 -> 0.6x within 0.02 a frame, runs to its end and ends`, () => {
+    const c = fresh();
+    run(c, 5);
+    c.press();
+    framesToFreeze(c);
+    const held = run(c, 30);
+    assert.ok(held.every((s) => s.segment === "freeze" && srcOf(s) === F && s.speed === 0));
+    c.press(); // nothing in the freeze
+    assert.equal(c.state.segment, "freeze");
+    c.resume();
+    const [r0, r1] = v.segments.resume;
+    const states = run(c, r1 - r0 + 5);
+    assert.equal(states[0].frame, r0);
+    assert.equal(states[0].segment, "resume");
+    let prev = 0;
+    let prevReal = 0;
+    let last: ClockState = held[held.length - 1];
+    for (const s of states.slice(0, r1 - r0 + 1)) {
+      assert.ok(Math.abs(s.speed - prev) <= 0.02, `${prev} -> ${s.speed}`);
+      const real = realStep(last, s);
+      if (exact) assert.ok(Math.abs(real - prevReal) <= 0.02, `real ${prevReal} -> ${real}`);
+      prev = s.speed;
+      prevReal = real;
+      last = s;
+    }
+    close(prev, v.pass2Speed);
+    assert.equal(states[r1 - r0].frame, r1);
+    assert.ok(states.slice(r1 - r0 + 1).every((s) => s.segment === "ended" && s.frame === r1));
+  });
+
+  test(`${name}: nextJump names every jump before it happens (the second decoder primes it)`, () => {
+    const c = fresh();
+    let prev = { ...c.state };
+    let pressed = false;
+    let resumed = false;
+    for (let i = 0; i < 4000 && c.state.segment !== "ended"; i++) {
+      if (!pressed && c.state.segment === "pass2" && c.state.frame === v.segments.eases[1].start - 2) {
+        c.press();
+        pressed = true;
+        prev = { ...c.state };
+      }
+      if (!resumed && c.state.segment === "freeze" && i % 7 === 0) {
+        c.resume();
+        resumed = true;
+        prev = { ...c.state };
+      }
+      const s = { ...c.update(1 / hz) };
+      if (s.frame !== prev.frame + 1 && s.frame !== prev.frame) assert.equal(prev.nextJump, s.frame, `jump ${prev.frame} -> ${s.frame} was primed`);
+      prev = s;
+    }
+    assert.ok(pressed && resumed);
+    assert.equal(c.state.segment, "ended");
+    // pass 2 unpressed before the cutoff primes the ease a press would take; after the cutoff the repeat
+    const d = fresh();
+    run(d, v.segments.pass2[0] + 1 - v.segments.pass1[0]);
+    assert.equal(d.state.nextJump, v.segments.eases[d.state.nextEase!].frames[0]);
+    run(d, v.cutoff + 1 - d.state.frame);
+    assert.equal(d.state.nextJump, v.segments.pass2[0]);
+  });
+
+  test(`${name}: restart goes back to pass 1's start; jumpToFreeze holds F`, () => {
+    const c = fresh();
+    run(c, 300);
+    c.press();
+    c.restart();
+    assert.equal(c.state.frame, v.segments.pass1[0]);
+    assert.equal(c.state.segment, "pass1");
+    assert.equal(c.state.armed, false);
+    assert.equal(c.state.pass, 0);
+    run(c, 3);
+    c.jumpToFreeze();
+    assert.equal(c.state.segment, "freeze");
+    assert.equal(srcOf(c.state), F);
+    assert.equal(c.state.speed, 0);
+    c.resume();
+    assert.equal(c.update(1 / hz).frame, v.segments.resume[0]);
+  });
+
+  test(`${name}: the clock steps round(dt x displayHz) show frames per XR frame`, () => {
+    const c = fresh();
+    c.update(2 / hz);
+    assert.equal(c.state.frame, v.segments.pass1[0] + 2);
+    c.update(0.4 / hz);
+    assert.equal(c.state.frame, v.segments.pass1[0] + 2);
+    c.update(0);
+    assert.equal(c.state.frame, v.segments.pass1[0] + 2);
+    c.update(1 / 120); // a 120 Hz host frame still advances one show frame (round(0.6) = 1)
+    assert.equal(c.state.frame, v.segments.pass1[0] + 3);
+  });
+}
+
+test("a dropped XR frame (dt = 2 frames) never skips an ease start: the stop still lands on F", () => {
+  const { court, frames } = standinBundle();
+  const v = court.video;
+  for (const start of v.segments.eases.map((e) => e.start)) {
+    const c = new Clock(court, frames);
+    run(c, start - 1 - v.segments.pass1[0]);
+    c.press();
+    c.update(2 / 72); // start - 1 -> start -> the ease's first frame
+    const path = framesToFreeze(c)!;
+    assert.equal(frames[path[path.length - 1].frame].src, v.freezeSource);
+  }
 });
