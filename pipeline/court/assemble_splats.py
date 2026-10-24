@@ -462,10 +462,11 @@ def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, bu
     return 1 - np.exp(logT).reshape(H, W)
 
 
-def render(s: Splats, cam: Cam, max_r: int = 64, budget: int = 4_000_000) -> tuple[np.ndarray, np.ndarray]:
+def render(s: Splats, cam: Cam, max_r: int = 64, budget: int = 4_000_000, contrib: bool = False):
     """A plain CPU splat render through `cam` (its own size): each Gaussian's EWA footprint, base colour (SH degree
     0), composited front to back by depth as 3DGS does (alpha capped at 0.99, under 1/255 skipped). Returns (rgb over
-    black, alpha), H x W. For measuring (a cut's cost), not for looks: slow, no view-dependent colour."""
+    black, alpha), H x W, and with `contrib` each Gaussian's share of the image too (the sum over its pixels of alpha
+    x footprint x the transmittance in front of it). For measuring, not for looks: no view-dependent colour."""
     e = ewa(s, cam)
     rank = np.empty(len(e["z"]), np.int64)
     rank[np.argsort(e["z"], kind="stable")] = np.arange(len(e["z"]))
@@ -489,18 +490,27 @@ def render(s: Splats, cam: Cam, max_r: int = 64, budget: int = 4_000_000) -> tup
         for c in range(3):
             out[:, c] = np.bincount(pix, wgt * rgb[g, c], minlength=W * H)
         acc = np.bincount(pix, wgt, minlength=W * H)
+    if contrib:
+        share = np.zeros(len(s))
+        if gs:
+            share[e["i"]] = np.bincount(g, wgt, minlength=len(e["i"]))
+        return out.reshape(H, W, 3), acc.reshape(H, W), share
     return out.reshape(H, W, 3), acc.reshape(H, W)
 
 
-def cap(s: Splats, cam: Cam, n: int) -> np.ndarray:
-    """Which Gaussians to keep for a budget of n: the n with the largest contribution seen from `cam`, alpha times
-    the area of its projected footprint (pi sqrt(det) of its EWA covariance). All of them when there are n or fewer."""
-    if len(s) <= n:
-        return np.ones(len(s), bool)
-    e = ewa(s, cam, min_alpha=0.0)
+def significance(s: Splats, cams: list) -> np.ndarray:
+    """Each Gaussian's global significance over a set of views: the most it adds to any one of them (render's
+    contrib: alpha x footprint x transmittance, summed over its pixels). A Gaussian hidden from one view but seen from
+    another keeps the score it has there."""
     score = np.zeros(len(s))
-    score[e["i"]] = e["a"] * np.pi * np.sqrt(np.maximum(e["A"] * e["C"] - e["B"] ** 2, 0))
-    keep = np.zeros(len(s), bool)
+    for cam in cams:
+        score = np.maximum(score, render(s, cam, contrib=True)[2])
+    return score
+
+
+def keep_top(score: np.ndarray, n: int) -> np.ndarray:
+    """The n highest scores (all of them when there are n or fewer)."""
+    keep = np.zeros(len(score), bool)
     keep[np.argsort(-score, kind="stable")[:n]] = True
     return keep
 

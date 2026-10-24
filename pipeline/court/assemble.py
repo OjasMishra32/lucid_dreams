@@ -74,6 +74,7 @@ BOARD_X, BOARD_HALF, BOARD_Y = 13.106, 0.915, (2.90, 3.97)
 LIGHT = {"crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5, "alternative": {"crowd": 0.16, "floor": 0.14}}
 SEAT = {"distance": 5.0, "distanceRange": [4, 7], "clear": 1.0}
 SPLAT_BUDGET = 500_000  # visible at the worst pose until the Quest says more (plan 8)
+BALL_IN_BODY_MIN = 100  # solid splats within 1.15 ball radii of the ball's centre: the holder's splats hold the ball
 PROXY_CELL_M = 0.005  # P8 (stream D): the pair's splat-depth proxies sampled at about half a centimetre
 PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|webp|ply|glb|bin|m4a|mp4|wav|spz)$", re.I)
 
@@ -542,7 +543,8 @@ def resolve_run(slot: dict, clips: Path | None = None) -> dict:
     held = report(run / f"recon-metrics-{v}")[0].get("psnr")
     out["run_report"] = {"variant": v, "cap": cap, "iou": src.get("iou"), "focal": src.get("focal"), "focalHeld": src.get("focalHeld"),
                          "sourcePsnr": fr.get("sourcePsnr"), "facePsnr": fr.get("facePsnr"), "gaussians": fr.get("gaussians"),
-                         "heldOutPsnr": held}
+                         "heldOutPsnr": held,
+                         "p42": json.loads((r / "p42.json").read_text()) if (r / "p42.json").exists() else None}
     out["metrics"] = {**(slot.get("metrics") or {}), **({"heldOutPsnr": held} if held is not None else {})}
     return out
 
@@ -569,6 +571,14 @@ def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
     return src, dst
 
 
+def still_camera(run: dict) -> geo.Cam:
+    """court-run.json's still camera over its own crop (court space; camera-from-world R; K with the crop's principal
+    point), the size of the crop."""
+    st, Ks = run["still"], np.asarray(run["still"]["K"], float)
+    return geo.Cam(np.asarray(st["C"], float), np.asarray(st["R"], float).T, float(Ks[0, 0]), float(Ks[0, 2]), float(Ks[1, 2]),
+                   int(run["crop"][2]), int(run["crop"][3]))
+
+
 def look_from(C, target, f: float, w: int, h: int) -> geo.Cam:
     """A level camera at C looking at target (OpenCV axes, no roll)."""
     fwd = np.asarray(target, float) - np.asarray(C, float)
@@ -590,12 +600,28 @@ def seat_floor(camF: geo.Cam, pair_centre, distance: float) -> np.ndarray:
     return np.array([camF.C[0], 0.0, camF.C[2]]) + (-b - math.sqrt(disc)) * d
 
 
+def body_centre(s: sp.Splats) -> np.ndarray:
+    P = s.pos[s.alpha > 0.3].astype(float)
+    return np.array([np.median(P[:, 0]), 0.5 * float(np.percentile(P[:, 1], 99)), np.median(P[:, 2])])
+
+
+def judge_views(s: sp.Splats, camF: geo.Cam, distance: float, w: int = 384, h: int = 512) -> list:
+    """The views a judge can take of one body (for its cut): camera F's own (the picture), the seat in front of it (on
+    F's floor ray, `distance` short of the body, eye 1.2 m up) and 16 round it at standing eye height (3 m out, 1.6 m
+    up, between cap_cost's eight)."""
+    c = body_centre(s)
+    d = np.array([camF.axis[0], 0.0, camF.axis[2]])
+    d /= np.linalg.norm(d)
+    seat = np.array([c[0], 1.2, c[2]]) - distance * d
+    ring = [c + [3 * math.cos((k + 0.5) * math.pi / 8), 1.6 - c[1], 3 * math.sin((k + 0.5) * math.pi / 8)] for k in range(16)]
+    return [camF.scaled(960)] + [look_from(C, c, h * float(np.linalg.norm(c - C)) / 2.6, w, h) for C in [seat, *ring]]
+
+
 def cap_cost(whole: sp.Splats, kept: sp.Splats, camF: geo.Cam, pair_centre, distance: float, w: int = 384, h: int = 512) -> dict:
     """What a pair body's cut costs: the PSNR of the cut body's render against the whole one's (sp.render, each alone
     over black, over the pixels either covers), from the seat (eye 1.2 m up over seat_floor, looking at the body) and
     from 8 views round the body (3 m out, 1.4 m up)."""
-    P = whole.pos[whole.alpha > 0.3].astype(float)
-    c = np.array([np.median(P[:, 0]), 0.5 * float(np.percentile(P[:, 1], 99)), np.median(P[:, 2])])
+    c = body_centre(whole)
 
     def psnr(C) -> float:
         cam = look_from(C, c, h * float(np.linalg.norm(c - C)) / 2.6, w, h)
@@ -625,6 +651,12 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         name = f"{slot.get('name', sp_in['name'])} (stand-in body)"
     feet = slot.get("foot")
     feet = np.asarray(feet, float).reshape(-1, 2) if feet is not None else None
+    # depth along the source camera's rays is only as good as a camera that sees it: the source camera's own ground
+    # clicks are not (it looks a couple of degrees down: a pixel of sole row is centimetres of depth), so footError
+    # and vsFeet use a steep camera's or GVHMR's feet (footRef) or nothing
+    ref = slot.get("footRef")
+    ref_src = ref.get("source") if ref else None
+    ref = np.asarray(ref["xz"], float).reshape(-1, 2) if ref else None
     P = sp.solid(s)
     need = ("sourceCamera", "courtRun") + (("dream",) if slot.get("splatsSpace", "bundle") == "bundle" else ())
     has_cams = real and all(slot.get(k) and expand(slot[k]).exists() for k in need)
@@ -640,8 +672,8 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         if not has_cams:
             raise ValueError(f"{pid}: place 'camera' needs sourceCamera, dream and courtRun")
         sim, info = geo.place_by_camera(P, src_cam, dst_cam)
-        if feet is not None:
-            info["vsFeet"] = round(float(np.linalg.norm(sp.contact_points_xz(sim.apply(P)) - feet.mean(0))), 3)
+        if ref is not None:
+            info["vsFeet"] = round(float(np.linalg.norm(sp.contact_points_xz(sim.apply(P)) - ref.mean(0))), 3)
     else:
         if feet is None:
             # no calibrated soles: keep the stand-in's own spot (its feet in the stand-in court)
@@ -656,10 +688,11 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
     cut = None
     if slot.get("capPair") and len(s) > int(slot["capPair"]):
-        # the pair's budget (plan 8): keep the largest contributions seen from camera F, the reality copy alike
+        # the pair's budget (plan 8): keep the Gaussians that matter most in some view a judge can take (global
+        # significance over F, the seat and 16 views round the body), the reality copy alike
         whole = s.transformed(sim)
-        keep = sp.cap(whole, camF, int(slot["capPair"]))
-        cut = {"from": len(s), "kept": int(keep.sum()), "by": "alpha x projected footprint area at F"}
+        keep = sp.keep_top(sp.significance(whole, judge_views(whole, camF, float(slot.get("seatDistance") or SEAT["distance"]))), int(slot["capPair"]))
+        cut = {"from": len(s), "kept": int(keep.sum()), "by": "max over F, the seat and 16 views round the body of alpha x footprint x transmittance"}
         if slot.get("capPsnr"):
             cut["_whole"], cut["_kept"] = whole, whole.subset(keep)
         s, seen = s.subset(keep), seen[keep]
@@ -679,8 +712,11 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         if slot.get("courtRun") and expand(slot["courtRun"]).exists():
             rr["FOCAL"] = json.loads(expand(slot["courtRun"]).read_text()).get("FOCAL")
         entry["_"]["run"] = rr
-    if feet is not None:
-        entry["_"]["footError"] = round(float(np.linalg.norm(contact - feet.mean(0))), 3)
+    if ref is not None:
+        entry["_"]["footError"] = {"m": round(float(np.linalg.norm(contact - ref.mean(0))), 3), "against": ref_src}
+    else:
+        entry["_"]["placement"]["depthNote"] = ("no footError: the source camera's ground clicks can't see depth (a pixel of sole "
+                                                "row is centimetres along its ray); give a steep camera's or GVHMR's feet as footRef")
     w.piece(f"player:{pid}", real, str(expand(slot["splats"])) if real else f"stand-in body '{S['freeze']['players'][i]['id']}' re-placed at the calibrated feet")
     return entry
 
@@ -745,6 +781,12 @@ def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, spla
         else:
             raise ValueError(f"ball: fewer than 10 of {holder}'s Gaussians lie on the ball's ray; check the ball pixel")
         w.piece("ball", True, how, pixel=rnd(px, 2))
+        n = int((np.linalg.norm(P - centre, axis=1) < 1.15 * BALL_RADIUS).sum())
+        if real_body and n >= BALL_IN_BODY_MIN:
+            # the holder's own splats hold the real ball (the freeze's one 3D ball): nothing of theirs is erased round
+            # it, and the runtime keeps the ball card off through the freeze
+            w.pieces["ball"]["inBody"] = {"player": holder, "solidSplats": n}
+            return {"centre": rnd(centre), "radius": BALL_RADIUS, "erase": [], "ballInBody": holder, "_ballInBodyCount": n}
         return {"centre": rnd(centre), "radius": BALL_RADIUS, "erase": [{"player": holder, "radius": 0.15}]}
     # the stand-in ball, carried with the first player's placement (it sits in their hand)
     sim = players[0]["_"]["sim"]
@@ -1014,7 +1056,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         fill_plates(w, video, camF)
         court = court_piece(w, cfg, standin, S)
         slots = cfg.get("players") or [{} for _ in S["freeze"]["players"]]
-        slots = [{**sl, "capPair": cfg.get("capPair"), "capPsnr": cfg.get("capPsnr")} for sl in slots]
+        slots = [{**sl, "capPair": cfg.get("capPair"), "capPsnr": cfg.get("capPsnr"), "seatDistance": (cfg.get("seat") or {}).get("distance")} for sl in slots]
         players = [place_player(w, slot, i % len(S["freeze"]["players"]), standin, S, camF, camF_standin) for i, slot in enumerate(slots)]
         splats_by_id = {p["id"]: sp.solid(sp.read_ply(tmp / p["splats"])) for p in players}
         k1F = 0.0
@@ -1053,8 +1095,9 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
             "label": LABEL,
             "credit": cfg.get("credit", S["credit"]) + (f" Stand-in pieces: {', '.join(stand_in)}." if stand_in else ""),
             "court": court, "camera": camera, "video": video, "light": light, "seat": seat,
-            "freeze": {"players": [{k: v for k, v in p.items() if k != "_"} for p in players], "ball": ball,
-                       "others": others, "stands": stands},
+            "freeze": {"players": [{k: v for k, v in p.items() if k != "_"} for p in players],
+                       "ball": {k: v for k, v in ball.items() if k not in ("ballInBody", "_ballInBodyCount")},
+                       "others": others, "stands": stands, **({"ballInBody": ball["ballInBody"]} if ball.get("ballInBody") else {})},
             "audio": audio, "metrics": metrics,
         }
         if cfg.get("waivers"):
@@ -1272,6 +1315,20 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm")
         if cell > PROXY_CELL_M * 1.1:
             errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")
+    bib = court["freeze"].get("ballInBody")
+    if bib:
+        holder = next((p for p in court["freeze"]["players"] if p["id"] == bib), None)
+        ball = court["freeze"]["ball"]
+        if holder is None:
+            errs.append(f"freeze.ballInBody: {bib} isn't one of the pair")
+        else:
+            s = sp.read_ply(bundle / holder["splats"])
+            n = int(((np.linalg.norm(s.pos.astype(float) - np.asarray(ball["centre"], float), axis=1) < 1.15 * ball["radius"]) & (s.alpha > 0.5)).sum())
+            info.append(f"ballInBody {bib}: {n} solid splats within 1.15 x the ball's radius of its centre")
+            if n < BALL_IN_BODY_MIN:
+                errs.append(f"freeze.ballInBody: {bib}'s splats hold no ball at the ball's centre ({n} solid splats there, want >= {BALL_IN_BODY_MIN})")
+        if any(e.get("player") == bib for e in court["freeze"]["ball"].get("erase", [])):
+            errs.append(f"freeze.ballInBody: the ball would erase {bib}'s splats round it, the very ball they hold")
     asm_pieces = json.loads((bundle / "assembly.json").read_text()).get("pieces", {}) if (bundle / "assembly.json").exists() else {}
     for o in court["freeze"]["others"]:
         problems = []
@@ -1351,15 +1408,24 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
                 if A_["pieces"].get(f"player:{pid}", {}).get("source") == "real":
                     (errs if strict else pending).append(f"{pid} (P42): not measured: no freeze run report (focalHeld, focal, IoU) for this body")
                 continue
-            # P42: the real view really trained the freeze
-            if not rr.get("focalHeld"):
-                errs.append(f"{pid} (P42): the recon didn't hold the calibrated focal (focalHeld {rr.get('focalHeld')})")
-            if rr.get("FOCAL") is not None and (rr.get("focal") is None or abs(rr["focal"] - rr["FOCAL"]) > 0.5):
-                errs.append(f"{pid} (P42): the recon's focal {rr.get('focal')} isn't the run's FOCAL {rr['FOCAL']}")
-            if (rr.get("iou") or 0) < 0.95:
-                errs.append(f"{pid} (P42): the real frame's silhouette IoU {rr.get('iou')} is under 0.95")
+            # P42: the real view really trained the freeze. geo's court_p42.py judges it beside the recon (p42.json): the
+            # focal held at the run's FOCAL, and the TRAINED render covering the real mask at K (iouFinal, the ignored
+            # pixels left out); iouSolve is only the pre-training fit's sanity check
+            p = rr.get("p42")
+            if not p:
+                errs.append(f"{pid} (P42): no p42.json beside the freeze's recon: run geo's court_p42.py on it")
+            else:
+                if not p.get("focalHeld"):
+                    errs.append(f"{pid} (P42): the recon didn't hold the calibrated focal (focalHeld {p.get('focalHeld')})")
+                if p.get("FOCAL") is None or p.get("focal") is None or abs(p["focal"] - p["FOCAL"]) > 0.5:
+                    errs.append(f"{pid} (P42): the recon's focal {p.get('focal')} isn't the run's FOCAL {p.get('FOCAL')}")
+                if (p.get("iouFinal") or 0) < 0.95:
+                    errs.append(f"{pid} (P42): the trained render's IoU with the real mask {p.get('iouFinal')} is under 0.95")
+                if not p.get("pass") and not any(e.startswith(f"{pid} (P42)") for e in errs):
+                    errs.append(f"{pid} (P42): court_p42.py says it fails ({json.dumps(p)})")
             info.append(f"{pid}: {rr['variant']}-{rr['cap']}, real-frame PSNR {rr.get('sourcePsnr')}, face {rr.get('facePsnr')}, "
-                        f"held-out {rr.get('heldOutPsnr')}, iou {rr.get('iou')}")
+                        f"held-out {rr.get('heldOutPsnr')}, P42 iouFinal {(p or {}).get('iouFinal')} (iouSolve {(p or {}).get('iouSolve', rr.get('iou'))}), "
+                        f"focal {(p or {}).get('focal')} vs FOCAL {(p or {}).get('FOCAL')}")
         for k, pc_ in json.loads(asm.read_text())["pieces"].items():
             if pc_["source"] != "real":
                 pending.append(f"{k}: {pc_['detail']}")
@@ -1430,36 +1496,45 @@ def undistort_image(img: np.ndarray, cam: geo.Cam, k1: float) -> np.ndarray:
                      cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
-def silhouette_iou(ids: np.ndarray, i: int, mask: np.ndarray) -> float:
-    """Intersection over union of body i's pixels in a render (render_splats' ids) and a mask."""
-    r = ids == i
-    union = int((r | mask).sum())
-    return float((r & mask).sum()) / union if union else 0.0
-
-
 def silhouette_piece(w: Writer, cfg: dict, players: list, camF: geo.Cam, k1F: float, width: int = 960) -> dict:
-    """Each player's splats seen from camera F against its own mask at F (players[].maskF in the config: a
-    segmentation of the raw source frame, undistorted here with F's k1): the silhouette IoU, a placement check by
-    numbers (P8 asks the same of the real render)."""
+    """Each player's splats against their own mask by true coverage (coverage_image: 1 - prod(1 - alpha G) >= 0.5,
+    the cut and placed body that ships): at their freeze run's own crop when the config has its clip folder
+    (court-run.json's still camera, masks/<K>.png with the ball, ignore/<K>.png's pixels left out), else against
+    players[].maskF at F (the raw source frame, undistorted with F's k1). A placement check by numbers."""
     import cv2
 
-    masks = {p["id"]: cfg_player(cfg, p["id"]).get("maskF") for p in players}
-    if not any(masks.values()):
-        return {}
-    cam = camF.scaled(width)
-    _, ids = render_splats(cam, [sp.read_ply(w.root / p["splats"]) for p in players])
     got = {}
-    for i, p in enumerate(players):
-        if not masks[p["id"]]:
+    for p in players:
+        slot = cfg_player(cfg, p["id"])
+        s = sp.read_ply(w.root / p["splats"])
+        cr = expand(slot["courtRun"]) if slot.get("courtRun") else None
+        run = json.loads(cr.read_text()) if cr is not None and cr.exists() else None
+        mask = cr.parent / "masks" / f"{int(run['K']):06d}.png" if run and "K" in run else None
+        if mask is not None and mask.exists():
+            cam = still_camera(run)
+            m = cv2.imread(str(mask), cv2.IMREAD_GRAYSCALE) >= 128
+            ig_path = cr.parent / "ignore" / mask.name
+            ig = cv2.imread(str(ig_path), cv2.IMREAD_GRAYSCALE) >= 128 if ig_path.exists() else np.zeros_like(m)
+            on = sp.coverage_image(s, cam, (0.0, 0.0, float(cam.w), float(cam.h)), cam.w, cam.h) >= 0.5
+            union = int(((on | m) & ~ig).sum())
+            iou, against = (float(((on & m) & ~ig).sum()) / union if union else 0.0), "crop"
+        elif slot.get("maskF"):
+            raw = cv2.imread(str(expand(slot["maskF"])), cv2.IMREAD_GRAYSCALE)
+            if raw is None:
+                w.notes.append(f"player {p['id']}: its mask at F ({slot['maskF']}) can't be read: no silhouette check")
+                continue
+            cam = camF.scaled(width)
+            m = cv2.resize(undistort_image(raw, camF.scaled(raw.shape[1]), k1F), (cam.w, cam.h), interpolation=cv2.INTER_AREA) >= 128
+            on = sp.coverage_image(s, cam, (0.0, 0.0, float(cam.w), float(cam.h)), cam.w, cam.h) >= 0.5
+            union = int((on | m).sum())
+            iou, against = (float((on & m).sum()) / union if union else 0.0), "maskF"
+        else:
             continue
-        m = cv2.imread(str(expand(masks[p["id"]])), cv2.IMREAD_GRAYSCALE)
-        if m is None:
-            w.notes.append(f"player {p['id']}: its mask at F ({masks[p['id']]}) can't be read: no silhouette check")
-            continue
-        m = undistort_image(m, camF.scaled(m.shape[1]), k1F)
-        m = cv2.resize(m, (cam.w, cam.h), interpolation=cv2.INTER_AREA) >= 128
-        got[p["id"]] = w.pieces[f"player:{p['id']}"]["silhouetteIoU"] = round(silhouette_iou(ids, i, m), 3)
-    w.notes.append("silhouette IoU at F, splats vs the mask: " + ", ".join(f"{k} {v}" for k, v in got.items()))
+        got[p["id"]] = w.pieces[f"player:{p['id']}"]["silhouetteIoU"] = round(iou, 4)
+        w.pieces[f"player:{p['id']}"]["silhouetteAgainst"] = against
+    if got:
+        w.notes.append("silhouette IoU at F, the splats' coverage vs the mask: " + ", ".join(
+            f"{k} {v} ({w.pieces[f'player:{k}']['silhouetteAgainst']})" for k, v in got.items()))
     return got
 
 
@@ -1540,7 +1615,7 @@ def report(bundle: Path) -> str:
         pl = d["placement"]
         lines.append(f"  place {pid}: {pl['mode']} scale {pl.get('scale', 1):.3f}"
                      + (f" tilt {pl['tilt_deg']:.2f} deg" if "tilt_deg" in pl else "")
-                     + (f", soles {d['footError'] * 100:.1f} cm from the calibrated point" if "footError" in d else "")
+                     + (f", soles {d['footError']['m'] * 100:.1f} cm from {d['footError']['against']}'s feet" if "footError" in d else "")
                      + f", height {d['height']:.2f} m, {d['count']} splats")
     lines.append(f"  seat: pair centre {court['seat']['pairCentre']}, D' {court['seat']['distance']} m")
     lines += [f"  note: {n}" for n in asm["notes"]]

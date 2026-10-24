@@ -203,16 +203,6 @@ class SplatRender(unittest.TestCase):
         self.assertLessEqual(abs(y - v), 1)
         np.testing.assert_array_equal(A.undistort_image(raw, cam, 0.0), raw)
 
-    def test_silhouette_iou_compares_one_bodys_pixels_with_a_mask(self):
-        import assemble as A
-
-        ids = np.full((10, 10), -1)
-        ids[2:6, 2:6] = 0  # 16 pixels
-        ids[6:8, 2:6] = 1
-        mask = np.zeros((10, 10), bool)
-        mask[2:6, 4:8] = True  # 16 pixels, 8 shared with body 0
-        self.assertAlmostEqual(A.silhouette_iou(ids, 0, mask), 8 / 24)
-        self.assertEqual(A.silhouette_iou(ids, 2, np.zeros((10, 10), bool)), 0.0)
 
 
 class Placement(unittest.TestCase):
@@ -283,7 +273,7 @@ class ReconFiles(unittest.TestCase):
             (d / "src.json").write_text(json.dumps({"camera_to_world": c2w.tolist(), "K": [[crop.f, 0, 607.5], [0, crop.f, 1079.5], [0, 0, 1]],
                                                     "image_width": 1216, "image_height": 2160, "iou": 0.96}))
             (d / "dream.json").write_text(json.dumps({"placement": {"rot": rot.tolist(), "t": t.tolist()}}))
-            (d / "run.json").write_text(json.dumps({"K": 118, "crop": [x0, y0, 1216, 2160], "still": {
+            (d / "run.json").write_text(json.dumps({"K": 60, "crop": [x0, y0, 1216, 2160], "still": {
                 "R": full.R.T.tolist(), "C": full.C.tolist(), "K": [[crop.f, 0, crop.cx], [0, crop.f, crop.cy], [0, 0, 1]]}}))
             src, dst = A.recon_cameras({"sourceCamera": d / "src.json", "dream": d / "dream.json", "courtRun": d / "run.json"})
             src_r, dst_r = A.recon_cameras({"sourceCamera": d / "src.json", "courtRun": d / "run.json", "splatsSpace": "recon"})
@@ -310,29 +300,34 @@ class RunLayout(unittest.TestCase):
             for f in ("frames/000000.ply", "frames/000000.spz", "frames/000000.reality.spz"):
                 (b / f).write_bytes(b"x")
             (b / "dream.json").write_text("{}")
-            (r / "source-camera-000118.json").write_text("{}")
-            (r / "recon-000118.json").write_text(json.dumps({"frames": [{"sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000}],
-                                                             "source": {"iou": 0.962, "focal": 22350.0, "focalHeld": True}}))
-            (m / "recon-000118.json").write_text(json.dumps({"frames": [{"psnr": 27.4, "ssim": 0.95}], "source": {}}))
+            (r / "source-camera-000060.json").write_text("{}")
+            (r / "recon-000060.json").write_text(json.dumps({"frames": [{"sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000}],
+                                                             "source": {"iou": 0.962, "focal": 20000.0, "focalHeld": True}}))
+            (m / "recon-000060.json").write_text(json.dumps({"frames": [{"psnr": 27.4, "ssim": 0.95}], "source": {}}))
             slot = A.resolve_run({"id": "holder", "run": str(run), "variant": "raw-default-r1", "cap": "300k", "courtRun": "x.json"})
             self.assertEqual(Path(slot["splats"]), b / "frames/000000.ply")
             self.assertEqual(Path(slot["reality"]), b / "frames/000000.reality.spz")
             self.assertEqual(Path(slot["spz"]), b / "frames/000000.spz")
             self.assertEqual(Path(slot["dream"]), b / "dream.json")
-            self.assertEqual(Path(slot["sourceCamera"]), r / "source-camera-000118.json")
+            self.assertEqual(Path(slot["sourceCamera"]), r / "source-camera-000060.json")
             self.assertEqual(slot["metrics"]["heldOutPsnr"], 27.4)
-            self.assertEqual(slot["run_report"], {"variant": "raw-default-r1", "cap": "300k", "iou": 0.962, "focal": 22350.0,
-                                                  "focalHeld": True, "sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000, "heldOutPsnr": 27.4})
+            self.assertEqual(slot["run_report"], {"variant": "raw-default-r1", "cap": "300k", "iou": 0.962, "focal": 20000.0,
+                                                  "focalHeld": True, "sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000, "heldOutPsnr": 27.4,
+                                                  "p42": None})
+            # P42 is geo's court_p42.py verdict beside the recon's json, once it's there
+            p42 = {"K": 60, "iouSolve": 0.86, "focalHeld": True, "focal": 20000.0, "FOCAL": 20000.0, "iouFinal": 0.99, "bar": 0.95, "pass": True}
+            (r / "p42.json").write_text(json.dumps(p42))
+            self.assertEqual(A.resolve_run({"run": str(run), "variant": "raw-default-r1", "cap": "300k"})["run_report"]["p42"], p42)
             # one recon in the run: no need to name it
             self.assertEqual(A.resolve_run({"run": str(run)})["run_report"]["variant"], "raw-default-r1")
             # the recon's own PLY wins (matched straight to the still camera); only the A frame's source camera counts;
             # court-run.json comes from the clips folder
             (r / "frames").mkdir()
-            (r / "frames" / "000118.ply").write_bytes(b"x")
-            (r / "source-camera-B592-000118.json").write_text("{}")
+            (r / "frames" / "000060.ply").write_bytes(b"x")
+            (r / "source-camera-B100-000060.json").write_text("{}")
             slot = A.resolve_run({"run": str(run), "variant": "raw-default-r1", "cap": "300k"}, clips=Path(d) / "clips")
-            self.assertEqual((Path(slot["splats"]), slot["splatsSpace"]), (r / "frames" / "000118.ply", "recon"))
-            self.assertEqual(Path(slot["sourceCamera"]), r / "source-camera-000118.json")
+            self.assertEqual((Path(slot["splats"]), slot["splatsSpace"]), (r / "frames" / "000060.ply", "recon"))
+            self.assertEqual(Path(slot["sourceCamera"]), r / "source-camera-000060.json")
             self.assertEqual(Path(slot["courtRun"]), Path(d) / "clips" / "court-main-s2" / "court-run.json")
 
     def test_a_show_written_into_the_bundle_is_taken(self):
@@ -497,9 +492,13 @@ class Ball(unittest.TestCase):
         u, v, _ = cam.project(ball[None])
         with tempfile.TemporaryDirectory() as tmp:
             w = A.Writer(Path(tmp))
+            w.piece("player:holder", True, "a real body")
             got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
         np.testing.assert_allclose(got["centre"], ball, atol=0.03)
-        self.assertEqual(got["erase"], [{"player": "holder", "radius": 0.15}])
+        # the holder's splats hold the ball itself: it's theirs (ballInBody) and nothing of theirs is erased round it
+        self.assertEqual(got["ballInBody"], "holder")
+        self.assertGreaterEqual(got["_ballInBodyCount"], A.BALL_IN_BODY_MIN)
+        self.assertEqual(got["erase"], [])
 
     def test_a_hand_beside_the_ray_does_not_pull_the_ball_forward(self):
         """The ball held out in front of the body: an arm 8 cm to the side of the ball's ray and 0.4 m nearer the
@@ -525,6 +524,28 @@ class Ball(unittest.TestCase):
             w = A.Writer(Path(tmp))
             got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
         np.testing.assert_allclose(got["centre"], ball, atol=0.03)
+
+    def test_a_ball_beside_the_body_is_not_in_it(self):
+        """A holder whose splats near the ball's ray are a few stray points (no ball-sized blob): not ballInBody, and
+        today's erase stays."""
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        rng = np.random.default_rng(8)
+        cam = look(np.array([-16.0, 0.8, 2.5]), [6.0, 1.0, 1.5], w=3840, h=2160, f=22000.0)
+        ball = np.array([6.2, 1.0, 1.5])
+        toward = (cam.C - ball) / np.linalg.norm(cam.C - ball)
+        few = ball + A.BALL_RADIUS * toward + rng.normal(scale=0.005, size=(20, 3))  # a fingertip on the ball's front
+        body = np.concatenate([person(rng, foot=(6.0, 2.5)), few])
+        u, v, _ = cam.project(ball[None])
+        with tempfile.TemporaryDirectory() as tmp:
+            w = A.Writer(Path(tmp))
+            w.piece("player:holder", True, "a real body")
+            got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
+        self.assertNotIn("ballInBody", got)
+        self.assertEqual(got["erase"], [{"player": "holder", "radius": 0.15}])
 
 
 class Floor(unittest.TestCase):
