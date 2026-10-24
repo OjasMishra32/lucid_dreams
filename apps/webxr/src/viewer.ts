@@ -306,6 +306,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     onEnterXr: () => {
       scene.background = null;
       placeNextFrame = true;
+      reveal = 0; // they arrive in your room, rather than already standing there
       const session = renderer.xr.getSession();
       // a quick pinch pauses or plays; holding it brings them in front of you (works with hands or controllers)
       session?.addEventListener("selectstart", (e) => pinches.set(e.inputSource, performance.now()));
