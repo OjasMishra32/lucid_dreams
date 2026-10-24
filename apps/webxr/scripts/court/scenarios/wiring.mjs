@@ -12,7 +12,8 @@ export const needs = ["seat", "vrhands"];
 const HZ = 72;
 /** The 16 x 9 thumbnail's middle cells, where a hand 0.3 m straight ahead lands. */
 const MIDDLE = [3, 4, 5].flatMap((row) => [6, 7, 8, 9].map((col) => row * 16 + col));
-const change = (a, b) => MIDDLE.reduce((sum, k) => sum + Math.abs(a.thumb[k] - b.thumb[k]), 0) / MIDDLE.length;
+/** The largest change of any middle cell between two frames, grey levels (a hand covers some cells, not all). */
+const change = (a, b) => Math.max(...MIDDLE.map((k) => Math.abs(a.thumb[k] - b.thumb[k])));
 
 export default async function wiring(ctx) {
   const w = async () => (await ctx.snapshot()).wiring;
@@ -47,7 +48,7 @@ export default async function wiring(ctx) {
     const gone = await ctx.nextFrame();
     const hand = change(shown, gone);
     const base = change(quiet[0], quiet[1]);
-    ctx.check("C5: a drawn hand shows over the picture", hand > 6 && hand > 4 * base + 2, `middle of the view changes ${hand.toFixed(1)} grey levels with the hand, ${base.toFixed(1)} frame to frame without`);
+    ctx.check("C5: a drawn hand shows over the picture", hand > 4 * base + 4, `a middle cell changes ${hand.toFixed(1)} grey levels with the hand, at most ${base.toFixed(1)} frame to frame without`);
   }
   ctx.check("C7: seat.update gets the frame's dt at the show's rate", Math.abs(lit.seatDt - 1 / HZ) < 1e-9, `dt ${lit.seatDt}`);
 
