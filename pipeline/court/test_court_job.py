@@ -652,6 +652,10 @@ class Submit(unittest.TestCase):
         self.assertEqual(len(calls(out)), 1)
         rc, out = dryrun(a, FACEFIX=str(ref), FACEFIX_WAIT="x")
         self.assertIn("FACEFIX_WAIT=x", out)
+        rc, out = dryrun(a, FACEFIX=str(ref), FACEFIX_WAIT="60")  # an hour of idle GPUs: RC would kill the job
+        self.assertNotEqual(rc, 0)
+        self.assertIn("FACEFIX_WAIT=60 (minutes, 1-50: GPUs idle while waiting)", out)
+        self.assertEqual(calls(out), [])
         for bad, says in ((self.root / "faces" / "none", "no .jpg/.png crops"), ("faces/shooter", "absolute path"),
                           (f"{ref};x", "absolute path")):
             rc, out = dryrun(a, FACEFIX=str(bad), FACEFIX_STACK="1")

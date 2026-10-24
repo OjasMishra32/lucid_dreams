@@ -41,7 +41,8 @@ fi
 if [ -n "${FACEFIX:-}" ]; then
   [[ $FACEFIX =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "FACEFIX='$FACEFIX' (an absolute path)"
   compgen -G "$FACEFIX/*.jpg" > /dev/null || compgen -G "$FACEFIX/*.png" > /dev/null || fail "no .jpg/.png crops in $FACEFIX"
-  [[ -z ${FACEFIX_WAIT:-} || $FACEFIX_WAIT =~ ^[1-9][0-9]?$ ]] || fail "FACEFIX_WAIT=$FACEFIX_WAIT (minutes, 1-99)"
+  [[ -z ${FACEFIX_WAIT:-} || $FACEFIX_WAIT =~ ^([1-9]|[1-4][0-9]|50)$ ]] ||
+    fail "FACEFIX_WAIT=$FACEFIX_WAIT (minutes, 1-50: GPUs idle while waiting)"
   if [ -z "${FACEFIX_WAIT:-}" ]; then  # FACEFIX_WAIT: the env is being built beside the job, which waits for it
     test -x "${FACEFIX_PY:-$D/envs/facefix/bin/python}" || fail "no facefix env (court-facefix-env.sh)"
     for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
