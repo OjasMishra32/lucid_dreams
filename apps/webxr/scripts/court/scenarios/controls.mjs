@@ -2,8 +2,9 @@
 // right index presses); every button works (Step into the court / Back to my seat, Reality check, Replay, See my room,
 // Walk closer, and Next view where it applies: hidden at 3.5 x 3.5 m, unit-tested on a bigger floor in seat.test.ts);
 // Seat here acts only after a 2.0 s hold (a 1 s press changes nothing); pinches, held pinches and swipes change
-// nothing; P22 caption, label and credit, and the card over the 3D clear of both players from every walk stop; P23/P7
-// the Reality panel. Owner: stream C.
+// nothing; P22 caption, label and credit, the card over the 3D clear of both players from every walk stop, and never
+// drawn over a player standing between the eye and it (the card has no depth test and the splats write no depth, so
+// that would be a stereo conflict); P23/P7 the Reality panel. Owner: stream C.
 import { fmt, rig } from "../rig.mjs";
 
 export const owner = "C (core)";
@@ -34,6 +35,58 @@ function cardClearance(corners, players) {
         best = Math.min(best, toRect(p, corners) - cap.r);
       }
   return best;
+}
+/** Which torso or head capsule hides part of the card from the eye (court space), as text; null when none does. */
+function hiddenBy(eye, pts, players) {
+  const toSeg = (q, a, b) => {
+    const ab = sub(b, a);
+    const t = Math.max(0, Math.min(1, dot(sub(q, a), ab) / dot(ab, ab)));
+    return Math.hypot(...sub(q, [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]]));
+  };
+  for (const [i, pl] of players.entries()) {
+    let n = 0;
+    for (const p of pts)
+      if (pl.capsules.some((cap) => Array.from({ length: 41 }, (_, k) => k / 40).some((t) => toSeg([0, 1, 2].map((j) => cap.a[j] + t * (cap.b[j] - cap.a[j])), eye, p) < cap.r))) n++;
+    if (n) return `${n} of ${pts.length} card points behind player ${i}'s torso or head`;
+  }
+  return null;
+}
+/** The caption mesh as drawn (court.ts's scene, found from the freeze's group): 15 points over it in court space, opacity, visible. */
+function drawnCard() {
+  let root = window.__courtLook?.freeze?.group;
+  while (root?.parent) root = root.parent;
+  const m = root?.getObjectByName("court-caption");
+  const world = root?.getObjectByName("court-world");
+  if (!m || !world) return null;
+  m.updateWorldMatrix(true, false);
+  world.updateWorldMatrix(true, false);
+  const inv = world.matrixWorld.clone().invert();
+  const { width, height } = m.geometry.parameters;
+  const pts = [];
+  for (const v of [-1, 0, 1]) for (const u of [-1, -0.5, 0, 0.5, 1]) pts.push(m.position.clone().set((u * width) / 2, (v * height) / 2, 0).applyMatrix4(m.matrixWorld).applyMatrix4(inv).toArray());
+  return { pts, opacity: m.material.opacity, visible: m.visible };
+}
+/** Eyes just behind each player from the middle of the pair (0.6 and 0.9 m from its torso, eye 1.0, 1.3 and 1.6 m), looking at the middle: where a player stands between the eye and the card over the pair; room space. */
+function behindStops(court, world) {
+  const ps = court.freeze.players;
+  const mid = (k) => (Math.min(...ps.map((p) => p.bounds.min[k])) + Math.max(...ps.map((p) => p.bounds.max[k]))) / 2;
+  const c = [mid(0), 0, mid(2)];
+  const co = Math.cos(world.yaw);
+  const si = Math.sin(world.yaw);
+  const toRoom = (q) => [co * q[0] + si * q[2] + world.position[0], q[1] + world.position[1], -si * q[0] + co * q[2] + world.position[2]];
+  const out = [];
+  for (const pl of ps) {
+    const t = pl.capsules[0];
+    const b = [(t.a[0] + t.b[0]) / 2, 0, (t.a[2] + t.b[2]) / 2];
+    const n = Math.hypot(b[0] - c[0], b[2] - c[2]) || 1;
+    for (const d of [0.6, 0.9])
+      for (const y of [1.0, 1.3, 1.6]) {
+        const p = toRoom([b[0] + (d * (b[0] - c[0])) / n, y, b[2] + (d * (b[2] - c[2])) / n]);
+        const at = toRoom(c);
+        out.push({ p, yaw: Math.atan2(-(at[0] - p[0]), -(at[2] - p[2])) });
+      }
+  }
+  return out;
 }
 /** The walk stops (D's walk sheet): a ring 1.5 m round the pair every 45 deg at eye 1.6 m, 0.8 m before and behind each player, one low stop; room space, each looking at its target. */
 function walkStops(court, world) {
@@ -166,24 +219,39 @@ export default async function controls(ctx) {
   ctx.check("P21: Walk closer jumps to the walking anchoring; Next view shows only where it applies", openIds.join() === "changeSeat,closer,back,reality,replay,room" && walking.phase === "walking" && seatAt.walking && walkIds.join() === wantWalk,
     `menus ${openIds.join(",")} / ${walkIds.join(",")}; Next view ${seatAt.nextView ? "applies" : "hidden (3.5 x 3.5 m)"}`);
 
-  // P22 over the 3D: the caption card is above the pair, clear of both players' torsos and heads from every walk stop
+  // P22 over the 3D: the caption card is above the pair, clear of both players' torsos and heads from every walk stop,
+  // and never drawn while a player nearer than it stands in front of any of it
   await r.handsAway();
-  const stops = walkStops(ctx.court, seatAt.world);
+  const stops = [...walkStops(ctx.court, seatAt.world), ...behindStops(ctx.court, seatAt.world)];
   let clear = Infinity;
   const modes = new Set();
   let shown = 0;
   let lowest = Infinity;
+  const conflicts = [];
+  let hidden = 0;
   for (const s of stops) {
     await r.setHead(s.p, s.yaw);
-    await ctx.frames(12);
-    const card = await r.ui((u) => u.caption());
-    modes.add(card.mode);
-    if (card.visible) shown++;
-    clear = Math.min(clear, cardClearance(card.corners, ctx.court.freeze.players));
-    lowest = Math.min(lowest, ...card.corners.map((q) => q[1]));
+    await ctx.frames(24); // the card's fades settle
+    const card = await r.ui((u) => u.caption?.() ?? null);
+    if (card) {
+      modes.add(card.mode);
+      clear = Math.min(clear, cardClearance(card.corners, ctx.court.freeze.players));
+      lowest = Math.min(lowest, ...card.corners.map((q) => q[1]));
+    }
+    const eye = (await ctx.snapshot()).head.court;
+    const drawn = await ctx.page.evaluate(drawnCard);
+    const behind = drawn && hiddenBy(eye, drawn.pts, ctx.court.freeze.players);
+    if (behind) hidden++;
+    if (!drawn) conflicts.push("no caption mesh in the scene");
+    else if (drawn.visible && drawn.opacity > 0.02) {
+      shown++;
+      if (behind) conflicts.push(`eye ${fmt(eye, 2)}: ${behind}, drawn at opacity ${fmt(drawn.opacity, 2)}`);
+    }
   }
   ctx.check("P22: over the 3D the caption card sits above the pair, clear of both players from every walk stop", clear > 0 && modes.size === 1 && modes.has("pair"),
-    `${stops.length} stops: placement ${[...modes].join("/")}, ${fmt(clear)} m clear of the nearest torso or head capsule, card bottom at ${fmt(lowest)} m, shown at ${shown} (faded within 1 m)`);
+    `${stops.length} stops: placement ${[...modes].join("/")}, ${fmt(clear)} m clear of the nearest torso or head capsule, card bottom at ${fmt(lowest)} m, shown at ${shown} (faded within 1 m or behind a player)`);
+  ctx.check("P22: the caption card is never drawn over a player standing between the eye and it (no stereo conflict)", conflicts.length === 0,
+    conflicts.length ? `${conflicts.length} of ${stops.length} stops: ${conflicts.slice(0, 3).join("; ")}` : `${stops.length} stops, a player in front of part of the card at ${hidden}: hidden there each time`);
 
   // stand up by the pair, then Back to my seat: through the room
   await r.handsAway();
