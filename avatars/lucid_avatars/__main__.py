@@ -1,4 +1,5 @@
-"""Command line: `python -m lucid_avatars validate dreams/<id>`, `... idle motion.json`, `... bake dreams/<id>`."""
+"""Command line: `python -m lucid_avatars validate dreams/<id>`, `... idle motion.json`, `... bake dreams/<id>`,
+`... results <run>-tuned.work`."""
 
 import argparse
 import sys
@@ -23,6 +24,9 @@ def main() -> int:
     b.add_argument("bundle")
     b.add_argument("--id", help="new bundle id (default <id>-baked, next to the source)")
     b.add_argument("--fps", type=float, default=15.0)
+    r = sub.add_parser("results", help="fine-tune work dir -> avatars/README.md Results section + avatars/results/")
+    r.add_argument("work", help="the fine-tune's <run>-tuned.work dir (results.md, compare.png)")
+    r.add_argument("--max-width", type=int, default=1600, help="renders wider than this are scaled down")
     args = parser.parse_args()
 
     if args.cmd == "validate":
@@ -44,6 +48,16 @@ def main() -> int:
         errors = validate_bundle(root)
         print(f"{'FAIL' if errors else 'OK  '} {root}", *errors, sep="\n     ")
         return 1 if errors else 0
+    if args.cmd == "results":
+        from pathlib import Path
+
+        from .results_page import fill
+
+        here = Path(__file__).resolve().parents[1]
+        for c in fill(args.work, here / "README.md", here / "results", args.max_width):
+            print(f"wrote {c} ({c.stat().st_size // 1024} KB)")
+        print(f"wrote {here / 'README.md'} (Results section)")
+        return 0
     idle_loop(np.zeros(10), args.seconds, args.fps, args.stand_y).save(args.out)
     print(f"wrote {args.out}")
     return 0

@@ -4,6 +4,15 @@ Vishal's area: photoreal, rigged people that can do any move. A photo or clip go
 gets fine-tuned on 4DAnyone's generated views, and is exported as `avatar/avatar.ply` + `avatar/motion.json`
 in a dream bundle (see `AGENTS.md`, Contracts).
 
+## Results
+
+The research claim ("Fine-tune on 4DAnyone's views" below), measured on held-out views.
+`uv run python -m lucid_avatars results <run>-tuned.work` rewrites this section from a finished fine-tune.
+
+<!-- results:start (written by `python -m lucid_avatars results`) -->
+Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's views, PSNR / SSIM / LPIPS on held-out views, with before/after renders. The table lands here when verified.
+<!-- results:end -->
+
 ## What's here
 
 `lucid_avatars/` is plain numpy, so it runs anywhere, including the GPU environment:
@@ -24,6 +33,7 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | `gvhmr.py` | GVHMR's SMPL-X motion (4DAnyone's) as a Motion, moved into 4DAnyone's world |
 | `detail.py` | Hands and face pass: face and hand regions from posed joints, 2x close-up cameras, the view resampled into them |
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
+| `results_page.py` | `python -m lucid_avatars results <work dir>`: a fine-tune's table and renders into this README's Results section |
 | `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
 
 GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
@@ -88,7 +98,9 @@ trains the decoder at lr / 1000, a second ablation row if there's time.
 Output, in `$L/data/avatars/finetune/<run>/dreams/<run>-tuned.work/`: `results.md` (the table for the slides),
 `results.json`, `compare.png` (held-out views of the first frame: 4DAnyone view / one photo / fine-tuned) and a
 bundle `<run>-tuned` that plays the clip's motion. Metrics are over every prepared frame x held-out view, on full
-frames composited on white (so absolute PSNR runs high; the before/after change is the claim).
+frames composited on white (so absolute PSNR runs high; the before/after change is the claim). Once fetched,
+`uv run python -m lucid_avatars results <run>-tuned.work` puts the table and renders (shrunk to 1600 px, in
+`avatars/results/`) into the Results section at the top of this file.
 
 **Hands and face pass** (`DETAIL_STEPS=300`, off until it has run once): after the fine-tune, a short extra
 optimisation on 2x close-ups of the face and both hands, so close-ups hold up (`lucid_avatars/detail.py`). DiGS needs a
