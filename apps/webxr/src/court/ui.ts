@@ -23,8 +23,8 @@ export interface UiFlags {
   reality: boolean;
   /** Seat here hasn't been held yet: the setup page. */
   setup: boolean;
-  /** The walk ring replaced the spots (Next view hides). */
-  ring: boolean;
+  /** Next view applies (a second placement fits the bounds and the ring is off). */
+  nextView: boolean;
 }
 
 /**

@@ -310,8 +310,8 @@ export function standinBundle() {
   const atF = sceneAt(0);
   const [shooter, defender, trailer] = atF.people;
   const bounds = { shooter: capsuleBounds(shooter.caps), defender: capsuleBounds(defender.caps) };
-  // the viewing spots: front (toward the camera) and 60 deg to either side, as close as 1.5 m and always `clear` m
-  // from both bodies (P29)
+  // walk spots around the pair (front, toward the camera, and 60 deg to either side, as close as 1.5 m and always
+  // `clear` m from both bodies, P29), only to bound the trailer's maxRayAngle; the bundle stores no spots (3.4)
   const toCam = norm([CAM_C[0] - PC[0], 0, CAM_C[2] - PC[2]]);
   const spotAt = (deg, r) => {
     const a = (deg * Math.PI) / 180;
@@ -369,7 +369,7 @@ export function standinBundle() {
       standsMask: "video/stands-mask.png",
     },
     light: { crowd: 0.45, floor: 0.3, pair: 1.0, stands: 0.6, penumbra: 1.5, alternative: { crowd: 0.16, floor: 0.14 } },
-    seat: { ray: "freeze", distance: 5.0, distanceRange: [4, 7], pairCentre: PC, closer: 2.0, clear: 1.0, spots, ringArea: [4.5, 5.5] },
+    seat: { ray: "freeze", distance: 5.0, distanceRange: [4, 7], pairCentre: PC, clear: 1.0 },
     freeze: {
       players: [player(shooter, "Shooter (stand-in)", seenShare(shooter)), player(defender, "Defender (stand-in)", seenShare(defender))],
       ball: { centre: atF.ball.map((x) => round(x, 4)), radius: BALL_R, erase: [{ player: "shooter", radius: 0.15 }] },

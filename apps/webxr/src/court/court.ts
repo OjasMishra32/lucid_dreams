@@ -5,8 +5,9 @@
 // `visible-blurred` and would break the headset-off hand-over, P38), and drives the phase machine once per XR frame:
 //   setup (until Seat here) -> arrival (black and room tone until the page is visible and the seated head is still
 //   ~1 s, then 2.5 s of lights-up) -> watching (pass 1, pass 2; Step into the court arms or takes an ease) -> easing
-//   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer, Next view) -> returning (through
-//   the room to the chair, re-seat, handback(t)) -> resume (through the make) -> ended (Replay).
+//   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer or standing up: the walking
+//   anchoring; Next view) -> returning (through the room to the chair, re-seat, handback(t)) -> resume (through the
+//   make) -> ended (Replay).
 // See my room works in every phase; the edge fade runs every frame; every button, key and probe action is queued to
 // the top of the next frame. A throw inside the frame is logged once and the loop keeps going (a stopped loop freezes
 // the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e harness (probe.ts). Owned
@@ -164,7 +165,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let rushed = false; // the head rose mid-fade: the fade finishes within RISE_FADE_S
   let restored = false; // Back to my seat: the chair reached and the world re-seated
   let visible = true;
-  const flags = () => ({ inRoom, reality, setup, ring: seat.layout().kind === "ring" });
+  const flags = () => ({ inRoom, reality, setup, nextView: seat.hasNextView() });
   const go = (next: Phase) => {
     phase = next;
     ui.setPhase(phase, flags());
@@ -322,7 +323,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         break;
     }
     sound.update(head, clock.state);
-    if (head.room[1] - seatedEyeY > STAND_RISE && phase === "open") go("walking");
+    // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4)
+    if (head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
+      seat.closer();
+      go("walking");
+    }
   };
 
   // ---------------- the frame loop ----------------

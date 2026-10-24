@@ -45,6 +45,14 @@ test("unknown fields are ignored, so the format can grow", () => {
   assert.deepEqual(validateCourt(court), []);
 });
 
+test("the walking layout is derived from the bounds and the bodies (3.4): seat has no closer, spots or ringArea", () => {
+  const { court } = fresh();
+  for (const k of ["closer", "spots", "ringArea"]) assert.equal(k in court.seat, false, `seat.${k} is gone`);
+  // an older bundle that still carries them loads: unknown fields are ignored
+  Object.assign(court.seat, { closer: 2, spots: [[1, 0, 1]], ringArea: [4.5, 5.5] });
+  assert.deepEqual(validateCourt(court), []);
+});
+
 test("anything that isn't an object is refused with one clear error", () => {
   for (const bad of [null, 3, "court", [1, 2]]) {
     const errors = validateCourt(bad);
@@ -98,9 +106,7 @@ const BROKEN: [string, (c: Json) => void, string, RegExp][] = [
   ["seat distance", (c) => (c.seat.distance = 9), "seat.distance", /distanceRange/],
   ["seat range", (c) => (c.seat.distanceRange = [7, 4]), "seat.distanceRange", /low, high/],
   ["pair off the floor", (c) => (c.seat.pairCentre[1] = 1), "seat.pairCentre", /floor/],
-  ["no spots", (c) => (c.seat.spots = []), "seat.spots", /at least one/],
-  ["spot not a point", (c) => (c.seat.spots[1] = [1, 0]), "seat.spots[1]", /\[x, y, z\]/],
-  ["ring area", (c) => (c.seat.ringArea = [4.5]), "seat.ringArea", /width, depth/],
+  ["seat clearance", (c) => (c.seat.clear = 0), "seat.clear", /greater than 0/],
   ["no players", (c) => (c.freeze.players = []), "freeze.players", /at least one/],
   ["seen fraction", (c) => (c.freeze.players[0].seenFraction = 1.5), "freeze.players[0].seenFraction", /between 0 and 1/],
   ["duplicate id", (c) => (c.freeze.players[1].id = c.freeze.players[0].id), "freeze.players[1].id", /unique/],

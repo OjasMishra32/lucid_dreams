@@ -12,10 +12,10 @@ import type { Head, Polygon, WorldPose } from "./types";
 /** True once stream C has built this module. */
 export const BUILT = false;
 
-/** The layout the judge walks: the three spots, or the ring when the bounds allow. */
+/** The layout the judge walks (3.4): the chair spot (Next view where a second placement fits), or the ring when the bounds hold it. */
 export interface Layout {
-  kind: "spots" | "ring";
-  /** Walk targets, court space (floor points). */
+  kind: "chair" | "ring";
+  /** Walk targets, court space (floor points): the chair's, or the ring's. */
   points: Vec3[];
 }
 
@@ -53,15 +53,20 @@ export class Seat {
   /** Back to the dolly seat (undoing Walk closer and Next view), behind the fade. Stub: no-op. */
   restore(): void {}
 
-  /** Walk closer: one 0.3 s fade-jump along F's ray. Stub: no-op. */
+  /** Walk closer or standing up: one 0.3 s fade-jump to the walking anchoring (seatmath walkingWorld). Stub: no-op. */
   closer(): void {}
 
-  /** Next view: one 0.3 s fade-jump to the next viewing spot (spots layout only). Stub: no-op. */
+  /** Next view: one 0.3 s fade-jump to the other placement, when one fits (seatmath nextViewWorld). Stub: no-op. */
   nextView(): void {}
 
-  /** The current layout. Stub: the bundle's spots. */
+  /** True when Next view applies: walking, a second placement fits and the ring is off. Stub: false. */
+  hasNextView(): boolean {
+    return false;
+  }
+
+  /** The current layout. Stub: no walk targets. */
   layout(): Layout {
-    return { kind: "spots", points: this.court.seat.spots };
+    return { kind: "chair", points: [] };
   }
 
   /** Metres from the head to the bounds (the edge fade's input). Stub: far from any edge. */

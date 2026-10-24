@@ -233,7 +233,11 @@ export interface LightLevels {
   alternative: { crowd: number; floor: number };
 }
 
-/** Decision W: where the judge sits and the viewing places after the world opens. */
+/**
+ * Decision W: where the judge sits for the watch. The walking anchoring after the world opens (the pair's centre at the
+ * room's centre, its long axis on a room diagonal, the chair as spot 0, Next view where a second placement fits, the
+ * automatic ring) is derived from the bounds and the bodies' bounds by seatmath.ts (3.4), so it isn't stored.
+ */
 export interface SeatInfo {
   /** Which camera's optical ray the seat sits on: "freeze" (the camera of the show frame equal to F). */
   ray: "freeze";
@@ -243,14 +247,8 @@ export interface SeatInfo {
   distanceRange: [number, number];
   /** The pair's centre on the floor, court space (y = 0). */
   pairCentre: Vec3;
-  /** After Walk closer, the pair's centre is this far in front of the chair, metres (2.0). */
-  closer: number;
-  /** Every viewing spot and ring point keeps this much clear of each body's bounds, metres (1.0, P29). */
+  /** The chair and every ring point keep this much clear of each body's bounds, metres (1.0, P29). */
   clear: number;
-  /** The viewing spots on the floor, court space (three: front and up to 60 deg to either side, on the camera's side). */
-  spots: Vec3[];
-  /** The bounds that turn the walk ring on by themselves, metres: [width, depth] (4.5 x 5.5). */
-  ringArea: [number, number];
 }
 
 /** The frozen 3D: the pair, the ball, the other players, the stands. */
@@ -572,11 +570,7 @@ export function validateCourt(json: unknown): string[] {
       c.fail("seat.distance", `expected a distance inside distanceRange [${lo}, ${hi}]`, o.distance);
     if (c.has(o, "pairCentre", "seat.pairCentre") && c.vec3(o.pairCentre, "seat.pairCentre") && Math.abs(o.pairCentre[1]) > 0.01)
       c.fail("seat.pairCentre", "expected a point on the floor (y = 0)", o.pairCentre);
-    for (const k of ["closer", "clear"]) if (c.has(o, k, `seat.${k}`)) c.num(o[k], `seat.${k}`, { gt: 0 });
-    if (c.has(o, "spots", "seat.spots") && c.list(o.spots, "seat.spots", 1, "one viewing spot"))
-      o.spots.forEach((p, i) => c.vec3(p, `seat.spots[${i}]`));
-    if (c.has(o, "ringArea", "seat.ringArea") && c.nums(o.ringArea, 2, "seat.ringArea", "[width, depth] metres"))
-      o.ringArea.forEach((x, i) => c.num(x, `seat.ringArea[${i}]`, { gt: 0 }));
+    if (c.has(o, "clear", "seat.clear")) c.num(o.clear, "seat.clear", { gt: 0 });
   }
 
   // freeze
