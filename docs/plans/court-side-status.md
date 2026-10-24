@@ -4,7 +4,7 @@
 2018 Finals G4**, from the best low, fixed courtside angle that exists. You start in a courtside seat where that camera
 stood, about 2 s plays in real 3D, you pause on the palm menu and it eases into a freeze at the release, then you stand
 up and walk a ring about 1.5 m around the pair; it plays on or replays. Ojasva's bar: if two players aren't passing
-by noon, ship Steph alone. Updated Sat 6:25 AM.
+by noon, ship Steph alone. Updated Sat 6:45 AM.
 
 ## Asks for Ojasva (newest first)
 
@@ -23,9 +23,11 @@ by noon, ship Steph alone. Updated Sat 6:25 AM.
 
 ## Now
 
-Planning moves to a fresh session (Vishal's call). Next there: which low, fixed courtside angles exist for this play,
-Apple Vision Pro's courtside NBA feel, 3 prototypes of the freeze-and-walk transition, then the full plan. Waiting for
-the clip file.
+Planning resumed 6:30 AM in a fresh session. Running now: which low, fixed courtside angles exist for this play (exact
+video + timestamps for Vishal), Apple Vision Pro's courtside feel and the best walk-around freeze effects, a stereo
+Quest test page that can load two real replays (ask 7, page next), a prototype rig for the 3 transition directions,
+and spikes for low-camera calibration, smooth slow-down into the freeze, and real contact shadows. Waiting for the
+clip file.
 
 ## Verdict so far
 
