@@ -32,6 +32,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seed-samples", type=int, default=0, help="also run this many of 4DAnyone's sample clips")
     p.add_argument("--interval", type=int, default=60)
+    p.add_argument("--queue", default=str(runner.REPO / "pipeline" / "runner" / "queue.json"),
+                   help='clips already on HiPerGator to run first: [{"clip": "/blue/...mp4", "name": "...", "startS": 3.5}]')
     a = p.parse_args()
     state_path = runner.DEFAULT_DEST / ".autopilot.json"
     runner.DEFAULT_DEST.mkdir(parents=True, exist_ok=True)
@@ -45,6 +47,14 @@ def main():
             if not ready:
                 log("waiting for SMPL-X on HiPerGator")
             else:
+                queue = json.loads(Path(a.queue).read_text()) if Path(a.queue).exists() else []
+                for item in queue:
+                    if item["clip"] in [v["clip"] for v in state["submitted"].values()]:
+                        continue
+                    out = runner.submit("hpg:" + item["clip"], item["name"], item.get("id"), False, item.get("chunks", 6),
+                                        item.get("startS", 0.0))
+                    state["submitted"][out["id"]] = {"clip": item["clip"], "at": time.time()}
+                    log(f"submitted queued clip {out['id']}")
                 if a.seed_samples and not seeded:
                     clips = runner.remote(f"ls -1 {SAMPLES}/*.mp4").split()[: a.seed_samples]
                     for c in clips:
