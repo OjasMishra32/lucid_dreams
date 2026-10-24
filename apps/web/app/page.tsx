@@ -85,7 +85,7 @@ export default function Home() {
         <section className="play-section" aria-labelledby="play-title">
           <p className="eyebrow-x reveal">In the headset</p>
           <h2 id="play-title" className="section-head reveal">See it played.</h2>
-          <p className="section-sub reveal">Recorded straight from the app: the real people, the real games, the real physics.</p>
+          <p className="section-sub reveal">Recorded straight from the app, on the same court and board you play on in the headset.</p>
           <div className="reveal"><PlayReel clips={clips} /></div>
         </section>
       )}
