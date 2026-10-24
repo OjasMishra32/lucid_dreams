@@ -13,6 +13,11 @@ export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { ...CORS, "Cache-Control": "no-store" } });
 }
 
+/** JSON for this web app's own pages only (no CORS): what another site's script must not read, like a learner's try. */
+export function ownJson(body: unknown, status = 200): Response {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
 export function preflight(): Response {
   return new Response(null, { status: 204, headers: CORS });
 }

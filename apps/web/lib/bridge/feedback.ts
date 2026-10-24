@@ -98,7 +98,13 @@ export async function compareTry(c: Comparison): Promise<Notes> {
         }),
       ).then((r) => ({ text: r.text ?? "", model })),
     );
-    return { ...clean(JSON.parse(text), c), model };
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      throw new Error("Gemini's notes came back unreadable. Ask again.");
+    }
+    return { ...clean(raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}, c), model };
   } finally {
     for (const f of files) ai().files.delete({ name: f.name! }).catch(() => {}); // never leave someone's try on Google's side
   }

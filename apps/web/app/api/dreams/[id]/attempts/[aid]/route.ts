@@ -1,5 +1,7 @@
 import { busy, deleteAttempt, getAttempt, lessonOf, retryAttempt } from "@/lib/bridge/attempts";
-import { json, preflight } from "@/lib/bridge/http";
+import { ownJson as json } from "@/lib/bridge/http";
+
+// A learner's try is for this web app's own pages: no CORS, so another site's script on the Wi-Fi can't read it.
 
 type Ctx = { params: Promise<{ id: string; aid: string }> };
 
@@ -27,5 +29,3 @@ export async function DELETE(_req: Request, ctx: Ctx) {
     ? json({ error: "Gemini is watching this try right now. Delete it in a moment." }, 409)
     : json({ error: "No such try." }, 404);
 }
-
-export const OPTIONS = preflight;

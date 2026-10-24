@@ -4,9 +4,9 @@ import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
-import { attemptsView, busy, dropAttempt, lessonOf, newAttempt, startAttempt } from "@/lib/bridge/attempts";
+import { attemptsView, busy, dropAttempt, hiddenDream, lessonOf, newAttempt, startAttempt } from "@/lib/bridge/attempts";
 import { readDream } from "@/lib/bridge/dreams";
-import { json, preflight } from "@/lib/bridge/http";
+import { ownJson as json } from "@/lib/bridge/http";
 
 const VIDEO = new Set([".mp4", ".mov", ".m4v", ".webm", ".3gp"]);
 const BY_TYPE: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/x-m4v": ".m4v", "video/webm": ".webm", "video/3gpp": ".3gp" };
@@ -15,12 +15,16 @@ const MAX_BYTES = 2 * 1024 ** 3;
 type Ctx = { params: Promise<{ id: string }> };
 
 function notALesson(id: string): Response {
-  return readDream(id)
+  const d = readDream(id);
+  return d && !hiddenDream(d)
     ? json({ error: "Watch me try works on lessons, and this dream's plan isn't one (yet)." }, 409)
     : json({ error: "No such dream." }, 404);
 }
 
-/** GET /api/dreams/:id/attempts -> { gemini, lesson, attempts }: the lesson clip and every try, newest first. */
+/**
+ * GET /api/dreams/:id/attempts -> { gemini, lesson, attempts }: the lesson clip and every try, newest first. Tries are
+ * the learner's own videos, so these replies are for this web app's pages only (no CORS).
+ */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const l = lessonOf(id);
@@ -76,5 +80,3 @@ export async function POST(req: Request, ctx: Ctx) {
   const hint = Number(fields.durationS);
   return json(startAttempt(l.dream.id, tryId, f.name, Number.isFinite(hint) && hint > 0 ? hint : null), 202);
 }
-
-export const OPTIONS = preflight;

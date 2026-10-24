@@ -1,10 +1,10 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Attempt, Attempts, LessonClip } from "../attempt";
 import { dreamFile, type Dream, type Experience, type FeedbackNote } from "../dream";
-import { DATA_DIR, DREAMS_DIR, isRunId, readDream } from "./dreams";
+import { DATA_DIR, DREAMS_DIR, heldIds, isRunId, readDream } from "./dreams";
 import { cutWindow, dropPulled, ensureExperience, GEMINI_ON, saveExperience, trim, windowS } from "./experience";
 import { compareTry } from "./feedback";
 import { humanError } from "./gemini";
@@ -17,6 +17,7 @@ import { humanError } from "./gemini";
 
 const ROOT = join(DATA_DIR, "attempts");
 const MAX_TRY_S = 20;
+const MAX_WEBM_BYTES = 200 * 1024 ** 2; // a WebM goes to Gemini as it is: a few seconds of you, not a whole video
 const KEEP = 6;
 const RETRY_AFTER_MS = 10 * 60_000;
 export const FIX = "Your fix";
@@ -51,11 +52,19 @@ export function isAttemptId(id: string): boolean {
   return ATTEMPT_ID.test(id);
 }
 
+/**
+ * Held back from the library (dreams/.held: its dream page 404s) or private (a family's): no try page, lesson clip or
+ * tries for anyone, so the source footage of a dream nobody may see yet never leaves through here.
+ */
+export function hiddenDream(d: Dream): boolean {
+  return heldIds().has(d.id) || (d as Dream & { private?: unknown }).private === true;
+}
+
 /** The dream and its plan, when the plan is a lesson. Tries are only ever taken (and fixes only added) for these. */
 export function lessonOf(id: string): { dream: Dream; experience: Experience } | null {
   if (!isRunId(id)) return null;
   const dream = readDream(id);
-  if (!dream || dream.kind !== "replay") return null;
+  if (!dream || dream.kind !== "replay" || hiddenDream(dream)) return null;
   const s = ensureExperience(id);
   if (s.state !== "ready" || s.experience.mode !== "teach" || !s.experience.steps?.length) return null;
   return { dream, experience: s.experience };
@@ -134,21 +143,26 @@ export function retryAttempt(dream: string, id: string): Attempt | null {
   return view(dream, r);
 }
 
-/** The learner's try and its notes, gone from this Mac (any fix already in the lesson stays: it names no one). */
+/** The learner's try and its notes, gone from this Mac: its fix leaves the lesson too, if the lesson's fix is its. */
 export function deleteAttempt(dream: string, id: string): boolean {
   if (!readRec(dream, id) || state.working === busyKey(dream, id)) return false;
   state.queue = state.queue.filter((q) => !(q.dream === dream && q.id === id));
+  dropFromLesson(dream, id);
   rmSync(dirOf(dream, id), { recursive: true, force: true });
   return true;
 }
 
 export function getAttempt(dream: string, id: string): Attempt | null {
+  const d = readDream(dream);
+  if (!d || hiddenDream(d)) return null;
   const r = readRec(dream, id);
   return r ? view(dream, settle(dream, r), lessonOf(dream)?.experience) : null;
 }
 
 /** The try's video on this Mac, for the page to play. */
 export function attemptVideo(dream: string, id: string): { path: string; mime: string } | null {
+  const d = readDream(dream);
+  if (!d || hiddenDream(d)) return null;
   const r = readRec(dream, id);
   if (!r?.video) return null;
   const path = join(dirOf(dream, id), r.video);
@@ -201,13 +215,20 @@ function view(dream: string, r: Rec, e?: Experience): Attempt {
   };
 }
 
+/** humanError, worded for a try: nothing asks Gemini again on its own here, the learner does ("Ask again"). */
+function tryError(e: unknown): string {
+  return humanError(e)
+    .replace("It tries again in a few minutes.", "Ask again in a few minutes.")
+    .replace("the models the plan needs", "the models the notes need");
+}
+
 function pump() {
   if (state.working || !state.queue.length) return;
   const { dream, id } = state.queue.shift()!;
   state.working = busyKey(dream, id);
   work(dream, id)
     .catch((e: Error) => {
-      const message = humanError(e);
+      const message = tryError(e);
       console.error(`[try] ${dream}/${id}: ${message}`, e?.message === message ? "" : `(${String(e?.message ?? e).slice(0, 300)})`);
       const r = readRec(dream, id);
       if (r) {
@@ -235,8 +256,11 @@ async function work(dream: string, id: string) {
       Object.assign(r, { video: "try.mp4", mime: "video/mp4", lengthS: mp4Duration(out) ?? r.hintS ?? null });
       rmSync(input, { force: true });
     } else if (/\.webm$/i.test(r.input)) {
-      // A browser's own recording (Chrome or Firefox without MP4 recording): AVFoundation can't read WebM, but a
-      // MediaRecorder file carries no location, so it goes as it is; Gemini is told to watch only the first seconds.
+      // A browser's own recording (Firefox, or Chrome without MP4 recording): AVFoundation can't read WebM, but a
+      // MediaRecorder file carries no location, so it goes as it is. It can't be shortened here, so a long one doesn't go.
+      if ((r.hintS ?? 0) > MAX_TRY_S + 1 || statSync(input).size > MAX_WEBM_BYTES) {
+        throw new Error(`This Mac can't shorten a WebM video. Send a try under ${MAX_TRY_S} seconds, or an MP4 or MOV.`);
+      }
       renameSync(input, join(dir, "try.webm"));
       Object.assign(r, { video: "try.webm", mime: "video/webm", lengthS: r.hintS ? Math.min(r.hintS, MAX_TRY_S) : null });
     } else {
@@ -267,12 +291,15 @@ async function work(dream: string, id: string) {
     intent: l.experience.intent,
     steps,
   });
+  // Real seconds per bundle second: the cut clip is real time (a mock's stand-in runs on a far shorter clock, so
+  // bundle times need ms precision); the orbit render plays the bundle's own clock.
+  const real = lesson.orbit ? 1 : scale;
   const notes = out.notes.map((n) => {
     let t = n.teacherS / scale;
     if (t > clockS) t = lesson.orbit ? t % clockS : clockS; // the orbit render loops the move
-    return { ...n, teacherS: Math.round(t * 10) / 10 };
+    return { ...n, teacherS: Math.round(t * 1000) / 1000 };
   });
-  const added = notes.length > 0 && addToLesson(dream, id, notes, out.good);
+  const added = notes.length > 0 && addToLesson(dream, id, notes, out.good, real);
   delete r.stage;
   writeRec(dream, {
     ...r, state: "ready", notes, model: out.model, added,
@@ -286,21 +313,22 @@ async function work(dream: string, id: string) {
  * moment around it), slowed down, with the fix as the tip; the notes go in "feedback". It replaces an earlier fix, and
  * only ever goes into a plan that is (still) a lesson.
  */
-function addToLesson(dream: string, attempt: string, notes: FeedbackNote[], good?: string): boolean {
+function addToLesson(dream: string, attempt: string, notes: FeedbackNote[], good: string | undefined, real: number): boolean {
   const l = lessonOf(dream);
   if (!l) return false;
   const { dream: d, experience: e } = l;
   const D = clockOf(d, e);
   const steps = lessonSteps(e);
   const t = notes[0].teacherS;
-  const at = steps.find((s) => t >= s.start - 0.05 && t <= s.end + 0.05);
-  let start = at?.start ?? Math.max(0, t - 0.8);
-  let end = at?.end ?? Math.min(D, t + 0.8);
-  if (end - start < 0.4) {
-    start = Math.max(0, Math.min(start, D - 0.4));
-    end = Math.min(D, start + 0.4);
+  const secs = (x: number) => x / (real > 0 ? real : 1); // x real seconds, on the bundle's clock
+  const at = steps.find((s) => t >= s.start - secs(0.05) && t <= s.end + secs(0.05));
+  let start = at?.start ?? Math.max(0, t - secs(0.8));
+  let end = at?.end ?? Math.min(D, t + secs(0.8));
+  if (end - start < secs(0.4)) {
+    start = Math.max(0, Math.min(start, D - secs(0.4)));
+    end = Math.min(D, start + secs(0.4));
   }
-  const r = (x: number) => Math.round(x * 10) / 10;
+  const r = (x: number) => Math.round(x * 1000) / 1000;
   const fix = { start: r(start), end: r(end), title: FIX, tip: notes[0].note, speed: 0.5, repeat: 2 };
   saveExperience(d, {
     ...e,
@@ -308,6 +336,15 @@ function addToLesson(dream: string, attempt: string, notes: FeedbackNote[], good
     feedback: { createdAt: new Date().toISOString(), notes, ...(good ? { good } : {}), attempt, step: steps.length },
   });
   return true;
+}
+
+/** A deleted try's fix and notes come out of the lesson (only while the lesson's fix is that try's). */
+function dropFromLesson(dream: string, attempt: string) {
+  const l = lessonOf(dream);
+  if (!l || l.experience.feedback?.attempt !== attempt) return;
+  const e: Experience = { ...l.experience, steps: lessonSteps(l.experience) };
+  delete e.feedback;
+  saveExperience(l.dream, e);
 }
 
 // ---------- the lesson clip ----------
@@ -354,9 +391,9 @@ export function ensureLesson(d: Dream): Promise<Lesson | null> {
 
 async function cutLesson(d: Dream): Promise<Lesson | null> {
   const dir = join(ROOT, d.id);
-  mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `lesson-${randomBytes(4).toString("hex")}.mp4`);
   try {
+    mkdirSync(dir, { recursive: true });
     const v = await cutWindow(d, tmp);
     if (!v) {
       noLesson.set(d.id, Date.now());
@@ -372,6 +409,10 @@ async function cutLesson(d: Dream): Promise<Lesson | null> {
     const meta: LessonMeta = { for: d.createdAt ?? "", orbit: v.orbit, lengthS, at: Date.now() };
     writeFileSync(join(dir, "lesson.json"), JSON.stringify(meta, null, 2));
     return { path, orbit: v.orbit, lengthS };
+  } catch (e) {
+    console.error(`[try] ${d.id}: the lesson clip couldn't be cut (${String((e as Error)?.message ?? e).slice(0, 200)})`);
+    noLesson.set(d.id, Date.now());
+    return null;
   } finally {
     rmSync(tmp, { force: true });
   }

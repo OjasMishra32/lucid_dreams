@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import WatchMeTry from "@/components/WatchMeTry";
-import { attemptsView, lessonOf, lessonSteps } from "@/lib/bridge/attempts";
+import { attemptsView, hiddenDream, lessonOf, lessonSteps } from "@/lib/bridge/attempts";
 import { readDream } from "@/lib/bridge/dreams";
 
 export const dynamic = "force-dynamic";
@@ -11,13 +11,13 @@ type Props = { params: Promise<{ id: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const d = readDream((await params).id);
-  return { title: d ? `Watch me try · ${d.name}` : "Not found", robots: { index: false } };
+  return { title: d && !hiddenDream(d) ? `Watch me try · ${d.name}` : "Not found", robots: { index: false } };
 }
 
 /** "Watch me try": film your try at a lesson, and Gemini says what to fix, on both videos side by side. */
 export default async function TryPage({ params }: Props) {
   const d = readDream((await params).id);
-  if (!d) notFound();
+  if (!d || hiddenDream(d)) notFound(); // held back or private: like its dream page
   const back = `/library/${encodeURIComponent(d.id)}`;
   const l = lessonOf(d.id);
 

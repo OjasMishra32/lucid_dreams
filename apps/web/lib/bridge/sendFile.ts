@@ -3,10 +3,13 @@ import { createReadStream, statSync } from "node:fs";
 import { Readable } from "node:stream";
 import { CORS } from "./http";
 
-/** A file on this Mac as a response, honouring Range (Safari and the Quest won't seek a video without it). */
-export function sendFile(req: Request, file: string, type: string, cache = "no-store"): Response {
+/**
+ * A file on this Mac as a response, honouring Range (Safari and the Quest won't seek a video without it). `cors: false`
+ * for files only this web app's own pages may read (a learner's try).
+ */
+export function sendFile(req: Request, file: string, type: string, cache = "no-store", cors = true): Response {
   const size = statSync(file).size;
-  const headers: Record<string, string> = { ...CORS, "Content-Type": type, "Accept-Ranges": "bytes", "Cache-Control": cache };
+  const headers: Record<string, string> = { ...(cors ? CORS : {}), "Content-Type": type, "Accept-Ranges": "bytes", "Cache-Control": cache };
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");
   if (range && (range[1] || range[2])) {
     let start = range[1] ? Number(range[1]) : size - Number(range[2]);
