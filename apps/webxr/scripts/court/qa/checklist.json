@@ -424,13 +424,13 @@
    "id": "P17",
    "group": "Walking",
    "requirement": "You never enter a body, and leaning in never fades one.",
-   "how": "e2e poses in walk",
+   "how": "e2e poses in proximity",
    "threshold": "eye 0.2 m from torso/head: that player fades to 30% within 300 ms; eye 0.3 m from ball or hand: no fade",
    "owner": "E look (freeze.ts)",
    "checks": [
     {
      "kind": "e2e",
-     "scenario": "walk",
+     "scenario": "proximity",
      "needs": [
       "freeze"
      ]

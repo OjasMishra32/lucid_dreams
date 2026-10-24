@@ -1,5 +1,5 @@
-// The walk: P14 (0 mm of drift while the head walks round the chair: the court never moves without a fade) and P17
-// once the freeze is built (stream E's: seatmath's ProximityFade gives the opacities). Owner: stream C (P17: stream E).
+// The walk: P14 (0 mm of drift while the head walks round the chair: the court never moves without a fade). P17 (the
+// capsule fade) is stream E's own scenario, proximity.mjs. Owner: stream C.
 import { rig, wrap } from "../rig.mjs";
 
 export const owner = "C (core)";
@@ -24,6 +24,4 @@ export default async function walk(ctx) {
     worst = Math.max(worst, Math.hypot(...w.position.map((v, i) => v - w0.position[i])), Math.abs(wrap(w.yaw - w0.yaw)));
   }
   ctx.check("P14: 0 mm of drift over a 17-pose walk", worst <= 1e-6, `worst ${(worst * 1000).toFixed(4)} mm (or mrad of yaw)`);
-  if (ctx.modules.freeze) ctx.check("P17: capsule fade", false, "not written yet (stream E): seatmath ProximityFade gives the opacities");
-  else ctx.report.proximity = "waiting on freeze (stream E)";
 }
