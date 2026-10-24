@@ -3,6 +3,18 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## DECIDED (Sat 3:30 AM): passthrough only, no 360 places
+
+Ojasva watched the full-quality jump shot on the court place and called it: "the backgrounds are cooked; we only
+keep the passthrough." Your own room reads as more real than any panorama.
+- **Quest app:** remove the Place button from the rail and ignore `experience.environment`. The person is always
+  in your real room.
+- **WebXR:** done (`PLACES = false` in viewer.ts).
+- **Unity:** drop the place textures from the APK (‑23 MB) when convenient.
+
+Next: the real basketball renders as its own object (the tracked ball, `props.json`) for Jump shot 2, LeBron and
+every later shooting clip; check that your props player shows it in the hands and in flight.
+
 ## UPDATE (Sat 2:35 AM): bring MANY photos of your grandma; the legends at your board
 
 1. **More photos beat one.** We're testing LHM++, which builds one 3D person from many photos at once (every angle

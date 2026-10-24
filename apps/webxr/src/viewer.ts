@@ -96,7 +96,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
   controls.maxPolarAngle = Math.PI * 0.55;
   controls.update();
 
-  // Places: a full 360-degree environment instead of your room (or, on a screen, the dark stage). Nothing until chosen.
+  // Places: a full 360-degree environment instead of your room (or, on a screen, the dark stage). Off: passthrough
+  // only (Ojasva, Sat 3:30 AM: your own room reads as more real than any panorama). Flip PLACES to bring them back.
+  const PLACES = false;
   const places = new Places(renderer);
   scene.add(places.group);
 
@@ -209,6 +211,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
 
   // ---------------- places: a concert hall, a court, a ring around them instead of your room ----------------
   const placeBtn = $("#place");
+  placeBtn.hidden = !PLACES;
   let xrPlace: XrButton | null = null;
   const placedForward = new THREE.Vector3(0, 0, -1); // the way you faced when they were last placed in your room
   places.onChange = (p: Place | null) => {
@@ -232,7 +235,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const cyclePlace = () => setPlace(nextPlace(places.current));
   placeBtn.addEventListener("click", cyclePlace);
   // ?place= (a demo link), else experience.json's "environment", else what the intent suggests, else your room
-  setPlace(startingPlace(new URLSearchParams(location.search).get("place") ?? experience?.environment, experience?.intent ?? dream.intent));
+  setPlace(PLACES ? startingPlace(new URLSearchParams(location.search).get("place") ?? experience?.environment, experience?.intent ?? dream.intent) : null);
 
   let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
   const show = (i: number, force = false) => {
@@ -401,7 +404,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       e.preventDefault();
       setPlaying(!playing);
     }
-    if (e.code === "KeyP" && !e.metaKey && !e.ctrlKey && !e.altKey) cyclePlace();
+    if (PLACES && e.code === "KeyP" && !e.metaKey && !e.ctrlKey && !e.altKey) cyclePlace();
     if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) ask();
   });
   syncAudio();
@@ -507,16 +510,18 @@ export async function renderViewer(root: HTMLElement, id: string) {
     tilt.add(b.mesh);
   });
   // the place on a row of its own just beyond the others: Your room -> each place -> back
-  xrPlace = new XrButton("place", places.current?.name ?? "Your room", cyclePlace);
-  xrPlace.setOn(!!places.current);
-  xrPlace.mesh.position.y = 0.045;
-  tilt.add(xrPlace.mesh);
-  xrButtons.push(xrPlace);
+  if (PLACES) {
+    xrPlace = new XrButton("place", places.current?.name ?? "Your room", cyclePlace);
+    xrPlace.setOn(!!places.current);
+    xrPlace.mesh.position.y = 0.045;
+    tilt.add(xrPlace.mesh);
+    xrButtons.push(xrPlace);
+  }
   // Ask shares that row, to the right of the place, once the bridge says the coach is on
   if (coach) {
     xrAsk = new XrButton("ask", ASK.idle[1], ask);
     xrAsk.mesh.visible = false; // hidden buttons can't be pressed
-    xrAsk.mesh.position.set(0.05, 0.045, 0);
+    xrAsk.mesh.position.set(PLACES ? 0.05 : 0, 0.045, 0);
     tilt.add(xrAsk.mesh);
     xrButtons.push(xrAsk);
     const placeBtn3d = xrPlace;
@@ -524,7 +529,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       if (!on) return console.info("Ask is off: the bridge on :5170 has no Gemini key, or isn't running.");
       askBtn.hidden = false;
       xrAsk!.mesh.visible = true;
-      placeBtn3d.mesh.position.x = -0.05;
+      if (placeBtn3d) placeBtn3d.mesh.position.x = -0.05;
     });
   }
 

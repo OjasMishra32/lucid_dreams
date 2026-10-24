@@ -6,6 +6,11 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## DECIDED (Sat 3:30 AM): passthrough only; the web app drops Places
+
+Ojasva: "the backgrounds are cooked; we only keep the passthrough." In the web app, remove the Places row from dream
+pages and `?place=` from every link; the viewer ignores places now (`PLACES = false`).
+
 ## RESEARCH (Sat 2:50 AM): the models to use, checked against their repos and weights
 
 - **Bodies: LHM++** (aigc3d/LHM-plusplus, 700M weights; code Apache-2.0, weights CC BY-NC 4.0). Takes 1-16
