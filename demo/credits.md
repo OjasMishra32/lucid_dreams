@@ -1,7 +1,7 @@
 # Credits and source ledger
 
 Every source Lucid Dreams uses, with its link and license: the people in the demo, the places and objects around them,
-every model and its weights, and every library. Started by Atina; completed by Ian (Sat 12:45 AM) with licenses read
+every model and its weights, and every library. Started by Atina; completed by Ian (Sat 12:39 AM) with licenses read
 from each project's own license file, model card or Wikimedia Commons metadata, not inferred from search results.
 It contains links and license terms only: no source media, model weights, private recordings, consent evidence, or
 credentials.
