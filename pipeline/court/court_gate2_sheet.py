@@ -4,7 +4,10 @@ view), and, when a freeze has been trained, its peeks (the real frame | render w
 space and the held-out --depth-view's PSNR, then the views' ground truth | render) and its bundle's orbit preview every
 45 degrees (180 = the back of the head).
 
-    python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] <run dir>...
+    python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] [--ball] <run dir>...
+
+--ball: the player holds the ball at K in the real frame, so the views must too: the ball gate passes when at least half
+the fetched ring views show it (the back can hide it), written to <run>/ball.json for the pick (court_grid_report.py).
 
 A run dir is what a job copied back ($L/runs/<id>, or <id>/seed<k>): prepped.mp4, views/videos/NN.mp4, recon-*/.
 K comes from <run>/court-run.json, else a recon's used.json, else --clips <local runs dir>/<id>/court-run.json (the id
@@ -28,6 +31,9 @@ from court_grid_report import pick_runs  # noqa: E402  (one folder per seed: see
 
 VIEWS = ("00", "04", "08", "12")  # always shown (a missing one as a grey tile), with any other views fetched
 GREY = (90, 90, 90)
+BALL_HUE, BALL_SAT, BALL_VAL = (3, 22), 130, 70  # a basketball's orange (OpenCV HSV)
+BALL_B, BALL_CHROMA = 33, 45  # and its Lab b* and chroma: more saturated than any skin, light or dark
+BALL_AREA, BALL_FILL = 0.0005, 0.35  # its blob: at least this share of the frame height squared, and this round
 
 
 def views_of(run: Path) -> list[str]:
@@ -60,6 +66,31 @@ def frame_at(video: Path, n: int) -> np.ndarray | None:
                         "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True)
     img = cv2.imdecode(np.frombuffer(p.stdout, np.uint8), cv2.IMREAD_COLOR) if p.stdout else None
     return img
+
+
+def ball_in(img: np.ndarray) -> bool:
+    """Does a generated view show the ball: its largest saturated-orange blob big and round enough."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.int16) - 128
+    m = ((hsv[..., 0] >= BALL_HUE[0]) & (hsv[..., 0] <= BALL_HUE[1]) & (hsv[..., 1] >= BALL_SAT)
+         & (hsv[..., 2] >= BALL_VAL) & (lab[..., 2] >= BALL_B) & (np.hypot(lab[..., 1], lab[..., 2]) >= BALL_CHROMA))
+    m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    n, comp, st, _ = cv2.connectedComponentsWithStats(m)
+    if n < 2:
+        return False
+    i = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+    area = st[i, cv2.CC_STAT_AREA]
+    _, r = cv2.minEnclosingCircle(np.argwhere(comp == i)[:, ::-1].astype(np.float32))
+    return bool(area >= BALL_AREA * img.shape[0] ** 2 and area / (np.pi * r * r) >= BALL_FILL)
+
+
+def ball_check(run: Path, frames: dict) -> dict:
+    """The ball gate over the ring views' frames at K ({view: image or None}); writes <run>/ball.json."""
+    have = [v for v, img in frames.items() if img is not None]
+    seen = [v for v in have if ball_in(frames[v])]
+    r = {"views": seen, "of": len(have), "pass": bool(have) and 2 * len(seen) >= len(have)}
+    (run / "ball.json").write_text(json.dumps(r) + "\n")
+    return r
 
 
 def tile(img: np.ndarray | None, h: int, label: str, sub: str | list = "") -> np.ndarray:
@@ -111,16 +142,21 @@ def p42_text(rec: Path, clips: Path | None) -> str:
     return f"P42 {'PASS' if r.get('pass') else 'FAIL'} iou {r.get('iouFinal')}"
 
 
-def rows_for(run: Path, h: int, clips: Path | None, depth_view: str | None = None) -> list[np.ndarray]:
+def rows_for(run: Path, h: int, clips: Path | None, depth_view: str | None = None,
+             ball: bool = False) -> list[np.ndarray]:
     k = find_k(run, clips)
     name = f"{run_id(run)}{'/' + run.name if run.name.startswith('seed') else ''}"
     if k is None:
         return [tile(None, h, f"{name}: no K")]
-    row = [tile(frame_at(run / "prepped.mp4", k), h, f"{name} clip k={k}")]
     first, second = split_views(run)
-    row += [tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}") for v in first]
-    out = [np.hstack(row), np.hstack([tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}")
-                                      for v in second])]
+    frames = {v: frame_at(run / "views" / "videos" / f"{v}.mp4", k) for v in first + second}
+    note = ""
+    if ball:
+        b = ball_check(run, frames)
+        note = f"ball in {len(b['views'])}/{b['of']} views: " + ("PASS" if b["pass"] else "FAIL (no ball)")
+    row = [tile(frame_at(run / "prepped.mp4", k), h, f"{name} clip k={k}", note)]
+    row += [tile(frames[v], h, f"view {v}") for v in first]
+    out = [np.hstack(row), np.hstack([tile(frames[v], h, f"view {v}") for v in second])]
     for rec in sorted(run.glob("recon-*")):
         if not rec.is_dir():
             continue
@@ -165,8 +201,9 @@ def main(argv=None):
     ap.add_argument("--clips", type=Path, default=None, help="local run folders, for K when the fetch has none")
     ap.add_argument("--depth-view", default=None, help="the real view that sees the source camera's depth axis: its "
                                                        "held-out PSNR goes on each freeze")
+    ap.add_argument("--ball", action="store_true", help="the player holds the ball at K: gate the views on it")
     a = ap.parse_args(argv)
-    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips, a.depth_view)]
+    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips, a.depth_view, a.ball)]
     cv2.imwrite(str(a.out), stack(rows), [cv2.IMWRITE_JPEG_QUALITY, 90])
     print(f"{a.out}: {len(a.runs)} runs, {len(rows)} rows")
 
