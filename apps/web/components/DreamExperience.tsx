@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ExperienceState } from "@/lib/dream";
 import ShareButton from "./ShareButton";
@@ -153,6 +154,9 @@ export default function DreamExperience({
                 ? `A real chess engine plays at ${e.play?.strength ?? "club"} strength. Not affiliated with any player.`
                 : plannedFrom(e.source, e.intent)}
           </p>
+          {steps && steps.length > 0 && kind === "replay" && (
+            <Link href={`/library/${encodeURIComponent(id)}/try`} className="more plan-try">Watch me try</Link>
+          )}
         </section>
       )}
     </>

@@ -54,6 +54,38 @@ GEMINI_API_KEY=...
 `GET /api/dreams/<id>/experience` says where a plan stands (`ready`, `working`, `failed` with the reason, or `off`);
 `POST` to the same path writes it again.
 
+## Watch me try (Gemini feedback on your attempt)
+
+A lesson's dream page links to `/library/<id>/try`: film your try, and Gemini compares it with the teacher's clip and
+says what to fix, moment by moment ("0:02 · Your elbow flares out; keep it under the ball."). The notes sit beside both
+videos, side by side, and tapping one seeks both to that moment.
+
+- **Filming:** the laptop or phone camera (`getUserMedia` + `MediaRecorder`, MP4 where the browser can, else WebM)
+  wherever the page is a secure context: on the Mac itself (`localhost`) or over https. On a plain-http LAN address the
+  camera API is blocked, so the button becomes a file input with `capture="user"`, which opens the phone's own camera.
+  A 5 s countdown to step back, up to 15 s of you, the lesson playing alongside.
+- **On the Mac:** the try streams to `.data/attempts/<id>/<try>/` and avconvert re-encodes it (H.264, at most 20 s, no
+  location metadata; WebM, which AVFoundation can't read, goes as recorded: a browser recording carries no location).
+  The teacher's side is the same clip window the plan was written from (`cutWindow` in `lib/bridge/experience.ts`),
+  cut once per run into `.data/attempts/<id>/lesson.mp4`; the orbit render stands in when there's no clip.
+- **Gemini** gets both videos and returns `{ notes: [{ attemptS, teacherS, note }], good, unclear }`, the main fix first;
+  both uploads are deleted from Google right after. It never names or describes the person, and avoids left/right
+  (front cameras mirror).
+- **Into the lesson:** the main fix becomes the plan's last step, `"Your fix"` (the teacher's segment it's about,
+  speed 0.5, repeat 2, tip = the fix), and experience.json gains `"feedback": { createdAt, notes, good, attempt, step }`
+  (`teacherS` in the bundle's clip time). Saved to the bundle and the `.data/experiences` cache, so a re-fetch keeps it;
+  a newer try replaces it. Only ever for plans whose `mode` is `teach`.
+- No key: the try is kept and shown side by side, with no notes. A bad key fails with a sentence, never a stack trace.
+
+| Call | Reply |
+| --- | --- |
+| `GET /api/dreams/<id>/attempts` | `{ gemini, lesson: { state, src, scale, orbit }, attempts }` (newest first) |
+| `POST /api/dreams/<id>/attempts` | multipart `file` (video), optional `durationS` -> `202` the try (`working`), or `400`/`409`/`429 { error }` |
+| `GET /api/dreams/<id>/attempts/<try>` | `{ state: working/ready/failed/off, stage, notes, good, unclear, added, video }` |
+| `POST /api/dreams/<id>/attempts/<try>` | ask Gemini again (after a failure, or once a key is in) |
+| `DELETE /api/dreams/<id>/attempts/<try>` | the try's video and notes, gone from the Mac (a fix already in the lesson stays) |
+| `GET /api/dreams/<id>/attempts/<try>/video`, `GET /api/dreams/<id>/lesson` | the two videos, with Range |
+
 ## API (contract in AGENTS.md)
 
 | Call | Reply |
