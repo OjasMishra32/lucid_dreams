@@ -92,6 +92,12 @@ class StillCamera(unittest.TestCase):
         self.assertLess(np.abs(cu - uu[ok]).max(), 1e-3)
         self.assertLess(np.abs(cv - vv[ok]).max(), 1e-3)
 
+    def test_frames_are_found_by_file_name_without_source_frame(self):
+        calib = synth_calib(list(range(100, 140)))
+        for fr in calib["frames"]:
+            del fr["source_frame"]
+        self.assertEqual(st.frame_index(calib, 120), 20)
+
     def test_unknown_frame_is_an_error(self):
         with self.assertRaises(KeyError):
             st.ref_still_camera(self.calib, 99)

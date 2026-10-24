@@ -38,10 +38,18 @@ def frame_camera(calib, t):
     return dict(R=np.array(fr["R"]), C=np.array(fr["C"]), f=fr["f"], k1=fr["k1"], cx=cx, cy=cy)
 
 
+def source_frame(fr, t):
+    """A calibrated frame's number in the clip: "source_frame", else its file's numeric stem, else its position."""
+    if "source_frame" in fr:
+        return int(fr["source_frame"])
+    stem = os.path.splitext(os.path.basename(fr.get("file", "")))[0]
+    return int(stem) if stem.isdigit() else t
+
+
 def frame_index(calib, n):
-    """Index into calib["frames"] of source frame n (frames carry "source_frame"; older files: t = position)."""
+    """Index into calib["frames"] of source frame n."""
     for t, fr in enumerate(calib["frames"]):
-        if fr.get("source_frame", t) == n:
+        if source_frame(fr, t) == n:
             return t
     raise KeyError(f"source frame {n} is not in the calibration")
 

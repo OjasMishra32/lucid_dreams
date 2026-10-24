@@ -223,5 +223,98 @@ class AB(unittest.TestCase):
         self.assertIn("OUT=ab-agree-300k,RESULT=views,EXTRA=--source-agree ", c[0])
 
 
+class Grid(unittest.TestCase):
+    SETS = ("main-s2", "def-s2", "main-s1", "def-s1")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.folders = []
+        for turbo in (True, False):
+            for s in self.SETS:
+                k = 118 if s.endswith("s2") else 117
+                rid = f"court-turbo-{s}" if turbo else f"court-{s}"
+                self.folders.append(make_run(self.root, rid, k=k, turbo=turbo))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def grid(self, **env):
+        return dryrun(*self.folders, SCRIPT="court-grid-hpg.sh", **env)
+
+    def test_everything_at_once_when_space_allows(self):
+        rc, out = self.grid()
+        self.assertEqual(rc, 0, out)
+        c = calls(out)
+        self.assertEqual(len(c), 80, out)  # per run: views, upscale, 2 x (freeze, metrics, export), 2 cleanups
+        self.assertIn("GRID 8 runs", out)
+        self.assertNotIn("source-agree", out)
+        views = [x for x in c if x.endswith("stage-views.sbatch")]
+        self.assertTrue(all("--dependency" not in x for x in views))
+        self.assertTrue(all("--kill-on-invalid-dep=yes" in x for x in c if "--dependency" in x))
+        ups = {x.split()[0]: x for x in c if x.endswith("stage-upscale.sbatch")}
+        for x in c:
+            if "OUT=recon-up-300k" in x:
+                self.assertIn("RESULT=views-up,EXTRA= ", x)
+                self.assertIn(re.search(r"afterok:(\d+)", x).group(1), ups)
+            if "OUT=recon-raw-300k" in x:
+                self.assertIn("RESULT=views,EXTRA= ", x)
+        cleans = [x for x in c if "WHAT=views" in x]
+        self.assertEqual(sum("WHAT=views-up " in x for x in cleans), 4)  # full-quality runs keep views/ for the caps
+        self.assertTrue(all(re.search(r"--dependency=afterany:\d+(:\d+){5} ", x) for x in cleans))
+        self.assertTrue(c[0].endswith("stage-views.sbatch") and "court-turbo-main-s2" in c[0])
+
+    def test_waves_when_space_is_short(self):
+        rc, out = self.grid(FREE_T="0.05")  # 51 GB: 20 reserve + 12 kept leaves one run of 12 in flight
+        self.assertEqual(rc, 0, out)
+        c = calls(out)
+        views = [x for x in c if x.endswith("stage-views.sbatch")]
+        self.assertNotIn("--dependency", views[0])
+        self.assertTrue(all("--dependency=afterany:" in x for x in views[1:]))
+        first_clean = next(x for x in c if "WHAT=views" in x).split()[0]
+        self.assertIn(f"afterany:{first_clean} ", views[1])
+
+    def test_nothing_when_even_one_run_does_not_fit(self):
+        rc, out = self.grid(FREE_T="0.03")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("doesn't fit", out)
+        self.assertEqual(calls(out), [])
+
+    def test_seedvr2_weights_fetched_first_when_absent(self):
+        rc, out = self.grid(SEEDVR2="0", FREE_T="0.5")
+        self.assertEqual(rc, 0, out)
+        c = calls(out)
+        self.assertTrue(c[0].endswith("setup-seedvr2.sbatch"))
+        self.assertTrue(all(":1001 " in x for x in c if x.endswith("stage-upscale.sbatch")))
+
+    def test_raw_only_and_dry(self):
+        rc, out = self.grid(VARIANTS="raw", DRY="1")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("DRY: nothing submitted", out)
+        self.assertEqual(calls(out), [])
+
+    def test_a_bad_run_stops_the_whole_grid(self):
+        (self.folders[3] / "ignore" / "000117.png").unlink()
+        rc, out = self.grid()
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(calls(out), [])
+
+
+class Winner(unittest.TestCase):
+    def test_caps_from_remade_views_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = make_run(Path(tmp), "court-main-s2")
+            (d / "views" / "videos").mkdir(parents=True)
+            (d / "views" / "videos" / "00.mp4").write_bytes(b"x")
+            rc, out = dryrun(d, "up", SCRIPT="court-winner.sh", INTO="runs")
+            self.assertEqual(rc, 0, out)
+            c = calls(out)
+            self.assertTrue(c[0].endswith("stage-upscale.sbatch"))
+            freezes = [x for x in c if x.endswith("court-freeze.sbatch")]
+            self.assertEqual([re.search(r"OUT=(\S+?),", x).group(1) for x in freezes], ["recon-up-250k", "recon-up-200k"])
+            self.assertTrue(all("afterok:1001 " in x and "RESULT=views-up,EXTRA= " in x for x in freezes))
+            self.assertEqual(len(c), 7)
+
+
 if __name__ == "__main__":
     unittest.main()

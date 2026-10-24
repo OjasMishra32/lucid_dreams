@@ -536,7 +536,7 @@ def main(argv=None):
     cfg = expand(json.loads(a.config.read_text()))
     names = [x for x in a.sets.split(",") if x] or list(cfg["sets"])
     calib = json.loads(cfg["calib"].read_text())
-    frames_by_n = {fr.get("source_frame", t): fr for t, fr in enumerate(calib["frames"])}
+    frames_by_n = {st.source_frame(fr, t): fr for t, fr in enumerate(calib["frames"])}
     still = st.ref_still_camera(calib, cfg["ref"])
     plans = {name: plan_set(cfg, name, calib, still, frames_by_n, a.allow_partial) for name in names}
     cfg["out"].mkdir(parents=True, exist_ok=True)
