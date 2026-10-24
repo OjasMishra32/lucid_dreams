@@ -1,9 +1,23 @@
 import numpy as np
 import pytest
+from smplx_rest import smplx_like_rest
 
-from lucid_avatars.idle import idle_loop
+from lucid_avatars.idle import (
+    ANKLE_ABOVE_FLOOR,
+    BOARD_Z,
+    ELBOW_ON_TABLE,
+    HIP_ABOVE_SEAT,
+    MAX_LEAN,
+    MIN_SEAT_Y,
+    WRIST_ON_TABLE,
+    idle_loop,
+    seated_idle,
+    seated_rest_pose,
+)
+from lucid_avatars.ik import world_joints
 from lucid_avatars.motion import validate_motion_dict
-from lucid_avatars.rotations import quat_to_aa
+from lucid_avatars.rotations import quat_to_aa, quat_to_matrix
+from lucid_avatars.smplx_layout import J
 
 
 def test_idle_loop_is_valid_motion():
@@ -56,3 +70,87 @@ def test_idle_loop_blinks_along_the_given_direction():
     assert 2 <= closed_frames <= 12  # a couple of quick blinks in 8 s, not a long squint
     assert amount[0] == 0.0 and amount[-1] == 0.0  # wraps with eyes open
     assert idle_loop(np.zeros(10), seconds=2.0).expr is None
+
+
+# ---------------- seated idle (the chess opponent) ----------------
+
+SEAT_Y, TABLE_Y = 0.45, 0.75
+
+
+@pytest.fixture(scope="module")
+def seated():
+    rest = smplx_like_rest()
+    m = seated_idle(rest, np.zeros(10), seconds=8.0, fps=30, seat_y=SEAT_Y, table_y=TABLE_Y)
+    pos, rot = zip(*(world_joints(rest, m.root_q[f], m.root_t[f], m.pose[f]) for f in range(m.num_frames)))
+    return m, np.stack(pos), np.stack(rot)
+
+
+def test_seated_idle_is_valid_and_wraps(seated):
+    m, _, _ = seated
+    assert m.pose.shape == (240, 55, 3)
+    assert validate_motion_dict(m.to_dict()) == []
+    steps = np.abs(np.diff(m.pose, axis=0)).max(axis=(1, 2))
+    assert np.abs(m.pose[0] - m.pose[-1]).max() <= steps.max() * 1.05
+
+
+def test_seated_idle_faces_the_viewer_and_sits_on_the_chair(seated):
+    m, pos, _ = seated
+    facing = quat_to_matrix(m.root_q[0]) @ [0, 0, 1.0]  # leaning in from the hips, but turned to face -Z
+    assert abs(facing[0]) < 1e-9 and facing[2] < -0.8
+    seat = seated_rest_pose(smplx_like_rest(), SEAT_Y, TABLE_Y).seat_y
+    assert MIN_SEAT_Y <= seat <= SEAT_Y  # this body's arms are short, so the seat may have come down a little
+    hips = (pos[:, J["left_hip"]] + pos[:, J["right_hip"]]) / 2
+    np.testing.assert_allclose(hips, np.tile([0, seat + HIP_ABOVE_SEAT, 0], (len(hips), 1)), atol=1e-6)
+    for side in ("left", "right"):
+        knee, hip, ankle = pos[:, J[f"{side}_knee"]], pos[:, J[f"{side}_hip"]], pos[:, J[f"{side}_ankle"]]
+        thigh = knee - hip
+        slope = np.degrees(np.arctan2(-thigh[:, 1], np.linalg.norm(thigh[:, [0, 2]], axis=1)))
+        assert np.all((-1 < slope) & (slope < 20))             # thighs on the seat, at most sloping down a little
+        assert np.all(knee[:, 2] < hip[:, 2] - 0.3)            # knees out in front (front is -Z)
+        np.testing.assert_allclose(ankle[:, 1], ANKLE_ABOVE_FLOOR, atol=0.01)  # feet on the floor
+        assert np.all(pos[:, J[f"{side}_foot"], 1] > 0)
+
+
+def test_seated_idle_rests_forearms_on_the_table(seated):
+    _, pos, _ = seated
+    for side in ("left", "right"):
+        elbow, wrist = pos[:, J[f"{side}_elbow"]], pos[:, J[f"{side}_wrist"]]
+        np.testing.assert_allclose(elbow[:, 1], TABLE_Y + ELBOW_ON_TABLE, atol=1e-3)
+        np.testing.assert_allclose(wrist[:, 1], TABLE_Y + WRIST_ON_TABLE, atol=1e-3)
+        assert np.ptp(wrist, axis=0).max() < 1e-3          # hands stay put while the chest breathes
+        assert np.all(wrist[:, 2] < elbow[:, 2] - 0.05)    # forearms point at the board
+        assert np.all(wrist[:, 2] > -BOARD_Z + 0.2)        # but the hands stay off the board (0.4 m + frame)
+    assert np.all(pos[:, J["left_wrist"], 0] < pos[:, J["right_wrist"], 0])  # left hand on the viewer's right
+
+
+def test_seated_idle_looks_down_at_the_board(seated):
+    _, pos, rot = seated
+    board = np.array([0, TABLE_Y, -BOARD_Z])
+    to_board = board - pos[:, J["head"]]
+    to_board /= np.linalg.norm(to_board, axis=1, keepdims=True)
+    facing = rot[:, J["head"]] @ np.array([0, 0, 1.0])
+    angle = np.degrees(np.arccos(np.clip(np.sum(facing * to_board, axis=1), -1, 1)))
+    assert angle.max() < 6
+
+
+def test_seated_idle_breathes_and_blinks():
+    rest = smplx_like_rest()
+    closed = np.zeros(10)
+    closed[2] = 1.5
+    m = seated_idle(rest, np.zeros(10), seconds=8.0, fps=30, blink_expr=closed)
+    spine = m.pose[:, J["spine2"]]
+    assert 0.005 < np.ptp(spine[:, 0]) < 0.1
+    assert m.expr is not None and m.expr[:, 2].max() == pytest.approx(1.5)
+    assert m.expr[0, 2] == 0 and m.expr[-1, 2] == 0
+
+
+def test_seated_keeps_the_chair_height_when_the_arms_reach():
+    rest = smplx_like_rest()
+    for side in ("left", "right"):  # 20% longer arms
+        chain = [J[f"{side}_{n}"] for n in ("shoulder", "elbow", "wrist")]
+        hand = range(25, 40) if side == "left" else range(40, 55)
+        below = [*chain[1:], *hand]
+        rest[below] = rest[chain[0]] + 1.2 * (rest[below] - rest[chain[0]])
+    s = seated_rest_pose(rest, SEAT_Y, TABLE_Y)
+    assert s.seat_y == pytest.approx(SEAT_Y)
+    assert 0 <= s.lean <= MAX_LEAN

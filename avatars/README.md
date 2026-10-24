@@ -12,7 +12,8 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | Module | Does |
 | --- | --- |
 | `motion.py` | `motion.json` read/write/validate; DiGS-Avatar packed SMPL-X <-> motion; turning a motion to face the viewer on the floor |
-| `idle.py` | Seamless idle loop (breathing, weight shift, head sway) so a family-photo person never freezes |
+| `idle.py` | Seamless idle loops so a person never freezes: standing (breathing, weight shift, head sway) and seated at the chess board (forearms on the table, looking at the board) |
+| `ik.py` | Closed-form two-bone arm IK (elbow can rest on a table) and head aim on the SMPL-X skeleton |
 | `gaussian_ply.py` | Standard 3DGS binary PLY read/write |
 | `bundle.py` | Writes an avatar bundle; validates any bundle against the contract |
 | `digs_io.py` | Photo/NLF/DiGS glue: crop and intrinsics, DiGS reference JSON, rasterizer Gaussians to PLY, sanity checks |
