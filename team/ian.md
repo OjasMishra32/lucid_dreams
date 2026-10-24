@@ -186,3 +186,11 @@ What makes it simple, and what to do the same way in Unity:
 - `place` sets placement once the plan loads; `facing` is now 1.8 m (the contract), was 1.5 m.
 - Companion / watch / play modes: plain playback for now; chess stays in the WebXR app.
 
+## Decisions: library (Ian, Fri night)
+
+- Bridge address: `bridge.txt` in the app's storage (one adb line, see apps/quest/README.md) or the scene field.
+  Ojasva / Raami: if the Mac's address changes, that file is the only thing to update.
+- Downloads take SPZ + reality frames, plan, thumb, guide and audio (not PLY), into `<id>.part`, renamed when
+  complete; `dream.json` is written last. Cached dreams play offline; launch replays the last one played.
+- Checked against a static stand-in for the bridge (same paths as apps/web); not yet against the real bridge.
+

@@ -13,8 +13,23 @@ Photoreal Gaussian people standing on your real floor in Meta Quest 3S passthrou
 1. Open `apps/quest` in Unity 6000.6.0f1.
 2. **Lucid Dreams > Set Up Project** (safe to run again). It configures URP with the Gaussian pass, OpenXR for
    Android and desktop, the Android player settings and `Assets/LucidDreams/Scenes/Dream.unity`.
-3. Point the player at a bundle (`Dream/Person`, **Dream Sequence Player > Bundle**), then **Build And Run** on the
-   Quest, or **Lucid Dreams > Build APK**.
+3. Tell the headset where the bridge is (Raami's web app on the Mac, port 5170), then **Build And Run** on the Quest,
+   or **Lucid Dreams > Build APK**:
+
+   ```
+   adb shell "echo http://<mac-ip>:5170 > /sdcard/Android/data/com.luciddreams.quest/files/bridge.txt"
+   ```
+
+   (or set **Library > Dream Library > Bridge Url** in the scene before building).
+
+## Library
+
+The library lists the bridge's dreams (`GET /api/dreams`) and the ones already on the headset. **Get** downloads a
+bundle's SPZ frames, reality frames, `experience.json`, thumb and any guide or audio into the app's storage (never
+the multi-GB PLYs), with progress; it lands in `<id>.part` and is renamed only when complete. **Play** plays it from
+the headset, so downloaded dreams work with no bridge (the panel says when it's offline). At launch the app replays
+the last dream you played if it's there, otherwise the library opens by itself. Avatars show as "Soon" until the
+avatar player lands.
 
 ## Playing a replay
 
@@ -52,8 +67,8 @@ The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experien
 - **Pinch the person and drag:** they slide along the floor (never lifted, never scaled). **Both hands:** turn them.
 - **Pinch and hold ~1 s pointing at the floor:** they stand there, facing you.
 - **Control bar** (floats low in front of you, follows when you turn): push a fingertip through **Play/Pause**,
-  **speed** (1 / 0.5 / 0.25x), **Reality check** or **Bring here**; pinch the timeline and drag to scrub. Buttons fire
-  once per push.
+  **speed** (1 / 0.5 / 0.25x), **Reality check**, **Bring here** or **Library**; pinch the timeline and drag to scrub.
+  Buttons fire once per push. With more than five buttons it wraps into two rows.
 - **Reality check** (bundles with `frames.reality`): the first push loads the reality frames (same Gaussians, the ones
   the camera never saw tinted blue) and swaps them in at the same moment; the bar shows `metrics.seenFraction`
   ("62% seen by the camera · blue was imagined"). Push again for the real colours. It costs one more set of SPZ
@@ -78,11 +93,12 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
 
 `HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
 eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
-instead: placement, step timing, your turn, Back / Again / Next and the voice:
+instead: placement, step timing, your turn, Back / Again / Next and the voice. With `-bridge <url>` (no bundle) it
+checks the library from an empty cache: list, download, play from the headset, then offline:
 
 ```
 Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.HandsCheck.Run \
-  -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check
+  -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check        # or: -bridge http://127.0.0.1:5170
 ```
 
 By default the person stands 1.8 m in front of you on the scanned floor, facing you. Bundle files are right-handed

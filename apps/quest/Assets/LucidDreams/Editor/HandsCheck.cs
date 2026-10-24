@@ -10,11 +10,14 @@ namespace LucidDreams.Editor
     // Headless check of every hand gesture in the real scene with simulated hands (no headset needed).
     //   Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.HandsCheck.Run
     //     -dreamBundle /path/to/dreams/<id> -out /path/to/pngs
+    // or, for the library against a bridge (an empty cache under -out is used):
+    //     -bridge http://127.0.0.1:8765 -out /path/to/pngs
     [InitializeOnLoad]
     public static class HandsCheck
     {
         const string BundleKey = "LucidDreams.HandsCheck.bundle";
         const string OutKey = "LucidDreams.HandsCheck.out";
+        const string BridgeKey = "LucidDreams.HandsCheck.bridge";
 
         static HandsCheck()
         {
@@ -23,11 +26,21 @@ namespace LucidDreams.Editor
 
         public static void Run()
         {
-            string bundle = Path.GetFullPath(Arg("-dreamBundle")), output = Path.GetFullPath(Arg("-out"));
-            SessionState.SetString(BundleKey, bundle);
+            string bridge = OptionalArg("-bridge"), output = Path.GetFullPath(Arg("-out"));
+            string bundle = bridge == null ? Path.GetFullPath(Arg("-dreamBundle")) : "";
+            SessionState.SetString(BundleKey, bundle == "" ? bridge : bundle);
             SessionState.SetString(OutKey, output);
+            SessionState.SetString(BridgeKey, bridge ?? "");
             EditorSceneManager.OpenScene(EditorBuildSettings.scenes[0].path);
-            UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>().bundle = bundle; // in memory; the scene isn't saved
+            // In memory only; the scene file isn't saved.
+            UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>().bundle = bundle;
+            if (bridge != null)
+            {
+                var library = UnityEngine.Object.FindAnyObjectByType<DreamLibrary>();
+                library.bridgeUrl = bridge;
+                library.cacheRoot = Path.Combine(output, "cache");
+                if (Directory.Exists(library.cacheRoot)) Directory.Delete(library.cacheRoot, true);
+            }
             EditorApplication.update += Tick;
             EditorApplication.EnterPlaymode();
         }
@@ -40,6 +53,7 @@ namespace LucidDreams.Editor
             {
                 driver = new GameObject("Hands Check").AddComponent<HandsCheckDriver>();
                 driver.outputDir = SessionState.GetString(OutKey, "");
+                driver.libraryMode = SessionState.GetString(BridgeKey, "") != "";
                 return;
             }
             if (!driver.Done) return;
@@ -49,12 +63,13 @@ namespace LucidDreams.Editor
             else EditorApplication.ExitPlaymode();
         }
 
-        static string Arg(string name)
+        static string Arg(string name) => OptionalArg(name) ?? throw new ArgumentException($"Pass {name} <value>");
+
+        static string OptionalArg(string name)
         {
             var args = Environment.GetCommandLineArgs();
             int i = Array.IndexOf(args, name);
-            if (i < 0 || i + 1 >= args.Length) throw new ArgumentException($"Pass {name} <value>");
-            return args[i + 1];
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
         }
     }
 }

@@ -13,6 +13,7 @@ namespace LucidDreams.Tests
     public class HandsCheckDriver : MonoBehaviour
     {
         public string outputDir;
+        public bool libraryMode;
         public bool Done { get; private set; }
         public int Failures { get; private set; }
 
@@ -34,6 +35,13 @@ namespace LucidDreams.Tests
             head.transform.SetPositionAndRotation(new Vector3(0f, 1.6f, 2f), Quaternion.Euler(10f, 180f, 0f));
             hands.Simulate(hands.left, false, Vector3.zero, Vector3.zero);
             hands.Simulate(hands.right, false, Vector3.zero, Vector3.zero);
+            if (libraryMode)
+            {
+                yield return LibraryChecks();
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
 
             float until = Time.realtimeSinceStartup + 120f;
             while (!player.IsReady && player.Error == null && Time.realtimeSinceStartup < until) yield return null;
@@ -137,6 +145,62 @@ namespace LucidDreams.Tests
 
             Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
             Done = true;
+        }
+
+        // The library against a bridge, from an empty headset: list, download, play from the cache, then offline.
+        IEnumerator LibraryChecks()
+        {
+            var library = FindAnyObjectByType<DreamLibrary>();
+            var panel = FindAnyObjectByType<DreamLibraryPanel>();
+            float until = Time.realtimeSinceStartup + 20f;
+            while ((!panel.IsOpen || library.Refreshing || library.Entries.Count == 0) && Time.realtimeSinceStartup < until) yield return null;
+            yield return Frames(3);
+            Check(panel.IsOpen, "with nothing to play, the library opens by itself");
+            Check(library.Online && library.Entries.Count == 2 && library.Entries[0].id == "marker-teach",
+                $"lists the bridge's dreams, newest first ({string.Join(", ", library.Entries.Select(x => x.id))})");
+
+            FingertipButton RowAction(string name) => panel.GetComponentsInChildren<FingertipButton>()
+                .FirstOrDefault(b => b.transform.parent.Find("Name")?.GetComponent<TMPro.TMP_Text>().text == name);
+            var teach = library.Entries.First(x => x.id == "marker-teach");
+            Check(RowAction(teach.dream.name)?.label.text == "Get", $"a dream not on the headset offers Get ({RowAction(teach.dream.name)?.label.text})");
+            yield return new WaitForSecondsRealtime(0.4f);
+            Render(Path.Combine(outputDir, "library-eye-view.png"));
+
+            yield return Push(RowAction(teach.dream.name));
+            until = Time.realtimeSinceStartup + 60f;
+            while (!teach.cached && teach.error == null && Time.realtimeSinceStartup < until) yield return null;
+            string dir = Path.Combine(library.cacheRoot, "marker-teach");
+            int spz = Directory.Exists(Path.Combine(dir, "frames")) ? Directory.GetFiles(Path.Combine(dir, "frames"), "*.spz").Length : 0;
+            Check(teach.cached && spz == 2 * teach.dream.frameCount && File.Exists(Path.Combine(dir, "experience.json"))
+                  && File.Exists(Path.Combine(dir, "thumb.jpg")) && !Directory.Exists(dir + ".part"),
+                $"download lands whole: {spz} SPZ frames + reality, plan and thumb ({teach.error})");
+            yield return Frames(3);
+            Check(RowAction(teach.dream.name)?.label.text == "Play", "then offers Play");
+
+            yield return Push(RowAction(teach.dream.name));
+            until = Time.realtimeSinceStartup + 60f;
+            while (!player.IsReady && player.Error == null && Time.realtimeSinceStartup < until) yield return null;
+            Check(player.IsReady && player.LoadedFormat == DreamSequencePlayer.FrameFormat.Spz && player.Lesson != null && player.HasReality,
+                $"plays from the headset: SPZ frames, its lesson and reality check ({player.Error})");
+            Check(!panel.IsOpen, "picking a dream closes the library");
+            yield return Frames(10);
+            panel.Open();
+            yield return Frames(5);
+            Render(Path.Combine(outputDir, "library-playing-eye-view.png"));
+            panel.Close();
+
+            library.bridgeUrl = "http://127.0.0.1:9"; // the bridge is gone
+            library.Refresh();
+            yield return Frames(2);
+            until = Time.realtimeSinceStartup + 15f;
+            while (library.Refreshing && Time.realtimeSinceStartup < until) yield return null;
+            Check(!library.Online && library.Entries.Count == 1 && library.Entries[0].cached,
+                $"offline, it lists what's on the headset ({library.Entries.Count} dreams)");
+            library.Play(library.Entries[0]);
+            until = Time.realtimeSinceStartup + 60f;
+            yield return Frames(2);
+            while (!player.IsReady && player.Error == null && Time.realtimeSinceStartup < until) yield return null;
+            Check(player.IsReady, $"and plays it with no bridge ({player.Error})");
         }
 
         // A lesson from experience.json: placement by place, steps at their speed and repeats, your turn, Back/Again/Next.

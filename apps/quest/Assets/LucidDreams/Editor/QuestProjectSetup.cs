@@ -239,6 +239,7 @@ namespace LucidDreams.Editor
             ConfigureSplatRenderer(splat);
             placer.person = personGo.transform;
             var player = personGo.AddComponent<DreamSequencePlayer>();
+            player.bundle = ""; // the library picks: the last dream played, or it opens so you can choose
             placer.player = player;
             var controls = dreamGo.AddComponent<DreamTestControls>();
             controls.player = player;
@@ -262,6 +263,17 @@ namespace LucidDreams.Editor
             bar.hands = tracker;
             bar.player = player;
             bar.placer = placer;
+
+            // The library: dreams from the bridge and the ones already downloaded.
+            var libraryGo = new GameObject("Library");
+            var library = libraryGo.AddComponent<DreamLibrary>();
+            library.player = player;
+            var libraryPanel = libraryGo.AddComponent<DreamLibraryPanel>();
+            libraryPanel.library = library;
+            libraryPanel.player = player;
+            libraryPanel.hands = tracker;
+            libraryPanel.head = camGo.transform;
+            bar.library = libraryPanel;
 
             // Lessons: the step card beside the person, read aloud in the device's voice.
             var lessonGo = new GameObject("Lesson");

@@ -10,17 +10,18 @@ namespace LucidDreams
     // In a lesson, Back / Again / Next take the speed button's place; Reality check appears for bundles that have it.
     public class DreamControlBar : MonoBehaviour
     {
-        const float Height = 92f;
+        const float RowHeight = 92f; // one row of buttons
+        const float SecondRow = 36f;
         const float MinWidth = 364f;
         const float Edge = 20f; // panel padding left and right
         const float Gap = 8f;
         const float ButtonHeight = 28f;
-        const float TrackY = -30f;
 
         public Transform head;
         public HandTracker hands;
         public DreamSequencePlayer player;
         public DreamPlacer placer;
+        public DreamLibraryPanel library;
 
         [Tooltip("Meters in front of the eyes, and below them.")]
         public float forward = 0.45f, below = 0.32f;
@@ -28,10 +29,10 @@ namespace LucidDreams
         public float tilt = 35f;
         public float followAngle = 35f, followDistance = 0.3f;
 
-        FingertipButton play, speed, back, again, next, reality, bring;
+        FingertipButton play, speed, back, again, next, reality, bring, browse;
         readonly List<FingertipButton> all = new();
         string layout;
-        float width, trackWidth;
+        float width, height = RowHeight, trackWidth;
         TMP_Text title, clock;
         RectTransform panel, track, fill, knob;
         RectTransform canvasRect;
@@ -39,9 +40,9 @@ namespace LucidDreams
 
         void Start()
         {
-            var canvas = GlassUI.WorldCanvas(transform, "Controls", new Vector2(MinWidth, Height));
+            var canvas = GlassUI.WorldCanvas(transform, "Controls", new Vector2(MinWidth, RowHeight));
             canvasRect = (RectTransform)canvas.transform;
-            panel = (RectTransform)GlassUI.Box(canvas.transform, "Panel", Vector2.zero, new Vector2(MinWidth, Height), GlassUI.Panel, 24f).transform;
+            panel = (RectTransform)GlassUI.Box(canvas.transform, "Panel", Vector2.zero, new Vector2(MinWidth, RowHeight), GlassUI.Panel, 24f).transform;
 
             title = GlassUI.Label(panel, "Title", Vector2.zero, new Vector2(200f, 14f), "", 9f, GlassUI.Text, TextAlignmentOptions.Left);
             clock = GlassUI.Label(panel, "Clock", Vector2.zero, new Vector2(70f, 14f), "", 8f, GlassUI.SecondaryText,
@@ -54,6 +55,7 @@ namespace LucidDreams
             next = Button("Next", () => player.Lesson?.Go(player.Lesson.Index + 1));
             reality = Button("Reality check", () => player.ToggleReality());
             bring = Button("Bring here", () => placer.PlaceInFrontOfViewer());
+            browse = Button("Library", () => library?.Toggle());
 
             track = (RectTransform)GlassUI.Box(panel, "Track", Vector2.zero, new Vector2(100f, 6f), GlassUI.Track, 3f).transform;
             fill = (RectTransform)GlassUI.Box(panel, "Played", Vector2.zero, new Vector2(0f, 6f), GlassUI.Text, 3f).transform;
@@ -86,6 +88,18 @@ namespace LucidDreams
             return Mathf.Abs(local.x) < trackWidth / 2f + 15f && Mathf.Abs(local.y - TrackY) < 16f && Mathf.Abs(local.z) < 40f;
         }
 
+        float TrackY => -height / 2f + 16f;
+
+        bool Playback(FingertipButton b) => b == play || b == speed || b == back || b == again || b == next;
+
+        // One row, or two when it would get too wide: playback first, then everything else.
+        IEnumerable<List<FingertipButton>> Rows(IReadOnlyList<FingertipButton> visible)
+        {
+            if (visible.Count <= 5) { yield return visible.ToList(); yield break; }
+            yield return visible.Where(Playback).ToList();
+            yield return visible.Where(b => !Playback(b)).ToList();
+        }
+
         // World position of a point along the timeline (0-1), on the bar's face.
         public Vector3 TimelinePoint(float normalized) =>
             canvasRect.TransformPoint(new Vector3(-trackWidth / 2f + trackWidth * Mathf.Clamp01(normalized), TrackY, 0f));
@@ -95,37 +109,47 @@ namespace LucidDreams
         {
             if (canvasRect == null) return false;
             var local = canvasRect.InverseTransformPoint(world);
-            return Mathf.Abs(local.x) < width / 2f + 20f && Mathf.Abs(local.y) < Height / 2f + 20f && local.z > -60f && local.z < 40f;
+            return Mathf.Abs(local.x) < width / 2f + 20f && Mathf.Abs(local.y) < height / 2f + 20f && local.z > -60f && local.z < 40f;
         }
 
-        // Lays the visible buttons out in one row, each sized to its label, and sizes the panel and timeline to fit.
+        // Lays the visible buttons out (one or two rows), each sized to its label, and sizes the panel and timeline to fit.
         void Layout(IReadOnlyList<FingertipButton> visible)
         {
-            var widths = visible.Select(b => Mathf.Max(58f, b.label.GetPreferredValues(Widest(b)).x + 26f)).ToArray();
-            float row = widths.Sum() + Gap * (visible.Count - 1);
-            width = Mathf.Max(MinWidth, row + 2 * Edge);
+            var rows = Rows(visible).ToList();
+            height = RowHeight + SecondRow * (rows.Count - 1);
+            float widest = rows.Max(r => r.Sum(b => ButtonWidth(b)) + Gap * (r.Count - 1));
+            width = Mathf.Max(MinWidth, widest + 2 * Edge);
             trackWidth = width - 2 * Edge;
-            canvasRect.sizeDelta = panel.sizeDelta = new Vector2(width, Height);
+            canvasRect.sizeDelta = panel.sizeDelta = new Vector2(width, height);
 
             foreach (var b in all) b.gameObject.SetActive(visible.Contains(b));
-            float x = -row / 2f;
-            for (int i = 0; i < visible.Count; i++)
+            float y = height / 2f - 42f;
+            foreach (var row in rows)
             {
-                var rt = (RectTransform)visible[i].transform;
-                rt.sizeDelta = new Vector2(widths[i], ButtonHeight);
-                ((RectTransform)visible[i].label.transform).sizeDelta = rt.sizeDelta;
-                rt.anchoredPosition = new Vector2(x + widths[i] / 2f, 4f);
-                x += widths[i] + Gap;
+                float rowWidth = row.Sum(b => ButtonWidth(b)) + Gap * (row.Count - 1);
+                float x = -rowWidth / 2f;
+                foreach (var b in row)
+                {
+                    float w = ButtonWidth(b);
+                    var rt = (RectTransform)b.transform;
+                    rt.sizeDelta = new Vector2(w, ButtonHeight);
+                    ((RectTransform)b.label.transform).sizeDelta = rt.sizeDelta;
+                    rt.anchoredPosition = new Vector2(x + w / 2f, y);
+                    x += w + Gap;
+                }
+                y -= SecondRow;
             }
 
             float textWidth = width - 2 * Edge;
             ((RectTransform)title.transform).sizeDelta = new Vector2(textWidth - 76f, 14f);
-            ((RectTransform)title.transform).anchoredPosition = new Vector2(-38f, 30f);
-            ((RectTransform)clock.transform).anchoredPosition = new Vector2(textWidth / 2f - 35f, 30f);
+            ((RectTransform)title.transform).anchoredPosition = new Vector2(-38f, height / 2f - 16f);
+            ((RectTransform)clock.transform).anchoredPosition = new Vector2(textWidth / 2f - 35f, height / 2f - 16f);
             track.sizeDelta = new Vector2(trackWidth, 6f);
             track.anchoredPosition = new Vector2(0f, TrackY);
             fill.anchoredPosition = new Vector2(-trackWidth / 2f, TrackY);
         }
+
+        float ButtonWidth(FingertipButton b) => Mathf.Max(58f, b.label.GetPreferredValues(Widest(b)).x + 26f);
 
         // Buttons whose label changes are sized for their longest label, so the row never jumps.
         string Widest(FingertipButton b) =>
@@ -142,6 +166,7 @@ namespace LucidDreams
             else visible.Add(speed);
             if (player.HasReality) visible.Add(reality);
             visible.Add(bring);
+            if (library != null) visible.Add(browse);
             string signature = string.Join(",", visible.Select(b => b.name));
             if (signature != layout)
             {
@@ -150,7 +175,8 @@ namespace LucidDreams
             }
 
             play.interactable = speed.interactable = back.interactable = again.interactable = next.interactable = ready;
-            if (player.Error != null) title.text = "Couldn't load this dream";
+            if (string.IsNullOrEmpty(player.bundle)) title.text = "Pick a dream in the Library";
+            else if (player.Error != null) title.text = "Couldn't load this dream";
             else if (!ready) title.text = $"Loading {Mathf.RoundToInt(player.LoadProgress * 100f)}%";
             else if (player.ShowingReality)
                 title.text = player.SeenFraction >= 0f
