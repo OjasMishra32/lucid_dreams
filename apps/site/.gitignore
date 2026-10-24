@@ -1,4 +1,8 @@
 node_modules/
 dist/
-# the repo ignores *.spz; the site ships its people from public/people (the root ignores any folder named dreams/)
+# the repo ignores *.spz; the site ships its sample person from public/people
 !public/people/*.spz
+# the repo ignores *.mp4; the site ships its own small, re-encoded clips (each under 2 MB)
+!public/media/*.mp4
+# raw renders before they're encoded for the web
+public/media-staging/

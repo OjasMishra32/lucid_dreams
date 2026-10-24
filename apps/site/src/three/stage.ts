@@ -20,7 +20,7 @@ export class Stage {
   private observer: IntersectionObserver;
 
   constructor(
-    readonly host: HTMLElement,
+    public host: HTMLElement,
     opts: { splats?: boolean; antialias?: boolean; fov?: number; maxDpr?: number } = {},
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: opts.antialias ?? false, alpha: true, powerPreference: "high-performance" });
@@ -34,6 +34,16 @@ export class Stage {
       this.scene.add(this.spark);
     }
     this.observer = new IntersectionObserver(([e]) => (this.onScreen = e.isIntersecting), { rootMargin: "80px 0px" });
+    this.observer.observe(host);
+    this.resize();
+  }
+
+  /** Move the canvas into another element (one WebGL context serves several scenes). */
+  attach(host: HTMLElement) {
+    if (host === this.host) return;
+    this.observer.unobserve(this.host);
+    this.host = host;
+    host.appendChild(this.renderer.domElement);
     this.observer.observe(host);
     this.resize();
   }

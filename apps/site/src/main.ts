@@ -1,103 +1,19 @@
 import "./styles.css";
-import { CREDITS, DEMO_URL, REPO_URL } from "./config";
-import { bundleFile, dreams, heroDream, heroPerson, holdsReplay, onSite, type Bundle } from "./people";
+import { REPO_URL } from "./config";
+import { mountHeroGl } from "./heroGl";
 import { Typer } from "./typer";
-import { clamp01, onTick, reducedMotion, webgl2Available } from "./motion";
+import { clamp01, onTick, reducedMotion, smooth, webgl2Available } from "./motion";
 
-const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
-const $$ = <T extends HTMLElement = HTMLElement>(s: string) => Array.from(document.querySelectorAll<T>(s));
+const $ = <T extends HTMLElement = HTMLElement>(s: string, root: ParentNode = document) => root.querySelector<T>(s)!;
+const $$ = <T extends HTMLElement = HTMLElement>(s: string, root: ParentNode = document) => Array.from(root.querySelectorAll<T>(s));
 const root = document.documentElement;
 root.classList.add("js");
 const has3d = webgl2Available();
-if (!has3d) root.classList.add("no-3d");
 const still = reducedMotion();
 
-// ---------------------------------------------------------------- links from config
-
 $$<HTMLAnchorElement>("[data-repo]").forEach((a) => (a.href = REPO_URL));
-const demo = $<HTMLAnchorElement>("#demo-link");
-if (DEMO_URL) {
-  demo.href = DEMO_URL;
-} else {
-  demo.setAttribute("aria-disabled", "true");
-  demo.title = "The demo film is on its way";
-  demo.addEventListener("click", (e) => e.preventDefault());
-}
 
-// ---------------------------------------------------------------- the load sequence
-
-/** A section whose 3D failed drops its canvas; the rest of the page keeps theirs. */
-const fallback = (section: string) => (why: unknown) => {
-  console.warn(`3D is off in ${section}:`, why);
-  $(section).classList.add("no-3d");
-};
-let arrived = false;
-const arrive = () => {
-  if (arrived) return;
-  arrived = true;
-  document.body.classList.add("is-in");
-};
-// the type comes in with the person, or on its own if they take a moment
-setTimeout(arrive, 700);
-
-const caption = $("#hero-caption");
-const live = () => {
-  if (!has3d) return arrive();
-  import("./three/hero")
-    .then(({ mountHero }) => mountHero($("#hero-canvas"), $("#hero-figure")))
-    .then(async (person) => {
-      const n = person.count.toLocaleString("en-US");
-      caption.textContent = `${(await heroPerson()).moving.label}. ${n} Gaussians, rendered live.`;
-      arrive();
-    })
-    .catch((e) => {
-      fallback("#top")(e);
-      arrive();
-    });
-};
-if (holdsReplay()) live();
-else {
-  // a phone: the person's 360 orbit as a video, not three megabytes of live splats (the sections below still go live)
-  heroDream().then((d) => {
-    if (!d?.preview) return live(); // no bridge: the sample, live
-    const v = document.createElement("video");
-    Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: !still, preload: "auto" });
-    v.className = "hero-video";
-    v.src = bundleFile(d, d.preview);
-    if (d.thumb) v.poster = bundleFile(d, d.thumb);
-    v.setAttribute("aria-label", `${d.name}, walked all the way around`);
-    v.addEventListener("loadeddata", () => v.classList.add("on"), { once: true });
-    $("#hero-figure").append(v);
-    caption.textContent = `${d.name}. Rebuilt in 3D from one video.`;
-    arrive();
-  });
-}
-
-// ---------------------------------------------------------------- nav
-
-const nav = $("#nav");
-const setNav = () => nav.classList.toggle("scrolled", scrollY > 8);
-addEventListener("scroll", setNav, { passive: true });
-setNav();
-
-// ---------------------------------------------------------------- reveals
-
-// stagger siblings: each [data-reveal] gets its index among revealed siblings
-for (const el of $$("[data-reveal]")) {
-  const sibs = Array.from(el.parentElement?.children ?? []).filter((c) => c.hasAttribute("data-reveal"));
-  el.style.setProperty("--i", String(Math.min(6, sibs.indexOf(el))));
-}
-const revealer = new IntersectionObserver(
-  (entries) =>
-    entries.forEach((e) => {
-      if (e.isIntersecting) {
-        e.target.classList.add("in");
-        revealer.unobserve(e.target);
-      }
-    }),
-  { rootMargin: "0px 0px -8% 0px", threshold: 0.12 },
-);
-$$("[data-reveal]").forEach((el) => revealer.observe(el));
+// ---------------------------------------------------------------- scroll scenes
 
 /** 0 at the top of a tall sticky track, 1 when its sticky child is about to leave. */
 const trackProgress = (track: HTMLElement) => {
@@ -109,199 +25,426 @@ const passProgress = (el: HTMLElement) => {
   const r = el.getBoundingClientRect();
   return clamp01((innerHeight - r.top) / (innerHeight + r.height));
 };
-/** Mount a 3D section once it's within a screen of view. */
-const whenNear = (el: HTMLElement, mount: () => void) => {
+
+interface Scene {
+  el: HTMLElement;
+  near: boolean;
+  beats: { el: HTMLElement; a: number; b: number }[];
+  update?: (p: number, dt: number, now: number) => void;
+}
+const scenes = new Map<string, Scene>();
+const nearby = new IntersectionObserver(
+  (entries) => entries.forEach((e) => (scenes.get((e.target as HTMLElement).dataset.scene!)!.near = e.isIntersecting)),
+  { rootMargin: "60% 0px" },
+);
+for (const el of $$("[data-scene]")) {
+  const beats = $$("[data-beat]", el).map((b) => {
+    const [a, z] = b.dataset.beat!.split(" ").map(Number);
+    return { el: b, a, b: z };
+  });
+  scenes.set(el.dataset.scene!, { el, near: false, beats });
+  nearby.observe(el);
+}
+const scene = (name: string, update: Scene["update"]) => (scenes.get(name)!.update = update);
+const progressOf = (name: string) => trackProgress(scenes.get(name)!.el);
+
+onTick((dt, now) => {
+  for (const s of scenes.values()) {
+    if (!s.near) continue;
+    const p = trackProgress(s.el);
+    for (const b of s.beats) b.el.classList.toggle("on", p >= b.a && p < b.b);
+    s.update?.(p, dt, now);
+  }
+});
+
+/** Videos that play only while on screen (and never on their own with reduced motion). */
+const inView = new IntersectionObserver(
+  (entries) =>
+    entries.forEach((e) => {
+      const v = e.target as HTMLVideoElement;
+      if (e.isIntersecting) {
+        for (const s of $$<HTMLSourceElement>("source[data-src]", v)) {
+          s.src = s.dataset.src!;
+          s.removeAttribute("data-src");
+          v.load();
+        }
+        if (!still) v.play().catch(() => {});
+      } else v.pause();
+    }),
+  { rootMargin: "20% 0px" },
+);
+$$<HTMLVideoElement>("video.lazy-video").forEach((v) => inView.observe(v));
+
+// one-time reveals
+for (const el of $$(".reveal")) {
+  const sibs = Array.from(el.parentElement?.children ?? []).filter((c) => c.classList.contains("reveal"));
+  el.style.setProperty("--i", String(Math.min(5, sibs.indexOf(el))));
+}
+const revealer = new IntersectionObserver(
+  (entries) =>
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      e.target.classList.add("in");
+      revealer.unobserve(e.target);
+    }),
+  { rootMargin: "0px 0px -10% 0px", threshold: 0.1 },
+);
+$$(".reveal").forEach((el) => revealer.observe(el));
+
+// nav
+const nav = $("#nav");
+const setNav = () => nav.classList.toggle("scrolled", scrollY > 8);
+addEventListener("scroll", setNav, { passive: true });
+setNav();
+
+// ---------------------------------------------------------------- 1. hero
+
+const heroVideo = $<HTMLVideoElement>("#hero-video");
+const heroMedia = $("#hero-media");
+const heroTitle = $(".hero-title");
+const heroFoot = $(".hero-foot");
+const heroReveal = $(".hero-reveal");
+if (!mountHeroGl(heroVideo, heroMedia)) heroVideo.style.mixBlendMode = "lighten";
+if (!still) heroVideo.play().catch(() => {});
+new IntersectionObserver(([e]) => (e.isIntersecting ? !still && heroVideo.play().catch(() => {}) : heroVideo.pause())).observe(heroMedia);
+const arrive = () => document.body.classList.add("is-in");
+requestAnimationFrame(() => requestAnimationFrame(arrive));
+
+scene("hero", (p) => {
+  // the headline parts and leaves; the person stays and comes closer; then the truth about what you're looking at
+  const out = smooth(0.04, 0.42, p);
+  const lines = $$(".line", heroTitle);
+  lines[0].style.transform = `translate3d(${(-out * 18).toFixed(2)}vw, 0, 0)`;
+  lines[1].style.transform = `translate3d(${(out * 18).toFixed(2)}vw, 0, 0)`;
+  heroTitle.style.opacity = String(1 - smooth(0.12, 0.42, p));
+  heroFoot.style.opacity = String(1 - smooth(0.02, 0.16, p));
+  const s = 1 + smooth(0, 0.6, p) * 0.06 - smooth(0.6, 1, p) * 0.1;
+  const x = smooth(0.4, 0.7, p) * (innerWidth > 900 ? 14 : 0);
+  heroMedia.style.transform = `translate3d(${x.toFixed(2)}vw, 0, 0) scale(${s.toFixed(4)})`;
+  heroMedia.style.opacity = String(1 - smooth(0.88, 1, p));
+  heroReveal.classList.toggle("on", p > 0.46 && p < 0.97);
+});
+
+// ---------------------------------------------------------------- 2. one video in
+
+const inputClip = $("#input-clip");
+const inputSpec = $("#input-spec");
+$$("div", inputSpec).forEach((d, i) => d.style.setProperty("--i", String(i)));
+scene("input", (p) => {
+  const s = 1.18 - smooth(0.0, 0.4, p) * 0.18;
+  inputClip.style.transform = `scale(${s.toFixed(4)})`;
+  inputSpec.classList.toggle("on", p > 0.3);
+});
+
+// ---------------------------------------------------------------- 3. 48 cameras
+
+const camerasEl = $("#cameras");
+const wallVideo = document.createElement("video");
+Object.assign(wallVideo, { muted: true, loop: true, playsInline: true, preload: "none", crossOrigin: "anonymous" });
+wallVideo.src = "media/wall-dance.mp4";
+const rigFallback = () => {
+  camerasEl.classList.add("no-rig");
+  inView.observe($("#wall-fallback"));
+};
+if (has3d) {
   const io = new IntersectionObserver(
     ([e]) => {
       if (!e.isIntersecting) return;
       io.disconnect();
-      mount();
+      wallVideo.preload = "auto";
+      import("./three/rig")
+        .then(({ mountRig }) => mountRig($("#rig-canvas"), { progress: () => progressOf("cameras"), labels: $("#rig-labels"), video: wallVideo, camerasUrl: "media/cameras-dance.json" }))
+        .catch((e) => {
+          console.warn("The camera rig is off:", e);
+          rigFallback();
+        });
     },
     { rootMargin: "100% 0px" },
   );
-  io.observe(el);
-};
+  io.observe(camerasEl);
+} else rigFallback();
 
-// ---------------------------------------------------------------- intent
+// ---------------------------------------------------------------- 3b. bullet time
 
-const EXAMPLES = [
-  ["teach me this jump shot", "show me the strum, slowly", "walk me through my knee exercises"],
-  ["I just want to sit with her", "let me hear him tell that story again"],
-  ["play chess with me", "give me a hard game"],
-];
-const intentTrack = $("#intent-track");
-$("#typed").textContent = ""; // typed in once you scroll here
-const typer = new Typer($("#typed"), still);
-const modeNames = $$("#modes .mode-name");
-const modeLines = $$("#modes .mode-line");
-let mode = -1;
-let line = 0;
-let nextLine = 0;
-let intentOn = false;
-new IntersectionObserver(([e]) => (intentOn = e.isIntersecting)).observe(intentTrack);
-const setMode = (m: number) => {
-  mode = m;
-  line = 0;
-  modeNames.forEach((el, i) => el.classList.toggle("on", i === m));
-  modeLines.forEach((el, i) => el.classList.toggle("on", i === m));
-  typer.type(EXAMPLES[m][0]);
-  nextLine = performance.now() + 3600;
-};
-
-// ---------------------------------------------------------------- how it works
-
-const howTrack = $("#how-track");
-const steps = $$(".step");
-const gpuRow = $("#gpus .gpu-row");
-// six B200s and six RTX PRO 6000s, each finishing its slice at its own pace
-const GPU_SPEED = [1.0, 0.97, 1.03, 0.99, 1.02, 0.96, 0.84, 0.8, 0.86, 0.82, 0.85, 0.79];
-const gpuFills = GPU_SPEED.map(() => {
-  const i = document.createElement("i");
-  const b = document.createElement("b");
-  i.appendChild(b);
-  gpuRow.appendChild(i);
-  return b;
-});
-let step = -1;
-const howProgress = () => trackProgress(howTrack);
-if (has3d)
-  whenNear(howTrack, () =>
-    import("./three/how")
-      .then(({ mountHow }) => mountHow($("#how-canvas"), { progress: howProgress, figure: $("#how-figure"), measure: $("#measure") }))
-      .catch(fallback("#how")),
-  );
-
-// ---------------------------------------------------------------- uses: the reel
-
-/**
- * The three best real dreams, playing: replays of a whole move first, then the sharpest (held-out PSNR), then the
- * newest, one per person. Public figures and a family's private dreams never appear. Without a bridge it stays hidden.
- */
-const reel = $("#reel");
-const rank = (d: Bundle) => [d.kind === "replay" && d.frameCount >= 121 ? 0 : 1, -(d.metrics?.psnr ?? 0), -Date.parse(d.createdAt ?? "")];
-const before = (a: Bundle, b: Bundle) => {
-  const [x, y] = [rank(a), rank(b)];
-  return x[0] - y[0] || x[1] - y[1] || (x[2] || 0) - (y[2] || 0);
-};
-whenNear(reel.parentElement!, () =>
-  dreams().then((all) => {
-    // one tile per person: a head-swap bundle ("<id>-head") and its base dream are the same person
-    const seen = new Set<string>();
-    const best = all
-      .filter(onSite)
-      .sort(before)
-      .filter((d) => {
-        const person = d.id.replace(/-head(-\d+)?$/, "");
-        return !seen.has(person) && !!seen.add(person);
-      })
-      .slice(0, 3);
-    if (!best.length) return;
-    const list = $("#reel-list");
-    const playing = new IntersectionObserver(
-      (entries) => entries.forEach((e) => (e.isIntersecting && !still ? (e.target as HTMLVideoElement).play().catch(() => {}) : (e.target as HTMLVideoElement).pause())),
-      { threshold: 0.3 },
+const bullet = $<HTMLCanvasElement>("#bullet-canvas");
+const bctx = bullet.getContext("2d");
+const FRAMES = 32;
+const sets = new Map<string, HTMLImageElement[]>();
+let who = "dance";
+let shownFrame = -1;
+const loadSet = (name: string) => {
+  if (!sets.has(name))
+    sets.set(
+      name,
+      Array.from({ length: FRAMES }, (_, i) => {
+        const img = new Image();
+        img.decoding = "async";
+        img.src = `media/bullet-${name}/${String(i).padStart(3, "0")}.webp`;
+        img.onload = () => {
+          if (name === who && i === Math.max(0, shownFrame)) shownFrame = -1; // redraw now that it's here
+        };
+        return img;
+      }),
     );
-    best.forEach((d, i) => {
-      const li = document.createElement("li");
-      li.className = "reel-item";
-      li.setAttribute("data-reveal", "");
-      li.style.setProperty("--i", String(i));
-      const media = document.createElement("div");
-      media.className = "reel-media";
-      const v = document.createElement("video");
-      Object.assign(v, { muted: true, loop: true, playsInline: true, preload: "metadata" });
-      v.src = bundleFile(d, d.preview!);
-      if (d.thumb) v.poster = bundleFile(d, d.thumb);
-      v.setAttribute("aria-label", `${d.name}, walked all the way around`);
-      media.append(v);
-      const name = document.createElement("h3");
-      name.textContent = d.name;
-      li.append(media, name);
-      const said = d.intent?.trim().replace(/[.!]+$/, "");
-      if (said) {
-        const p = document.createElement("p");
-        p.className = "reel-intent";
-        const q = document.createElement("q");
-        q.textContent = said.charAt(0).toUpperCase() + said.slice(1) + ".";
-        p.append(q);
-        li.append(p);
-      }
-      if (CREDITS[d.id]) {
-        const c = document.createElement("p");
-        c.className = "reel-credit";
-        c.textContent = CREDITS[d.id];
-        li.append(c);
-      }
-      list.append(li);
-      playing.observe(v);
-      revealer.observe(li);
+  return sets.get(name)!;
+};
+const dialDot = $("#dial-dot") as unknown as SVGCircleElement;
+const dialDeg = $("#dial-deg");
+new IntersectionObserver(([e]) => e.isIntersecting && loadSet(who), { rootMargin: "150% 0px" }).observe(bullet);
+$$<HTMLButtonElement>(".seg-btn").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    who = btn.dataset.who!;
+    $$<HTMLButtonElement>(".seg-btn").forEach((b) => {
+      b.classList.toggle("on", b === btn);
+      b.setAttribute("aria-pressed", String(b === btn));
     });
-    reel.hidden = false;
+    loadSet(who);
+    shownFrame = -1;
   }),
 );
+scene("bullet", (p) => {
+  const i = Math.min(FRAMES - 1, Math.floor(smooth(0.05, 0.95, p) * FRAMES));
+  if (i === shownFrame || !bctx) return;
+  const img = loadSet(who)[i];
+  if (!img.complete || !img.naturalWidth) return;
+  bctx.drawImage(img, 0, 0, bullet.width, bullet.height);
+  shownFrame = i;
+  const yaw = (i % 16) * 22.5;
+  const a = (yaw * Math.PI) / 180;
+  dialDot.setAttribute("cx", (50 + Math.sin(a) * 44).toFixed(2));
+  dialDot.setAttribute("cy", (50 - Math.cos(a) * 44).toFixed(2));
+  dialDeg.textContent = `${yaw.toFixed(1)}°`;
+});
 
-// ---------------------------------------------------------------- play
+// ---------------------------------------------------------------- 4 + 5. the live 3D person
 
-const play = $("#play");
-if (has3d)
-  whenNear(play, () =>
-    import("./three/chess").then(({ mountChess }) => mountChess($("#chess-canvas"), () => passProgress(play))).catch(fallback("#play")),
-  );
-
-// ---------------------------------------------------------------- honesty
+const gaussCount = $("#gauss-count");
+let gaussians = 286566;
+const chunks = $("#chunks");
+// 121 frames in 12 chunks of 11: each GPU takes a slice of the clip
+const cells: HTMLElement[][] = [];
+for (let g = 0; g < 12; g++) {
+  const col = document.createElement("div");
+  const c = document.createElement("div");
+  c.className = "chunk";
+  const row: HTMLElement[] = [];
+  for (let k = 0; k < 11; k++) {
+    const i = document.createElement("i");
+    if (g * 11 + k >= 121) i.className = "none";
+    c.appendChild(i);
+    row.push(i);
+  }
+  const label = document.createElement("p");
+  label.className = "chunk-label";
+  label.textContent = String(g + 1).padStart(2, "0");
+  col.append(c, label);
+  chunks.appendChild(col);
+  cells.push(row);
+}
+const GPU_PACE = [1, 0.97, 1.04, 0.99, 1.02, 0.95, 1.01, 0.98, 1.03, 0.96, 1.0, 0.94];
+scene("reconstruct", (p) => {
+  const n = Math.round(smooth(0.06, 0.5, p) * gaussians);
+  gaussCount.textContent = n.toLocaleString("en-US");
+  const g = smooth(0.62, 0.95, p);
+  cells.forEach((row, gi) => row.forEach((cell, k) => cell.classList.toggle("done", g * GPU_PACE[gi] * 11.4 > k + 0.4)));
+});
 
 const realityBtn = $<HTMLButtonElement>("#reality");
-let realityOn = true;
+let realityPressed: boolean | null = null; // null: scroll decides
 realityBtn.addEventListener("click", () => {
-  realityOn = !realityOn;
-  realityBtn.setAttribute("aria-pressed", String(realityOn));
+  realityPressed = !(realityPressed ?? realityBtn.getAttribute("aria-pressed") === "true");
+  realityBtn.setAttribute("aria-pressed", String(realityPressed));
 });
-const seenPct = $("#seen-pct");
-heroPerson().then(({ still: p }) => {
-  if (p.seenFraction == null) return;
-  seenPct.textContent = String(Math.round(p.seenFraction * 100));
-  $("#honesty").classList.add("has-seen");
+scene("honesty", (p) => {
+  if (realityPressed === null) realityBtn.setAttribute("aria-pressed", String(p > 0.34));
 });
-const honesty = $("#honesty");
-let honestyInView = false;
-new IntersectionObserver(([e]) => (honestyInView = e.isIntersecting), { threshold: 0.25 }).observe($(".honesty-stage"));
-if (has3d)
-  whenNear(honesty, () =>
-    import("./three/honesty")
-      .then(({ mountHonesty }) =>
-        mountHonesty($("#honesty-canvas"), { figure: $("#honesty-figure"), on: () => realityOn && honestyInView }),
-      )
-      .then((person) => {
-        seenPct.textContent = String(Math.round(person.seenFraction * 100));
-        $("#seen-note").hidden = !person.seenIsEstimate;
-      })
-      .catch(fallback("#honesty")),
+const realityOn = () => realityBtn.getAttribute("aria-pressed") === "true";
+
+const splatSlots = { reconstruct: $("#slot-reconstruct"), honesty: $("#slot-honesty") };
+const noSplat = () => {
+  for (const id of ["#reconstruct", "#honesty"]) $(id).classList.add("no-splat");
+  $$<HTMLVideoElement>(".slot-fallback").forEach((v) => inView.observe(v));
+};
+if (has3d) {
+  const io = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      import("./three/splat")
+        .then(({ mountSplats }) =>
+          mountSplats({
+            slots: splatSlots,
+            active: () => {
+              const r = scenes.get("reconstruct")!;
+              const h = scenes.get("honesty")!;
+              const vis = (el: HTMLElement) => {
+                const b = el.getBoundingClientRect();
+                return b.top < innerHeight && b.bottom > 0;
+              };
+              if (r.near && vis(r.el)) return "reconstruct";
+              if (h.near && vis(h.el)) return "honesty";
+              return null;
+            },
+            progress: (s) => progressOf(s),
+            reality: realityOn,
+          }),
+        )
+        .then((live) => {
+          gaussians = live.count;
+          if (!live.seenIsEstimate) $("#seen-num").textContent = String(Math.round(live.seenFraction * 100));
+        })
+        .catch((e) => {
+          console.warn("The live 3D is off:", e);
+          noSplat();
+        });
+    },
+    { rootMargin: "120% 0px" },
   );
+  io.observe($("#reconstruct"));
+  io.observe($("#honesty"));
+} else noSplat();
 
-// ---------------------------------------------------------------- every frame
+// ---------------------------------------------------------------- measured: the real frame against our render
 
-onTick((_dt, now) => {
-  // intent: three phases down the sticky track, one mode each; examples rotate while you stay
-  if (intentOn) {
-    const m = Math.min(2, Math.floor(trackProgress(intentTrack) * 3));
-    if (m !== mode) setMode(m);
-    else if (now > nextLine && typer.idle) {
-      line = (line + 1) % EXAMPLES[m].length;
-      typer.type(EXAMPLES[m][line]);
-      nextLine = now + 3600;
-    }
-  }
-
-  // how it works: which step, and the GPUs filling during step two
-  const p = howProgress();
-  const s = p < 0.36 ? 0 : p < 0.7 ? 1 : 2;
-  if (s !== step) {
-    step = s;
-    steps.forEach((el, i) => {
-      el.classList.toggle("on", i === s);
-      el.classList.toggle("past", i < s);
+const compare = $("#compare");
+const handle = $("#compare-handle");
+let touched = false;
+const setX = (pct: number) => {
+  const v = Math.max(0, Math.min(100, pct));
+  compare.style.setProperty("--x", `${v.toFixed(2)}%`);
+  handle.setAttribute("aria-valuenow", String(Math.round(v)));
+  handle.setAttribute("aria-valuetext", v < 50 ? `${Math.round(100 - v)}% our render` : `${Math.round(v)}% real frame`);
+};
+setX(50);
+let dragging = false;
+const fromPointer = (e: PointerEvent) => {
+  const r = compare.getBoundingClientRect();
+  setX(((e.clientX - r.left) / r.width) * 100);
+};
+compare.addEventListener("pointerdown", (e) => {
+  touched = dragging = true;
+  compare.setPointerCapture(e.pointerId);
+  fromPointer(e);
+});
+compare.addEventListener("pointermove", (e) => dragging && fromPointer(e));
+compare.addEventListener("pointerup", () => (dragging = false));
+compare.addEventListener("pointercancel", () => (dragging = false));
+handle.addEventListener("keydown", (e) => {
+  const now = Number(handle.getAttribute("aria-valuenow"));
+  const step = e.shiftKey ? 10 : 2;
+  if (e.key === "ArrowLeft" || e.key === "ArrowDown") setX(now - step);
+  else if (e.key === "ArrowRight" || e.key === "ArrowUp") setX(now + step);
+  else if (e.key === "Home") setX(0);
+  else if (e.key === "End") setX(100);
+  else return;
+  touched = true;
+  e.preventDefault();
+});
+// dance or tai chi: the real frame, our render, their number, and the generated views
+const TRUTH: Record<string, { db: string; who: string }> = { dance: { db: "40.3", who: "the dancer" }, taichi: { db: "46.6", who: "the tai chi player" } };
+$$<HTMLButtonElement>(".truth-btn").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    const k = btn.dataset.truth!;
+    $$<HTMLButtonElement>(".truth-btn").forEach((b) => {
+      b.classList.toggle("on", b === btn);
+      b.setAttribute("aria-pressed", String(b === btn));
     });
+    const real = $<HTMLImageElement>("#truth-real");
+    const render = $<HTMLImageElement>("#truth-render");
+    real.src = `media/truth-${k}-real.jpg`;
+    real.alt = `A frame of the real input video: ${TRUTH[k].who}, mid-move`;
+    render.src = `media/truth-${k}-render.jpg`;
+    $<HTMLImageElement>("#views-img").src = `media/views-${k}.jpg`;
+    $<HTMLImageElement>("#views-img").alt = `Five generated views of ${TRUTH[k].who} from all around, each beside our render from the same view`;
+    $("#truth-db").textContent = TRUTH[k].db;
+  }),
+);
+const viewsTrack = $("#views-track");
+const views = $("#views");
+let truthNear = false;
+new IntersectionObserver(([e]) => (truthNear = e.isIntersecting), { rootMargin: "20% 0px" }).observe($("#truth"));
+onTick(() => {
+  if (!truthNear) return;
+  // until you take the handle, scrolling sweeps it from the real frame across to our render
+  if (!touched) setX(82 - smooth(0.25, 0.7, passProgress(compare)) * 64);
+  const over = viewsTrack.scrollWidth - views.clientWidth;
+  if (over > 0) viewsTrack.style.transform = `translate3d(${(-smooth(0.15, 0.85, passProgress(views)) * over).toFixed(1)}px, 0, 0)`;
+});
+
+// ---------------------------------------------------------------- 6. in your room: stills from the WebXR viewer
+
+const SHOTS: Record<string, { src: string; alt: string }> = {
+  golf: { src: "media/room-golf.webp", alt: "A golfer rebuilt in 3D at the top of his backswing, beside the lesson card: Your turn, Part 1" },
+  ball: { src: "media/room-ball.webp", alt: "A basketball player rebuilt in 3D rising into a jump shot, the ball in his hands, a regulation hoop ahead of him" },
+  guitar: { src: "media/room-guitar.webp", alt: "A seated guitarist rebuilt in 3D, strumming, beside the lesson card: Your turn, Part 1" },
+  chess: { src: "media/room-chess.webp", alt: "A real-size chess board in the starting position, a chess clock beside it" },
+};
+for (const el of $$("[data-shot]")) {
+  const s = SHOTS[el.dataset.shot!];
+  if (!s) continue;
+  const img = document.createElement("img");
+  Object.assign(img, { src: s.src, alt: s.alt, loading: "lazy", decoding: "async", width: 1040, height: 780 });
+  el.append(img);
+}
+
+// ---------------------------------------------------------------- 7. one sentence becomes a plan
+
+const PLAN = `{
+  "intent": "teach me this strum",
+  "mode": "teach",
+  "title": "Down, down-up: a first strum",
+  "place": "beside",
+  "steps": [
+    { "start": 0.0, "end": 1.6, "title": "Rest the wrist",
+      "tip": "Let it hang loose over the sound hole.",
+      "speed": 0.5, "repeat": 2 },
+    { "start": 1.6, "end": 2.8, "title": "Down",
+      "tip": "One stroke, all six strings.",
+      "speed": 0.5, "repeat": 3 },
+    { "start": 2.8, "end": 4.4, "title": "Down-up",
+      "tip": "The up-stroke catches the top strings only.",
+      "speed": 0.75, "repeat": 3 }
+  ]
+}`;
+const STEPS = [
+  { t: "Rest the wrist", s: 0.5, r: 2, d: 1.6 },
+  { t: "Down", s: 0.5, r: 3, d: 1.2 },
+  { t: "Down-up", s: 0.75, r: 3, d: 1.6 },
+];
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const tint = (s: string) =>
+  esc(s)
+    .replace(/("[^"]*")(\s*:)/g, '<span class="k">$1</span>$2')
+    .replace(/(:\s*)("[^"]*")/g, '$1<span class="s">$2</span>')
+    .replace(/(:\s*)(-?\d+(?:\.\d+)?)/g, '$1<span class="n">$2</span>');
+const planLines = PLAN.split("\n");
+const code = $("#json code");
+const stepsEl = $("#steps");
+const stepBars = STEPS.map((st) => {
+  const el = document.createElement("div");
+  el.className = "step-bar";
+  el.style.flex = String(st.d * st.r / st.s);
+  el.innerHTML = `<i></i><b>${st.t}</b><em>${st.s}× · ×${st.r}</em>`;
+  stepsEl.appendChild(el);
+  return el;
+});
+$("[data-mode=teach]").classList.add("on");
+const typer = new Typer($("#typed"), still);
+let typed = false;
+let shownLines = -1;
+scene("plan", (p) => {
+  if (!typed && p > 0.02) {
+    typed = true;
+    typer.type("teach me this strum");
   }
-  const local = clamp01((p - 0.38) / 0.28);
-  gpuFills.forEach((b, i) => (b.style.transform = `scaleX(${clamp01(local * GPU_SPEED[i] * 1.12).toFixed(4)})`));
+  const n = still ? planLines.length : Math.round(smooth(0.12, 0.6, p) * planLines.length);
+  if (n !== shownLines) {
+    shownLines = n;
+    code.innerHTML = tint(planLines.slice(0, n).join("\n"));
+  }
+  stepBars.forEach((b, i) => {
+    b.classList.toggle("on", p > 0.5 + i * 0.05);
+    const f = smooth(0.62 + i * 0.1, 0.72 + i * 0.1, p);
+    (b.firstElementChild as HTMLElement).style.setProperty("--f", f.toFixed(3));
+  });
 });
