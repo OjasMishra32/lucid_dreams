@@ -269,6 +269,12 @@ export interface FreezeInfo {
   /** The main players (the pair), each rebuilt from their own window. */
   players: FreezePlayer[];
   ball: FreezeBall;
+  /**
+   * The freeze.players id whose own splats hold the ball at F (the holder's real splats do): the 3D then draws no ball
+   * of its own and erases nothing of theirs (freeze.ball.erase must not list them), and the ball's card leaves and comes
+   * back with the video layer, in the same frames as the holder's card. Absent: freeze.ball's sphere is the ball.
+   */
+  ballInBody?: string;
   /** The extras (3.4b): every other player or ref placed on the court. May be empty. */
   others: FreezeExtra[];
   stands: StandsInfo;
@@ -632,8 +638,12 @@ export function validateCourt(json: unknown): string[] {
           if (c.has(e, "player", `${at}.player`) && c.text(e.player, `${at}.player`) && !players.has(e.player))
             c.fail(`${at}.player`, "expected the id of one of freeze.players (there is no player by that id)", e.player);
           if (c.has(e, "radius", `${at}.radius`)) c.num(e.radius, `${at}.radius`, { gt: 0 });
+          if (fz.ballInBody !== undefined && e.player === fz.ballInBody)
+            c.fail(`${at}.player`, "expected no erase for freeze.ballInBody's player: their splats hold the ball", e.player);
         });
     }
+    if (fz.ballInBody !== undefined && c.text(fz.ballInBody, "freeze.ballInBody") && !players.has(fz.ballInBody))
+      c.fail("freeze.ballInBody", "expected the id of one of freeze.players (there is no player by that id)", fz.ballInBody);
     if (c.has(fz, "others", "freeze.others") && c.list(fz.others, "freeze.others"))
       fz.others.forEach((o, i) => {
         const at = `freeze.others[${i}]`;

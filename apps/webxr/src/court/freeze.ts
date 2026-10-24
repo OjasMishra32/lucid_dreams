@@ -292,7 +292,8 @@ export class Freeze {
       const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
       return (await new GLTFLoader().loadAsync(this.bundle.file(path))).scene;
     };
-    const eraseFor = (id: string) => fz.ball.erase.find((e) => e.player === id);
+    // a holder whose own splats hold the ball (freeze.ballInBody) keeps them all: their ball is the ball
+    const eraseFor = (id: string) => (id === fz.ballInBody ? undefined : fz.ball.erase.find((e) => e.player === id));
 
     const addPerson = async (p: {
       id: string; pair: boolean; fromC: boolean; kind: "splats" | "body" | "relief"; file: string; reality: string;
@@ -371,16 +372,19 @@ export class Freeze {
       ),
     ]);
 
-    // the ball: F's own pixels projected from camera F onto a sphere at freeze.ball
+    // the ball: F's own pixels projected from camera F onto a sphere at freeze.ball, unless the holder's splats hold it
+    // (freeze.ballInBody: a sphere there would draw a second ball)
     const fIndex = court.video.segments.eases[0]?.frames[1] ?? 0;
     const fr = frames[Math.min(frames.length - 1, fIndex)];
     const camF = { centre: court.camera.centre, q: fr.q, f: fr.f, cx: court.camera.cx, cy: court.camera.cy, width: court.camera.width, height: court.camera.height };
     const freezeTex = await tex(court.video.freeze, true);
     if (freezeTex) freezeTex.generateMipmaps = true;
-    this.ball = new THREE.Mesh(new THREE.SphereGeometry(fz.ball.radius, 48, 32), ballMaterial(light, freezeTex, camF, this.realityU));
-    this.ball.position.set(...fz.ball.centre);
-    this.ball.name = "court-ball";
-    this.group.add(this.ball);
+    if (!fz.ballInBody) {
+      this.ball = new THREE.Mesh(new THREE.SphereGeometry(fz.ball.radius, 48, 32), ballMaterial(light, freezeTex, camF, this.realityU));
+      this.ball.position.set(...fz.ball.centre);
+      this.ball.name = "court-ball";
+      this.group.add(this.ball);
+    }
 
     // the players' white point, for the arena's own lights (P13)
     const colors: number[] = [];

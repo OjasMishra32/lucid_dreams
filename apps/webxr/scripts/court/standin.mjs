@@ -1,7 +1,8 @@
 // The stand-in court bundle: a synthetic play shaped like the real one, so every stream builds and tests against a
 // valid bundle before the real footage lands. Nothing in it comes from, or is measured from, broadcast footage: the
 // camera, rates, speeds and frame numbers are made up.
-//   node apps/webxr/scripts/court/standin.mjs [--out <dir>] [--render 768x432] [--workers N]
+//   node apps/webxr/scripts/court/standin.mjs [--out <dir>] [--render 768x432] [--workers N] [--ball-in-body]
+//        (--ball-in-body: the shooter's own splats and proxy hold the ball at F, freeze.ballInBody, as the real ones do)
 //   node apps/webxr/scripts/court/standin.mjs --fixture   (rewrites scripts/court/fixtures/court.json only)
 // Writes (default) apps/webxr/scripts/court/out/standin/ (git-ignored by scripts/court/.gitignore):
 //   court.json, video/frames.json, video/cards.json   valid per src/court/format.ts (checked before it exits)
@@ -311,8 +312,11 @@ const capsuleBounds = (caps) => {
 const boxDistance = (p, b) => Math.hypot(Math.max(b.min[0] - p[0], 0, p[0] - b.max[0]), Math.max(b.min[2] - p[2], 0, p[2] - b.max[2]));
 const floorRect = (c, half) => [round(c[0] - half, 3), round(c[2] - half, 3), round(c[0] + half, 3), round(c[2] + half, 3)];
 
-/** court.json, frames.json and cards.json for the stand-in (pure: no files). */
-export function standinBundle() {
+/**
+ * court.json, frames.json and cards.json for the stand-in (pure: no files). `ballInBody`: the shooter's own splats
+ * hold the ball at F (freeze.ballInBody "shooter", nothing erased), as the real shooter's do.
+ */
+export function standinBundle({ ballInBody = false } = {}) {
   const tl = timeline();
   const atF = sceneAt(0);
   const [shooter, defender, trailer] = atF.people;
@@ -379,7 +383,8 @@ export function standinBundle() {
     seat: { ray: "freeze", distance: 5.0, distanceRange: [4, 7], pairCentre: PC, clear: 1.0 },
     freeze: {
       players: [player(shooter, "Shooter (stand-in)", seenShare(shooter)), player(defender, "Defender (stand-in)", seenShare(defender))],
-      ball: { centre: atF.ball.map((x) => round(x, 4)), radius: BALL_R, erase: [{ player: "shooter", radius: 0.15 }] },
+      ball: { centre: atF.ball.map((x) => round(x, 4)), radius: BALL_R, erase: ballInBody ? [] : [{ player: "shooter", radius: 0.15 }] },
+      ...(ballInBody ? { ballInBody: "shooter" } : {}),
       others: [
         {
           id: "trailer",
@@ -481,6 +486,20 @@ function sampleBody(person, count, seed) {
       continue;
     }
     out.push({ p, n, rgb: lambert(albedo(c.part, p[1], person.palette, person.k), n) });
+  }
+  return out;
+}
+
+/** Points on the ball's surface (the held ball in a holder's own splats: --ball-in-body). */
+function sampleBall(ball, count, seed) {
+  const r = rng(seed);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const z = 2 * r() - 1;
+    const phi = 2 * Math.PI * r();
+    const s = Math.sqrt(1 - z * z);
+    const n = [s * Math.cos(phi), z, s * Math.sin(phi)];
+    out.push({ p: add(ball.c, mul(n, ball.r)), n, rgb: lambert([0.85, 0.42, 0.12], n) });
   }
   return out;
 }
@@ -806,8 +825,8 @@ function rayCapsule(d, k) {
 
 // ---------------- writers ----------------
 
-/** A depth mesh of a body seen from camera F (the splat-depth proxy stand-in), as a binary glTF. */
-function proxyGlb(person, camF) {
+/** A depth mesh of a body seen from camera F (the splat-depth proxy stand-in), as a binary glTF; `held` a ball in it. */
+function proxyGlb(person, camF, held = null) {
   const caps = person.caps.map((c) => {
     const ba = sub(c.b, c.a);
     const oa = sub(CAM_C, c.a);
@@ -841,6 +860,12 @@ function proxyGlb(person, camF) {
       for (const k of caps) {
         const x = rayCapsule(d, k);
         if (x > 0 && x < t) t = x;
+      }
+      if (held) {
+        const oc = sub(CAM_C, held.c);
+        const b = dot(oc, d);
+        const h = b * b - (dot(oc, oc) - held.r * held.r);
+        if (h > 0 && -b - Math.sqrt(h) > 0 && -b - Math.sqrt(h) < t) t = -b - Math.sqrt(h);
       }
       // off the body the mesh sits at the body's mean depth (the matte hides it)
       if (!Number.isFinite(t)) t = zMean / dot(d, r2);
@@ -988,7 +1013,8 @@ export function stackedFrame(show, cards, rw, rh) {
 async function main() {
   const args = process.argv.slice(2);
   const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
-  const { court, frames, cards } = standinBundle();
+  const ballInBody = args.includes("--ball-in-body");
+  const { court, frames, cards } = standinBundle({ ballInBody });
   if (args.includes("--fixture")) {
     mkdirSync(dirname(FIXTURE), { recursive: true });
     writeFileSync(FIXTURE, `${JSON.stringify(court, null, 2)}\n`);
@@ -1028,12 +1054,14 @@ async function main() {
 
   // the pair and the trailer: splats, reality, proxy (the pair), floor maps
   const atF = sceneAt(0);
+  const held = ballInBody ? { c: atF.ball, r: BALL_R } : null;
   for (const [i, person] of atF.people.entries()) {
     const dir = person.id === "trailer" ? "others/trailer" : `players/${person.id}`;
     const pts = sampleBody(person, person.id === "trailer" ? 16000 : 24000, 11 + i);
+    if (held && person.id === "shooter") pts.push(...sampleBall(held, 3000, 31));
     writeFileSync(join(out, dir, "freeze.ply"), ply(pts, false));
     writeFileSync(join(out, dir, "reality.ply"), ply(pts, true));
-    if (person.id !== "trailer") writeFileSync(join(out, dir, "proxy.glb"), proxyGlb(person, camF));
+    if (person.id !== "trailer") writeFileSync(join(out, dir, "proxy.glb"), proxyGlb(person, camF, person.id === "shooter" ? held : null));
     const rect = floorRect(person.foot, 0.8);
     writePng(join(out, dir, "shadow.png"), floorBlob(rect, person.feet, [0, 0, 0], 0.55));
     writePng(join(out, dir, "reflection.png"), floorBlob(rect, person.feet, person.palette.jersey, 0.15));

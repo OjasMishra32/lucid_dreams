@@ -23,7 +23,7 @@ import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, h
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { Probe, viewOf } from "./probe";
 import { judgeRate, wantRate, type XrRate } from "./rate";
-import { BUILT as PROXIES_BUILT, Proxies } from "./proxies";
+import { BUILT as PROXIES_BUILT, Proxies, layerVisibility } from "./proxies";
 import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
 import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
@@ -103,6 +103,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let videoRef: ShowVideo | null = null;
   let lightRef: LightField | null = null;
   let clockRef: Clock | null = null;
+  let ballsRef: (() => Record<string, boolean>) | null = null;
   // the headset's display rate (rate.ts): what the session runs at and offers, what court.ts asked for, the verdict
   const xr: XrRate = { rate: null, supported: [], requested: null, showHz: 0, verdict: "unknown" };
   // every button, key and probe action waits for the top of the next XR frame (anchors need the XRFrame; one order)
@@ -120,6 +121,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           onScreen: videoRef?.stats.onScreen ?? -1,
           fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)), mask: videoRef?.maskLevel ?? -1,
           xr: { ...xr, supported: [...xr.supported] }, xrHz: xr.rate ?? xr.showHz, clockHz: clockRef?.outputHz() ?? 0,
+          balls: ballsRef?.() ?? {},
         }),
         seatHere: () => actions.get("seatHere")?.(),
         press: (action) => actions.get(action)?.(),
@@ -174,6 +176,24 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const seat = new Seat(court, frames, world, seatLock, params.has("seat") ? Number(params.get("seat")) : undefined);
   world.add(proxies.group);
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
+  // what draws a ball this frame (the e2e's ball scenario): the ball's card on the video layer, the 3D's own sphere,
+  // the holder's splats (freeze.ballInBody); and the holder's card, which the ball's goes with
+  const drawn = (o: THREE.Object3D | undefined): boolean => {
+    for (let x: THREE.Object3D | null | undefined = o; x; x = x.parent) if (!x.visible) return false;
+    return !!o;
+  };
+  const holder = court.freeze.ballInBody ?? court.freeze.ball.erase[0]?.player ?? court.freeze.players[0]?.id ?? "";
+  ballsRef = () => {
+    const on = video.stats.onScreen;
+    const here = on >= 0 ? bundle.cards[on]?.cards ?? [] : [];
+    const cardsUp = layerVisibility(video.opacity, video.maskLevel).cards;
+    const ballCardHere = here.some((c) => c.kind === "ball");
+    return {
+      ballCardHere, card: cardsUp && ballCardHere, holderCard: cardsUp && here.some((c) => c.id === holder),
+      sphere: drawn(scene.getObjectByName("court-ball")),
+      body: !!court.freeze.ballInBody && drawn(scene.getObjectByName(`court-freeze-${court.freeze.ballInBody}`)),
+    };
+  };
   // the textures follow the clock's frame every display frame from the watch on, the freeze included (stream D): a held
   // F still goes up once it decodes, and See my room's jump to F can't leave an earlier frame on the video or proxies
   const feed = (frame: number) => {

@@ -57,6 +57,17 @@ test("cards.json is resolution-free: boxes in source pixel edges, tiles 0-1 in t
   }
 });
 
+test("a ball held in a player's own splats (freeze.ballInBody, nothing erased from them) validates; so does the stand-in built that way", () => {
+  const { court } = fresh();
+  court.freeze.ballInBody = "shooter";
+  court.freeze.ball.erase = [];
+  assert.deepEqual(validateCourt(court), []);
+  const held = structuredClone(standinBundle({ ballInBody: true })) as { court: Json; frames: Json[]; cards: Json[] };
+  assert.equal(held.court.freeze.ballInBody, "shooter");
+  assert.deepEqual(held.court.freeze.ball.erase, []);
+  assert.deepEqual(validateCourt(held.court), []);
+});
+
 test("they still validate after a JSON round trip", () => {
   const { court, frames } = JSON.parse(JSON.stringify(fresh()));
   assert.deepEqual(validateCourt(court), []);
@@ -142,6 +153,8 @@ const BROKEN: [string, (c: Json) => void, string, RegExp][] = [
   ["missing proxy", (c) => delete c.freeze.players[0].proxy, "freeze.players[0].proxy", /missing/],
   ["ball radius", (c) => (c.freeze.ball.radius = -0.1), "freeze.ball.radius", /greater than 0/],
   ["ball erase player", (c) => (c.freeze.ball.erase[0].player = "nobody"), "freeze.ball.erase[0].player", /no player/],
+  ["ball in a body nobody has", (c) => (c.freeze.ballInBody = "nobody"), "freeze.ballInBody", /no player/],
+  ["ball in a body and erased from it", (c) => (c.freeze.ballInBody = "shooter"), "freeze.ball.erase[0].player", /hold the ball/],
   ["extra kind", (c) => (c.freeze.others[0].kind = "card"), "freeze.others[0].kind", /splats, body or relief/],
   ["extra pose", (c) => (c.freeze.others[0].pose = "B"), "freeze.others[0].pose", /A or C/],
   ["relief past 15 deg", (c) => Object.assign(c.freeze.others[0], { kind: "relief", maxRayAngle: 20 }), "freeze.others[0].maxRayAngle", /15/],

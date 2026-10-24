@@ -60,6 +60,7 @@ Exit 0 when every check that ran passed, 1 on a failure, 3 when every scenario a
 | `wiring` | integrator | court.ts's wiring of C: seat.arrival, PersistentLock, the hands' light and draw order, seat.update's dt | written |
 | `rate` | integrator | the session runs at the show's rate when it offers it (court.ts asks for it); the show keeps the headset's time within one show frame over 10 s; run as is, `--query xrhz=90` and `--query "xrhz=90&xrrates=90,120"` (IWER's rate and offer) | written |
 | `reseat` | integrator | Change seat: a 2 s hold goes back to the setup page, the show stops, the world stays on its anchor; Seat here again takes a new seat, waits for the hand-over, starts from the top | written |
+| `ball` | integrator | one ball at F: with `freeze.ballInBody` the holder's splats (no card, no sphere), else the 3D's sphere; the ball's card goes with the holder's through the resume; run on the stand-in and on `standin.mjs --ball-in-body --out <dir outside the checkout>` with `--bundle <dir>` | written |
 | `freezehold` | integrator | the clock's frame reaches the video and the proxies every frame after F, See my room's jump lands the picture on F, a rushed fade never rushes the light (P44) | written; waits on video, proxies, handoff |
 
 `ctx` (see the top of `e2e.mjs`): `nextFrame()`, `frames(n)`, `until(phase, max)`, `save(name)` (the next frame as a
