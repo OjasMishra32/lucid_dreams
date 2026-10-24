@@ -21,8 +21,8 @@ Your head swap is now the centre of the demo's realism, on two people:
    Same chain with `NAME=ian-grandma`. Her face matters more than anything else we build, so check it at 1.5 m in
    the headset with Ian before anyone else sees it. If there's a home video with her voice, your Audio2Expression
    lips (MORE, item 1) are what make her feel present.
-3. **`SMPL-X__FLAME_vertex_ids.npy`:** Ojasva is downloading it with the SMPL-X login (the "model correspondences"
-   download) into `$L/models/smplx/`. Until it lands, test your alignment on the synthetic head in your tests.
+3. **`SMPL-X__FLAME_vertex_ids.npy` is installed** (Sat 1:30 AM), with `MANO_SMPLX_vertex_ids.pkl` for the hands,
+   in `$L/models/smplx/`, from SMPL-X's correspondences download. Your alignment can run on real heads now.
 4. **`head-swap.sbatch`** (your part 2): finish it, with InsightFace identity cosine in `compare.png` and
    `metrics.identity`.
 
