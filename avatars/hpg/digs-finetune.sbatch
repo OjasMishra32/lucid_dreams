@@ -12,6 +12,7 @@
 # The research claim: a one-photo DiGS avatar of the person in a finished replay run, fine-tuned on that run's
 # 4DAnyone views, with PSNR / SSIM / LPIPS on 4 held-out views before and after. Needs digs-assets first.
 #   sbatch --export=ALL,RUN_ID=<run id> avatars/hpg/digs-finetune.sbatch
+# DETAIL_STEPS=300 adds the hands and face pass (2x face and hand crops) after the fine-tune; off until tried once.
 # Writes $OUT/: motion_world.json, views/ (8 frames x every view, cut out), photo.jpg, and dreams/<run>-photo and
 # dreams/<run>-tuned (bundles); the numbers are in dreams/<run>-tuned.work/results.md. Only consented people.
 set -euo pipefail
@@ -22,6 +23,7 @@ OUT=${OUT:-$L/data/avatars/finetune/$RUN_ID}
 AV=$L/repos/lucid_dreams/avatars
 FRAMES=${FRAMES:-8}
 STEPS=${STEPS:-800}
+DETAIL_STEPS=${DETAIL_STEPS:-0}
 mkdir -p "$OUT/dreams"
 flock $L/repos/.lucid_dreams.lock git -C $L/repos/lucid_dreams pull -q --ff-only || echo "repo update skipped"
 git -C $L/repos/lucid_dreams log -1 --format='lucid_dreams at %h %s'
@@ -50,7 +52,7 @@ python -u $AV/digs_avatar.py --image "$OUT/photo.jpg" --id "$RUN_ID-photo" --nam
   --out "$OUT/dreams" --nlf $L/models/nlf/nlf_l_multi_0.3.2.patch6.torchscript
 python -u $AV/digs_finetune.py --views "$OUT/views" --motion "$OUT/motion_world.json" \
   --start "$OUT/dreams/$RUN_ID-photo.work/code.pt" --out "$OUT/dreams" --id "$RUN_ID-tuned" \
-  --name "$RUN_ID (fine-tuned)" --steps $STEPS
+  --name "$RUN_ID (fine-tuned)" --steps $STEPS --detail-steps $DETAIL_STEPS
 cat "$OUT/dreams/$RUN_ID-tuned.work/results.md"
 du -sh "$OUT"
 echo FINETUNE_OK

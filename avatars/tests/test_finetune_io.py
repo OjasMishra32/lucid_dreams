@@ -78,3 +78,26 @@ def test_cosine_factor_decays_to_the_floor():
     assert F.cosine_factor(0, 100) == pytest.approx(1.0)
     assert F.cosine_factor(100, 100) == pytest.approx(0.05)
     assert 0.05 < F.cosine_factor(50, 100) < 1.0
+
+
+def test_results_table_with_the_hands_and_face_pass():
+    before = {"psnr": 21.0, "lpips": 0.21, "psnrFace": 18.0, "lpipsHands": 0.40}
+    tuned = {"psnr": 24.5, "lpips": 0.14, "psnrFace": 19.0, "lpipsHands": 0.35}
+    after = {"psnr": 24.4, "lpips": 0.14, "psnrFace": 21.5, "lpipsHands": 0.28}
+    table = F.results_markdown(before, after, tuned=tuned)
+    assert table.splitlines()[0] == ("| Held-out views | One photo (DiGS) | + fine-tune on 4DAnyone views "
+                                     "| + hands and face pass | Change |")
+    assert "| PSNR (dB) | 21.00 | 24.50 | 24.40 | +3.40 |" in table
+    assert "| PSNR, face crop at 2x (dB) | 18.00 | 19.00 | 21.50 | +3.50 |" in table
+    assert "| LPIPS, hand crops at 2x | 0.400 | 0.350 | 0.280 | -0.120 |" in table
+
+
+def test_write_results_keeps_the_middle_column():
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "results.json"
+        F.write_results(path, {"psnr": 20.0}, {"psnr": 23.0}, {}, tuned={"psnr": 22.0})
+        data = json.loads(path.read_text())
+    assert data["tuned"] == {"psnr": 22.0} and data["delta"] == {"psnr": 3.0}

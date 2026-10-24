@@ -16,6 +16,8 @@ METRICS = (
     ("psnr", "PSNR (dB)", "{:.2f}"), ("ssim", "SSIM", "{:.3f}"), ("lpips", "LPIPS (lower is better)", "{:.3f}"),
     ("psnrPerson", "PSNR, person crop (dB)", "{:.2f}"), ("ssimPerson", "SSIM, person crop", "{:.3f}"),
     ("lpipsPerson", "LPIPS, person crop", "{:.3f}"),
+    ("psnrFace", "PSNR, face crop at 2x (dB)", "{:.2f}"), ("lpipsFace", "LPIPS, face crop at 2x", "{:.3f}"),
+    ("psnrHands", "PSNR, hand crops at 2x (dB)", "{:.2f}"), ("lpipsHands", "LPIPS, hand crops at 2x", "{:.3f}"),
 )
 
 
@@ -59,20 +61,27 @@ def on_white(rgba: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return x[..., :3] * alpha[..., None] + (1 - alpha[..., None]), alpha
 
 
-def write_results(path: str | Path, before: dict, after: dict, setup: dict) -> None:
+def write_results(path: str | Path, before: dict, after: dict, setup: dict, tuned: dict | None = None) -> None:
+    """results.json: before (one photo), after (everything), delta = after - before; tuned (after the 4DAnyone-view
+    fine-tune, before the hands and face pass) when that pass ran."""
     delta = {k: round(after[k] - before[k], 6) for k, _, _ in METRICS if k in before and k in after}
     data = {"before": before, "after": after, "delta": delta, "setup": setup,
             "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    if tuned is not None:
+        data["tuned"] = tuned
     Path(path).write_text(json.dumps(data, indent=2) + "\n")
 
 
-def results_markdown(before: dict, after: dict) -> str:
-    """The before/after table for the README and the slides."""
-    rows = ["| Held-out views | One photo (DiGS) | + fine-tune on 4DAnyone views | Change |",
-            "| --- | --- | --- | --- |"]
+def results_markdown(before: dict, after: dict, tuned: dict | None = None) -> str:
+    """The before/after table for the README and the slides; with `tuned`, a middle column for the fine-tune alone
+    and the last for the hands and face pass on top. Change is always last vs one photo."""
+    cols = [before] + ([tuned] if tuned is not None else []) + [after]
+    head = "| Held-out views | One photo (DiGS) | + fine-tune on 4DAnyone views |"
+    head += " + hands and face pass |" if tuned is not None else ""
+    rows = [head + " Change |", "|" + " --- |" * (len(cols) + 2)]
     for key, label, fmt in METRICS:
-        if key in before and key in after:
+        if all(key in c for c in cols):
             d = after[key] - before[key]
-            rows.append(f"| {label} | {fmt.format(before[key])} | {fmt.format(after[key])} | "
-                        f"{'+' if d >= 0 else '-'}{fmt.format(abs(d))} |")
+            rows.append(f"| {label} | " + " | ".join(fmt.format(c[key]) for c in cols)
+                        + f" | {'+' if d >= 0 else '-'}{fmt.format(abs(d))} |")
     return "\n".join(rows)

@@ -22,6 +22,7 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | `skinning.py` | `skin.bin` / `skeleton.json` read, write, check; reference linear-blend skinning |
 | `retarget.py` | Someone else's motion on an avatar: leg-length scaling, facing the viewer, soles on the floor |
 | `gvhmr.py` | GVHMR's SMPL-X motion (4DAnyone's) as a Motion, moved into 4DAnyone's world |
+| `detail.py` | Hands and face pass: face and hand regions from posed joints, 2x close-up cameras, the view resampled into them |
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
 | `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
 
@@ -88,6 +89,15 @@ Output, in `$L/data/avatars/finetune/<run>/dreams/<run>-tuned.work/`: `results.m
 `results.json`, `compare.png` (held-out views of the first frame: 4DAnyone view / one photo / fine-tuned) and a
 bundle `<run>-tuned` that plays the clip's motion. Metrics are over every prepared frame x held-out view, on full
 frames composited on white (so absolute PSNR runs high; the before/after change is the claim).
+
+**Hands and face pass** (`DETAIL_STEPS=300`, off until it has run once): after the fine-tune, a short extra
+optimisation on 2x close-ups of the face and both hands, so close-ups hold up (`lucid_avatars/detail.py`). DiGS needs a
+centred principal point, so each close-up is a camera at the view's own centre turned onto the face or hand (from the
+clip's posed SMPL-X joints) at twice the focal length; the view maps onto it exactly by a homography and is resampled
+into it. Loss L1 + 0.2 (1 - SSIM) on those crops only, decoder code only. `results.md` then has three columns (one
+photo / + fine-tune / + hands and face pass) and face and hand crop rows on the held-out views, plus
+`compare_detail.png` (held-out face crops). The crops resample the view, so they reweight the face and hands, not add
+pixels the view doesn't have. If the pass fails, the job keeps the fine-tune's code and numbers.
 
 ## "You, perfected"
 
