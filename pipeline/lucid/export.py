@@ -106,6 +106,39 @@ def shot_props(frames: list[Gaussians], words: str, fps: float, ball: dict | Non
     return {"fps": fps, "objects": ([ball] if ball else []) + [hoop]}
 
 
+def ball_from_gaussians(frames: list[Gaussians], radius: float = 0.12) -> dict | None:
+    """The basketball found in the reconstruction itself: per frame, the biggest compact cluster of strongly orange
+    Gaussians about a ball's size; its centre is the track (bundle coordinates, as the frames are). None if fewer than
+    a fifth of the frames have one."""
+    from scipy.spatial import cKDTree
+
+    track = []
+    for g in frames:
+        rgb = np.clip(g.sh0[:, 0] * SH_C0 + 0.5, 0, 1)
+        a = 1 / (1 + np.exp(-g.opacities))
+        r, gg, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+        orange = (a > 0.3) & (r - b > 0.32) & (gg < 0.72 * r) & (gg > 0.25 * r) & (r > 0.35)
+        pts = g.means[orange]
+        best = None
+        if len(pts) >= 40:
+            tree = cKDTree(pts)
+            seen = np.zeros(len(pts), bool)
+            for i in np.argsort(-tree.query_ball_point(pts, 0.04, return_length=True))[:200]:
+                if seen[i]:
+                    continue
+                idx = tree.query_ball_point(pts[i], radius * 1.3)
+                seen[idx] = True
+                c = np.median(pts[idx], 0)
+                ext = np.percentile(pts[idx], 90, 0) - np.percentile(pts[idx], 10, 0)
+                if len(idx) >= 40 and ext.max() < radius * 2.6 and ext.min() > radius * 0.5:
+                    if best is None or len(idx) > best[0]:
+                        best = (len(idx), c)
+        track.append([round(float(v), 4) for v in best[1]] if best else None)
+    if sum(t is not None for t in track) < len(track) / 5:
+        return None
+    return {"kind": "basketball", "radius": radius, "track": track, "source": "reconstruction"}
+
+
 def ball_object(result: Path | None, rot: np.ndarray, t: np.ndarray, n_frames: int) -> dict | None:
     """The basketball's track in bundle coordinates, from GVHMR's camera and the ball's box in the clip GVHMR ran on
     (avatars/lucid_avatars/ball_props.py). None when the result has no GVHMR camera or the ball isn't found; any
@@ -392,6 +425,13 @@ def main(argv=None):
     }
     words = f"{a.intent} {a.name}"
     ball = ball_object(a.result, rot, t, len(placed_frames)) if SHOT.search(words) else None
+    if ball is None and SHOT.search(words):
+        try:  # the ball as the reconstruction has it (it was in every generated view)
+            ball = ball_from_gaussians(placed_frames)
+            print(f"[export] ball from the reconstruction: {sum(x is not None for x in ball['track'])}/{len(placed_frames)} frames"
+                  if ball else "[export] ball not found in the reconstruction")
+        except Exception as e:  # noqa: BLE001
+            print(f"[export] ball from the reconstruction skipped: {type(e).__name__}: {e}")
     props = shot_props(placed_frames, words, a.fps, ball)
     if props:
         (a.out / "props.json").write_text(json.dumps(props, indent=2))
