@@ -2,13 +2,69 @@
 // right index presses); every button works (Step into the court / Back to my seat, Reality check, Replay, See my room,
 // Walk closer, and Next view where it applies: hidden at 3.5 x 3.5 m, unit-tested on a bigger floor in seat.test.ts);
 // Seat here acts only after a 2.0 s hold (a 1 s press changes nothing); pinches, held pinches and swipes change
-// nothing; P22 caption, label and credit; P23/P7 the Reality panel. Owner: stream C.
-import { rig } from "../rig.mjs";
+// nothing; P22 caption, label and credit, and the card over the 3D clear of both players from every walk stop; P23/P7
+// the Reality panel. Owner: stream C.
+import { fmt, rig } from "../rig.mjs";
 
 export const owner = "C (core)";
 export const needs = ["ui", "vrhands", "seat", "clock"];
 
 const LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.";
+
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** Distance from a point to a rectangle given by its corners c0..c3 (c1 - c0 and c3 - c0 its sides). */
+function toRect(p, c) {
+  const e1 = sub(c[1], c[0]);
+  const e2 = sub(c[3], c[0]);
+  const d = sub(p, c[0]);
+  const u = Math.max(0, Math.min(1, dot(d, e1) / dot(e1, e1)));
+  const v = Math.max(0, Math.min(1, dot(d, e2) / dot(e2, e2)));
+  const q = [c[0][0] + u * e1[0] + v * e2[0], c[0][1] + u * e1[1] + v * e2[1], c[0][2] + u * e1[2] + v * e2[2]];
+  return Math.hypot(...sub(p, q));
+}
+/** How far the card (court-space corners) stays outside every torso and head capsule of the pair, metres (< 0: inside one). */
+function cardClearance(corners, players) {
+  let best = Infinity;
+  for (const pl of players)
+    for (const cap of pl.capsules)
+      for (let i = 0; i <= 40; i++) {
+        const t = i / 40;
+        const p = [cap.a[0] + t * (cap.b[0] - cap.a[0]), cap.a[1] + t * (cap.b[1] - cap.a[1]), cap.a[2] + t * (cap.b[2] - cap.a[2])];
+        best = Math.min(best, toRect(p, corners) - cap.r);
+      }
+  return best;
+}
+/** The walk stops (D's walk sheet): a ring 1.5 m round the pair every 45 deg at eye 1.6 m, 0.8 m before and behind each player, one low stop; room space, each looking at its target. */
+function walkStops(court, world) {
+  const ps = court.freeze.players;
+  const mid = (k) => (Math.min(...ps.map((p) => p.bounds.min[k])) + Math.max(...ps.map((p) => p.bounds.max[k]))) / 2;
+  const c = [mid(0), 0, mid(2)];
+  const cam = court.camera.centre;
+  const toRoom = (q) => {
+    const co = Math.cos(world.yaw);
+    const si = Math.sin(world.yaw);
+    return [co * q[0] + si * q[2] + world.position[0], q[1] + world.position[1], -si * q[0] + co * q[2] + world.position[2]];
+  };
+  const stop = (from, at) => {
+    const p = toRoom(from);
+    const t = toRoom(at);
+    return { p, yaw: Math.atan2(-(t[0] - p[0]), -(t[2] - p[2])) };
+  };
+  const back = Math.atan2(cam[0] - c[0], cam[2] - c[2]); // toward camera F: 0 deg on the ring
+  const out = [];
+  for (let k = 0; k < 8; k++) {
+    const a = back + (k * Math.PI) / 4;
+    out.push(stop([c[0] + 1.5 * Math.sin(a), 1.6, c[2] + 1.5 * Math.cos(a)], [c[0], 1.0, c[2]]));
+  }
+  for (const pl of ps) {
+    const b = [(pl.bounds.min[0] + pl.bounds.max[0]) / 2, 1.0, (pl.bounds.min[2] + pl.bounds.max[2]) / 2];
+    const n = Math.hypot(cam[0] - b[0], cam[2] - b[2]) || 1;
+    for (const s of [1, -1]) out.push(stop([b[0] + (s * 0.8 * (cam[0] - b[0])) / n, 1.6, b[2] + (s * 0.8 * (cam[2] - b[2])) / n], b));
+  }
+  out.push(stop([c[0] + 1.5 * Math.sin(back), 1.0, c[2] + 1.5 * Math.cos(back)], [c[0], 1.0, c[2]]));
+  return out;
+}
 /** What a gesture could change (the phase and the clock move on by themselves). */
 const state = (s) => JSON.stringify({ setup: s.setup, inRoom: s.inRoom, reality: s.reality, armed: s.clock.armed, world: s.world });
 
@@ -109,6 +165,25 @@ export default async function controls(ctx) {
   const wantWalk = seatAt.nextView ? "changeSeat,nextView,back,reality,replay,room" : "changeSeat,back,reality,replay,room";
   ctx.check("P21: Walk closer jumps to the walking anchoring; Next view shows only where it applies", openIds.join() === "changeSeat,closer,back,reality,replay,room" && walking.phase === "walking" && seatAt.walking && walkIds.join() === wantWalk,
     `menus ${openIds.join(",")} / ${walkIds.join(",")}; Next view ${seatAt.nextView ? "applies" : "hidden (3.5 x 3.5 m)"}`);
+
+  // P22 over the 3D: the caption card is above the pair, clear of both players' torsos and heads from every walk stop
+  await r.handsAway();
+  const stops = walkStops(ctx.court, seatAt.world);
+  let clear = Infinity;
+  const modes = new Set();
+  let shown = 0;
+  let lowest = Infinity;
+  for (const s of stops) {
+    await r.setHead(s.p, s.yaw);
+    await ctx.frames(12);
+    const card = await r.ui((u) => u.caption());
+    modes.add(card.mode);
+    if (card.visible) shown++;
+    clear = Math.min(clear, cardClearance(card.corners, ctx.court.freeze.players));
+    lowest = Math.min(lowest, ...card.corners.map((q) => q[1]));
+  }
+  ctx.check("P22: over the 3D the caption card sits above the pair, clear of both players from every walk stop", clear > 0 && modes.size === 1 && modes.has("pair"),
+    `${stops.length} stops: placement ${[...modes].join("/")}, ${fmt(clear)} m clear of the nearest torso or head capsule, card bottom at ${fmt(lowest)} m, shown at ${shown} (faded within 1 m)`);
 
   // stand up by the pair, then Back to my seat: through the room
   await r.handsAway();

@@ -1,5 +1,7 @@
 // What the judge reads and presses (3.6): the caption, the honesty label and the source credit (P22), low in front of
-// you and following you lazily as you walk; the Reality check's panel (blue = never seen, the seen % per player, the
+// you and following you lazily through the watch, and over the 3D (open, walking, returning) a smaller card above the
+// pair, turned to you, fading as you come within a metre of it, so it never sits inside or in front of a player; the
+// Reality check's panel (blue = never seen, the seen % per player, the
 // interpolated share of the show: P7, P23); and the palm menu (left palm up, right index; xr/menu.ts HandMenu, 2
 // columns, first row on top):
 //   [Change seat]                      every phase after Seat here: back to the setup page after a 2 s hold (HoldButton),
@@ -43,6 +45,17 @@ const ROOM_OUT = "   See my room";
 const ROOM_BACK = "   Back to the arena";
 /** Seat here's hold (P32). */
 export const HOLD_MS = 2000;
+/**
+ * The caption over the 3D: centred over the pair, its lower edge `clear` above the highest of their capsules and bounds
+ * and at least `minY` up, metres; sized to about `deg` degrees wide wherever you stand (`scale` its bounds: smaller
+ * than the watch's card up close, readable from the seat); gone within `near[1]` of the eye, full from `near[0]`. The
+ * swap between the two placements fades out and in.
+ */
+const OVER_PAIR = { minY: 2.4, clear: 0.25, deg: 12, scale: [0.5, 1.6] as const, near: [1.0, 0.6] as const };
+/** The caption's plane, metres (the canvas's 1024 x 384). */
+const CAPTION_W = 0.6;
+const CAPTION_H = 0.225;
+
 /** A fingertip lost to tracking for this long ends a hold (blinks shorter than this don't); one seen coming out ends it at once. */
 const HOLD_GRACE_MS = 150;
 /** A holding tip stays in until it is this far back in front of the face, metres (jitter at the surface never lets go). */
@@ -130,6 +143,22 @@ export class HoldButton extends XrButton {
   }
 }
 
+/** The middle of the caption card's lower edge over the pair, court space: over the middle of the pair's bounds, `clear` above the highest of their bounds and capsules (at least `minY` up). */
+function overPair(bundle: CourtBundle): THREE.Vector3 {
+  const players = bundle.court.freeze.players;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  let top = 0;
+  for (const p of players) {
+    x0 = Math.min(x0, p.bounds.min[0]);
+    x1 = Math.max(x1, p.bounds.max[0]);
+    z0 = Math.min(z0, p.bounds.min[2]);
+    z1 = Math.max(z1, p.bounds.max[2]);
+    top = Math.max(top, p.bounds.max[1], ...p.capsules.flatMap((c) => [c.a[1] + c.r, c.b[1] + c.r]));
+  }
+  const y = Math.max(OVER_PAIR.minY, top + OVER_PAIR.clear);
+  return players.length ? new THREE.Vector3((x0 + x1) / 2, y, (z0 + z1) / 2) : new THREE.Vector3(0, y, 0);
+}
+
 /** A small window glyph for See my room (a frame with four panes), as a child plane at the button's left. */
 function windowIcon(): THREE.Mesh {
   const c = document.createElement("canvas");
@@ -155,6 +184,9 @@ function windowIcon(): THREE.Mesh {
 class CaptionPanel {
   readonly mesh: THREE.Mesh;
   readonly lines: string[] = [];
+  /** The fade (0-1) and the near fade over the pair (0-1): drawn at their product. */
+  private level = 0;
+  private nearness = 1;
   private readonly canvas = document.createElement("canvas");
   private readonly tex: THREE.CanvasTexture;
   private readonly material: THREE.MeshBasicMaterial;
@@ -166,19 +198,30 @@ class CaptionPanel {
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tex.anisotropy = 8;
     this.material = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.225), this.material);
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(CAPTION_W, CAPTION_H), this.material);
     this.mesh.name = "court-caption";
     this.mesh.renderOrder = 100; // over the arena, under the fade-jump veil
     this.mesh.visible = false;
   }
 
   set opacity(v: number) {
-    this.material.opacity = v;
-    this.mesh.visible = v > 0.001;
+    this.level = v;
+    this.apply();
   }
 
   get opacity(): number {
-    return this.material.opacity;
+    return this.level;
+  }
+
+  /** 1 = full, 0 = gone (the eye too close to the card over the pair). */
+  set near(v: number) {
+    this.nearness = v;
+    this.apply();
+  }
+
+  private apply(): void {
+    this.material.opacity = this.level * this.nearness;
+    this.mesh.visible = this.material.opacity > 0.001;
   }
 
   /** The caption, label and credit always; `reality` lines above them while the Reality check is on. */
@@ -241,6 +284,8 @@ export interface UiProbe {
   holds(): { start: number; fired: number | null }[];
   /** The text on the caption panel now (Reality lines first, then caption, label, credit), and whether it shows. */
   text(): { lines: string[]; visible: boolean };
+  /** Where the caption card is: its placement, drawn opacity and four corners (court space when the court group is in the scene). */
+  caption(): { mode: "front" | "pair"; opacity: number; visible: boolean; corners: number[][] };
   /** A tracked hand joint's world position and orientation (the e2e moves IWER's hands by them); null when not tracked. */
   joint(side: "left" | "right", name: string): { p: number[]; q: number[] } | null;
 }
@@ -267,6 +312,13 @@ export class Ui {
   private phase: Phase = "arrival";
   private flags: UiFlags = { inRoom: false, reality: false, setup: true, nextView: false };
   private placed = false;
+  /** Where the caption is: low in front (the watch), or over the pair (the 3D). */
+  private mode: "front" | "pair" = "front";
+  /** The court group (court.ts's "court-world"): the card over the pair rides it. */
+  private readonly world: THREE.Object3D | null;
+  /** Over the pair, court space: the middle of the card's lower edge. */
+  private readonly overPair = new THREE.Vector3();
+  private readonly lift = new THREE.Vector3();
   private readonly headV = new THREE.Vector3();
   private readonly target = new THREE.Vector3();
 
@@ -290,6 +342,8 @@ export class Ui {
       changeSeat: new HoldButton("changeSeat", "Hold to change seat", () => this.press("changeSeat")),
     };
     this.b.room.mesh.add(windowIcon());
+    this.world = scene.getObjectByName("court-world") ?? null;
+    this.overPair.copy(overPair(bundle));
     scene.add(this.caption.mesh);
     this.drawCaption();
     this.relayout();
@@ -329,14 +383,36 @@ export class Ui {
   update(head: Head, now: number, dt: number): void {
     this.headV.set(head.room[0], head.room[1], head.room[2]);
     this.menu.update(this.headV, now, dt);
-    // the caption: shown from the watch on (the arrival is black), low in front, catching up only when you turn away
-    const want = this.flags.setup || this.phase === "arrival" ? 0 : 1;
+    // the caption: shown from the watch on (the arrival is black); low in front through the watch, catching up only when
+    // you turn away; over the 3D, above the pair. A change of place fades out, moves, and fades in.
     const cap = this.caption;
-    cap.opacity = Math.min(1, Math.max(0, cap.opacity + Math.sign(want - cap.opacity) * dt * 2));
+    const mode = this.world && (this.phase === "open" || this.phase === "walking" || this.phase === "returning") ? "pair" : "front";
+    const want = this.flags.setup || this.phase === "arrival" || mode !== this.mode ? 0 : 1;
+    cap.opacity = Math.min(1, Math.max(0, cap.opacity + Math.sign(want - cap.opacity) * dt * (mode !== this.mode ? 4 : 2)));
+    if (mode !== this.mode && cap.opacity <= 0) {
+      this.mode = mode;
+      this.placed = false;
+    }
+    const m = cap.mesh;
+    if (this.mode === "pair" && this.world) {
+      this.world.updateWorldMatrix(true, false);
+      m.position.copy(this.overPair);
+      this.world.localToWorld(m.position);
+      const far = m.position.distanceTo(this.headV);
+      const scale = Math.min(OVER_PAIR.scale[1], Math.max(OVER_PAIR.scale[0], (far * Math.tan(((OVER_PAIR.deg / 2) * Math.PI) / 180) * 2) / CAPTION_W));
+      m.scale.setScalar(scale);
+      // the lower edge stays put; the card grows upward (the court group turns about y only, so up is up)
+      m.position.add(this.lift.set(0, (CAPTION_H * scale) / 2, 0));
+      const [full, gone] = OVER_PAIR.near;
+      cap.near = Math.min(1, Math.max(0, (m.position.distanceTo(this.headV) - gone) / (full - gone)));
+      m.lookAt(this.headV);
+      return;
+    }
+    m.scale.setScalar(1);
+    cap.near = 1;
     const fx = -Math.sin(head.yaw);
     const fz = -Math.cos(head.yaw);
     this.target.set(head.room[0] + fx * 1.05, head.room[1] - 0.42, head.room[2] + fz * 1.05);
-    const m = cap.mesh;
     if (!this.placed) {
       m.position.copy(this.target);
       this.placed = true;
@@ -405,6 +481,16 @@ export class Ui {
         }),
       holds: () => this.seatHere.holds.map((h) => ({ ...h })),
       text: () => ({ lines: [...this.caption.lines], visible: this.caption.mesh.visible }),
+      caption: () => {
+        const m = this.caption.mesh;
+        m.updateWorldMatrix(true, false);
+        const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => {
+          const p = m.localToWorld(new THREE.Vector3((x * CAPTION_W) / 2, (y * CAPTION_H) / 2, 0));
+          if (this.world) this.world.worldToLocal(p);
+          return p.toArray();
+        });
+        return { mode: this.mode, opacity: (m.material as THREE.MeshBasicMaterial).opacity, visible: m.visible, corners };
+      },
       joint: (side, name) => {
         const j = liveJoints(this.hands[handIndex(this.sideOf, side)])[name];
         if (!j?.visible) return null;
