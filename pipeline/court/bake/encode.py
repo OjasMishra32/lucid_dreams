@@ -13,6 +13,7 @@ quality, and the frames that show F are protected with an x264 zone at a low con
 from __future__ import annotations
 
 import math
+import os
 import re
 import subprocess
 import tempfile
@@ -25,6 +26,7 @@ import numpy as np
 
 from pipeline.court.bake.stack import Layout
 
+THREADS = os.environ.get("COURT_BAKE_THREADS", "2")  # the Mac is shared: ffmpeg stays on two threads unless told otherwise
 MAD_BOUND = 1.0  # grey levels (luma), P44: the video layer vs the 3D through the hand-off
 # H.264 table A-1: level -> (level_idc, MaxMBPS, MaxFS)
 LEVELS = {"5.1": (51, 983_040, 36_864), "5.2": (51 + 1, 2_073_600, 36_864)}
@@ -88,7 +90,7 @@ def ffmpeg_command(outputs: Sequence[Output], size: tuple[int, int], hz: float, 
         # RGB -> BT.709 limited-range YUV 4:2:0, tagged bt709 in the SPS below
         chains.append(f"[s{k}]{cut}{resize if resize else 'scale='}out_color_matrix=bt709:out_range=tv,format=yuv420p[o{k}]")
     graph = f"[0:v]split={len(outputs)}" + "".join(f"[s{k}]" for k in range(len(outputs))) + ";" + ";".join(chains)
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", f"{hz:g}", "-i", "pipe:0", "-filter_complex", graph]
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-threads", THREADS, "-filter_threads", THREADS, "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", f"{hz:g}", "-i", "pipe:0", "-filter_complex", graph]
     for k, o in enumerate(outputs):
         level = level_for(o.width, o.height, hz)
         mp4 = o.fmt == "mp4"
@@ -96,7 +98,7 @@ def ffmpeg_command(outputs: Sequence[Output], size: tuple[int, int], hz: float, 
         params = color + zones if mp4 else "aud=1:repeat-headers=1:" + color + zones
         cmd += [
             "-map", f"[o{k}]", "-fps_mode", "passthrough", "-force_key_frames", keys,
-            "-c:v", "libx264", "-profile:v", "high", "-level:v", level, "-preset", preset, "-crf", f"{crf:g}",
+            "-c:v", "libx264", "-threads", THREADS, "-profile:v", "high", "-level:v", level, "-preset", preset, "-crf", f"{crf:g}",
             "-bf", "0", "-refs", "3", "-g", "100000", "-keyint_min", "100000", "-sc_threshold", "0", "-forced-idr", "1",
             "-x264-params", params, *(["-movflags", "+faststart", "-f", "mp4"] if mp4 else ["-f", "h264"]), str(o.path),
         ]
@@ -275,7 +277,7 @@ def decode_frames(path: Path | str, indices: Sequence[int], width: int, height: 
     want = sorted(set(indices))
     sel = "+".join(f"eq(n,{i})" for i in want)
     cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "h264", "-i", str(path),
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", THREADS, "-f", "h264", "-i", str(path),
         "-vf", f"select='{sel}',scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24",
         "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1",
     ]
@@ -296,7 +298,7 @@ def decode_all(path: Path | str, width: int, height: int, region: tuple[int, int
     if region:
         x, y, w, h = region
         vf = f"crop={w}:{h}:{x}:{y}," + vf
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "h264", "-i", str(path), "-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1"]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", THREADS, "-f", "h264", "-i", str(path), "-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1"]
     size = w * h * 3
     with tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err)

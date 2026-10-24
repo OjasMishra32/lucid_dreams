@@ -26,12 +26,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, Protocol, Sequence
 
+import cv2
 import numpy as np
 
 from pipeline.court.bake import cards as cards_mod
 from pipeline.court.bake import encode, fmtcheck, stack
 from pipeline.court.bake.cards import Person, TileSlots
 from pipeline.court.bake.stack import Layout
+
+cv2.setNumThreads(2)  # the Mac is shared
 
 
 @dataclass
@@ -200,7 +203,7 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
         write_json(vdir / "frames-90.json", cameras.frames_json(t90))
         write_json(vdir / "cards-90.json", r90.cards)
         fb["hz90"] = {
-            "file": "video/show-90.h264", "codec": res90[0].codec, "width": layout.width, "height": layout.height, "displayHz": 90,
+            "file": "video/show-90.h264", "codec": res90[0].codec, "width": layout.width, "height": layout.height, "displayHz": 90, "pass2Speed": t90.pass2_speed,
             "frames": "video/frames-90.json", "cards": "video/cards-90.json", "segments": t90.segments, "cutoff": t90.cutoff,
         }
 
@@ -240,7 +243,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = ap.parse_args(argv)
     from pipeline.court.bake import providers  # the footage-side adapters (source / interp / layers / cameras)
 
-    opts = Options(crf=args.crf, preset=args.preset, protect_qp=args.protect_qp, hz90=not args.no_hz90, small=not args.no_small, pass1_mp4=not args.no_pass1_mp4)
+    extra = dict(layout=stack.synthetic_layout(256), small_width=128, n_slots=4) if args.synth else {}  # the synthetic clip is tiny
+    opts = Options(**extra, crf=args.crf, preset=args.preset, protect_qp=args.protect_qp, hz90=not args.no_hz90, small=not args.no_small, pass1_mp4=not args.no_pass1_mp4)
     run = providers.synth_run if args.synth else providers.real_run
     report = run(Path(args.synth) if args.synth else None, args.out, args.config, opts, bake)
     print(json.dumps(report, indent=1, default=str))

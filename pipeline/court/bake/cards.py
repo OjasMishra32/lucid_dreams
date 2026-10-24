@@ -148,23 +148,28 @@ class PeopleTrack:
             return []
         if ka is None or kb is None or ka == kb:
             return list(self.by_src[ka if ka is not None else kb])
-        t = (src - ka) / (kb - ka)
-        a = {p.id: p for p in self.by_src[ka]}
-        b = {p.id: p for p in self.by_src[kb]}
-        out: list[Person] = []
-        for pid in sorted(set(a) | set(b)):
-            if pid in a and pid in b:
-                pa, pb = a[pid], b[pid]
-                lerp = lambda u, v: u + (v - u) * t
-                out.append(Person(pid, tuple(lerp(u, v) for u, v in zip(pa.box, pb.box)), tuple(lerp(u, v) for u, v in zip(pa.foot, pb.foot)), lerp(pa.order, pb.order)))  # type: ignore[arg-type]
-            elif pid in a and t < 0.5:
-                out.append(a[pid])
-            elif pid in b and t >= 0.5:
-                out.append(b[pid])
-        # in-between orders: rank the interpolated depth so every card has its own
-        ranked = sorted(out, key=lambda p: (p.order, p.id))
-        rank = {p.id: i for i, p in enumerate(ranked)}
-        return [replace(p, order=rank[p.id]) for p in out]
+        return blend_people(self.by_src[ka], self.by_src[kb], (src - ka) / (kb - ka))
+
+
+def blend_people(pa: Sequence[Person], pb: Sequence[Person], t: float) -> list[Person]:
+    """The people t of the way (0 = a, 1 = b) between two real frames: box, foot and depth lerped for anyone in both; a
+    person in one frame only is kept while that frame is the nearer (t < 0.5 for a, t >= 0.5 for b)."""
+    a = {p.id: p for p in pa}
+    b = {p.id: p for p in pb}
+    out: list[Person] = []
+    lerp = lambda u, v: u + (v - u) * t
+    for pid in sorted(set(a) | set(b)):
+        if pid in a and pid in b:
+            x, y = a[pid], b[pid]
+            out.append(Person(pid, tuple(lerp(u, v) for u, v in zip(x.box, y.box)), tuple(lerp(u, v) for u, v in zip(x.foot, y.foot)), lerp(x.order, y.order)))  # type: ignore[arg-type]
+        elif pid in a and t < 0.5:
+            out.append(a[pid])
+        elif pid in b and t >= 0.5:
+            out.append(b[pid])
+    # in-between orders: rank the interpolated depth so every card has its own
+    ranked = sorted(out, key=lambda p: (p.order, p.id))
+    rank = {p.id: i for i, p in enumerate(ranked)}
+    return [replace(p, order=rank[p.id]) for p in out]
 
 
 def cards_for_frames(
