@@ -4,8 +4,8 @@
 #SBATCH --qos=iruchkin
 #SBATCH --partition=hpg-b200,hpg-rtx6000,hpg-turin
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=96G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 #SBATCH --time=03:00:00
 #SBATCH --output=%x-%A_%a.log
 # Stage "reconstruct": one array task per chunk of frames; each chunk warm-starts frame to frame. Needs RUN, CHUNKS.

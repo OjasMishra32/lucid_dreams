@@ -78,7 +78,7 @@ def main():
                 for item in queue:
                     if item["clip"] in [v["clip"] for v in state["submitted"].values()]:
                         continue
-                    out = runner.submit("hpg:" + item["clip"], item["name"], item.get("id"), False, item.get("chunks", 6),
+                    out = runner.submit("hpg:" + item["clip"], item["name"], item.get("id"), False, item.get("chunks", 12),
                                         item.get("startS", 0.0), intent=item.get("intent", ""))
                     state["submitted"][out["id"]] = {"clip": item["clip"], "at": time.time(), "slurm": out.get("slurm", {})}
                     log(f"submitted queued clip {out['id']}")
@@ -86,7 +86,7 @@ def main():
                     clips = runner.remote(f"ls -1 {SAMPLES}/*.mp4").split()[: a.seed_samples]
                     for c in clips:
                         name = "Sample " + Path(c).stem.split("-")[0].split("_")[0]
-                        out = runner.submit("hpg:" + c, name, None, False, 6)
+                        out = runner.submit("hpg:" + c, name, None, False, 12)
                         state["submitted"][out["id"]] = {"clip": c, "at": time.time()}
                         log(f"submitted sample {out['id']}")
                     seeded = state["seeded"] = True
@@ -97,7 +97,7 @@ def main():
                     if sizes.get(str(f)) != size:  # still copying: wait for the size to settle
                         sizes[str(f)] = size
                         continue
-                    out = runner.submit(f, f.stem.replace("_", " ").replace("-", " ").strip().title(), None, False, 6,
+                    out = runner.submit(f, f.stem.replace("_", " ").replace("-", " ").strip().title(), None, False, 12,
                                         intent=intent_for(f))
                     state["submitted"][out["id"]] = {"clip": str(f), "at": time.time()}
                     log(f"submitted {f.name} as {out['id']}")
@@ -133,7 +133,7 @@ def main():
                         subprocess.run(["sips", "-s", "format", "jpeg", str(f), "--out", str(src)], check=True,
                                        capture_output=True)
                     rid = runner.slug(f.stem)
-                    out = runner.submit(src, f.stem.replace("_", " ").replace("-", " ").strip().title(), rid, False, 6,
+                    out = runner.submit(src, f.stem.replace("_", " ").replace("-", " ").strip().title(), rid, False, 12,
                                         0.0, kind="avatar", intent=intent_for(f), after=assets_jid)
                     state["submitted"][out["id"]] = {"clip": str(f), "at": time.time(), "kind": "avatar"}
                     log(f"submitted photo {f.name} as avatar {out['id']}")

@@ -116,7 +116,7 @@ def main(argv=None):
     s.add_argument("--name", required=True)
     s.add_argument("--id")
     s.add_argument("--turbo", action="store_true", help="faster, slightly softer views (previews)")
-    s.add_argument("--chunks", type=int, default=6, help="GPUs used in parallel for reconstruction")
+    s.add_argument("--chunks", type=int, default=12, help="GPUs used in parallel for reconstruction")
     s.add_argument("--kind", choices=["replay", "avatar"], default="replay", help="avatar: the file is a photo")
     s.add_argument("--intent", default="", help='what you want to do with them, e.g. "teach me this strum"')
     st = sub.add_parser("status")
