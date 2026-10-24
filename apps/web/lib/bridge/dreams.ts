@@ -75,9 +75,19 @@ export function bundleComplete(d: Dream): boolean {
   return true;
 }
 
-/** What players and pages list: whole bundles only, never one still being copied back. */
+/** Dreams held back from the library until they're good enough to show (dreams/.held, one id per line; Ojasva's). */
+export function heldIds(): Set<string> {
+  try {
+    return new Set(readFileSync(join(DREAMS_DIR, ".held"), "utf8").split(/\s+/).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+/** What players and pages list: whole bundles only, never one still being copied back or held back. */
 export function listReady(dreams: Dream[] = listDreams()): Dream[] {
-  return dreams.filter((d) => !fetching(d.id) && bundleComplete(d));
+  const held = heldIds();
+  return dreams.filter((d) => !held.has(d.id) && !fetching(d.id) && bundleComplete(d));
 }
 
 /** The dream a page should lead with: newest real person with a 360 preview (test bundles last). */
