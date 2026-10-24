@@ -20,7 +20,7 @@ NAME=$(job name "$ID")
 FPS=$(job fps 25)
 INTENT=$(job intent "")
 CLIP=$( [ -f prepped.mp4 ] && echo prepped.mp4 || ls input.* | head -1 )
-python -m lucid.export --recon recon --out bundle --id "$ID" --name "$NAME" \
+python -m lucid.export --recon recon --out bundle --id "$ID" --name "$NAME" --no-ply \
   --result views --clip "$CLIP" --fps "$FPS" --intent "$INTENT" || { python -m lucid.status mark "$RUN" export failed; exit 1; }
 python -m lucid.status mark "$RUN" export done
 # the bundle holds placed copies of every frame: drop the intermediates (the lab's storage is nearly full)

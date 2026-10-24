@@ -41,6 +41,8 @@ def parse_args(argv=None):
     p.add_argument("--fps", type=float, default=25.0)
     p.add_argument("--intent", default="", help="what the user wants to do with this person (for experience.json)")
     p.add_argument("--preview-size", default="1080x1920")
+    p.add_argument("--no-ply", dest="ply", action="store_false",
+                   help="SPZ frames only (every player streams SPZ; the lab's disk is nearly full)")
     p.add_argument("--preview-bg", default="0,0,0", help="r,g,b in 0-255")
     p.add_argument("--device", default="cuda:0")
     return p.parse_args(argv)
@@ -285,7 +287,8 @@ def main(argv=None):
     for i, path in enumerate(frame_paths):
         raw = read_ply(path)
         g = place(raw, rot, t)
-        write_ply(out_frames / f"{i:06d}.ply", g)
+        if a.ply:
+            write_ply(out_frames / f"{i:06d}.ply", g)
         spz_total += write_spz(out_frames / f"{i:06d}.spz", g, sh_degree=0)
         if cams:
             seen = seen_mask(raw, cams, a.device)
