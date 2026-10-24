@@ -141,6 +141,13 @@ def load_digs(config_path: str, ckpt_path: str):
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     have = set(ckpt.get("state_dict", ckpt))
+    # DiGS loads DINOv3 itself when it builds the model (torch.hub, weights from pretrained/dinov3_vitb16.pth or
+    # DIGS_DINOV3_WEIGHTS), so student.ckpt doesn't need to carry it: count the weights that file provides
+    dino_path = Path(os.environ.get("DIGS_DINOV3_WEIGHTS", "pretrained/dinov3_vitb16.pth"))
+    if dino_path.exists():
+        dino = torch.load(dino_path, map_location="cpu", weights_only=False)
+        have |= {"dino_encoder.dino_model." + k for k in dino.get("model", dino)}
+        del dino
     problems = []
     for prefix in CHECKED_MODULES:
         wanted = [k for k in model.state_dict() if k.startswith(prefix)]
