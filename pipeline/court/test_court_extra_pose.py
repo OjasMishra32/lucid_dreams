@@ -201,21 +201,24 @@ class FixedSolve(unittest.TestCase):
         img[(uv[ok, 1].long() * w + uv[ok, 0].long())] = 1.0
         return torch.nn.functional.max_pool2d(img.view(1, 1, h, w), 5, 1, 2)[0, 0]
 
-    def make(self, t: Path, lift=0.0):
+    def make(self, t: Path, lift=0.0, name="V1", weight=1.0):
         to_recon, V = recon_world()
         P = person()
         R = to_recon(P + [0, lift, 0])  # lift > 0: the recon's soles float, so the soles' scale is off
         w, h = E_SIZE
         mask = self.draw(E_K, np.r_[np.c_[np.asarray(extra()["R"]), -np.asarray(extra()["R"]) @ E_C], [[0, 0, 0, 1]]], P, w, h)
-        d = t / "real" / "V1"
+        d = t / "real" / name
         d.mkdir(parents=True)
         pose = {"extra": extra(), "source": still(), "scaleFit": list(cep.SCALE_FIT), "minIou": cep.MIN_IOU}
-        cep.pose_file(d / "V1.mkv").write_text(json.dumps(pose))
+        cep.pose_file(d / f"{name}.mkv").write_text(json.dumps(pose))
         draw = self.draw
 
         class SV:
-            video, name, device, W, H, masks_given, max_height = d / "V1.mkv", "V1", "cpu", w, h, True, 2560
-            masks, valid = mask[None].numpy(), None
+            video, device, W, H, masks_given, max_height = d / f"{name}.mkv", "cpu", w, h, True, 2560
+            masks, valid, frame_ids, offset = mask[None].numpy(), None, [0], -40
+
+            def __init__(self):
+                self.name, self.weight = name, weight
 
             def _render(self, trainer, params, vm, K, w, h, bg=None):
                 return None, draw(K.numpy(), vm.numpy(), params["means"].numpy(), w, h)[None, ..., None], None
@@ -246,6 +249,22 @@ class FixedSolve(unittest.TestCase):
                 self.assertTrue(cep.fixed_solve(sv, trainer, params))
             self.assertGreater(sv.report["iou"], sv.report["iouSoles"] + 0.05)
             self.assertAlmostEqual(sv.report["scale"] * 0.7, 1.0, delta=0.006)
+
+    def test_one_scale_per_recon_world_and_held_out_views_never_fit_it(self):
+        with tempfile.TemporaryDirectory() as t:
+            first, trainer, params = self.make(Path(t), lift=0.03)
+            second, _, _ = self.make(Path(t), lift=0.03, name="V2", weight=0.7)
+            held, _, _ = self.make(Path(t), lift=0.03, name="V3", weight=0.0)
+            alone = types.SimpleNamespace(source=trainer.source)
+            with contextlib.redirect_stdout(io.StringIO()) as log:
+                for sv, tr in ((first, trainer), (second, trainer), (held, alone)):
+                    self.assertTrue(cep.fixed_solve(sv, tr, params))
+            self.assertEqual(first.report["scaleFrom"], "fit")
+            self.assertEqual(second.report["scaleFrom"], "as V1")
+            self.assertEqual(second.report["scale"], first.report["scale"])
+            self.assertEqual(held.report["scaleFrom"], "soles")  # nothing trained before it: no fit on a held-out view
+            self.assertEqual(held.report["scale"], held.report["scaleSoles"])
+            self.assertIn("extra V2: fixed pose, iou", log.getvalue())
 
 
 class Patch(unittest.TestCase):

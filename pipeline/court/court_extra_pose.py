@@ -13,7 +13,9 @@ world. Court and recon world are then tied: a court point and its recon point si
 cameras (their principal points differ, which the pixel grid's best rotation absorbs), at depths in a ratio set so the
 recon's soles stand on the court floor. The other camera goes through the same map, its focal the calibrated one.
 That ratio is the one thing calibration can't fix, and a grazing source camera sees it poorly (1% of it moves the
-body ~1% of the camera's distance along its rays), so each other view fits it alone, in 1-D, around the soles' value.
+body ~1% of the camera's distance along its rays), so the first other view that trains fits it alone, in 1-D, around
+the soles' value, and the others take the same (one recon world, one scale). A held-out view (weight 0) never fits it:
+it takes a trained view's, else the soles'.
 """
 
 from __future__ import annotations
@@ -124,18 +126,32 @@ def fixed_solve(sv, trainer, params, debug=None):
             a = a[0, ..., 0] > 0.5
             return float((a & m & v).sum() / ((a | m) & v).sum().clamp_min(1))
 
+    # one recon world, one scale: the first trained view fits it, the rest take it; a held-out view never fits it
+    fitted = getattr(trainer, "court_extra_scale", None)
+    if fitted is None:
+        fitted = trainer.court_extra_scale = {}
+    chunk = sv.frame_ids[0] - getattr(sv, "offset", 0)
     iou0 = iou(1.0)
     rng = pose.get("scaleFit", list(SCALE_FIT))
-    f, best = scale_fit(iou, *rng) if rng else (1.0, iou0)
-    if best < iou0:
-        f, best = 1.0, iou0
+    trained = getattr(sv, "weight", 1.0) > 0
+    if chunk in fitted:
+        f, how = fitted[chunk][0], f"as {fitted[chunk][1]}"
+        best = iou(f)
+    elif trained and rng:
+        f, best = scale_fit(iou, *rng)
+        if best < iou0:
+            f, best = 1.0, iou0
+        fitted[chunk], how = (f, name), "fit"
+    else:
+        f, best, how = 1.0, iou0, "soles"
     vm = viewmat(f)
     sv.report = {"fromCamera": None, "pose": "fixed", "iouSoles": round(iou0, 4), "iou": round(best, 4),
-                 "scaleSoles": round(float(s0), 5), "scale": round(float(s0 * f), 5), "focal": round(float(K_full[0, 0]), 1),
-                 "focalHeld": True, "masks": "given" if sv.masks_given else "model", "ignoring": sv.valid is not None}
-    print(f"[source] extra {name}: fixed pose, iou {best:.3f} (court scale: soles {s0:.4f} iou {iou0:.3f} -> fit "
-          f"{s0 * f:.4f}, x{f:.4f})", flush=True)
-    if best < pose.get("minIou", MIN_IOU):
+                 "scaleSoles": round(float(s0), 5), "scale": round(float(s0 * f), 5), "scaleFrom": how,
+                 "focal": round(float(K_full[0, 0]), 1), "focalHeld": True,
+                 "masks": "given" if sv.masks_given else "model", "ignoring": sv.valid is not None}
+    print(f"[source] extra {name}: fixed pose, iou {best:.3f} (court scale {s0 * f:.4f}, {how}: x{f:.4f} on the "
+          f"soles' {s0:.4f}, iou there {iou0:.3f})", flush=True)
+    if trained and best < pose.get("minIou", MIN_IOU):
         print(f"[source] extra {name}: IoU under {pose.get('minIou', MIN_IOU)} at the fixed pose: trained without it",
               flush=True)
         return False
