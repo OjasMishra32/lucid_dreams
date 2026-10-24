@@ -85,6 +85,10 @@ class Gate2Sheet(unittest.TestCase):
         (rec / "p42.json").write_text(json.dumps({"pass": False, "iouFinal": 0.9123}))
         self.assertEqual(g2.p42_text(rec, None), "P42 FAIL iou 0.9123")
         self.assertEqual(len(g2.rows_for(self.run, 64, None)), 3)
+        (rec / "stance.json").write_text(json.dumps({"stance": 0.52, "along": 0.47, "across": 0.23,
+                                                     "ref": {"stance": 0.57, "along": 0.53, "across": 0.21}}))
+        self.assertEqual(g2.stance_text(rec), "stance 0.52 (0.47/0.23) vs 0.57")
+        self.assertEqual(g2.depth_text(self.run, rec, None), "")
 
     def test_no_k_anywhere_is_one_labelled_tile(self):
         bare = Path(self.tmp.name) / "court-y"

@@ -1,7 +1,8 @@
 """Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 (and any other views
 fetched) at the freeze frame K (the whole fetched ring in two rows: the Janus / doubled-figure gate looks at every
-view), and, when a freeze has been trained, its peeks (the real frame | render with its P42, then the views' ground
-truth | render) and its bundle's orbit preview every 45 degrees (180 = the back of the head).
+view), and, when a freeze has been trained, its peeks (the real frame | render with its P42, its stance in court
+space and the held-out --depth-view's PSNR, then the views' ground truth | render) and its bundle's orbit preview every
+45 degrees (180 = the back of the head).
 
     python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] <run dir>...
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -60,16 +62,40 @@ def frame_at(video: Path, n: int) -> np.ndarray | None:
     return img
 
 
-def tile(img: np.ndarray | None, h: int, label: str, sub: str = "") -> np.ndarray:
+def tile(img: np.ndarray | None, h: int, label: str, sub: str | list = "") -> np.ndarray:
     if img is None:
         t = np.full((h, h * 9 // 16, 3), GREY, np.uint8)
         label += " (missing)"
     else:
         t = cv2.resize(img, (max(1, round(img.shape[1] * h / img.shape[0])), h), interpolation=cv2.INTER_AREA)
     cv2.putText(t, label, (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
-    if sub:
-        cv2.putText(t, sub, (6, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+    for i, line in enumerate([sub] if isinstance(sub, str) else sub):
+        if line:
+            cv2.putText(t, line, (6, 44 + 20 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
     return t
+
+
+def stance_text(rec: Path) -> str:
+    """court_stance.py's sole-to-sole stance in court space (along / across the source camera), vs the measured one."""
+    if not (rec / "stance.json").exists():
+        return ""
+    st = json.loads((rec / "stance.json").read_text())
+    ref = st.get("ref") or {}
+    return f"stance {st['stance']:.2f} ({st['along']:.2f}/{st['across']:.2f})" + (
+        f" vs {ref['stance']:.2f}" if "stance" in ref else "")
+
+
+def depth_text(run: Path, rec: Path, depth_view: str | None) -> str:
+    """The held-out PSNR of the real view that sees the source camera's depth axis (when this freeze held it out)."""
+    if not depth_view:
+        return ""
+    from court_grid_report import held_out_views, report
+
+    variant = re.fullmatch(r"recon-(.+)-\d+k", rec.name)
+    if not variant:
+        return ""
+    v = held_out_views(run, variant.group(1), report(run / f"recon-metrics-{variant.group(1)}")[0]).get(depth_view)
+    return f"held-out {depth_view} {v:.2f} dB" if v is not None else f"{depth_view} trained (not held out)"
 
 
 def p42_text(rec: Path, clips: Path | None) -> str:
@@ -85,7 +111,7 @@ def p42_text(rec: Path, clips: Path | None) -> str:
     return f"P42 {'PASS' if r.get('pass') else 'FAIL'} iou {r.get('iouFinal')}"
 
 
-def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
+def rows_for(run: Path, h: int, clips: Path | None, depth_view: str | None = None) -> list[np.ndarray]:
     k = find_k(run, clips)
     name = f"{run_id(run)}{'/' + run.name if run.name.startswith('seed') else ''}"
     if k is None:
@@ -101,7 +127,8 @@ def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
         peeks = [rec / f"peek-source-{k:06d}.jpg", rec / f"peek-{k:06d}.jpg"]
         if any(p.exists() for p in peeks):
             imgs = [cv2.imread(str(p)) if p.exists() else None for p in peeks]
-            out.append(np.hstack([tile(imgs[0], h, f"{rec.name} real | render", p42_text(rec, clips)),
+            notes = [p42_text(rec, clips), stance_text(rec), depth_text(run, rec, depth_view)]
+            out.append(np.hstack([tile(imgs[0], h, f"{rec.name} real | render", notes),
                                   tile(imgs[1], h, "views gt | render")]))
     for b in sorted(run.glob("bundle-*/preview.mp4")):
         out.append(orbit_row(b, h))
@@ -136,8 +163,10 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--clips", type=Path, default=None, help="local run folders, for K when the fetch has none")
+    ap.add_argument("--depth-view", default=None, help="the real view that sees the source camera's depth axis: its "
+                                                       "held-out PSNR goes on each freeze")
     a = ap.parse_args(argv)
-    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips)]
+    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips, a.depth_view)]
     cv2.imwrite(str(a.out), stack(rows), [cv2.IMWRITE_JPEG_QUALITY, 90])
     print(f"{a.out}: {len(a.runs)} runs, {len(rows)} rows")
 
