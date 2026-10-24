@@ -31,7 +31,7 @@ keep the passthrough." Your own room reads as more real than any panorama.
 Next: the real basketball renders as its own object (the tracked ball, `props.json`) for Jump shot 2, LeBron and
 every later shooting clip; check that your props player shows it in the hands and in flight.
 
-## UPDATE (Sat 2:35 AM): bring MANY photos of your grandma; the legends at your board
+## UPDATE (Sat 2:35 AM): bring MANY photos of your grandma
 
 1. **More photos beat one.** We're testing LHM++, which builds one 3D person from many photos at once (every angle
    comes from a real photo, not a guess). For your grandma, gather **as many photos as you can from one period**
@@ -116,8 +116,7 @@ the Unity app. Every item gets a before/after passthrough capture.
    look fake.
 4. **Eye contact.** For avatars in `companion` and `play` modes, the head (joint 15, with the neck, 12, taking 30%)
    turns toward the viewer's head: ±35° yaw, ±20° pitch, eased over 300 ms. In WebXR, `SkinnedAvatar.pose(t,
-   edit)` in `apps/webxr/src/avatar.ts` lets you change a joint's local rotation before skinning. Chess opponents
-   look up at you after their move, then back down at the board.
+   edit)` in `apps/webxr/src/avatar.ts` lets you change a joint's local rotation before skinning.
 5. **Blinks and breathing** once Vishal ships `expr` / `expr.bin`: apply the 10 expression offsets per head
    Gaussian on the GPU (one extra buffer, read in the splat vertex stage).
 
@@ -150,8 +149,8 @@ built her headset UI). Her drafts are in `demo/`: start from them, don't redo th
 **submitted by Sun 3 PM** (late entries aren't accepted). Do these between the Quest items below, in this order:
 
 1. **Credits, complete** (`demo/credits.md`, then the README): every source with link and license. Jason Han's
-   piano videos (Wikimedia Commons, CC BY-SA 4.0, "JMC, Han (Jason)"); Bobby Fischer (W. Punt / Anefo, Nationaal
-   Archief, CC0); Magnus Carlsen (Wikimedia user Autopilot, CC BY-SA 3.0); Juice WRLD (Lexiou WesCudi, CC BY-SA 2.0);
+   piano videos (Wikimedia Commons, CC BY-SA 4.0, "JMC, Han (Jason)"); Bobby Fischer (1966 AP portrait, public domain; 1972 Anefo / Nationaal
+   Archief photos, CC0); Magnus Carlsen (Ralf Roletschek, 2015, CC BY-SA 3.0); LHM++ (code Apache-2.0, weights CC BY-NC 4.0); Juice WRLD (Lexiou WesCudi, CC BY-SA 2.0);
    the Pexels jump-shot clips (Pexels license); LeBron's clip (supplied for a non-commercial demo, not
    redistributed); Poly Haven places (CC0, `apps/webxr/public/places/CREDITS.md`) and chess set (CC0); every model
    and library (4DAnyone, DiGS-Avatar, gsplat, Spark, three.js, Unity Gaussian Splatting, NLF, rembg, GVHMR,
