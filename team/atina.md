@@ -53,3 +53,16 @@ not for long coding sessions. Read `AGENTS.md` first.
 6. Video: script + shot list in `demo/video.md` (family moment first, then the wow, then how it works, then the team).
 7. Judge Q&A in `demo/judges.md`: theme fit, consent, what's real vs imagined, limits, what's next.
 8. Slides with placeholders for the numbers (PSNR, % seen, Gaussians, time per dream).
+
+## Working decisions — Friday, October 23
+
+- First-milestone preparation lives in `demo/README.md`, `demo/capture-guide.md`, `demo/clips.md` and
+  `demo/consent.md`. Prioritize three simple, sharply recorded teammate movements; this batch does not need
+  public-figure footage or GPU work from Atina.
+- Keep clip capture, consent, transfer and processing as separate states. Planned shots are not delivered clips.
+  The Friday milestone remains open until three handoffs, a family asset selection and a sent consent request
+  are confirmed. A pending consent request does not authorize processing or display.
+- Store private media and written consent evidence outside this public repository. `demo/consent.md` holds
+  anonymous record IDs, permission scope, status and private evidence labels; it does not expose family messages.
+- No app code, shared contracts or pipeline settings are changed by this preparation work. Ian receives UI
+  designs later; Ojasva remains the contact for automatic intake and processing results.
