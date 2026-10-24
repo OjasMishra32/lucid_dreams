@@ -43,13 +43,27 @@ def test_strobes_are_real_captures_but_not_usable():
     assert c.is_usable(329) and c.is_usable(332)
 
 
-def test_src_time_map_is_piecewise_linear_through_real_frames_and_inverts():
+def test_src_has_one_meaning_a_whole_src_is_that_container_frames_time():
     c = ct()
-    # between 298 and 300 (299 is the repeat): halfway in time is source 299.0
+    # a whole repeat index means the repeat's own time (the frame it repeats), in both directions
+    assert c.time_of_src(299.0) == c.time_of(299) == c.time_of(298)
+    # an in-between across a repeat lies after the repeat's index: halfway from 298 to 300 is 299.5, never whole
     t = (c.time_of(298) + c.time_of(300)) / 2
-    assert c.src_at(t) == pytest.approx(299.0)
-    for s in (12.0, 13.5, 298.25, 299.0, 300.0, 333.7):
+    assert c.src_at(t) == pytest.approx(299.5)
+    assert c.src_at(c.time_of(298)) == 298.0 and c.src_at(c.time_of(300)) == 300.0
+    for s in (12.0, 13.5, 299.25, 300.0, 333.7):
         assert c.src_at(c.time_of_src(s)) == pytest.approx(s)
+    # strictly between two captures, src is never a whole number
+    for a, b in zip(c.real_frames, c.real_frames[1:]):
+        for w in (0.01, 0.5, 0.99):
+            src = c.src_at((1 - w) * c.time_of(a) + w * c.time_of(b))
+            assert a < src < b and not float(src).is_integer()
+
+
+def test_a_strobe_given_by_its_repeat_index_flags_the_frame_it_repeats():
+    c = CapTime(11, 400, 120, 4, 3, strobes=(331,))
+    assert not c.is_usable(330)
+    assert c.strobes == frozenset({330})
 
 
 def test_sample_snaps_to_real_frames_and_brackets_in_betweens_around_strobes():
@@ -110,8 +124,10 @@ def test_config_round_trips_and_validates(tmp_path):
     d = config.to_dict(CFG)
     d["_comment"] = "notes are allowed"
     d["play_start"] = 150  # pass 1 may start after pass 2's start (a later start of play)
+    d["rife_dir"], d["watermark_model"] = "rife", "wm.npz"
     p.write_text(json.dumps(d))
     cfg = config.load(p)
+    assert (cfg.rife_dir, cfg.watermark_model) == ("rife", "wm.npz") and BakeConfig().rife_dir == ""
     assert cfg.play_start == 150 and cfg.strobes == CFG.strobes and cfg.f_end == CFG.freeze
     d["freeze"] = 299  # a repeat frame
     p.write_text(json.dumps(d))
@@ -121,3 +137,11 @@ def test_config_round_trips_and_validates(tmp_path):
     p.write_text(json.dumps(d))
     with pytest.raises(ValueError, match="unknown"):
         config.load(p)
+
+
+def test_snap_and_near_real_tolerances_are_validated():
+    import dataclasses
+
+    assert dataclasses.replace(CFG, snap_tol=0.6).validate()
+    assert dataclasses.replace(CFG, near_real=0.5).validate()
+    assert dataclasses.replace(CFG, snap_tol=0.0, near_real=0.0).validate() == []

@@ -12,6 +12,7 @@ shipped bundle) gives them the nearest solved camera and marks each one `held`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -24,6 +25,8 @@ from scipy.spatial.transform import Rotation
 
 from .config import BakeConfig
 from .timeline import Timeline
+
+log = logging.getLogger(__name__)
 
 
 class CameraCoverageError(ValueError):
@@ -65,8 +68,14 @@ def load_calib(path) -> Solve:
     frames = {}
     for fr in sorted(doc["frames"], key=lambda x: x["source_frame"]):
         R = np.asarray(fr["R"], float)
-        if not np.allclose(R @ R.T, np.eye(3), atol=1e-6):
-            raise ValueError(f"frame {fr['source_frame']}: R is not a rotation")
+        if not np.allclose(R @ R.T, np.eye(3), atol=1e-6) or np.linalg.det(R) <= 0:
+            raise ValueError(f"frame {fr['source_frame']}: R is not a rotation (orthonormal with det +1)")
+        K = fr.get("K")
+        if K is not None:
+            ccx, ccy = (w - 1) / 2, (h - 1) / 2
+            if abs(K[0][2] - ccx) > 0.01 or abs(K[1][2] - ccy) > 0.01:
+                log.warning("frame %s: the solve's principal point (%.3f, %.3f) is not the image centre (%.3f, %.3f) "
+                            "the bake assumes", fr["source_frame"], K[0][2], K[1][2], ccx, ccy)
         q = Rotation.from_matrix(R.T).as_quat()  # world-from-camera, [x, y, z, w]
         if ref is None:
             ref = q if q[3] >= 0 else -q
