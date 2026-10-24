@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  EASE_SECONDS, RESUME_RAMP_S, easeFrameCount, easeSpeed, easeTau, easeTravel, rampTravel, resumeSpeed, resumeTau,
+  Cadence, EASE_SECONDS, RESUME_RAMP_S, easeFrameCount, easeSpeed, easeTau, easeTravel, rampTravel, resumeSpeed, resumeTau,
   smootherstep, stepFrames,
 } from "../../src/court/clock.ts";
 import { standinBundle } from "./standin.mjs";
@@ -336,15 +336,16 @@ for (const [name, bundle] of [["stand-in 72 Hz", standinBundle()], ["bake-rule 7
     assert.equal(c.update(1 / hz).frame, v.segments.resume[0]);
   });
 
-  test(`${name}: the clock steps round(dt x displayHz) show frames per XR frame`, () => {
+  test(`${name}: at a matched output rate the clock steps round(dt x displayHz) show frames per XR frame`, () => {
     const c = fresh();
+    c.setOutputHz(hz); // the XR session's frameRate
     c.update(2 / hz);
     assert.equal(c.state.frame, v.segments.pass1[0] + 2);
     c.update(0.4 / hz);
     assert.equal(c.state.frame, v.segments.pass1[0] + 2);
     c.update(0);
     assert.equal(c.state.frame, v.segments.pass1[0] + 2);
-    c.update(1 / 120); // a 120 Hz host frame still advances one show frame (round(0.6) = 1)
+    c.update(1 / 120); // one short frame at the matched rate is jitter: it still advances one show frame (round(0.6) = 1)
     assert.equal(c.state.frame, v.segments.pass1[0] + 3);
   });
 }
@@ -360,4 +361,121 @@ test("a dropped XR frame (dt = 2 frames) never skips an ease start: the stop sti
     const path = framesToFreeze(c)!;
     assert.equal(frames[path[path.length - 1].frame].src, v.freezeSource);
   }
+});
+
+// ---------------- the cadence at any display rate ----------------
+
+/** A seeded uniform random in [0, 1) (mulberry32), so every jittered run is the same run. */
+function random(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** n frame times at `hz`, each off by up to `jitter` of a frame either way, independently (P6's jitter: dt itself wanders). */
+function dtJitter(hz: number, n: number, jitter = 0.1, seed = 7): number[] {
+  const r = random(seed);
+  return Array.from({ length: n }, () => (1 + jitter * (2 * r() - 1)) / hz);
+}
+
+/** n frame times at `hz` from vsync-locked timestamps, each up to half of `jitter` of a frame late or early (dt within +-jitter), with a dropped frame every `drop`. */
+function vsyncJitter(hz: number, n: number, jitter = 0.1, drop = 0, seed = 11): number[] {
+  const r = random(seed);
+  const out: number[] = [];
+  let tick = 0;
+  let last = 0;
+  for (let i = 0; i < n; i++) {
+    tick += drop && i % drop === drop - 1 ? 2 : 1;
+    const t = (tick + (jitter / 2) * (2 * r() - 1)) / hz;
+    out.push(t - last);
+    last = t;
+  }
+  return out;
+}
+
+for (const hz of [72, 90])
+  test(`cadence at a matched rate (${hz}/${hz}): exactly round(dt x displayHz) every frame under +-10% jitter and dropped frames (the session's rate; or estimated from vsync-locked or exact frame times)`, () => {
+    const runs: [string, number | null, number[]][] = [
+      ["known, dt wandering", hz, dtJitter(hz, 3000)],
+      ["known, vsync-locked", hz, vsyncJitter(hz, 3000, 0.1, 37)],
+      ["estimated, vsync-locked", null, vsyncJitter(hz, 3000, 0.1, 37)],
+      ["estimated, exact (the probe)", null, Array.from({ length: 500 }, () => 1 / hz)],
+    ];
+    for (const [name, known, dts] of runs) {
+      const c = new Cadence(hz);
+      c.setOutputHz(known);
+      dts.forEach((dt, i) => assert.equal(c.steps(dt), stepFrames(dt, hz), `${name}: frame ${i} (dt ${(dt * hz).toFixed(3)} frames)`));
+    }
+  });
+
+for (const out of [60, 90, 120])
+  test(`cadence at ${out} Hz out for a 72 Hz show: real time within one show frame over 10 s (rate known or estimated, jittered and with dropped frames)`, () => {
+    for (const known of [out, null])
+      for (const drop of [0, 53]) {
+        const c = new Cadence(72);
+        c.setOutputHz(known);
+        let wall = 0;
+        let shown = 0;
+        let worst = 0;
+        for (const dt of vsyncJitter(out, 10 * out, 0.1, drop)) {
+          wall += dt;
+          shown += c.steps(dt);
+          worst = Math.max(worst, Math.abs(shown / 72 - wall));
+        }
+        assert.ok(worst <= 1 / 72 + 1e-9, `${known ?? "estimated"} ${out} Hz, drop ${drop}: ${(worst * 72).toFixed(2)} show frames off real time`);
+        assert.ok(Math.abs(c.outputHz() - out) < 0.5, `rate ${c.outputHz()}`);
+      }
+  });
+
+test("cadence steps evenly (Bresenham): 72 Hz on 90 Hz is 4 of every 5 frames, on 120 Hz 3 of every 5, on 60 Hz 1 or 2 (6 per 5)", () => {
+  for (const [out, per5] of [[90, [0, 1]], [120, [0, 1]], [60, [1, 2]]] as const) {
+    const c = new Cadence(72);
+    c.setOutputHz(out);
+    const steps = Array.from({ length: 100 }, () => c.steps(1 / out));
+    assert.ok(steps.every((n) => (per5 as readonly number[]).includes(n)), `${out} Hz: ${steps.slice(0, 10)}`);
+    for (let i = 0; i + 5 <= steps.length; i += 5) assert.equal(steps.slice(i, i + 5).reduce((a, b) => a + b, 0), (72 * 5) / out);
+  }
+});
+
+test("the Clock under +-10% jitter at 72 Hz shows exactly the frames it shows at an exact 72 Hz, press and stop included", () => {
+  const { court, frames } = standinBundle();
+  const exact = new Clock(court, frames);
+  const jittered = new Clock(court, frames);
+  const dts = dtJitter(72, 1500);
+  const a: number[] = [];
+  const b: number[] = [];
+  dts.forEach((dt, i) => {
+    if (i === 260) {
+      exact.press();
+      jittered.press();
+    }
+    a.push(exact.update(1 / 72).frame);
+    b.push(jittered.update(dt).frame);
+  });
+  assert.deepEqual(b, a);
+});
+
+test("the Clock at 120 Hz keeps real time (not 1.67x) and the stop still lands on F one show frame at a time", () => {
+  const { court, frames } = standinBundle();
+  const v = court.video;
+  const c = new Clock(court, frames);
+  c.setOutputHz(120);
+  const states: ClockState[] = [];
+  for (let i = 0; i < 120 * 2; i++) states.push({ ...c.update(1 / 120) });
+  // pass 1 plays 1x: 2 s of wall time is 144 show frames
+  assert.ok(Math.abs(states.at(-1)!.frame - v.segments.pass1[0] - 144) <= 1, `${states.at(-1)!.frame - v.segments.pass1[0]} frames in 2 s`);
+  c.press();
+  let prev = { ...c.state };
+  for (let i = 0; i < 120 * 30 && c.state.segment !== "freeze"; i++) {
+    const s = { ...c.update(1 / 120) };
+    if (s.segment === prev.segment && s.ease === prev.ease) assert.ok([0, 1].includes(s.segmentFrame - prev.segmentFrame), `${s.segment}: ${prev.segmentFrame} -> ${s.segmentFrame}`);
+    prev = s;
+  }
+  assert.equal(c.state.segment, "freeze");
+  assert.equal(frames[c.state.frame].src, v.freezeSource);
 });
