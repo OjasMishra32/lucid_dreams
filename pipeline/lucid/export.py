@@ -40,7 +40,7 @@ def parse_args(argv=None):
     p.add_argument("--clip", type=Path, help="source clip, for audio and source metadata")
     p.add_argument("--fps", type=float, default=25.0)
     p.add_argument("--intent", default="", help="what the user wants to do with this person (for experience.json)")
-    p.add_argument("--preview-size", default="720x1280")
+    p.add_argument("--preview-size", default="1080x1920")
     p.add_argument("--preview-bg", default="0,0,0", help="r,g,b in 0-255")
     p.add_argument("--device", default="cuda:0")
     return p.parse_args(argv)
@@ -196,9 +196,10 @@ def place(g: Gaussians, rot: np.ndarray, t: np.ndarray) -> Gaussians:
     return moved
 
 
-def orbit_camera(angle: float, radius: float, height: float, target_y: float) -> np.ndarray:
-    pos = np.array([radius * math.sin(angle), height, -radius * math.cos(angle)])
-    f = np.array([0.0, target_y, 0.0]) - pos
+def orbit_camera(angle: float, radius: float, height: float, target_y: float, centre=(0.0, 0.0)) -> np.ndarray:
+    cx, cz = centre
+    pos = np.array([cx + radius * math.sin(angle), height, cz - radius * math.cos(angle)])
+    f = np.array([cx, target_y, cz]) - pos
     f /= np.linalg.norm(f)
     r = np.cross(f, [0.0, 1.0, 0.0])
     r /= np.linalg.norm(r)
@@ -299,16 +300,28 @@ def main(argv=None):
          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", str(a.out / "preview.mp4")],
         stdin=subprocess.PIPE,
     )
+    # the orbit follows the person (smoothed over half a second): someone who steps or jumps stays in frame
+    def middle(g: Gaussians) -> np.ndarray:
+        alpha = 1 / (1 + np.exp(-g.opacities))
+        solid = g.means[alpha > 0.5] if (alpha > 0.5).sum() > 100 else g.means
+        return np.median(solid[:, [0, 2]], axis=0)
+
+    track = np.stack([middle(g) for g in placed_frames])
+    k_half = max(1, int(a.fps * 0.25))
+    track = np.stack([track[max(0, i - k_half): i + k_half + 1].mean(0) for i in range(len(track))])
     for k in range(n_out):
-        g = placed_frames[int(k / 30 * a.fps) % len(placed_frames)]
-        vm = orbit_camera(2 * math.pi * k / n_out, radius=max(2.4, top * 1.4), height=top * 0.6, target_y=top * 0.5)
+        i = int(k / 30 * a.fps) % len(placed_frames)
+        g = placed_frames[i]
+        vm = orbit_camera(2 * math.pi * k / n_out, radius=max(2.4, top * 1.4), height=top * 0.6, target_y=top * 0.5,
+                          centre=tuple(track[i]))
         ff.stdin.write(render(g, vm, w, h, bg, a.device).tobytes())
     ff.stdin.close()
     ff.wait()
     from PIL import Image
 
     front = placed_frames[len(placed_frames) // 3]
-    thumb = render(front, orbit_camera(0.0, max(2.4, top * 1.4), top * 0.6, top * 0.5), w, h, bg, a.device)
+    thumb = render(front, orbit_camera(0.0, max(2.4, top * 1.4), top * 0.6, top * 0.5,
+                                       centre=tuple(track[len(placed_frames) // 3])), w, h, bg, a.device)
     Image.fromarray(thumb).save(a.out / "thumb.jpg", quality=92)
 
     audio = None

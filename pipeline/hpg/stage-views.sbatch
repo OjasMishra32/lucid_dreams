@@ -25,7 +25,8 @@ PY
 )
 cd "$L/repos/4DAnyone"
 EXTRA=""
-[ "$TURBO" = "false" ] && EXTRA="$(python inference.py --help 2>&1 | grep -q -- '--turbo' && echo '--turbo False' || true)"
+# the flag is --enable_turbo (default True); asking for --turbo matched nothing, so every run so far was 4-step Turbo
+[ "$TURBO" = "false" ] && EXTRA="--enable_turbo=False"
 python inference.py --video_path "$RUN/$CLIP" --output_dir "$RUN/views" --views_per_layer "$VPL" --layer_pitches "$PITCHES" $EXTRA \
   || { python -m lucid.status mark "$RUN" views failed; exit 1; }
 python -m lucid.status mark "$RUN" views done

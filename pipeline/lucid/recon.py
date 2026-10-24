@@ -39,6 +39,11 @@ def parse_args(argv=None):
     p.add_argument("--batch", type=int, default=4, help="views rendered per step")
     p.add_argument("--perceptual", type=float, default=0.3, help="VGG-19 perceptual loss weight (0 = off)")
     p.add_argument("--holdout-every", type=int, default=0, help="hold out every Nth view for metrics (0 = none)")
+    p.add_argument("--aniso", type=float, default=0.0,
+                   help="weight on Gaussians stretched past --aniso-ratio: needles look right from the views they were "
+                        "fitted to and smear everywhere else (0 = off)")
+    p.add_argument("--aniso-ratio", type=float, default=6.0, help="longest / shortest axis allowed before it costs")
+    p.add_argument("--peek", default="", help="comma-separated views: save ground truth | render pairs of the first frame")
     p.add_argument("--spz-sh", type=int, default=0, help="SH degree kept in the .spz copies")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--seed", type=int, default=0)
@@ -177,6 +182,9 @@ class Trainer:
             if self.perc is not None and step % 2 == 0:
                 loss = loss + a.perceptual * self.perc(pred.permute(0, 3, 1, 2), gt.permute(0, 3, 1, 2))
             loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * torch.exp(params["scales"]).mean()
+            if a.aniso > 0:
+                s = params["scales"]  # log scales, so max - min is the log of the axis ratio
+                loss = loss + a.aniso * (s.max(-1).values - s.min(-1).values - math.log(a.aniso_ratio)).clamp_min(0).mean()
             loss.backward()
             for opt in optimizers.values():
                 opt.step()
@@ -185,6 +193,23 @@ class Trainer:
             optimizers["means"].param_groups[0]["lr"] = lr
             strategy.step_post_backward(params, optimizers, state, step, info, lr=lr)
         return params
+
+    @torch.no_grad()
+    def peek(self, params, rgba: torch.Tensor, views: list[int], path: Path) -> None:
+        """Ground truth beside our render for each view, all in one strip: the check numbers can't make."""
+        from PIL import Image
+
+        degree = int(round(math.sqrt(params["shN"].shape[1] + 1))) - 1
+        white = torch.ones(1, 3, device=self.device)
+        pairs = []
+        for v in views:
+            vt = torch.as_tensor([v], device=self.device)
+            target = rgba[vt].float() / 255.0
+            gt = target[..., :3] * target[..., 3:4] + (1 - target[..., 3:4])
+            pred, _, _ = self.render(params, vt, degree, white)
+            pairs.append(torch.cat([gt[0], pred[0]], 1))
+        strip = (torch.cat(pairs, 1).clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+        Image.fromarray(strip).save(path, quality=90)
 
     @torch.no_grad()
     def evaluate(self, params, rgba: torch.Tensor) -> dict:
@@ -239,6 +264,8 @@ def main(argv=None):
             params = clone_params(params)
         params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm)
         metrics = trainer.evaluate(params, rgba)
+        if args.peek and not warm:
+            trainer.peek(params, rgba, [int(v) for v in args.peek.split(",")], args.out / f"peek-{frame:06d}.jpg")
         g = Gaussians.from_params(params)
         keep = 1 / (1 + np.exp(-g.opacities)) > 0.005
         g = g.subset(keep)
