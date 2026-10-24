@@ -6,6 +6,8 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
 1. Hands (wrist and finger joints): LHM++ sees hands in few photos, so a handful of big Gaussians cover each one;
    when the fingers curl round a piece they stretch into streaks. Their size is capped (6 mm, axis ratio 3) and each
    one is re-skinned from its nearest SMPL-X vertex (finger-accurate) instead of LHM++'s coarse skinning grid.
+   The hip crease (Gaussians shared by the torso and a thigh) follows one joint and can't be a needle, so a seated
+   avatar's jacket hem doesn't streak over the lap.
 2. Clothes (everything but head and hands): a Gaussian whose colour is far from its 24 nearest neighbours' median
    (a garbled logo, a stray speck) takes that median.
 3. Hair (head joint, above the eyes): colour blended halfway to its neighbours' median, so it reads as hair, not
@@ -69,6 +71,21 @@ def main(argv=None) -> None:
     idx, q = idx.copy(), q.copy()
     idx[hands], q[hands] = h_idx, h_q
 
+    # 1b. the hip crease: Gaussians shared between the torso and a thigh stretch into streaks when he sits (90 degrees
+    # of hip flexion pulls them both ways). Each one follows only its strongest joint, and can't be a needle.
+    HIPS = [J["pelvis"], J["left_hip"], J["right_hip"], J["spine1"]]
+    w = q.astype(np.float32) / 255.0
+    top = w.max(1)
+    shared = np.isin(idx, HIPS).sum(1) >= 2
+    crease = shared & (top < 0.85) & ~hands
+    one = np.zeros_like(q)
+    one[:, 0] = 255
+    best = idx[np.arange(len(idx)), np.argmax(q, 1)]
+    idx[crease] = np.stack([best[crease]] + [best[crease]] * 3, 1)
+    q[crease] = one[crease]
+    sc = scale[crease]
+    scale[crease] = np.minimum(sc, sc.min(1, keepdims=True) + math.log(2.5))
+
     # 2. clothes: specks take their neighbours' median colour
     _, nn = tree.query(g.xyz, k=25)
     med = np.median(rgb[nn[:, 1:]], axis=1)
@@ -95,7 +112,7 @@ def main(argv=None) -> None:
 
     write_ply(ply, replace(g, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale))
     write_skin_bin(skin, idx, q)
-    report = {"hands": int(hands.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()), "hair": int(hair.sum()),
+    report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()), "hair": int(hair.sum()),
               "of": len(g)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
