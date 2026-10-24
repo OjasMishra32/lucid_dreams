@@ -37,5 +37,7 @@ d["avatar"]["reality"] = "avatar/reality.ply"
 json.dump(d, open("bundle/dream.json", "w"), indent=2)
 PY
 fi
+# a black-and-white photo makes a black-and-white person (no half-guessed skin colour)
+( source /blue/iruchkin/vishalnaveen/lucid/code/pipeline/hpg/env.sh >/dev/null 2>&1; python -m lucid.monochrome bundle "$RUN/$PHOTO" ) || true
 python3 -m lucid.status mark "$RUN" reconstruct done
 python3 -m lucid.status mark "$RUN" export done
