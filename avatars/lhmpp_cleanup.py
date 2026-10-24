@@ -193,12 +193,14 @@ def main(argv=None) -> None:
         out[blob] = trousers * (0.9 + 0.2 * np.clip(lum[blob, None] - mid, 0, 1))
 
     # 2d. --legs-lum: the trousers become one dark cloth (their median colour, a quarter of its hue kept, at luminance
-    # L) with 30% of their own shading; a light shirt tail over the belt stays
+    # L) with 30% of their own shading; a light shirt tail over the belt, in the front middle, stays
     trousers = np.isin(dom, TROUSERS) & ~hands
     toned = trousers & False
     if a.legs_lum is not None and trousers.sum() > 64:
         lum = out @ LUM
-        toned = trousers & (lum < 0.55)
+        pelvis = joints[J["pelvis"]]
+        tail = (lum >= 0.55) & (np.abs(g.xyz[:, 0] - pelvis[0]) < 0.08) & (g.xyz[:, 2] > pelvis[2])  # the front middle
+        toned = trousers & ~tail
         base = np.median(out[toned], axis=0)
         tone = float(base @ LUM) + 0.25 * (base - float(base @ LUM))
         tone = tone * (a.legs_lum / max(float(tone @ LUM), 1e-3))
