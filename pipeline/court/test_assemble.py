@@ -7,6 +7,7 @@ import math
 import os
 import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -111,6 +112,55 @@ class Calibration(unittest.TestCase):
         self.assertAlmostEqual(float(u), 1919.5)
         self.assertAlmostEqual(float(v), 1079.5)
         self.assertAlmostEqual(float(z), 20.0)
+
+    def test_flagged_frames_are_spans_inside_the_window(self):
+        c = self.calib()
+        for fr in c["frames"]:
+            fr["source"] = "layers+interp" if fr["source_frame"] in (104, 105) else "layers+lines"
+        c["frames"][9]["strobe"] = True  # 109
+        c["flags"] = {"no_lines": [[103, 106]], "offset_gt_1p5px": [108, 120]}
+        t = g.CalibTrack(c)
+        self.assertEqual(t.flagged(100, 107), {"interp": [[104, 105]], "no_lines": [[103, 106]]})
+        self.assertEqual(t.flagged(105, 110), {"interp": [[105, 105]], "no_lines": [[105, 106]], "offset_gt_1p5px": [[108, 108]],
+                                               "strobe": [[109, 109]]})
+        self.assertEqual(g.CalibTrack(self.calib()).flagged(100, 110), {})
+
+    def test_cameras_are_compared_with_the_calibration(self):
+        import assemble as A
+
+        t = g.CalibTrack(self.calib())
+        frames = []
+        for src in (101, 102.5, 104):
+            q, f = t.at(src)
+            frames.append({"src": src, "q": q.tolist(), "f": f})
+        self.assertEqual(A.vs_calib(frames, t)["maxDeg"], 0.0)
+        frames[1]["q"] = g.matrix_to_quat(g.quat_to_matrix(frames[1]["q"]) @ g.rot_y(math.radians(0.2))).tolist()
+        frames[2]["f"] *= 1.01
+        got = A.vs_calib(frames + [{"src": 300, "q": [0, 0, 0, 1], "f": 1.0}], t)  # outside the calibration: not compared
+        self.assertAlmostEqual(got["maxDeg"], 0.2, places=6)
+        self.assertEqual(got["maxDegAt"], 102.5)
+        self.assertAlmostEqual(got["maxFocal"], 0.01, places=6)
+        self.assertEqual((got["frames"], t.clamped), (3, 0))
+
+
+class Metrics(unittest.TestCase):
+    def test_reprojection_comes_from_the_solve_the_calibration_names(self):
+        """A per-frame calibration built on another solve carries no click summary: the config names the solve whose
+        clicks it keeps, and the reprojection comes from there (without one it is unknown, never made up)."""
+        import tempfile
+
+        import assemble as A
+
+        cam = g.Cam(np.zeros(3), np.eye(3), 1000.0, 959.5, 539.5, 1920, 1080)
+        frames = [{"interp": False}, {"interp": True}]
+        none = A.metrics_piece({}, {"frames": []}, cam, frames, [])
+        self.assertEqual(none["reprojDeg"], {"median": None, "p95": None})
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "solve.json").write_text(json.dumps({"summary": {"click_reproj_px": {"median": 1.0, "p95": 10.0}}}))
+            got = A.metrics_piece({"metrics": {"reprojFrom": str(Path(d) / "solve.json")}}, {"frames": []}, cam, frames, [])
+        self.assertAlmostEqual(got["reprojDeg"]["median"], math.degrees(math.atan(1.0 / 1000.0)), places=5)
+        self.assertAlmostEqual(got["reprojDeg"]["p95"], math.degrees(math.atan(10.0 / 1000.0)), places=5)
+        self.assertEqual(got["interpShare"], 0.5)
 
 
 class Placement(unittest.TestCase):
