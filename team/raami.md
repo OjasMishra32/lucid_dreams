@@ -96,3 +96,23 @@ or `import lucid_runner` and call the functions. Every command prints one JSON o
 7. **Demo command:** `npm run demo` in apps/web that starts the web app in runner mode; document it in the README.
 8. **Polish pass:** motion (subtle, under 300 ms), focus states, empty states, mobile layout, Lighthouse 95+.
 9. **Screenshots** of every page at 2x for Atina's Devpost once real dreams exist.
+
+## Update (Fri 9 PM): checked what's in, here's what's next
+
+In and working: web app + bridge (landing, Make a dream with clip checks, live progress, library, dream pages, mock
+and runner modes, `/api/dreams` for Ian, run-id validation). Great base.
+
+Not started yet, in this order:
+1. **Gemini guide** (MLH Gemini prize, so it matters): `guide.json` + spoken `guide.m4a` per dream, steps synced to the
+   preview video on the dream page, cached so it runs once. Key in `apps/web/.env.local` (git-ignored).
+2. **5-second window picker** in Make a dream (`startS` in the POST; the bridge and runner already take it).
+3. **Photo flow consent:** the photo/avatar toggle exists; add the required checkbox ("I have permission to bring this
+   person in") and the full-body photo checks (one person, head to toe).
+4. **Captions on the dream page:** bundles will get an optional `captions` (WebVTT, `captions.vtt`) from Atina's new
+   captions step. Show them under the preview video as a `<track>`, styled like the rest of the page.
+5. **Avatars show a live preview now:** the WebXR viewer skins avatar bundles live (no more rest pose), so "View in
+   your room" works for `kind: "avatar"` too. Same link.
+6. **Chess link:** add a quiet "Chess" item to the nav that opens `https://<host>:5180/?mode=chess` (the side mode:
+   hand-tracked board, engine up to Carlsen's peak rating). On a dream page for an avatar, also offer
+   "Play chess with them" -> `?mode=chess&opponent=<id>`.
+7. `npm run demo`, the polish pass and screenshots, as before.

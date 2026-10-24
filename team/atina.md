@@ -77,3 +77,54 @@ side mode: a real-size chess board on your table, pieces moved with your bare ha
 level up to Fischer's and Carlsen's peak ratings (labelled "Stockfish at X's peak rating. Not affiliated." Keep that
 wording anywhere it appears). In the video it's a 5-10 second "and it's not just people" beat after the main demo;
 in Devpost, one line under "what's next / also built". Never say or imply we have the real players.
+
+## Your new big chunk (Fri 9 PM): two pieces of the product nobody else owns
+
+The milestone clips still come first (30 minutes tonight). After that these two are yours end to end. Both run on
+your Mac with no GPU account and very little code, and both are things the demo really needs.
+
+### 1. Their words, floating beside them (captions)
+
+When someone appears in the room and speaks, their words should appear beside them as quiet captions. It's the most
+emotional detail in the family moment, and it makes the product work for deaf and hard-of-hearing people (Best
+Social Impact).
+
+- Tool: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`brew install whisper-cpp`; model `ggml-large-v3-turbo`,
+  runs on the Mac GPU through Metal). Input: a bundle's `voice.m4a` (Demucs-separated voice) or `audio.m4a`.
+- Write `pipeline/lucid/captions.py`: `python -m lucid.captions dreams/<id>` converts the voice to 16 kHz mono WAV with
+  ffmpeg, runs whisper with word timestamps, then cleans the result:
+  - at most 2 lines of 42 characters per cue, and 1-6 s on screen;
+  - drop non-speech tags (`[Music]`, `(laughs)`);
+  - drop any cue over near-silence (whisper invents "Thank you." on silence; check the audio level under each cue).
+  It writes `captions.vtt` (WebVTT, times in the clip's own time) into the bundle and adds `"captions": "captions.vtt"`
+  to `dream.json`. That field is in the contract now (AGENTS.md).
+- Test on 3 clips that have real speech (a teammate talking to camera works). Read every caption against the audio
+  and fix the cleaning rules until none are wrong.
+- Ojasva wires the WebXR viewer to show them; Raami shows them on the dream page.
+- Done means: `captions.py` plus a short test with a tiny WAV in `pipeline/tests/`, three bundles with correct captions,
+  and two lines in `demo/README.md` on how to run it.
+
+### 2. Old footage, restored before it goes in
+
+The pitch is "an old video of someone you love". Real old home video is 480p, interlaced, noisy and 4:3, and the
+pipeline wants a sharp 1080p portrait clip. Find out how much a restoration pass helps, and ship it if it does.
+
+- Write `pipeline/lucid/restore.py`: `python -m lucid.restore in.mp4 out.mp4`. It runs:
+  1. ffmpeg deinterlace (`bwdif`) and a light denoise (`hqdn3d=2:1:3:3`);
+  2. a 4x upscale with [Real-ESRGAN ncnn](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) (macOS binary, Metal via
+     MoltenVK; model `realesrgan-x4plus`), frame by frame;
+  3. reassemble at the original fps with the original audio.
+  **No face-restoration models** (GFPGAN, CodeFormer): they change who the person looks like, and for this product
+  that's the one thing we can't do.
+- Test footage: a public-domain home movie from the Prelinger Archives on archive.org (note the item URL in
+  `demo/clips.md`), plus a teammate filmed on purpose at 480p.
+- A/B test: put the plain and the restored version of the same clip through the pipeline (drop both into
+  `~/Downloads/lucid-clips/` on Ojasva's Mac). Compare the two dreams side by side in the viewer, and compare the
+  sharpness and PSNR numbers in each `recon-*.json`.
+- Done means: `restore.py`, a side-by-side image for the slides, and a recommendation: should `prep_clip.py` call it
+  automatically for inputs under 720p? If yes, add that call yourself.
+
+### Then, Saturday, as before
+
+Devpost draft (noon), video script (noon), README with credits (8 PM; add whisper.cpp and Real-ESRGAN, both MIT/BSD),
+slides, judge Q&A. Use Codex for the two scripts above; they're each well under 200 lines.

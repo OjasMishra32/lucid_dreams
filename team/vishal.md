@@ -130,3 +130,14 @@ Next, in order:
    Pure numpy IK on the arm chain is fine; write it as `lucid_avatars/reach.py` with a test. The WebXR chess plays it
    whenever the engine moves.
 4. Hands and face pass, then the family-photo person (unchanged from before).
+
+## Update (Fri 9:05 PM): bake + seen % in; the viewer skins your avatars live
+
+The WebXR viewer now plays avatar bundles with live GPU skinning from your `skin.bin` / `skeleton.json` / `motion.json`.
+It matches `skinning.py` to 1e-6, so bake is only needed for the Quest app until Ian's skinning lands.
+
+Chess opponent: `?mode=chess&opponent=<avatar id>` stands an avatar across the table. It should be a **consenting
+teammate**, never a public figure's face (the legends stay engine ratings only; AGENTS.md, Consent). So:
+1. **Your own avatar first** (after the fine-tune table): a head-to-toe photo of you -> `digs-sample` -> bundle `vishal`.
+   That one avatar is the chess opponent, the "you, perfected" subject and the first avatar in the demo.
+2. Then the seated idle and reach-and-place motions (above), so the opponent sits and moves its own pieces.

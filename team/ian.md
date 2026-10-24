@@ -96,3 +96,23 @@ Nice: Android OpenXR settings, Meta hand tracking and the batch APK build are in
   now) and logs the per-frame cap that fits; the real Quest 3S number comes from item 8.
 - **Delivery size:** a 121-frame PLY replay at 300k is about 9 GB, too big for Wi-Fi to the headset. Real bundles
   reach the Quest as SPZ once the runtime SPZ reader lands; PLY stays for development and editor checks.
+
+## Update (Fri 9:10 PM): sequence player in, next is SPZ
+
+The sequence player is exactly right (runtime loading, everything resident, no uploads while playing). Your own
+numbers make the next step obvious: **the runtime SPZ reader is now item 1.** A 121-frame PLY replay is about 9 GB;
+the same replay as SPZ is about 2-3% of that and decodes into the same GPU buffers. Format: `write_spz` in
+`pipeline/lucid/gaussians.py` (gzip, header, then positions as 24-bit fixed point, alpha u8, colour u8, log-scale u8,
+rotation xyz u8). `samples/synthetic-test/frames/*.spz` is test data. After that: hands (pinch to pause, grab to
+move) and the avatar player below.
+
+### Avatars skin live in WebXR now: copy the maths
+
+`apps/webxr/src/avatar.ts` plays avatar bundles with GPU skinning and matches Vishal's Python reference to 1e-6.
+What makes it simple, and what to do the same way in Unity:
+- Rest = identity for every bone. Each frame, hand each bone the whole skinning transform
+  `M_j = G_j [I | -rest_j] + root_t` (`skinTransforms()`), so the shader is just "blend 4 bone transforms per Gaussian".
+- Dual-quaternion blend (no candy-wrapper wrists); rotate each Gaussian's own rotation by the blended rotation.
+- Blend between motion frames (slerp per joint) so 30 fps motion is smooth at 72-90 Hz.
+- Until your skinning works, Vishal's `python -m lucid_avatars bake dreams/<id>` turns an avatar into a normal frame
+  sequence your sequence player already plays.

@@ -167,6 +167,9 @@ For an avatar, `kind` is `"avatar"`, `frames` is null and
 `"avatar": { "file": "avatar/avatar.ply", "rig": "smplx", "motion": "avatar/motion.json", "skin": "avatar/skin.bin",
 "skeleton": "avatar/skeleton.json" }`.
 
+Optional in any bundle: `"captions": "captions.vtt"` (WebVTT of what the person says, times in the clip's own time; Atina's
+`pipeline/lucid/captions.py` writes it, players show it beside the person).
+
 `motion.json`: `{ "fps": 30, "betas": [10 floats], "frames": [ { "root_t": [x,y,z], "root_q": [x,y,z,w],
 "pose": [55 x 3 axis-angle, SMPL-X joint order] } ] }`
 
@@ -255,3 +258,4 @@ samples/           a small sample dream bundle for development (kept tiny, or li
 - Fri 8:53 PM, Vishal: avatar bundles now report `metrics.seenFraction` too (share of the avatar the photo really saw; the rest is DiGS's imagination), so the web app's seen % works for avatars. `python -m lucid_avatars bake dreams/<id>` turns an avatar into a replay bundle (.ply + .spz frames) for players that can't skin yet.
 - Fri 9:00 PM, Ojasva: chess side mode pushed (`?mode=chess` in apps/webxr: hands only, fingertip buttons, real hands occlude pieces, Stockfish 19 from Club 1400 to full strength incl. Fischer/Carlsen peak ratings, labelled not affiliated). Autopilot now chains Vishal's `digs-finetune` onto each jump-shot run (queue `then` jobs). HiPerGator still waiting on Vishal's login after his exam.
 - Fri 9:05 PM, Ian: Quest replay sequence player in apps/quest: loads every PLY frame at runtime (device storage, StreamingAssets or the bridge), all frames resident on the GPU in float precision, frame swaps with no uploads; play/pause, 0.25/0.5/1x, scrub. Verified in a headless playback check (30 frames at 25 fps, correct facing and handedness) and an APK build; not yet run on the Quest. GPU cost is 72 B per Gaussian per frame, so 121 x 300k is about 2.5 GB. Next: runtime SPZ loading.
+- Fri 9:05 PM, Ojasva: WebXR viewer skins avatar bundles live (Spark dual-quaternion splat skinning; matches skinning.py to 1e-6). New optional bundle field `captions` (WebVTT). Atina now owns captions (whisper.cpp) and old-footage restoration (Real-ESRGAN, no face models). Chess opponents are consenting teammates' avatars only; legends stay engine ratings.
