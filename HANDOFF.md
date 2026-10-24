@@ -148,6 +148,10 @@ Checklist before export: under 3:00, the labels and credits, the family consent 
 clear over the music.
 
 ## Running services on Ojasva's Mac
+- **The headset gets a stable build, not the dev server.** The dev server reloaded the page on every code edit,
+  which froze the Quest mid-session. `:5180` now runs `vite preview` of the last commit. After committing new WebXR
+  work, run `~/LucidDreams-held/rebuild-stable.sh` (builds HEAD and restarts `:5180`; same tunnel URL), then reload
+  the page on the Quest. `:5181` stays the live dev server for desktop checks.
 - **Ports:**
   - `:5170` web app + bridge (`apps/web`, runner mode);
   - `:5175` Talk (`apps/talk`, keys in its git-ignored `.env`);
