@@ -8,7 +8,7 @@ import * as THREE from "three";
 import type { Court, ShowFrame, Vec3 } from "./format";
 import {
   Arrival, SeatedWatch, boundsDistance, freezeCamera, nextViewWorld, placeWorld, placements, playArea, ringFits, ringPoints,
-  seatPoint, toCourt, toRoom, walkingProblems, walkingWorld, yawOf, type ChairPose, type SeatSpot,
+  seatPoint, toCourt, toRoom, walkingLayout, walkingProblems, walkingWorld, yawOf, type ChairPose, type LayoutCase, type SeatSpot,
 } from "./seatmath";
 import type { Head, Polygon, WorldPose } from "./types";
 
@@ -153,6 +153,10 @@ export interface Layout {
   kind: "chair" | "ring";
   /** Walk targets, court space (floor points): the chair's, or the ring's. */
   points: Vec3[];
+  /** Which layout applied, richest first: "ring", "views" (Next view), "one-view", "overflow" (seatmath walkingLayout); null before Seat here. */
+  case: LayoutCase | null;
+  /** Why, in one line. */
+  why: string;
 }
 
 /** What the e2e and the frame log read about the seat (P1, P29). */
@@ -166,6 +170,9 @@ export interface SeatReport {
   /** "bounded-floor", "play-area" or null before Seat here. */
   bounds: "bounded-floor" | "play-area" | null;
   layout: "chair" | "ring";
+  /** The layout's case and why (seatmath walkingLayout). */
+  layoutCase: LayoutCase | null;
+  why: string;
   /** The world sits at the walking anchoring (or a Next view of it), not the watch's. */
   walking: boolean;
   /** Next view applies here (a second placement passes P29 and the ring is off). */
@@ -339,10 +346,11 @@ export class Seat {
 
   /** The current layout: the chair spot at the walking anchoring, or the ring when the bounds hold it. */
   layout(): Layout {
-    if (!this.chair || !this.bounds) return { kind: "chair", points: [] };
-    const w = walkingWorld(this.court, this.bounds, this.chair);
-    if (ringFits(this.court, this.bounds)) return { kind: "ring", points: ringPoints(this.court, this.bounds, w) };
-    return { kind: "chair", points: [toCourt(w, this.chair.position)] };
+    if (!this.chair || !this.bounds) return { kind: "chair", points: [], case: null, why: "before Seat here" };
+    const l = walkingLayout(this.court, this.bounds, this.chair);
+    const w = l.first.world;
+    if (l.case === "ring") return { kind: "ring", points: ringPoints(this.court, this.bounds, w), case: l.case, why: l.why };
+    return { kind: "chair", points: [toCourt(w, this.chair.position)], case: l.case, why: l.why };
   }
 
   /** Metres from the head to the bounds (the edge fade's input, P35); far from any edge before Seat here. */
@@ -402,6 +410,7 @@ export class Seat {
   /** What the e2e and the frame log read (P1 seat pose, P29). */
   report(): SeatReport {
     const seatFloor = toRoom(this.world, this.spotF.floor);
+    const layout = this.layout();
     const walk = this.chair && this.bounds ? placements(this.court, this.bounds, this.chair) : null;
     const w = this.chair && this.bounds ? walkingWorld(this.court, this.bounds, this.chair) : null;
     const at = walk && w ? walk.find((p) => p.world.yaw === w.yaw && p.world.position[0] === w.position[0]) ?? null : null;
@@ -411,7 +420,9 @@ export class Seat {
       seatFloor,
       distance: this.distance,
       bounds: this.floorBounds ? "bounded-floor" : this.area ? "play-area" : null,
-      layout: this.layout().kind,
+      layout: layout.kind,
+      layoutCase: layout.case,
+      why: layout.why,
       walking: this.walking,
       nextView: this.hasNextView(),
       chairCourt: at?.chair ?? null,

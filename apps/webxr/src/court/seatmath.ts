@@ -38,8 +38,13 @@ export const SIDE_MIN = 0.3;
 export const PROXIMITY = { distance: 0.2, opacity: 0.3, seconds: 0.25 };
 /** The arrival (P27): a seated head still this long starts the lights-up. */
 export const ARRIVAL_STILL_S = 1.0;
-/** "Still": the head stays within this of where it settled, metres (Quest tracking jitter is a few mm). */
-export const STILL_RADIUS = 0.05;
+/** "Still": every head position over the time counted fits a box this big (its diagonal, metres). Quest tracking jitter
+ * is a few mm; a 10 cm sway with a period up to ~4.5 s covers more than this in any second, even round the end of a swing. */
+export const STILL_RANGE = 0.025;
+/** The longest stillness measured, seconds (enough for every caller's wait). */
+const STILL_SPAN_S = 2;
+/** Head samples kept for it (2 s at up to 120 Hz). */
+const STILL_SAMPLES = 256;
 /** A head lower than this is not a seated person (a headset left on the chair), metres. */
 const MIN_EYE = 0.6;
 
@@ -318,10 +323,45 @@ export function placements(court: Court, bounds: Polygon, chair: ChairPose): Pla
   return out;
 }
 
-/** The walking anchoring's placement: the axis on the diagonal away from the chair, the chair on the camera's side. */
+/**
+ * The walking anchoring's placement: one that passes P29 if any does; among those, the chair on the camera's side and
+ * the axis on the diagonal away from the chair.
+ */
 function primary(list: Placement[]): Placement {
-  const ranked = [...list].sort((a, b) => Number(b.cameraSide) - Number(a.cameraSide) || b.offDiagonal - a.offDiagonal || Number(b.passes) - Number(a.passes));
+  const ranked = [...list].sort(
+    (a, b) => Number(b.passes) - Number(a.passes) || Number(b.cameraSide) - Number(a.cameraSide) || b.offDiagonal - a.offDiagonal,
+  );
   return ranked[0];
+}
+
+/**
+ * The walking layout a floor holds, richest first (P29): "ring" (the bounds hold the walk ring; Next view hides),
+ * "views" (two or more placements pass: Next view between them), "one-view" (one passes: one view and free walking,
+ * no Next view), "overflow" (none passes: the walking anchoring anyway, its overflow reported and clipped in See my
+ * room, no Next view). The 0.3 m and 1 m limits are never reduced.
+ */
+export type LayoutCase = "ring" | "views" | "one-view" | "overflow";
+
+export interface WalkingLayout {
+  case: LayoutCase;
+  /** Why this case, in one line. */
+  why: string;
+  /** The walking anchoring: the first placement (Walk closer and standing up jump here). */
+  first: Placement;
+  /** The placements offered as views, first one first: every one passes P29 (empty for "overflow"). */
+  offered: Placement[];
+}
+
+/** The walking layout for this floor and chair (3.4, P29). */
+export function walkingLayout(court: Court, bounds: Polygon, chair: ChairPose): WalkingLayout {
+  const list = placements(court, bounds, chair);
+  const first = primary(list);
+  const offered = [first, ...list.filter((p) => p !== first)].filter((p) => p.passes);
+  if (ringFits(court, bounds))
+    return { case: "ring", why: `the bounds hold a ring ${ringRadius(court).toFixed(2)} m round the pair, ${court.seat.clear} m clear of both bodies and ${RING_INSET} m inside`, first, offered };
+  if (offered.length >= 2) return { case: "views", why: `${offered.length} placements keep the chair ${court.seat.clear} m clear and both bodies ${BODY_INSET} m inside: Next view between them`, first, offered };
+  if (offered.length === 1) return { case: "one-view", why: "one placement passes (the chair on the camera's side): one view and free walking, no Next view", first, offered };
+  return { case: "overflow", why: `no placement passes: ${walkingProblems(court, bounds, chair).join("; ")}`, first, offered };
 }
 
 /**
@@ -350,15 +390,14 @@ function samePose(a: WorldPose, b: WorldPose): boolean {
   return Math.hypot(a.position[0] - b.position[0], a.position[2] - b.position[2]) < 0.01 && Math.abs(dy) < Math.PI / 180;
 }
 
-/** Next view: the other placement from the chair, when one fits the bounds with both bodies BODY_INSET inside; null hides Next view. */
+/** Next view: the next offered placement in the "views" layout (every one passes P29); null hides Next view (ring, one view, overflow). */
 export function nextViewWorld(court: Court, bounds: Polygon, chair: ChairPose, current: WorldPose): WorldPose | null {
-  const list = placements(court, bounds, chair);
-  const first = primary(list);
-  const passing = [first, ...list.filter((p) => p !== first)].filter((p) => p.passes);
-  const others = passing.filter((p) => !samePose(p.world, current));
+  const { case: kind, offered } = walkingLayout(court, bounds, chair);
+  if (kind !== "views") return null;
+  const others = offered.filter((p) => !samePose(p.world, current));
   if (!others.length) return null;
-  const at = passing.findIndex((p) => samePose(p.world, current));
-  return at < 0 ? others[0].world : passing[(at + 1) % passing.length].world;
+  const at = offered.findIndex((p) => samePose(p.world, current));
+  return at < 0 ? others[0].world : offered[(at + 1) % offered.length].world;
 }
 
 /** The ring's radius round the pair's axis centre: the smallest that keeps every point `seat.clear` from both bodies (court space). */
@@ -442,25 +481,53 @@ export class ProximityFade {
 
 // ---------------- the arrival (P27) and the sit (3.5) ----------------
 
-/** Settles when a head stays within STILL_RADIUS of where it stopped; `seconds` is how long it has. */
+/**
+ * How long the head has been still: the time back over which every position fits a STILL_RANGE box, up to STILL_SPAN_S.
+ * A window, not a filter, so a head that stops counts from the moment it stopped (P27's 1.1 s leaves no room for lag).
+ */
 class Stillness {
   seconds = 0;
-  private anchor: Vec3 | null = null;
+  /** Ring of [t, x, y, z] samples; the newest is just before `next`. */
+  private readonly ring = new Float64Array(STILL_SAMPLES * 4);
+  private count = 0;
+  private next = 0;
+  private now = 0;
 
   update(dt: number, head: Vec3, counting: boolean): number {
     if (!counting) {
       this.reset();
       return 0;
     }
-    if (!this.anchor || Math.hypot(head[0] - this.anchor[0], head[1] - this.anchor[1], head[2] - this.anchor[2]) > STILL_RADIUS) {
-      this.anchor = [...head];
-      this.seconds = 0;
-    } else this.seconds += dt;
+    this.now += dt;
+    const r = this.ring;
+    const at = this.next * 4;
+    r[at] = this.now;
+    r[at + 1] = head[0];
+    r[at + 2] = head[1];
+    r[at + 3] = head[2];
+    this.next = (this.next + 1) % STILL_SAMPLES;
+    this.count = Math.min(this.count + 1, STILL_SAMPLES);
+    let x0 = head[0], x1 = head[0], y0 = head[1], y1 = head[1], z0 = head[2], z1 = head[2];
+    let from = this.now;
+    for (let k = 1; k < this.count; k++) {
+      const b = ((this.next - 1 - k + STILL_SAMPLES) % STILL_SAMPLES) * 4;
+      if (this.now - r[b] > STILL_SPAN_S) break;
+      x0 = Math.min(x0, r[b + 1]);
+      x1 = Math.max(x1, r[b + 1]);
+      y0 = Math.min(y0, r[b + 2]);
+      y1 = Math.max(y1, r[b + 2]);
+      z0 = Math.min(z0, r[b + 3]);
+      z1 = Math.max(z1, r[b + 3]);
+      if (Math.hypot(x1 - x0, y1 - y0, z1 - z0) > STILL_RANGE) break;
+      from = r[b];
+    }
+    this.seconds = this.now - from;
     return this.seconds;
   }
 
   reset(): void {
-    this.anchor = null;
+    this.count = 0;
+    this.next = 0;
     this.seconds = 0;
   }
 }

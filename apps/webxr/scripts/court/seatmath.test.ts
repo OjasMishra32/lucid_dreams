@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import {
   Arrival, BODY_INSET, CHAIR_INSET, EDGE_FADE, PLAY_AREA, PROXIMITY, ProximityFade, RING_INSET, SIDE_MIN, SeatedWatch,
   bodiesInside, boundsDistance, capsuleDistance, clearance, edgeFade, forwardOf, freezeCamera, nextViewWorld, pairAxis,
-  placeWorld, placements, playArea, ringFits, ringPoints, roomFrame, seatPoint, toCourt, toRoom, walkingProblems, walkingWorld,
-  yawOf,
+  placeWorld, placements, playArea, ringFits, ringPoints, roomFrame, seatPoint, toCourt, toRoom, walkingLayout, walkingProblems,
+  walkingWorld, yawOf, type LayoutCase,
 } from "../../src/court/seatmath.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
 import type { Polygon, WorldPose } from "../../src/court/types.ts";
@@ -204,6 +204,58 @@ test("P29: a pair too long for the floor reports the overflow (not a failure): t
   assert.match(walkingProblems(court, small.bounds, small.chair).join("; "), /from the nearer body/);
 });
 
+/** A synthetic pair whose bounds span exactly `span` m along the pair axis (near body's front to far body's back). */
+function spanPair(span: number): Court {
+  let lo = 0;
+  let hi = span;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (2 * pairAxis(pairOf(mid, 0.3, 0.5, 0.6)).half[0] < span) lo = mid;
+    else hi = mid;
+  }
+  return pairOf(lo, 0.3, 0.5, 0.6);
+}
+
+/** Synthetic pairs: the stand-in's, and two long ones. */
+const PAIRS: [string, Court][] = [["the stand-in pair", court], ["a 2.6 m pair", spanPair(2.6)], ["a 3.2 m pair", spanPair(3.2)]];
+/** What each floor holds with the chair in a corner (3.5, 5, 7 m): the richest layout that fits. */
+const WANT: Record<string, LayoutCase[]> = {
+  "the stand-in pair": ["one-view", "ring", "ring"],
+  "a 2.6 m pair": ["one-view", "one-view", "ring"],
+  "a 3.2 m pair": ["one-view", "one-view", "ring"],
+};
+
+for (const [name, c] of PAIRS)
+  test(`P29 (${name}) on 3.5, 5 and 7 m floors: the richest layout that fits, and every offered view clears (1 m from the chair, bodies 0.3 m inside)`, () => {
+    [3.5, 5, 7].forEach((size, k) => {
+      const { chair, bounds } = corner(c, [size, size]);
+      const l = walkingLayout(c, bounds, chair);
+      if (c !== court) assert.ok(Math.abs(2 * pairAxis(c).half[0] - Number.parseFloat(name.slice(2))) < 1e-6);
+      assert.equal(l.case, WANT[name][k], `${size} m: ${l.case} (${l.why})`);
+      for (const p of l.offered) {
+        assert.ok(p.passes && p.clearance >= c.seat.clear - 1e-9 && Math.min(...p.inside) >= BODY_INSET - 1e-9, `${size} m: an offered view fails`);
+      }
+      // the richest that fits: a ring only when it fits, views only with two passing placements, overflow only with none
+      const passing = placements(c, bounds, chair).filter((p) => p.passes).length;
+      assert.equal(l.case === "ring", ringFits(c, bounds));
+      if (l.case !== "ring") assert.equal(l.case, passing >= 2 ? "views" : passing === 1 ? "one-view" : "overflow");
+      assert.ok(l.why.length > 0);
+      assert.equal(nextViewWorld(c, bounds, chair, l.first.world) !== null, l.case === "views"); // Next view only between offered views
+    });
+  });
+
+test("P29: \"views\" where a second placement passes (the chair mid-side of a 4.8 m room); \"overflow\" offers nothing and says why", () => {
+  const views = walkingLayout(court, rect(4.8, 4.8), { position: [0, 0, 1.8], yaw: 0 });
+  assert.equal(views.case, "views");
+  assert.equal(views.offered.length, 2);
+  const deep = pairOf(1.9, 0.2, 0.5, 0.7);
+  const { chair, bounds } = corner(deep);
+  const over = walkingLayout(deep, bounds, chair);
+  assert.equal(over.case, "overflow");
+  assert.deepEqual(over.offered, []);
+  assert.match(over.why, /past them, clipped in See my room/);
+});
+
 test("the ring turns on from the bounds and the bodies alone: every point 1 m clear of both bodies and 0.7 m inside", () => {
   assert.equal(ringFits(court, rect(3.5, 3.5)), false);
   assert.equal(ringFits(court, rect(8, 8, 0.4, [3, 1])), true);
@@ -317,6 +369,32 @@ test("P27: black until a hand-over (not visible -> visible), then a seated head 
   // a new Seat here waits for a new hand-over
   a.seatHere(seat, 1.15);
   assert.equal(run([0.04, 1.12, 0.06], 2), null);
+});
+
+test("P27: a sway is not still (10 cm side to side, periods 1-4 s): it waits, however long each swing dwells near its end", () => {
+  for (const period of [1, 2.1, 4]) {
+    const a = new Arrival();
+    a.seatHere([0, 0, 0], 1.15);
+    a.visibility("hidden");
+    a.visibility("visible");
+    let at: number | null = null;
+    for (let i = 0; i < 6 * 72 && at === null; i++) if (a.update(1 / 72, [0.1 * Math.sin((2 * Math.PI * i) / 72 / period), 1.15, 0])) at = i / 72;
+    assert.equal(at, null, `${period} s sway lit up after ${at} s`);
+  }
+});
+
+test("P27: a head that stops mid-sway lights up 1 s after it stops (no filter lag: P27 allows 1.1 s)", () => {
+  for (const stopAt of [0.5, 0.9, 1.3]) {
+    const a = new Arrival();
+    a.seatHere([0, 0, 0], 1.15);
+    a.visibility("hidden");
+    a.visibility("visible");
+    const dt = 1 / 72;
+    const x = (t: number) => 0.1 * Math.sin(3 * Math.min(t, stopAt)); // 0.3 m/s side to side, then still
+    let at: number | null = null;
+    for (let i = 0; i < 4 * 72 && at === null; i++) if (a.update(dt, [x(i * dt), 1.15, 0])) at = i * dt;
+    assert.ok(at !== null && at - stopAt <= 1.0 + dt + 1e-9, `stopped at ${stopAt} s, lit at ${at} s`);
+  }
 });
 
 test("P27: tracking jitter (a few mm a frame) still counts as still", () => {
