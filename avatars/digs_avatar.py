@@ -68,7 +68,9 @@ def matte_and_crop(photo: Image.Image, model_name: str, work: Path):
     """The person on white and the same crop unmatted (for NLF), both 640x896, and the crop box in photo pixels."""
     import rembg
 
-    alpha = rembg.remove(photo, session=rembg.new_session(model_name), only_mask=True)
+    # on CPU: onnxruntime-gpu has no kernels for Blackwell GPUs (B200 / RTX PRO 6000), and one matte is fast anyway
+    session = rembg.new_session(model_name, providers=["CPUExecutionProvider"])
+    alpha = rembg.remove(photo, session=session, only_mask=True)
     alpha = np.asarray(alpha.convert("L"))
     Image.fromarray(alpha).save(work / "matte.png")
     x0, y0, x1, y1 = (round(v) for v in D.aspect_crop_box(D.alpha_bbox(alpha), D.DIGS_W / D.DIGS_H))
