@@ -40,7 +40,7 @@ export interface HandoffParts {
 /** The beats, seconds from F (3.3). */
 export const BEATS = {
   splatsUp: [-0.45, 0.3],
-  maskLifts: [0.1, 1.0],
+  maskLifts: [0.1, 3.1], // 3 s: what the lift uncovers is the arena at F's light, so the window opens slowly (P44)
   videoFades: [0.15, 1.15],
   poolGrows: [1.0, 4.0],
   standsRise: [3.0, 5.0],

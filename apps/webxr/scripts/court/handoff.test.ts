@@ -56,8 +56,8 @@ function recorder() {
 const last = (calls: Call[], name: string) => [...calls].reverse().find((c) => c[0] === name);
 const lastNum = (calls: Call[], name: string) => Number(last(calls, name)![1]);
 
-test("the beats are the plan's (3.3): splats up from F - 0.45, mask F + 0.1..1.0, video F + 0.15..1.15, pool 1..4, stands 3..5", () => {
-  assert.deepEqual(BEATS, { splatsUp: [-0.45, 0.3], maskLifts: [0.1, 1.0], videoFades: [0.15, 1.15], poolGrows: [1.0, 4.0], standsRise: [3.0, 5.0] });
+test("the beats are the plan's (3.3): splats up from F - 0.45, mask F + 0.1..3.1 (the window opens over 3 s, P44), video F + 0.15..1.15, pool 1..4, stands 3..5", () => {
+  assert.deepEqual(BEATS, { splatsUp: [-0.45, 0.3], maskLifts: [0.1, 3.1], videoFades: [0.15, 1.15], poolGrows: [1.0, 4.0], standsRise: [3.0, 5.0] });
   assert.equal(HANDOFF_END, 5.0);
   assert.deepEqual(BACK_BEATS, { videoReturns: [-0.1, 1.2], maskCloses: [1.2, 1.8] });
   assert.equal(HANDBACK_END, 1.8);
@@ -71,18 +71,18 @@ test("the video layer fades over F + 0.15 .. F + 1.15 s (P10: 1.0 s), smootherst
   monotone((t) => handoffBeats(t).video, 0, 1.3, -1, "video");
 });
 
-test("the splats come up F - 0.45 .. F + 0.3 under the picture; the mask lifts F + 0.1 .. 1.0; the world opens with the pool", () => {
+test("the splats come up F - 0.45 .. F + 0.3 under the picture; the mask lifts F + 0.1 .. 3.1; the world opens with the pool", () => {
   const at = (t: number) => handoffBeats(t);
   close(at(-0.45).reveal, 0, 0, "nothing drawn before");
   close(at(0.3).reveal, 1, 0, "drawn by F + 0.3");
   for (const t of frames(-0.45, 0.15)) close(at(t).video, 1, 0, "the picture stays opaque while they come up");
   assert.ok(at(0.15).reveal > 0.8, "mostly up before the fade starts");
   close(at(0.1).mask, 0, 0, "the watch's edge before");
-  close(at(1.0).mask, 1, 0, "lifted");
+  close(at(3.1).mask, 1, 0, "lifted");
   close(at(1.0).open, 0, 0, "the world waits for the pool");
   close(at(4.0).open, 1, 0, "open as the pool leaves it");
   assert.ok(maxStep((t) => at(t).reveal, -0.6, 0.4) <= stepBar(0.75));
-  assert.ok(maxStep((t) => at(t).mask, 0, 1.2) <= stepBar(0.9));
+  assert.ok(maxStep((t) => at(t).mask, 0, 3.3) <= stepBar(3.0));
   assert.ok(maxStep((t) => at(t).open, 0.9, 4.2) <= stepBar(3.0));
   monotone((t) => at(t).reveal, -0.6, 0.4, 1, "reveal");
   monotone((t) => at(t).mask, 0, 1.2, 1, "mask");
