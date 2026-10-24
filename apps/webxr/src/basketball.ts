@@ -415,16 +415,19 @@ export class Basketball {
     return true;
   }
 
-  /** Catch and shoot on or off. On, the person waits in their opening pose for your pass. */
+  /** Catch and shoot on or off. On, the person plays their clip as usual until your pass reaches them. */
   setGame(on: boolean) {
     this.gameOn = on && !!this.player;
     this.phase = "waiting";
     this.clip = 0;
   }
 
-  /** True while the game, not the lesson, decides what moment of the clip is shown. */
+  /**
+   * True while the game, not the clip's own clock, decides what moment is shown: from your pass reaching them until
+   * the rebound comes back to you. Waiting for a pass they just play (nobody stands frozen until you throw).
+   */
   get driving(): boolean {
-    return this.gameOn && this.state !== "away";
+    return this.gameOn && this.state !== "away" && this.phase !== "waiting";
   }
 
   private trackWorld(t: number, out: THREE.Vector3): THREE.Vector3 {

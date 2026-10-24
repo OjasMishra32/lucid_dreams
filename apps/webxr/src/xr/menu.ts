@@ -64,6 +64,12 @@ export class HandMenu {
     });
   }
 
+  /** Buttons put in at a place in the menu (after Play, say) instead of at its end. */
+  insert(at: number, ...buttons: XrButton[]) {
+    this.buttons.splice(Math.min(at, this.buttons.length), 0, ...buttons.filter((b) => !this.buttons.includes(b)));
+    this.add();
+  }
+
   remove(button: XrButton) {
     const k = this.buttons.indexOf(button);
     if (k < 0) return;

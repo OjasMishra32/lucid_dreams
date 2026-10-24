@@ -71,8 +71,11 @@ export class Props {
   inHands: ((t: number, out: THREE.Vector3) => boolean) | null = null;
   private fader = new Fader();
   private reveal = -1;
+  private fps: number;
+  private erasedAt = NaN; // the frame the erasers were last moved for
 
   constructor(file: PropsFile, fps: number, renderer: THREE.WebGLRenderer) {
+    this.fps = fps;
     const known = file.objects.filter((o) => (o?.kind === "basketball" && Array.isArray((o as BallProp).track)) || (o?.kind === "hoop" && finite3((o as HoopProp).rim)));
     if (!known.length) return;
     // a soft studio light of its own: the splats carry their own light, only these solid objects need it
@@ -128,6 +131,11 @@ export class Props {
     }
     // the reconstruction's own ball goes wherever the solid one stands in for it; nowhere else (a guess between
     // tracked frames, or held at a track's ends, would cut pieces out of the person)
+    // moved once per frame of the clip, not per frame drawn: each move re-runs the splats behind it (and their sort),
+    // and the ball they erase only changes when the person's frame does
+    const frame = Math.round(t * this.fps) * 2 + (this.ballsVisible ? 0 : 1);
+    if (frame === this.erasedAt) return;
+    this.erasedAt = frame;
     for (const e of this.erasers) {
       if (e.ball.known) e.sdf.position.copy(e.ball.pos);
       else if (!(!this.ballsVisible && this.inHands?.(t, e.sdf.position))) e.sdf.position.set(0, -100, 0);

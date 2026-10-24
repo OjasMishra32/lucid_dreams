@@ -18,7 +18,7 @@ import { FloatingNote } from "./room";
 import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
 import { TableSounds } from "./sound";
 import { FamousMoves } from "./famous";
-import { XR_QUALITY } from "../xr/quality";
+import { QualityGovernor, XR_QUALITY } from "../xr/quality";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
 // you at the strength you choose, with a real clock (10 + 0) at your right. Hands only, and nothing moves unless you
@@ -121,6 +121,7 @@ export async function renderChess(root: HTMLElement) {
   let opponentSince = 0;
   let opponentToken = 0;
   let spark: SparkRenderer | null = null;
+  const governor = new QualityGovernor(renderer); // holds the headset at its frame rate (xr/quality.ts)
   const opponentGroup = new THREE.Group();
   scene.add(opponentGroup);
   let opponentShownId: string | null = null;
@@ -150,7 +151,10 @@ export async function renderChess(root: HTMLElement) {
       clearOpponent();
       return updateStatus();
     }
-    if (!spark) scene.add((spark = new SparkRenderer({ renderer })));
+    if (!spark) {
+      scene.add((spark = new SparkRenderer({ renderer, maxStdDev: XR_QUALITY.std })));
+      governor.attach(spark);
+    }
     loadDream(id)
       .then(async (d) => {
         if (!SkinnedAvatar.canSkin(d)) throw new Error(`${d.id} has no rig`);
@@ -936,6 +940,7 @@ export async function renderChess(root: HTMLElement) {
     renderer.xr.setFramebufferScaleFactor(XR_QUALITY.res);
     renderer.xr.setFoveation(XR_QUALITY.fov); // three's default is full foveation: the clock, the menu and the edges blurred
     await renderer.xr.setSession(session);
+    governor.reset();
     placed = false;
     panel.visible = true;
     hintUntil = performance.now() + 20000;
@@ -992,6 +997,7 @@ export async function renderChess(root: HTMLElement) {
   const headPos = new THREE.Vector3();
   const handJoints = ["wrist", "index-finger-tip", "middle-finger-metacarpal", "thumb-tip"];
   const frame = (time: number) => {
+    governor.frame(performance.now());
     const dt = lastTime ? Math.min(0.1, (time - lastTime) / 1000) : 0;
     lastTime = time;
     clock.update(dt);

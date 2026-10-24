@@ -7,7 +7,7 @@ import { loadDream } from "../dream";
 import { XrButton, liveJoints, openness } from "../xr/hands";
 import { HandMenu, handIndex, handSides } from "../xr/menu";
 import { WorldLock } from "../xr/anchor";
-import { XR_QUALITY } from "../xr/quality";
+import { QualityGovernor, XR_QUALITY } from "../xr/quality";
 import { hashSeed } from "../chess/person";
 import { C, buildCourt, inCourt, inServiceBox, netHeight } from "./court";
 import { type Ball, type BallEvent, BALL_R, STEP, aimToReach, copyBall, newBall, predict, spinFor, stepBall } from "./physics";
@@ -168,6 +168,7 @@ export async function renderTennis(root: HTMLElement) {
 
   // ---------------- the opponent's body ----------------
   let spark: SparkRenderer | null = null;
+  const governor = new QualityGovernor(renderer); // holds the headset at its frame rate (xr/quality.ts)
   let labelText = "";
   const opponentIds = [params.get("opponent"), ...PLAYER_ID_DEFAULTS].filter(Boolean) as string[];
   const loadOpponent = async (ids: string[]) => {
@@ -175,7 +176,10 @@ export async function renderTennis(root: HTMLElement) {
       try {
         const d = await loadDream(id);
         if (!SkinnedAvatar.canSkin(d)) throw new Error("no rig");
-        if (!spark) scene.add((spark = new SparkRenderer({ renderer })));
+        if (!spark) {
+          scene.add((spark = new SparkRenderer({ renderer, maxStdDev: XR_QUALITY.std })));
+          governor.attach(spark);
+        }
         const a = await SkinnedAvatar.load(d);
         const display = /\(|test/i.test(d.name) ? "Your opponent" : d.name;
         oppShort = /\(|test/i.test(d.name) ? "Opponent" : d.name.trim().split(/\s+/).pop()!;
@@ -1096,6 +1100,7 @@ export async function renderTennis(root: HTMLElement) {
     renderer.xr.setFramebufferScaleFactor(XR_QUALITY.res); // full resolution: the lines, the ball and the text stay sharp
     renderer.xr.setFoveation(XR_QUALITY.fov);
     await renderer.xr.setSession(session);
+    governor.reset();
     placed = false;
     setRoom(false);
     note(`session ${arOk ? "ar" : "vr"}`);
@@ -1150,6 +1155,7 @@ export async function renderTennis(root: HTMLElement) {
   let paused = false; // dev: hold everything still (his pose can be set by hand)
   camera.position.set(desk.x * 0.8, 2.15, desk.z + 3.6);
   const frame = (time: number) => {
+    governor.frame(performance.now());
     const dt = lastTime ? THREE.MathUtils.clamp((time - lastTime) / 1000, 0, 0.1) : 1 / 72; // a clock that jumps back: no time passes
     lastTime = time;
     const xr = renderer.xr.isPresenting;
