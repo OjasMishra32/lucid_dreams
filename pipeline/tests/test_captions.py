@@ -336,6 +336,16 @@ class BundleTests(unittest.TestCase):
         self.assertNotIn("-tr", whisper_command)
         self.assertEqual(sorted(p.name for p in self.bundle.iterdir()), ["audio.m4a", "captions.vtt", "dream.json", "model.bin"])
 
+    def test_focus_preset_writes_sidecar_without_changing_words_or_start_times(self):
+        count, _ = self.generate(accessibility_preset="focus")
+        self.assertEqual(count, 1)
+        self.assertIn("00:00:01.250 --> 00:00:02.250", self.output.read_text())
+        self.assertIn("Hello world.", self.output.read_text())
+        sidecar = json.loads((self.bundle / "caption-accessibility.json").read_text())
+        self.assertEqual(sidecar["preset"], "focus")
+        self.assertEqual(sidecar["captions"], "captions.vtt")
+        self.assertEqual(sidecar["cueLimits"]["maxLines"], 1)
+
     def test_missing_model_and_dependencies_do_not_touch_outputs(self):
         self.output.write_text("existing captions")
         with self.assertRaisesRegex(cc.CaptionError, "model not found"):

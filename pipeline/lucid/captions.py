@@ -23,6 +23,8 @@ import tempfile
 import textwrap
 import wave
 
+from . import caption_accessibility as accessibility
+
 
 class CaptionError(Exception):
     """An actionable failure; do not publish incomplete captions."""
@@ -174,24 +176,25 @@ def boundary_cost(previous: str, following: str) -> int:
     return cost
 
 
-def wrap(text: str) -> str | None:
-    if len(text) <= 42:
+def wrap(text: str, max_chars: int = 42, max_lines: int = 2) -> str | None:
+    if len(text) <= max_chars:
         return text
     words = text.split()
     candidates = []
     for i in range(1, len(words)):
         left, right = " ".join(words[:i]), " ".join(words[i:])
-        if max(len(left), len(right)) <= 42:
+        if max_lines >= 2 and max(len(left), len(right)) <= max_chars:
             # Balance lines without stranding function words or ignoring a useful phrase boundary.
             cost = boundary_cost(words[i - 1], words[i]) + abs(len(left) - len(right)) / 5
             candidates.append((cost, left + "\n" + right))
     if candidates:
         return min(candidates, key=lambda candidate: candidate[0])[1]
-    lines = textwrap.wrap(text, width=42, break_long_words=True, break_on_hyphens=False)
-    return "\n".join(lines) if len(lines) <= 2 else None
+    lines = textwrap.wrap(text, width=max_chars, break_long_words=True, break_on_hyphens=False)
+    return "\n".join(lines) if len(lines) <= max_lines else None
 
 
-def make_cues(words: list[Cue], duration: int) -> list[Cue]:
+def make_cues(words: list[Cue], duration: int, *, max_chars: int = 42, max_lines: int = 2,
+              min_ms: int = 1000, max_ms: int = 6000) -> list[Cue]:
     # Find the lowest-cost complete partition at real word boundaries, not the longest possible next cue.
     # Missing a sentence ending costs more than another cue. Pauses and clause starts guide necessary splits.
     choices: dict[int, tuple[Cue, int]] = {}
@@ -210,12 +213,12 @@ def make_cues(words: list[Cue], duration: int) -> list[Cue]:
                     crossed += 18
             text = (text + " " + words[j].text).strip()
             speech_end = max(speech_end, words[j].end)
-            wrapped = wrap(text)
-            if wrapped is None or speech_end - words[i].start > 6000:
+            wrapped = wrap(text, max_chars, max_lines)
+            if wrapped is None or speech_end - words[i].start > max_ms:
                 break
             limit = min(duration, words[j + 1].start if j + 1 < len(words) else duration)
-            end = min(max(speech_end, words[i].start + 1000), limit)
-            if j + 1 in costs and end >= speech_end and 1000 <= end - words[i].start <= 6000:
+            end = min(max(speech_end, words[i].start + min_ms), limit)
+            if j + 1 in costs and end >= speech_end and min_ms <= end - words[i].start <= max_ms:
                 boundary = 0 if j + 1 == len(words) else boundary_cost(words[j].text, words[j + 1].text)
                 if j + 1 < len(words) and words[j + 1].start - speech_end >= 300:
                     boundary = min(boundary, 6)
@@ -225,7 +228,7 @@ def make_cues(words: list[Cue], duration: int) -> list[Cue]:
                     costs[i] = cost
                     choices[i] = (Cue(words[i].start, end, wrapped), j + 1)
     if words and 0 not in costs:
-        raise CaptionError("Cannot fit all speech into non-overlapping 1–6s, two-line cues without shifting words. "
+        raise CaptionError("Cannot fit all speech into non-overlapping cues without shifting words. "
                            "Review word timestamps, clip length, or unusually dense speech; existing captions are unchanged.")
     result, i = [], 0
     while i < len(words):
@@ -275,12 +278,22 @@ def publish(bundle: Path, original: bytes, vtt: str) -> None:
 
 
 def generate(bundle: Path, model: Path, *, whisper: str = "whisper-cli", ffmpeg: str = "ffmpeg",
-             language: str = "auto", silence_db: float = -50, timeout: float = 600) -> int:
+             language: str = "auto", silence_db: float = -50, timeout: float = 600,
+             accessibility_preset: str | None = None, accessibility_out: Path | None = None) -> int:
     if not math.isfinite(silence_db) or not -120 <= silence_db <= 0:
         raise CaptionError("--silence-db must be a finite dBFS value between -120 and 0.")
     if not math.isfinite(timeout) or timeout <= 0:
         raise CaptionError("--timeout must be a positive, finite number of seconds.")
     bundle = bundle.expanduser().resolve()
+    contract = None
+    if accessibility_preset is not None:
+        contract = accessibility.resolve(accessibility_preset)
+        accessibility_out = accessibility_out or bundle / "caption-accessibility.json"
+        accessibility_out = accessibility_out.expanduser().resolve()
+        if bundle not in accessibility_out.parents:
+            raise CaptionError("Accessibility configuration must stay inside the bundle.")
+        if accessibility_out.exists():
+            raise CaptionError(f"Refusing to overwrite existing accessibility configuration {accessibility_out.name}.")
     original = (bundle / "dream.json").read_bytes()
     dream = read_json(bundle / "dream.json")
     source = audio_path(bundle, dream)
@@ -304,8 +317,12 @@ def generate(bundle: Path, model: Path, *, whisper: str = "whisper-cli", ffmpeg:
         run_tool([transcriber, "-m", str(model.expanduser().resolve()), "-f", str(wav), "-l", language,
                   "-oj", "-ml", "1", "-sow", "-of", str(output)], timeout)
         words = words_from_json(read_json(output.with_suffix(".json")), samples, duration, silence_db)
-        cues = make_cues(words, duration)
+        limits = accessibility.cue_limits(contract) if contract else {"max_chars": 42, "max_lines": 2, "min_ms": 1000, "max_ms": 6000}
+        cues = make_cues(words, duration, **limits)
         publish(bundle, original, webvtt(cues))
+        if contract is not None:
+            contract["captions"] = "captions.vtt"
+            accessibility_out.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
         return len(cues)
 
 
@@ -318,10 +335,15 @@ def main(argv=None) -> int:
     parser.add_argument("--language", default="auto", help="spoken language code or auto; never translates")
     parser.add_argument("--silence-db", type=float, default=-50, help="reject word intervals below this RMS dBFS")
     parser.add_argument("--timeout", type=float, default=600, help="timeout per external command, seconds")
+    parser.add_argument("--accessibility-preset", choices=[*accessibility.presets(), "custom"],
+                        help="generate safely regrouped cues and an optional presentation sidecar")
+    parser.add_argument("--accessibility-out", type=Path,
+                        help="new sidecar path (default: bundle/caption-accessibility.json; never overwritten)")
     args = parser.parse_args(argv)
     try:
         count = generate(args.bundle, args.model, whisper=args.whisper, ffmpeg=args.ffmpeg,
-                         language=args.language, silence_db=args.silence_db, timeout=args.timeout)
+                         language=args.language, silence_db=args.silence_db, timeout=args.timeout,
+                         accessibility_preset=args.accessibility_preset, accessibility_out=args.accessibility_out)
     except (CaptionError, OSError) as exc:
         print(f"captions: {exc}", file=sys.stderr)
         return 1
