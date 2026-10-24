@@ -80,6 +80,25 @@ uv run python -m lucid_avatars validate ../samples/<id>           # check a bund
 uv run python -m lucid_avatars idle motion.json                   # write a 20 s idle motion
 ```
 
+**Realism numbers** (`dream.json` `metrics`, for the web app's Realism panel; `lucid_avatars/realism.py` is the plain
+part, `digs_avatar.py measure_realism` the GPU glue). All rounded to 4 places; any that can't be computed is `null`,
+logged as `[realism] <key> skipped: ...` and never stops the bundle. Nothing leaves the cluster.
+
+| key | what | read it as |
+| --- | --- | --- |
+| `identity` | InsightFace buffalo_l ArcFace cosine between the avatar's front face render and the photo's face (the original photo's pixels) | 1 = same face, 0 = unrelated |
+| `lpipsFace` | LPIPS (VGG, as in `digs_finetune.py`) on the face crop: DiGS's re-render from the photo's own fitted camera vs the crop it was fitted to, both resized to 128 px | lower is better; 0 = identical |
+| `sharpness` | variance of the Laplacian on that render's face crop / the photo's (same crop, native pixels) | 1.0 = as sharp as the photo; under 1 = blurrier |
+
+The face crop is the fitted SMPL-X's head joint (NLF's pose and `trans`, run through our FK) plus 7 cm along the posed
+head's up, projected through the photo's camera as a square 34 cm tall (`head_swap_render.py`'s `FACE_HALF_M`). In a
+head-to-toe photo that is ~60-80 px, so `lpipsFace` and `sharpness` are rough there; a face under 16 px or mostly out of
+frame gives null. `identity` needs InsightFace in the DiGS env (`pip install insightface onnxruntime-gpu`; models in
+`--insightface-root`, default `~/.insightface`, which can't download on a compute node, so put `buffalo_l` there first);
+without it, `identity` is null. Fine-tunes and performances have no single source photo, so all three are null there
+(a head-swapped bundle's `identity` is `head_swap_render.py`'s, against LAM's close-up, and its `lpipsFace` and
+`sharpness` are reset to null: they described the face the swap replaced).
+
 ## Fine-tune on 4DAnyone's views (the research claim)
 
 `hpg/digs-finetune.sbatch` with `RUN_ID=<a finished replay run>` (RTX PRO 6000, 2 h limit, after `digs-assets`):

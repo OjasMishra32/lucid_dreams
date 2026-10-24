@@ -231,7 +231,7 @@ def main() -> int:
     work = out / f"{args.id}.work"
     work.mkdir(parents=True, exist_ok=True)
 
-    import lpips
+    import lpips  # noqa: F401  (fail early; A.make_lpips imports it again)
     from lucid.losses import ssim
 
     start = torch.load(args.start, map_location="cpu", weights_only=False)
@@ -257,7 +257,7 @@ def main() -> int:
         return export(args, model, config, demo, saved["code"].to(dev), motion, hand_mean, views, after, out, work, dev)
     # The clip's motion with the clip's body: GVHMR's betas pose the body where 4DAnyone's views see it.
     smpl = torch.as_tensor(to_digs_params(motion, hand_mean), dtype=torch.float32, device=dev)
-    lpips_fn = lpips.LPIPS(net="vgg").to(dev).eval()
+    lpips_fn = A.make_lpips(dev)
 
     code0 = start["code"].to(dev)
     raw = torch.atanh(code0.clamp(-0.999, 0.999)).clone().requires_grad_(True)

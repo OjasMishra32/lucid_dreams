@@ -29,8 +29,9 @@ from PIL import Image, ImageOps
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(1, os.getcwd())  # the DiGS-Avatar repo: run_demo_DiGS, lib.*
 from lucid_avatars import digs_io as D  # noqa: E402
+from lucid_avatars import realism as R  # noqa: E402
 from lucid_avatars import skinning as S  # noqa: E402
-from lucid_avatars.smplx_layout import SMPLX_PARENTS  # noqa: E402
+from lucid_avatars.smplx_layout import J, SMPLX_PARENTS  # noqa: E402
 from lucid_avatars.bundle import validate_bundle, write_avatar_bundle  # noqa: E402
 from lucid_avatars.gaussian_ply import write_ply  # noqa: E402
 from lucid_avatars.idle import IDLE_S, idle_loop  # noqa: E402
@@ -41,6 +42,8 @@ MAX_FLOATER_SHARE = 0.1  # more than this share far from the body means the rig 
 MAX_BODY_GAP_M = 0.1  # median Gaussian-to-SMPL-X-surface distance above this means the rig won't fit the avatar
 # Losing more than this share of a module's weights means it would run random: fail instead.
 MAX_MISSING_SHARE = 0.5
+FRONT_VIEW_HEIGHT_M = 0.5  # the front face render shows this much height (the face, FACE_HALF_M each way, fills most)
+LPIPS_PX = 128  # both face crops go to this size for LPIPS (VGG wants more than a 70 px crop gives)
 CHECKED_MODULES = ("dino_encoder.dino_model.", "diffusion_model.", "enhance.", "idol_decoder.")
 
 
@@ -60,6 +63,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--idle-seconds", type=float, default=IDLE_S)
     p.add_argument("--steps", type=int, default=None, help="diffusion steps (default: the config's)")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--insightface-root", default=str(Path.home() / ".insightface"),
+                   help="where InsightFace's buffalo_l is (metrics.identity is null without InsightFace)")
     return p.parse_args()
 
 
@@ -273,6 +278,85 @@ def seen_by_photo(model, code, ref_smpl, ref_camera, K: np.ndarray) -> np.ndarra
     return D.seen_from_camera(means, K, positions)
 
 
+# ---------------------------------------------------------------- realism: identity, lpipsFace, sharpness
+
+def make_lpips(dev):
+    """The LPIPS network digs_finetune.py scores with (VGG): the `lpips` package is already in this env."""
+    import lpips
+
+    return lpips.LPIPS(net="vgg").to(dev).eval()
+
+
+def front_face_view(model, demo, code, betas_np, rest, focal: float, frames: int = 60):
+    """(RGB uint8 render, face box in it): the avatar from the front (the turntable's first frame: DiGS's A-pose, orbit
+    camera on +Z), centred on the face and close enough that the face is ~600 px: what ArcFace needs."""
+    from lib.utils.infer_util import add_root_rotate_to_smplx
+
+    dev = code.device
+    spin = add_root_rotate_to_smplx(demo.get_default_smplx_params().squeeze().to(dev), frames, device=dev)[:1]
+    spin[:, 70:80] = torch.as_tensor(betas_np, dtype=torch.float32, device=dev).reshape(1, 10)
+    spin[:, 2] -= float(rest[J["head"]][1] + R.FACE_ABOVE_HEAD_JOINT_M)  # the face level with the camera
+    distance = focal * FRONT_VIEW_HEIGHT_M / D.DIGS_H
+    camera = demo._prepare_orbit_cameras(D.DIGS_H, D.DIGS_W, 2, dev, focal, distance)[1].reshape(1, 1, 20)
+    image = (render(model, code, spin, camera)[0].numpy() * 255).round().astype(np.uint8)
+    K = np.array([[focal, 0, D.DIGS_W / 2], [0, focal, D.DIGS_H / 2], [0, 0, 1]])
+    return image, R.clip_box(R.face_box(np.array([0.0, 0.0, distance]), K), D.DIGS_W, D.DIGS_H)
+
+
+def measure_realism(model, demo, code, betas_np, focal, pose, trans, K_crop, crop_img, ref_render, photo, crop_box,
+                    insightface_root) -> dict:
+    """metrics.identity / lpipsFace / sharpness (realism.py explains each), every one null and logged if it can't be
+    computed: no InsightFace or no face found (identity), no face box in the photo's camera (all three). Never raises.
+    The photo's face box is the fitted SMPL-X's head projected through the photo's camera; lpipsFace and sharpness
+    compare the DiGS re-render from that camera (ref_render, 0..1) with the same box of the crop it was fitted to."""
+    def face_in_photo():
+        bm = model.idol_decoder.deformer.body_model
+        as_np = lambda t: t.detach().float().cpu().numpy()  # noqa: E731
+        rest, _ = S.rest_joints(as_np(bm.v_template), as_np(bm.shapedirs), as_np(bm.J_regressor), betas_np)
+        box = R.clip_box(R.face_box_from_fit(rest, pose, trans, K_crop), D.DIGS_W, D.DIGS_H)
+        if box is None:
+            raise ValueError("the fitted head isn't in the photo's frame (or its face is under 16 px)")
+        return rest, box
+
+    located = R.guarded("face box", face_in_photo)
+    if located is None:
+        return R.realism_metrics(None, None, None)
+    rest, box = located
+    photo_face = R.crop(np.asarray(crop_img), box)
+    render_face = R.crop((ref_render * 255).round().astype(np.uint8), box)
+
+    def lpips_face():
+        import torch.nn.functional as F
+
+        def tensor(img):  # NCHW in -1..1 (what digs_finetune.py feeds LPIPS), at LPIPS_PX square
+            t = torch.as_tensor(img, dtype=torch.float32).permute(2, 0, 1)[None] / 127.5 - 1
+            return F.interpolate(t, size=(LPIPS_PX, LPIPS_PX), mode="bilinear", align_corners=False, antialias=True)
+
+        with torch.no_grad():
+            return float(make_lpips(code.device)(tensor(render_face).to(code.device), tensor(photo_face).to(code.device)))
+
+    def identity():
+        front, front_box = front_face_view(model, demo, code, betas_np, rest, focal)
+        # the photo's own pixels (not the 640x896 crop's): the box mapped back into the photo
+        src_box = R.clip_box(R.map_box(box, crop_box, D.DIGS_W, D.DIGS_H), photo.width, photo.height)
+        if front_box is None or src_box is None:
+            raise ValueError("no face box in the front render or in the photo")
+        images = {"photo": R.crop(np.asarray(photo), src_box), "avatar": R.crop(front, front_box)}
+        embeddings = R.embed_faces(images, insightface_root)
+        if embeddings is None:
+            raise ImportError("InsightFace isn't installed in this env (pip install insightface onnxruntime-gpu)")
+        value = R.identity_of(embeddings)
+        if value is None:
+            raise ValueError("no face found in the photo or the front render")
+        return value
+
+    out = R.realism_metrics(R.guarded("identity", identity), R.guarded("lpipsFace", lpips_face),
+                            R.guarded("sharpness", lambda: R.sharpness_ratio(render_face, photo_face)))
+    print(f"[realism] identity {out['identity']}, lpipsFace {out['lpipsFace']}, sharpness {out['sharpness']} "
+          f"(face box {box} in the crop)")
+    return out
+
+
 def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
     """DiGS's own writer (imageio, then OpenCV), which only prints when both fail: check the file."""
     from lib.utils.infer_util import save_video
@@ -286,11 +370,13 @@ def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
 
 def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out: Path, dream_id: str, name: str,
                   source: dict, work: Path, frames: int = 60, fps: int = 30, idle_seconds: float = IDLE_S,
-                  motion=None, metrics: dict | None = None, seen: np.ndarray | None = None) -> int:
+                  motion=None, metrics: dict | None = None, seen: np.ndarray | None = None,
+                  realism: dict | None = None) -> int:
     """From a DiGS decoder code to a validated bundle: rest-pose avatar.ply, skin.bin + skeleton.json, turntable
     preview.mp4 + thumb.jpg, and motion.json: an idle loop unless motion is given, as a Motion or as a function
     (gaussians, (skin_idx, skin_w), skeleton, stand_y) -> Motion, e.g. retarget.place_on_floor. Returns 0 when the
-    bundle validates."""
+    bundle validates. `realism` is measure_realism's identity / lpipsFace / sharpness (all null without a source
+    photo: a fine-tune or a performance has none)."""
     from lib.utils.infer_util import add_root_rotate_to_smplx
 
     dev = code.device
@@ -322,6 +408,8 @@ def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out
         metrics = {**(metrics or {"psnr": None, "ssim": None, "lpips": None, "views": None}),
                    "seenFraction": round(float(seen.mean()), 4)}
         print(f"seen by the photo: {seen.mean():.1%} of the Gaussians (the rest is imagined)")
+    metrics = {**(metrics or {"psnr": None, "ssim": None, "lpips": None, "views": None}),
+               **(realism or R.realism_metrics(None, None, None))}
     visible_y = gaussians.xyz[1 / (1 + np.exp(-gaussians.opacity)) >= 0.5, 1]
     height, middle_y = np.ptp(visible_y), (visible_y.min() + visible_y.max()) / 2
 
@@ -403,11 +491,16 @@ def main() -> int:
     ref_render = render(model, code, ref_smpl, ref_camera.reshape(1, 1, 20))[0].numpy()
     side = np.concatenate([np.asarray(crop), (ref_render * 255).astype(np.uint8)], axis=1)
     Image.fromarray(side).save(work / "ref_check.png")
+    # Realism numbers for dream.json: identity, lpipsFace, sharpness (each null, logged, if it can't be computed).
+    realism = R.guarded("all three", lambda: measure_realism(model, demo, code, betas_np, focal, pose, trans, K_crop,
+                                                              crop, ref_render, photo, box,
+                                                              Path(args.insightface_root)))
 
     source = {"photo": Path(args.image).name, "width": photo.width, "height": photo.height,
               "model": "DiGS-Avatar student + NLF SMPL-X fit", "note": HANDS_NOTE}
     return export_bundle(model, demo, code, betas_np, hand_mean, focal, ref_camera, out, args.id, args.name, source,
-                         work, frames=args.frames, fps=args.fps, idle_seconds=args.idle_seconds, seen=seen)
+                         work, frames=args.frames, fps=args.fps, idle_seconds=args.idle_seconds, seen=seen,
+                         realism=realism)
 
 
 if __name__ == "__main__":

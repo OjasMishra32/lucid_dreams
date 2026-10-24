@@ -24,6 +24,7 @@ import numpy as np
 from lucid_avatars.bundle import validate_bundle
 from lucid_avatars.face_expr import BLINK, N_CHANNELS, apply_expr, read_expr_bin
 from lucid_avatars.head_swap import consent_errors, dream_id_of
+from lucid_avatars.realism import FACE_ABOVE_HEAD_JOINT_M, FACE_HALF_M, embed_faces, identity_report
 from lucid_avatars.skinning import SKELETON_FILE
 from lucid_avatars.smplx_layout import J
 
@@ -31,8 +32,6 @@ FRONT = math.pi  # lucid.export.orbit_camera's angle 0 sits on -Z, behind a body
 THREE_QUARTER = FRONT - math.pi / 4
 TAN_HALF_FOV = math.tan(math.radians(40.0) / 2)  # lucid.export.render's vertical field of view
 FACE_PX = 512
-FACE_HALF_M = 0.17  # half the height a face view shows: chin to crown with a little neck and hair
-FACE_ABOVE_HEAD_JOINT_M = 0.07  # SMPL-X's head joint is at the top of the neck; the face's middle is above it
 TURNTABLE_FILL = 1.2  # the body's height times this fills the frame's height
 LABEL_PX = 28
 EYES_BOX = (0.25, 0.35, 0.30)  # top, left, side of the eyes in a face view, as shares of its size
@@ -94,34 +93,6 @@ def eyes(face: np.ndarray) -> np.ndarray:
     rows = top + np.arange(h) * side // h
     cols = left + np.arange(w) * side // w
     return face[rows[:, None], cols[None, :]]
-
-
-def identity_report(embeddings: dict[str, np.ndarray]) -> dict | None:
-    """Cosine of the old and new faces' ArcFace embeddings to the photo's (None without a face in the photo)."""
-    if "photo" not in embeddings:
-        return None
-    p = embeddings["photo"] / np.linalg.norm(embeddings["photo"])
-    cos = {k: round(float(p @ (v / np.linalg.norm(v))), 4) for k, v in embeddings.items() if k != "photo"}
-    return {"model": "InsightFace buffalo_l (ArcFace), cosine to the photo, front view", "old": cos.get("old"),
-            "new": cos.get("new")}
-
-
-def embed_faces(images: dict[str, np.ndarray], root: Path) -> dict[str, np.ndarray] | None:
-    """ArcFace embedding of the biggest face in each image, or None if InsightFace isn't installed."""
-    try:
-        from insightface.app import FaceAnalysis
-    except ImportError:
-        return None
-    app = FaceAnalysis(name="buffalo_l", root=str(root), providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-    app.prepare(ctx_id=0, det_size=(640, 640))
-    out = {}
-    for key, rgb in images.items():
-        faces = app.get(np.ascontiguousarray(rgb[..., ::-1]))  # InsightFace wants BGR
-        if faces:
-            out[key] = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])).normed_embedding
-        else:
-            print(f"[identity] no face found in the {key} image")
-    return out
 
 
 def load(bundle: Path):
@@ -241,7 +212,9 @@ def main() -> int:
     report["identity"] = identity
     (a.new / "head_swap.json").write_text(json.dumps(report, indent=2) + "\n")
     dream.update(preview="preview.mp4", thumb="thumb.jpg")
-    dream["metrics"] = {**dream.get("metrics", {}), "identity": identity["new"] if identity else None}
+    # lpipsFace and sharpness (digs_avatar.py) were measured on the face this swap replaced: not this bundle's
+    dream["metrics"] = {**dream.get("metrics", {}), "identity": identity["new"] if identity else None,
+                        "lpipsFace": None, "sharpness": None}
     (a.new / "dream.json").write_text(json.dumps(dream, indent=2) + "\n")
 
     problems = validate_bundle(a.new)
