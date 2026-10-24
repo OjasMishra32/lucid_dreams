@@ -9,6 +9,7 @@ import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
 import { nextPlace, type Place, Places, startingPlace } from "./places";
 import { loadProps } from "./props";
+import { Basketball, wantsBall } from "./basketball";
 import { Golf, wantsClub } from "./club";
 import { WorldLock } from "./xr/anchor";
 import { handOccluder, XrButton } from "./xr/hands";
@@ -523,6 +524,23 @@ export async function renderViewer(root: HTMLElement, id: string) {
   // golf: a real 7-iron in your hands and a ball on a tee in front of you, to swing along with them
   const golf = wantsClub(dream, experience) ? new Golf(scene, renderer, hands, sideOf, listener) : null;
   if (golf) locks.push(new WorldLock(renderer, golf.range));
+  // basketball: a real ball in your hands to shoot at the hoop; the hoop can come to your free-throw line
+  const hoopBall = wantsBall(dream, experience, props, !!golf) ? new Basketball(scene, renderer, hands, listener, props) : null;
+  const hoopLock = hoopBall?.hoop ? new WorldLock(renderer, hoopBall.hoop) : null; // only while the hoop stands on its own
+  const flatForward = (out: THREE.Vector3) => {
+    renderer.xr.getCamera().getWorldDirection(out).setY(0);
+    return out.lengthSq() < 1e-6 ? out.set(0, 0, -1) : out.normalize();
+  };
+  const ahead = new THREE.Vector3();
+  if (hoopBall?.hoop)
+    menu.add(
+      new XrButton("hoop", "Hoop here", () => {
+        hoopLock?.release();
+        hoopBall.moveHoopHere(eyes, flatForward(ahead));
+        hoopLock?.lock();
+      }),
+    );
+  const personRadius = dream.bounds ? Math.max(0.25, ...[0, 2].flatMap((k) => [Math.abs(dream.bounds!.min[k]), Math.abs(dream.bounds!.max[k])])) : 0.35;
   const releaseLocks = () =>
     locks.forEach((l) => {
       try {
@@ -532,7 +550,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
       }
     });
 
-  const caption = spatialCaption(dream.name, golf ? "Close your hands round the club  ·  Left palm up for controls" : "Turn your left palm up for controls");
+  const caption = spatialCaption(
+    dream.name,
+    golf ? "Close your hands round the club  ·  Left palm up for controls" : hoopBall ? "Palms on the ball to hold it  ·  Left palm up for controls" : "Turn your left palm up for controls",
+  );
   caption.visible = false;
   person.add(caption);
   let captionUntil = 0;
@@ -555,6 +576,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       caption.visible = true;
       captionUntil = performance.now() + 7000;
       golf?.setActive(true);
+      hoopBall?.setActive(true);
     },
     onExitXr: () => {
       coach?.stop(); // leaving the room ends the question: the mic is released
@@ -562,6 +584,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
       menu.group.visible = menu.open = false;
       stepCardGroup.visible = false;
       golf?.setActive(false);
+      try {
+        hoopLock?.release();
+      } catch {
+        // the session that held the anchor has already ended
+      }
+      hoopBall?.setActive(false);
       person.position.set(0, 0, 0);
       person.rotation.set(0, Math.PI, 0);
       caption.visible = false;
@@ -604,6 +632,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     stepCardGroup.rotation.y = Math.atan2(-forward.x, -forward.z) - 0.35;
     // the tee: on the floor just in front of you, so you can swing along without walking into them
     golf?.place(head, forward);
+    hoopBall?.place(head, forward, person, personRadius);
     // the place re-centres on you too: its stage ahead of you, behind them (for any `place`: facing, beside or ahead)
     placedForward.copy(forward);
     places.anchor(head, forward);
@@ -623,15 +652,19 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (renderer.xr.isPresenting) {
       if (placeNextFrame) {
         releaseLocks();
+        hoopLock?.release();
         placeInFrontOfYou();
         locks.forEach((l) => l.lock());
+        if (hoopBall?.hoopInRoom) hoopLock?.lock();
         placeNextFrame = false;
       }
       locks.forEach((l) => l.update());
+      hoopLock?.update();
       occluders.forEach((o) => o());
       renderer.xr.getCamera().getWorldPosition(eyes);
       const open = menu.update(eyes, performance.now(), dt);
       golf?.update(dt, open);
+      hoopBall?.update(dt, open, eyes, flatForward(ahead));
     }
     if (lesson) {
       if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration);
@@ -671,7 +704,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hands };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, hands };
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */

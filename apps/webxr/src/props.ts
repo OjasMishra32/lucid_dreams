@@ -36,6 +36,8 @@ const SQUARE_W = 0.59;
 const SQUARE_H = 0.45;
 const LINE = 0.05;
 const NET_LEN = 0.4;
+/** The hoop's regulation sizes, for anything that plays with it (a ball you shoot: basketball.ts). */
+export const HOOP = { RIM_R, RIM_TUBE, BOARD_GAP, BOARD_W, BOARD_H, BOARD_T, BOARD_BELOW_RIM, NET_LEN };
 const FADE_S = 0.18; // the ball fades in and out over this long instead of popping
 const BACKSPIN = 0.35; // spin as a fraction of rolling speed, turned backwards the way a shot leaves the fingers
 
@@ -56,6 +58,8 @@ export class Props {
   readonly group = new THREE.Group();
   /** Ring centres in the person's space, for framing the desktop view. */
   readonly hoops: THREE.Vector3[] = [];
+  /** The hoops themselves (local frame: floor under the ring, +Z toward the shooter; userData.rimTop = ring height). */
+  readonly hoopGroups: THREE.Group[] = [];
   private balls: Ball[] = [];
   private fader = new Fader();
   private reveal = -1;
@@ -80,7 +84,9 @@ export class Props {
         this.group.add(ball.mesh, ball.shadow);
       } else {
         const h = o as HoopProp;
-        this.group.add(buildHoop(h, env, this.fader));
+        const hoop = buildHoop(h, env, this.fader);
+        this.group.add(hoop);
+        this.hoopGroups.push(hoop);
         this.hoops.push(new THREE.Vector3(h.rim[0], h.rim[1], h.rim[2]));
       }
     }
@@ -269,7 +275,7 @@ function catmullRom(p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, p3:
  * great circles at right angles, and two curved seams: circles around the points where the first crosses 90 degrees
  * from the second, which splits each of the 4 lunes in two). Plus a bump map: pebbles up, seams sunk in as channels.
  */
-function basketballTextures(r: number): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
+export function basketballTextures(r: number): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
   const W = 1024, H = 512;
   const mk = () => {
     const c = document.createElement("canvas");
@@ -340,7 +346,7 @@ function valueNoise(x: number, y: number, z: number): number {
 
 let shadowTex: THREE.CanvasTexture | null = null;
 /** The same soft radial falloff as the person's contact shadow. */
-function shadowTexture(): THREE.CanvasTexture {
+export function shadowTexture(): THREE.CanvasTexture {
   if (shadowTex) return shadowTex;
   const size = 128;
   const canvas = document.createElement("canvas");
@@ -364,6 +370,7 @@ function shadowTexture(): THREE.CanvasTexture {
 function buildHoop(h: HoopProp, env: THREE.Texture, fader: Fader): THREE.Group {
   const g = new THREE.Group();
   const top = h.rim[1]; // the top of the ring
+  g.userData.rimTop = top;
   const ringY = top - RIM_TUBE;
   const face = -(RIM_R + BOARD_GAP); // the board's front face
   const back = face - BOARD_T;
@@ -452,6 +459,14 @@ function buildHoop(h: HoopProp, env: THREE.Texture, fader: Fader): THREE.Group {
   shadow.renderOrder = -1;
   g.add(shadow);
   return g;
+}
+
+/** A regulation hoop on its own (a basketball dream without one): ring at 3.05 m over the origin, facing +Z. */
+export function standaloneHoop(renderer: THREE.WebGLRenderer): THREE.Group {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+  return buildHoop({ kind: "hoop", rim: [0, 3.05, 0], facing: [0, 0, 1] }, env, new Fader());
 }
 
 /** One cord of the net: a thin open cylinder from a to b. */
