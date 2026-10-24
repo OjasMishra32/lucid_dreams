@@ -227,6 +227,11 @@ class Mac(unittest.TestCase):
                       out[-2])
         self.assertTrue(out[-1].endswith("court-hpg.sh court-sam-extras"), out[-1])
 
+    def test_fetch_sam_passes_unpack_flags(self):
+        out = self.mac("fetch", "sam", "views", "/m", "--single")
+        self.assertIn("runs/court-sam-views/masks-sam.tar /m/", out[1])
+        self.assertTrue(out[2].endswith("court_sam.py unpack /m/masks-sam.tar --out /m --single"), out[2])
+
     def test_fetch_matte_unpacks_into_the_masks(self):
         out = self.mac("fetch", "matte", "/m", "/stage")
         self.assertIn("hpg:/blue/iruchkin/vishalnaveen/lucid/runs/court-matte/masks-matte.tar /stage/", out[1])

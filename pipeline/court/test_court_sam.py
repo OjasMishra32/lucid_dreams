@@ -163,6 +163,24 @@ class FromVideo(unittest.TestCase):
         self.assertTrue((self.root / "masks/a-alpha/000004.png").exists())
         self.assertTrue((self.root / "masks/b-prob/000002.png").exists())
 
+    def test_one_frame_sets_from_zips_with_the_matte(self):
+        self.test_sam_then_matte_on_the_same_node()  # installs the stand-in BiRefNet
+        up = self.root / "views"
+        for v, stem in (("v1", "000005"), ("v2", "000009")):
+            make_set(up / v, [stem], {"ref": int(stem), "matte": True,
+                                      "objects": {"a": {stem: [5, 5, 25, 30]}, "b": {stem: [30, 5, 55, 30]}}})
+        out = self.root / "vout"
+        for s in court_sam.sets_in(up):
+            rep = court_sam.run_set(FakePredictor(), s, out / s.name, self.root / "work")
+            self.assertEqual(rep["matte"]["crops"], 2)
+        tar = self.root / "views.tar"
+        with tarfile.open(tar, "w") as t:
+            t.add(out, arcname=".")
+        self.assertEqual(court_sam.unpack(tar, self.root / "flat", single=True), 4)
+        for v in ("v1", "v2"):
+            for f in ("a.png", "a-prob.png", "a-alpha.png", "b.png", "b-alpha.png"):
+                self.assertTrue((self.root / "flat" / v / f).exists(), (v, f))
+
     def _tar(self) -> Path:
         tar = self.root / "masks-sam.tar"
         with tarfile.open(tar, "w") as t:

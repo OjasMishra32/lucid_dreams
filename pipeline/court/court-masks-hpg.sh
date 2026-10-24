@@ -6,7 +6,8 @@
 #   court-masks-hpg.sh sam <name> <upload dir>   upload a court_sam.py set (or folder of sets), submit court-sam-<name>
 #   court-masks-hpg.sh matte <clip> <masks dir> <staging dir> <name>...    pack, upload, submit the pair's soft edges
 #   court-masks-hpg.sh fetch people <dir>      masks-people.tar into <dir>, unpacked there (label/, prob/, objects.json)
-#   court-masks-hpg.sh fetch sam <name> <dir> [w,h]   masks-sam.tar into <dir>, unpacked there (w,h: a cropped set)
+#   court-masks-hpg.sh fetch sam <name> <dir> [unpack flags]   masks-sam.tar into <dir>, unpacked there
+#                                              (--size w,h for a cropped set, --single for one-frame sets)
 #   court-masks-hpg.sh fetch matte <masks dir> <staging dir>    the alpha mattes into <masks dir>/<name>-alpha/
 # Data paths are arguments (nothing about the footage lives in git). The HPG side is court-hpg.sh: it checks the upload
 # and the group quota, submits, and deletes nothing. Env: DRY=1 prints what would run; HOST (hpg); MIN_GB.
@@ -58,13 +59,14 @@ case "${1:-}" in
         N=${3:?name}; O=${4:?dir}
         run mkdir -p "$O"
         run rsync -a -e "$SSH" "$HOST:$L/runs/court-sam-$N/masks-sam.tar" "$O/"
-        run python3 -I "$HERE/court_sam.py" unpack "$O/masks-sam.tar" --out "$O" ${5:+--size "$5"} ;;
+        run python3 -I "$HERE/court_sam.py" unpack "$O/masks-sam.tar" --out "$O" "${@:5}" ;;
       matte)
         M=${3:?masks dir}; O=${4:?staging dir}
         run mkdir -p "$O"
         run rsync -a -e "$SSH" "$HOST:$L/runs/court-matte/masks-matte.tar" "$O/"
         run python3 -I "$HERE/court_matte.py" unpack "$O/masks-matte.tar" --masks "$M" ;;
-      *) echo "fetch people <dir> | fetch sam <name> <dir> [w,h] | fetch matte <masks dir> <staging dir>" >&2; exit 1 ;;
+      *) echo "fetch people <dir> | fetch sam <name> <dir> [flags] | fetch matte <masks dir> <staging dir>" >&2
+         exit 1 ;;
     esac ;;
-  *) sed -n '2,12p' "$0" >&2; exit 1 ;;
+  *) sed -n '2,13p' "$0" >&2; exit 1 ;;
 esac

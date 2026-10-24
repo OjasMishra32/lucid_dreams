@@ -183,6 +183,16 @@ class Layers(unittest.TestCase):
             cv2.imwrite(str(m / "p-alpha" / "000007.png"), np.full((4, 4), 51, np.uint8))
             self.assertAlmostEqual(float(pc.load_matte(m, "p", 7, 4, 4).max()), 0.2)
 
+    def test_extra_view_prefers_a_flat_soft_matte(self):
+        import cv2
+        import extra_view
+        with tempfile.TemporaryDirectory() as tmp:
+            m = Path(tmp)
+            cv2.imwrite(str(m / "p.png"), np.full((4, 4), 255, np.uint8))
+            self.assertEqual(float(extra_view.read_matte(m, "p", 7, 4, 4).min()), 1.0)
+            cv2.imwrite(str(m / "p-alpha.png"), np.full((4, 4), 51, np.uint8))
+            self.assertAlmostEqual(float(extra_view.read_matte(m, "p", 7, 4, 4).max()), 0.2)
+
     def test_composite_is_exact_at_full_and_zero_alpha(self):
         rgb = np.full((20, 20, 3), 200, np.uint8)
         out = pc.composite(rgb, self.back, (128, 128, 128))

@@ -39,6 +39,14 @@ def read_mask(masks: Path, name: str, n: int, w: int, h: int) -> np.ndarray:
     return m.astype(np.float32) / 255.0
 
 
+def read_matte(masks: Path, name: str, n: int, w: int, h: int) -> np.ndarray:
+    """The soft matte (<name>-alpha.png, or <name>-alpha/<n>.png) when one was made, else the binary mask."""
+    for soft in (masks / f"{name}-alpha.png", masks / f"{name}-alpha" / f"{n:06d}.png"):
+        if soft.exists():
+            return read_mask(soft.parent, soft.stem, n, w, h)
+    return read_mask(masks, name, n, w, h)
+
+
 def make_view(video: Path, calib_path: Path, frame: int, masks: Path, player: str, carried: list[str],
               front: list[str], out: Path, margin: int = 32, grow: int = 3, near: int = 200) -> dict:
     calib = json.loads(Path(calib_path).read_text())
@@ -59,7 +67,8 @@ def make_view(video: Path, calib_path: Path, frame: int, masks: Path, player: st
     img = pc.warp(rgb, maps, cv2.INTER_LANCZOS4)
     wm = {who: pc.warp(m, maps, cv2.INTER_LINEAR) for who, m in raw.items()}
     fronts = [wm[o] for o in front]
-    alpha = pc.player_alpha(wm[player], [wm[c] for c in carried], fronts, grow)
+    soft = [pc.warp(read_matte(masks, who, frame, w, h), maps, cv2.INTER_LINEAR) for who in [player, *carried]]
+    alpha = pc.player_alpha(soft[0], soft[1:], fronts, grow)
     ignore = pc.ignore_mask(wm[player], fronts, grow, near) * (alpha <= 0)
     out.mkdir(parents=True, exist_ok=True)
     enc = pc.Encoder(out / f"{out.name}.mkv", cw, ch)

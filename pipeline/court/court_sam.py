@@ -135,6 +135,16 @@ def decode_video(video: Path, lo: int, hi: int):
         raise ValueError(f"{video} ends at frame {n - 1}, before {hi}")
 
 
+def zip_frames(path: Path):
+    """(n, rgb) for every image in a set's frames.zip, in order; n is the stem's number."""
+    import cv2
+
+    with zipfile.ZipFile(path) as z:
+        for m in sorted((m for m in z.namelist() if not m.endswith("/")), key=lambda m: Path(m).stem):
+            bgr = cv2.imdecode(np.frombuffer(z.read(m), np.uint8), cv2.IMREAD_COLOR)
+            yield int(Path(m).stem), cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
 def write_png(path: Path, m: np.ndarray):
     from PIL import Image
 
@@ -183,14 +193,17 @@ def run_set(pred, set_dir: Path, out: Path, work: Path) -> dict:
     print(f"[sam] {set_dir.name}: {n}/{len(stems)} frames, {len(prompts['objects'])} objects, {rep['seconds']} s, "
           f"empty frames {sum(len(v) for v in empty.values())}", flush=True)
     shutil.rmtree(frames, ignore_errors=True)
-    if prompts.get("video") and prompts.get("matte"):
+    if prompts.get("matte"):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import court_matte
 
-        lo, hi = prompts["range"]
+        if prompts.get("video"):
+            lo, hi = prompts["range"]
+            frames = decode_video(set_dir / prompts["video"], lo, hi)
+        else:
+            frames = zip_frames(set_dir / "frames.zip")
         try:
-            rep["matte"] = court_matte.matte_video(decode_video(set_dir / prompts["video"], lo, hi), out / "masks",
-                                                   list(prompts["objects"]), out / "alpha")
+            rep["matte"] = court_matte.matte_video(frames, out / "masks", list(prompts["objects"]), out / "alpha")
         except Exception as e:  # the binary masks stand on their own
             rep["matte"] = {"error": repr(e)}
             print(f"[matte] FAILED, binary masks only: {e!r}", flush=True)
@@ -265,9 +278,11 @@ def pack(frames, prompts: dict, out: Path, crop: list[int] | None = None) -> Pat
     return out
 
 
-def unpack(tar: Path, out: Path, set_name: str | None = None, size: tuple[int, int] | None = None) -> int:
-    """Masks from the HPG tar into <out>/<name>/<stem>.png and <out>/<name>-prob/<stem>.png, pasted into the full
-    frame (size = (w, h)) when the set had a crop. Returns how many mask files were written."""
+def unpack(tar: Path, out: Path, set_name: str | None = None, size: tuple[int, int] | None = None,
+           single: bool = False) -> int:
+    """Masks from the HPG tar into <out>/<name>/<stem>.png and <out>/<name>-prob|alpha/<stem>.png, pasted into the
+    full frame (size = (w, h)) when the set had a crop; single-frame sets with single=True as <out>/<name>.png and
+    <out>/<name>-prob|alpha.png. Returns how many mask files were written."""
     import cv2
 
     pre = f"./{set_name}/" if set_name else "./"
@@ -276,7 +291,7 @@ def unpack(tar: Path, out: Path, set_name: str | None = None, size: tuple[int, i
         names = t.getnames()
         if pre + "prompts.json" not in names and set_name is None:  # one folder per set: each into <out>/<set>/
             sets = sorted(m.split("/")[1] for m in names if m.count("/") == 2 and m.endswith("/prompts.json"))
-            return sum(unpack(tar, out / s, s, size) for s in sets)
+            return sum(unpack(tar, out / s, s, size, single) for s in sets)
         prompts = json.load(t.extractfile(pre + "prompts.json"))
         crop = prompts.get("crop")
         if crop and size is None:
@@ -294,6 +309,8 @@ def unpack(tar: Path, out: Path, set_name: str | None = None, size: tuple[int, i
                 full[crop[1]:crop[3], crop[0]:crop[2]] = img
                 img = full
             p = out / (name if kind == "masks" else f"{name}-{kind}") / fname
+            if single:
+                p = out / (f"{name}.png" if kind == "masks" else f"{name}-{kind}.png")
             p.parent.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(p), img)
             n += kind == "masks"
@@ -317,6 +334,7 @@ def main(argv=None):
     u.add_argument("--out", type=Path, required=True)
     u.add_argument("--set", default=None)
     u.add_argument("--size", default=None, help="w,h of the full frame (needed when the set was cropped)")
+    u.add_argument("--single", action="store_true", help="one frame per set: <out>[/<set>]/<name>.png")
     a = ap.parse_args(argv)
     if a.cmd == "pack":
         import subprocess
@@ -338,7 +356,7 @@ def main(argv=None):
         run(a.upload, a.out)
     else:
         size = tuple(int(v) for v in a.size.split(",")) if a.size else None
-        print(f"{unpack(a.tar, a.out, a.set, size)} masks -> {a.out}")
+        print(f"{unpack(a.tar, a.out, a.set, size, a.single)} masks -> {a.out}")
 
 
 if __name__ == "__main__":
