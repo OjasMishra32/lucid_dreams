@@ -18,8 +18,9 @@ export async function GET() {
  */
 export async function POST(req: Request) {
   if (!GEMINI_ON) return json({ state: "off", error: "The coach is off: this Mac has no Gemini key." }, 503);
-  // the viewer's server forwards the headset's address; on the same Mac it's just this machine
-  const who = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "local";
+  // the viewer's server forwards the headset's address; on the same Mac it's just this machine. It appends the address
+  // it saw to whatever X-Forwarded-For the caller sent, so only the last entry is real (anything before it is a claim).
+  const who = (req.headers.get("x-forwarded-for") ?? "").split(",").pop()!.trim() || "local";
   const gate = allow(who);
   if (!gate.ok)
     return Response.json(

@@ -70,9 +70,17 @@ export function readContext(body: unknown): CoachContext | null {
   const planned = dream ? readPlan(dream) : null;
   const step = planned?.steps?.[index];
   if (planned && step && text(step.title, 80) === title) {
-    // the bridge's own plan for this dream: the viewer only chose which step
+    // the bridge's own plan for this dream: the viewer only chose which step. A hand-edited plan can hold anything, so
+    // its numbers are checked like the viewer's (a string "start" would otherwise break the instruction).
+    const s0 = num(step.start, 0, 3600);
+    const s1 = num(step.end, 0, 3600);
     ctx.plan = { title: text(planned.title, 80), intent: text(planned.intent, 200), category: text(planned.category, 40) };
-    ctx.step = { ...ctx.step, tip: text(step.tip, 240), start: step.start, end: step.end, speed: step.speed ?? ctx.step.speed };
+    ctx.step = {
+      ...ctx.step,
+      tip: text(step.tip, 240),
+      ...(s0 != null && s1 != null && s1 > s0 ? { start: s0, end: s1 } : {}),
+      speed: num(step.speed, 0.1, 2) ?? ctx.step.speed,
+    };
   }
   return ctx;
 }
