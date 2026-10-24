@@ -45,6 +45,14 @@ source camera went down; the measured table is in `team/ian.md` "SUBMISSION". Ta
 onto the floor (`lucid.floor`).
 
 ## In flight when this session ended (check them first)
+**Update 2:40 PM:**
+- Items 1-3 below are finished and committed (fa4fc74), and they're in the headset's stable build:
+  `scripts/check_{famous,tempo,rhythm,ghost}.ts` pass and tsc is clean.
+- Items 4-5 (Federer's face, Magnus's neck) were stopped unfinished. Their edits in `avatars/` are uncommitted and
+  untested: review them with `git diff avatars/`, or discard them with `git checkout -- avatars/`. Federer stays in
+  `.held`, and the tennis game loads him by direct link.
+- Headset resolution: the default is 0.8 with light foveation, because full resolution froze the Quest at the chess
+  board with no code error. `?res=1&fov=0` forces full. Slow-frame timings go to `~/Library/Logs/lucid-xr-errors.log`.
 Five background agents were running in the old session; they stop when that session does. For each, check
 `git log` for its commit and `git status` for half-done edits. The tree currently has uncommitted changes in:
 - `apps/webxr/src/{chess/game.ts, club.ts, dream.ts, experience.ts, follow.ts, guitar.ts, styles.css, viewer.ts,
