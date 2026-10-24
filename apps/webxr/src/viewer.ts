@@ -9,7 +9,10 @@ import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
 import { nextPlace, type Place, Places, startingPlace } from "./places";
 import { loadProps } from "./props";
-import { fingertips, handOccluder, XrButton } from "./xr/hands";
+import { Golf, wantsClub } from "./club";
+import { WorldLock } from "./xr/anchor";
+import { handOccluder, XrButton } from "./xr/hands";
+import { HandMenu, handSides } from "./xr/menu";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
 // "local-floor" space, so y = 0 is the real floor and nothing is ever scaled: the person is exactly their real size.
@@ -18,7 +21,7 @@ const PLAY = `<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>`;
 const PAUSE = `<svg viewBox="0 0 16 16"><path d="M3.5 2h3v12h-3zM9.5 2h3v12h-3z"/></svg>`;
 const BACK = `<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const MIC = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="1" width="5.5" height="9" rx="2.75"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
-// what the Ask button says in each state: on the step card, and on the fingertip bar in your room
+// what the Ask button says in each state: on the step card, and on the palm menu in your room
 const ASK: Record<CoachState, [string, string]> = {
   idle: ["Ask about this step", "Ask"],
   starting: ["Starting…", "Starting…"],
@@ -28,7 +31,6 @@ const ASK: Record<CoachState, [string, string]> = {
 };
 const PLACE_DISTANCE = 1.8; // meters in front of you when you enter the room
 const LOAD_CONCURRENCY = 4;
-const LONG_PINCH_MS = 800; // hold a pinch this long to bring the person in front of you
 const SPEEDS = [1, 0.5, 0.25];
 
 export async function renderViewer(root: HTMLElement, id: string) {
@@ -476,100 +478,89 @@ export async function renderViewer(root: HTMLElement, id: string) {
   });
 
   // ---------------- your room (WebXR passthrough) ----------------
-  // hands only: your real hands stay in front of the person, and a small bar of fingertip buttons sits within reach
+  // Hands only, and your hands are free: you copy a dance, hold a club, play along, so no pinch or gesture ever changes
+  // anything. The controls live on your left palm (turn it up toward you; press with your right index fingertip), your
+  // real hands stay in front of the person, and the person stays locked to your real floor where they were placed.
   const hands = [0, 1].map((i) => renderer.xr.getHand(i));
   hands.forEach((h) => scene.add(h));
+  const sideOf = handSides(hands);
   const occluders = hands.map((h) => handOccluder(h, scene));
-  const bar = new THREE.Group();
-  const tilt = new THREE.Group();
-  tilt.rotation.x = -0.75; // faces up toward your eyes
-  bar.add(tilt);
-  bar.visible = false;
-  scene.add(bar);
-  const xrButtons: XrButton[] = [];
+  const menu = new HandMenu(hands, sideOf, scene, 2);
   xrPlay = new XrButton("play", "Pause", () => setPlaying(!playing));
   xrSpeed = new XrButton("speed", "1×", () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]));
-  xrButtons.push(xrPlay);
   if (lesson)
-    xrButtons.push(
-      new XrButton("back", "Back", () => lesson.go(lesson.i - 1)),
+    menu.add(
+      xrPlay,
       new XrButton("again", "Again", () => {
         lastSaid = "";
         lesson.go(lesson.i);
       }),
+      new XrButton("back", "Back", () => lesson.go(lesson.i - 1)),
       new XrButton("next", "Next", () => lesson.go(lesson.i + 1)),
     );
-  else xrButtons.push(xrSpeed);
+  else menu.add(xrPlay, xrSpeed);
   if (!realityBtn.hidden) {
     const xrReality: XrButton = new XrButton("reality", "Reality check", () => void toggleReality().then((on) => xrReality.setOn(on)));
-    xrButtons.push(xrReality);
+    menu.add(xrReality);
   }
-  xrButtons.push(new XrButton("here", "Bring here", () => (placeNextFrame = true)));
-  xrButtons.forEach((b, i) => {
-    b.mesh.position.x = (i - (xrButtons.length - 1) / 2) * 0.1;
-    tilt.add(b.mesh);
-  });
-  // the place on a row of its own just beyond the others: Your room -> each place -> back
+  menu.add(new XrButton("here", "Bring here", () => (placeNextFrame = true)));
   if (PLACES) {
     xrPlace = new XrButton("place", places.current?.name ?? "Your room", cyclePlace);
     xrPlace.setOn(!!places.current);
-    xrPlace.mesh.position.y = 0.045;
-    tilt.add(xrPlace.mesh);
-    xrButtons.push(xrPlace);
+    menu.add(xrPlace);
   }
-  // Ask shares that row, to the right of the place, once the bridge says the coach is on
+  // Ask joins the menu once the bridge says the coach is on
   if (coach) {
     xrAsk = new XrButton("ask", ASK.idle[1], ask);
-    xrAsk.mesh.visible = false; // hidden buttons can't be pressed
-    xrAsk.mesh.position.set(PLACES ? 0.05 : 0, 0.045, 0);
-    tilt.add(xrAsk.mesh);
-    xrButtons.push(xrAsk);
-    const placeBtn3d = xrPlace;
     void coachAvailable().then((on) => {
       if (!on) return console.info("Ask is off: the bridge on :5170 has no Gemini key, or isn't running.");
       askBtn.hidden = false;
-      xrAsk!.mesh.visible = true;
-      if (placeBtn3d) placeBtn3d.mesh.position.x = -0.05;
+      menu.add(xrAsk!);
     });
   }
+  // what you placed stays where you put it in your real room (WebXR anchors), even through a recenter
+  const locks = [new WorldLock(renderer, person), new WorldLock(renderer, stepCardGroup)];
+  // golf: a real 7-iron in your hands and a ball on a tee in front of you, to swing along with them
+  const golf = wantsClub(dream, experience) ? new Golf(scene, renderer, hands, sideOf, listener) : null;
+  if (golf) locks.push(new WorldLock(renderer, golf.range));
+  const releaseLocks = () =>
+    locks.forEach((l) => {
+      try {
+        l.release();
+      } catch {
+        // the session that held the anchor has already ended
+      }
+    });
 
-  const caption = spatialCaption(dream.name, "Pinch to pause  ·  Hold the pinch to bring them here");
+  const caption = spatialCaption(dream.name, golf ? "Close your hands round the club  ·  Left palm up for controls" : "Turn your left palm up for controls");
   caption.visible = false;
   person.add(caption);
   let captionUntil = 0;
   let placeNextFrame = false;
-  const pinches = new Map<XRInputSource, number>();
   const xr = new SparkXr({
     renderer,
     mode: "ar",
     referenceSpaceType: "local-floor",
     button: false,
     enableHands: true,
+    sessionInit: { optionalFeatures: ["anchors"] },
     onEnterXr: () => {
       scene.background = null;
       placeNextFrame = true;
       reveal = 0; // they arrive in your room, rather than already standing there
-      const session = renderer.xr.getSession();
-      // a quick pinch pauses or plays; holding it brings them in front of you (works with hands or controllers)
-      session?.addEventListener("selectstart", (e) => pinches.set(e.inputSource, performance.now()));
-      session?.addEventListener("selectend", (e) => {
-        if (!pinches.delete(e.inputSource)) return; // already used as a long pinch
-        setPlaying(!playing);
-        captionUntil = performance.now() + 4000;
-      });
-      session?.addEventListener("squeeze", () => (placeNextFrame = true));
-      bar.visible = true;
       stepCardGroup.visible = !!lesson;
       caption.visible = true;
       captionUntil = performance.now() + 7000;
+      golf?.setActive(true);
     },
     onExitXr: () => {
       coach?.stop(); // leaving the room ends the question: the mic is released
-      bar.visible = false;
+      releaseLocks();
+      menu.group.visible = menu.open = false;
       stepCardGroup.visible = false;
-      pinches.clear();
+      golf?.setActive(false);
       person.position.set(0, 0, 0);
-      person.rotation.y = Math.PI;
+      person.rotation.set(0, Math.PI, 0);
       caption.visible = false;
       places.anchor(camera.position, controls.target.clone().sub(camera.position));
     },
@@ -608,9 +599,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
     // the step card: at eye level, off to the right so it never hides them
     stepCardGroup.position.set(head.x + forward.x * 0.95 + right.x * 0.42, head.y - 0.08, head.z + forward.z * 0.95 + right.z * 0.42);
     stepCardGroup.rotation.y = Math.atan2(-forward.x, -forward.z) - 0.35;
-    // the control bar: within reach, a little below your eyes, between you and them
-    bar.position.set(head.x + forward.x * 0.42, Math.max(0.7, head.y - 0.42), head.z + forward.z * 0.42);
-    bar.rotation.y = Math.atan2(-forward.x, -forward.z);
+    // the tee: on the floor just in front of you, so you can swing along without walking into them
+    golf?.place(head, forward);
     // the place re-centres on you too: its stage ahead of you, behind them (for any `place`: facing, beside or ahead)
     placedForward.copy(forward);
     places.anchor(head, forward);
@@ -624,22 +614,21 @@ export async function renderViewer(root: HTMLElement, id: string) {
     renderer.setSize(innerWidth, innerHeight);
   });
   const timeLabel = $("#time");
+  const eyes = new THREE.Vector3();
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.1);
     if (renderer.xr.isPresenting) {
-      const now = performance.now();
-      for (const [src, t0] of pinches)
-        if (now - t0 > LONG_PINCH_MS) {
-          pinches.delete(src);
-          placeNextFrame = true;
-        }
       if (placeNextFrame) {
+        releaseLocks();
         placeInFrontOfYou();
+        locks.forEach((l) => l.lock());
         placeNextFrame = false;
       }
+      locks.forEach((l) => l.update());
       occluders.forEach((o) => o());
-      const tips = fingertips(hands);
-      for (const b of xrButtons) b.touch(tips, now);
+      renderer.xr.getCamera().getWorldPosition(eyes);
+      const open = menu.update(eyes, performance.now(), dt);
+      golf?.update(dt, open);
     }
     if (lesson) {
       if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration);
@@ -679,7 +668,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hands };
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */
@@ -765,10 +754,10 @@ function spatialCaption(title: string, hint: string): THREE.Mesh {
   ctx.fillStyle = "#f5f5f7";
   ctx.font = '600 72px -apple-system, "SF Pro Display", "Inter", sans-serif';
   ctx.textAlign = "center";
-  ctx.fillText(title, w / 2, 118);
+  ctx.fillText(title, w / 2, 118, w - 96);
   ctx.fillStyle = "#a1a1a6";
   ctx.font = '500 40px -apple-system, "SF Pro Text", "Inter", sans-serif';
-  ctx.fillText(hint, w / 2, 190);
+  ctx.fillText(hint, w / 2, 190, w - 96);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const mesh = new THREE.Mesh(
