@@ -19,8 +19,16 @@ const TYPES: Record<string, string> = {
 function dreams(): Plugin {
   return {
     name: "lucid-dreams",
-    configureServer(server) {
-      server.middlewares.use("/dreams", (req, res, next) => {
+    // the dev server and the built app's preview server (the headset gets the stable build) serve dreams alike
+    configureServer: (server) => serveDreams(server.middlewares),
+    configurePreviewServer: (server) => serveDreams(server.middlewares),
+  };
+}
+
+function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any, next: () => void) => void) => void }) {
+  {
+    {
+      middlewares.use("/dreams", (req, res, next) => {
         const path = decodeURIComponent((req.url ?? "/").split("?")[0]);
         if (path === "/index.json") {
           // held dreams (dreams/.held: one id per line, as the web app reads it) stay out of the list; a link to one
@@ -66,8 +74,8 @@ function dreams(): Plugin {
         res.setHeader("Content-Length", String(st.size));
         createReadStream(file).pipe(res);
       });
-    },
-  };
+    }
+  }
 }
 
 // WebXR needs HTTPS on the headset: the dev server uses a self-signed certificate (accept it once in the Quest
