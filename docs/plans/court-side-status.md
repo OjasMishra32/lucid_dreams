@@ -1,12 +1,15 @@
 # Court Side: live status
 
 **Court Side replaces Ghost Coach for Vishal. Ghost Coach is paused.** One clip only: **Steph's three over LeBron,
-2018 Finals, main side camera** (Vishal, 5:45 AM). The play runs about 5 s in real time, slows smoothly to a freeze
-at Steph's release with LeBron contesting, you walk about 1 m around them, then it plays on or replays; never a cut.
-Ojasva's bar: if two players can't pass by noon, ship one player on the court. Updated Sat 5:57 AM.
+2018 Finals G4**, from the best low, fixed courtside angle that exists. You start in a courtside seat where that camera
+stood, about 2 s plays in real 3D, you pause on the palm menu and it eases into a freeze at the release, then you stand
+up and walk a ring about 1.5 m around the pair; it plays on or replays. Ojasva's bar: if two players aren't passing
+by noon, ship Steph alone. Updated Sat 6:25 AM.
 
 ## Asks for Ojasva (newest first)
 
+7. **Coming next (Ian or Ojasva).** Load a two-player budget scene on the Quest 3S and report frame time and memory.
+   Page and how to open it on the headset to follow; it's the first real headset number for Court Side.
 6. **Yes (Ojasva, Sat 6:05 AM).** 100k per player per frame for playback and the freeze frame alone at 250k is right for the
    Quest browser; keep `aniso`, the real-frame view (`sourceView`) and 50-step views for the final run. Original ask: playback frames with `recon.py --cap 100000`, plus the
    freeze frame trained again on its own at `--cap 250000` (one frame, one GPU, minutes). Both are existing flags
@@ -20,20 +23,16 @@ Ojasva's bar: if two players can't pass by noon, ship one player on the court. U
 
 ## Now
 
-Waiting for the clip file. Desktop spikes S4 and S5 are done; S1-S3 start when the clip lands.
+Planning moves to a fresh session (Vishal's call). Next there: which low, fixed courtside angles exist for this play,
+Apple Vision Pro's courtside NBA feel, 3 prototypes of the freeze-and-walk transition, then the full plan. Waiting for
+the clip file.
 
 ## Verdict so far
 
-**Feasible with cuts** (5:50 AM), for exactly this version:
-- **The whole 5 s can be real 3D:** our prep resamples every clip to 25 fps (`pipeline/lucid/prep_clip.py:21,74`),
-  so 121 frames are 4.84 s of real time. No broadcast-video hand-off is needed.
-- **Smooth slow-down:** the last stretch before the release uses denser real frames from the 60 fps source (a speed
-  ramp inside the 121 frames), and the player cross-fades adjacent frames at low speed. Fallback: even 25 fps plus
-  cross-fades.
-- **Cuts:** about 100k Gaussians per player per frame in playback and 250k in the freeze frame; the rest of the game
-  is a still court, stands and flat cut-outs; walkable ring 0.9-1.5 m around the pair. Target: the WebXR viewer.
-- **Biggest risks:** player size in the broadcast (soft faces up close), LeBron's hand overlapping Steph at the freeze,
-  and two full-quality runs inside the day.
+**Feasible with cuts** (5:50 AM), now planned around **121 even native 60 fps frames** around the release (about 2 s
+from the seat; Vishal, 6:20 AM). Prep has no 60 fps flag and 4DAnyone accepts only 24/25/30 fps, so the 121 frames
+are re-timed to a 25 fps clip (2.4x slow) for 4DAnyone and played back at 60 fps in the headset. Biggest risks:
+player size in a 720p broadcast, LeBron's hand overlapping Steph at the freeze, and two full-quality runs in a day.
 
 ## Done
 
@@ -50,10 +49,10 @@ Waiting for the clip file. Desktop spikes S4 and S5 are done; S1-S3 start when t
 
 ## Next
 
-1. Measure the clip; pick the 121 frames (ramp ending at the release).
-2. Court calibration, SAM 2.1 masks for both players (Vishal's PC), the stabilised still camera, one fixed crop per
-   player; then ask 5.
-3. `docs/plans/court-side.md` with the hour-by-hour build and exact job specs, once Vishal approves.
+1. Find the angle: which low, fixed courtside cameras exist for this play (exact video and timestamps for Vishal).
+2. Prototypes of the seat view and the freeze-and-walk transition for Vishal to pick; the Quest budget test (ask 7).
+3. When the clip lands: gate 1, calibration, masks, two fixed-crop player clips, then the Turbo run (ask 5).
+4. `docs/plans/court-side.md`, reviewed and broken before any build.
 
 ## Blocked on
 
@@ -61,7 +60,8 @@ Waiting for the clip file. Desktop spikes S4 and S5 are done; S1-S3 start when t
 
 ## Decisions
 
-- One clip: Steph's three over LeBron, 2018 Finals, main side camera, 60p; no backups for now (Vishal, 5:45 AM).
+- One clip: Steph's three over LeBron, 2018 Finals G4, from a low, fixed courtside camera; the seat sits where it
+  stood; 121 native 60 fps frames (Vishal, 6:20 AM). Plan and prototype only until Vishal approves the plan.
 - Target the WebXR viewer; the Quest app is only an ask to Ian (Vishal, 5:45 AM).
 - Each player's crop is a fixed window in the stabilised frame covering their whole 5 s path, never a moving crop
   (Vishal, 5:45 AM).
