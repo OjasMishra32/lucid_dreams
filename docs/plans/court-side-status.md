@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 9:30 AM. Vishal is up; the planning session keeps building.
+Updated Sat 9:31 AM. Vishal is up; the planning session keeps building.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -54,11 +54,13 @@ private, outside the repo.
    the real floor. Two conditions: the Quest boundary stays on (never ask people to turn it off), and the palm menu
    has a "See my room" toggle that drops to passthrough with the frozen players still standing there (comfort and
    safety while walking). Every other mode stays passthrough.
-7. **The first real Quest 3S number (Ian or Ojasva, ~20 min).** A new version of the test page is being built
-   now (adds WebCodecs 1440p72 video, the AR-opaque mode with See my room, the boundary check, splat sort lag,
-   headset off/on). It will be on branch `court-side-q0` (throwaway, never merged) with steps in its `HOW-TO.md`;
-   please wait for it rather than the old zip. ETA ~9:15 AM.
-   **(Ojasva, 8:10 AM): waiting on a person in the headset; Ojasva runs it when he's up, unless Ian gets to it first.**
+7. **The first real Quest 3S number: ready now on branch `court-side-q0`** (throwaway, never merge; code only, a
+   script makes the test videos). On your Mac: `git fetch && git worktree add ../q0 origin/court-side-q0`, symlink
+   `apps/webxr/node_modules` from your checkout, run `apps/webxr/src/spike6/make-assets.sh` (~1 min), start the dev
+   server your usual way, open `/court-quest.html` on the Quest. Steps and safety in `apps/webxr/src/spike6/HOW-TO.md`
+   (boundary >= 3.5 x 3.5 m kept on; Enter VR, then Enter AR-opaque; photo the two tables; answer the boundary and
+   edge-fade questions; headset off/on). It measures WebCodecs 1440p72 + the decoder switch, 2x250k and 2x400k
+   splats, sort lag, AR-opaque vs VR cost, See my room, your always-on edge fade, anchors and bounded-floor.
 9. **GPU, new shape:** (a) each main player: 50-step views on its 121-frame clip, then **only the freeze frame**
    reconstructed cold at 250-300k with more iterations (~30-45 min of one B200 each); (b) up to 8 other players:
    Turbo views + freeze frame at 40-80k (~15 min each, parallel), or LHM++ on an L4. Views deleted after each recon
