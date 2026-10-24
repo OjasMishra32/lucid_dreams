@@ -213,6 +213,30 @@ class Ball(unittest.TestCase):
         self.assertEqual(got["erase"], [{"player": "luka", "radius": 0.15}])
 
 
+class Floor(unittest.TestCase):
+    def test_top_down_floor_from_a_still_camera_mosaic(self):
+        import assemble as A
+
+        # a still camera 1 m up looking down the court; its "mosaic" is the floor's own pattern where the floor is
+        cam = look(np.array([-16.0, 1.0, 0.0]), [6.0, 0.0, 0.0], w=1600, h=900, f=900.0)
+        u, v = np.meshgrid(np.arange(cam.w, dtype=float), np.arange(cam.h, dtype=float))
+        d = cam.rays(u.ravel(), v.ravel())
+        s = -cam.C[1] / np.where(d[:, 1] < -1e-6, d[:, 1], np.nan)
+        X = cam.C + s[:, None] * d
+        pattern = lambda x, z: np.stack([(np.floor(x) % 2) * 200 + 20, (np.floor(z) % 2) * 200 + 20, np.full_like(x, 90)], -1)  # noqa: E731
+        img = np.where(np.isfinite(s)[:, None], pattern(X[:, 0], X[:, 2]), 0).reshape(cam.h, cam.w, 3).astype(np.uint8)
+        count = np.isfinite(s).reshape(cam.h, cam.w).astype(np.uint16)
+        canvas = {"K": cam.K.tolist(), "R": cam.R.T.tolist(), "C": cam.C.tolist(), "size": [cam.w, cam.h]}
+        floor, seen, hardwood = A.floor_from_mosaic(img, count, None, canvas, res=0.1)
+        self.assertEqual(floor.shape[:2], (int(round(A.WIDTH / 0.1)), int(round(A.LENGTH / 0.1))))
+        # a floor point well inside the view: x = 5.25 m, z = 0.55 m (pixel centres at (i + 0.5) res - half)
+        col, row = int((5.25 + A.LENGTH / 2) / 0.1), int((0.55 + A.WIDTH / 2) / 0.1)
+        self.assertTrue(seen[row, col])
+        np.testing.assert_allclose(floor[row, col], pattern(np.array([5.25]), np.array([0.55]))[0], atol=12)
+        self.assertFalse(seen[int((7.0 + A.WIDTH / 2) / 0.1), int((-13.95 + A.LENGTH / 2) / 0.1)])  # outside the view
+        self.assertEqual(len(hardwood), 3)
+
+
 class Spots(unittest.TestCase):
     def test_spots_clear_every_body(self):
         bounds = [([4.6, 0, 1.2], [5.4, 2.0, 2.0]), ([5.8, 0, 0.0], [6.9, 2.6, 1.0])]

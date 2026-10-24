@@ -195,12 +195,55 @@ def camera_block(cfg: dict, S: dict, timing: dict, calib: geo.CalibTrack | None,
             "sourceFps": t["sourceFps"], "captureFps": t["captureFps"], "slow": t["slow"]}
 
 
+def floor_from_mosaic(img: np.ndarray, count: np.ndarray, hole: np.ndarray | None, canvas: dict, res: float = 0.02):
+    """The whole court from above (FloorRect [-L/2, -W/2, L/2, W/2]: columns along +x, rows along +z, `res` m per
+    pixel) out of a still camera's people-free pan mosaic (RGB; `count` > 0 where a frame filled it, `hole` where it
+    was inpainted): (floor RGB uint8, seen bool, hardwood sRGB 0-1 = the median of the seen floor). Unseen floor is the
+    hardwood colour; the canvas camera is a pinhole, x_cam = R (X - C), its K in the mosaic's pixels."""
+    import cv2
+
+    K, Rcw, C = np.asarray(canvas["K"], float), np.asarray(canvas["R"], float), np.asarray(canvas["C"], float)
+    nx, nz = int(round(LENGTH / res)), int(round(WIDTH / res))
+    x = (np.arange(nx) + 0.5) * res - LENGTH / 2
+    z = (np.arange(nz) + 0.5) * res - WIDTH / 2
+    X, Z = np.meshgrid(x, z)
+    P = np.stack([X, np.zeros_like(X), Z], -1).reshape(-1, 3)
+    c = (P - C) @ Rcw.T
+    front = c[:, 2] > 0.1
+    zc = np.where(front, c[:, 2], 1.0)
+    u = (K[0, 0] * c[:, 0] / zc + K[0, 2]).reshape(nz, nx).astype(np.float32)
+    v = (K[1, 1] * c[:, 1] / zc + K[1, 2]).reshape(nz, nx).astype(np.float32)
+    H, W = img.shape[:2]
+    inside = front.reshape(nz, nx) & (u >= 0) & (u <= W - 1) & (v >= 0) & (v <= H - 1)
+    rgb = cv2.remap(np.ascontiguousarray(img), u, v, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    ui, vi = np.clip(np.round(u), 0, W - 1).astype(int), np.clip(np.round(v), 0, H - 1).astype(int)
+    seen = inside & (count[vi, ui] > 0)
+    if hole is not None:
+        seen &= hole[vi, ui] == 0
+    hardwood = (np.median(rgb[seen], 0) / 255.0) if seen.any() else np.array([0.71, 0.52, 0.33])
+    floor = np.where(seen[..., None], rgb, np.round(hardwood * 255)).astype(np.uint8)
+    return floor, seen, [round(float(h), 3) for h in hardwood]
+
+
 def court_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
     c = cfg.get("court") or {}
     block = {"length": LENGTH, "width": WIDTH, "rim": RIM,
              "backboard": [[BOARD_X, BOARD_Y[0], -BOARD_HALF], [BOARD_X, BOARD_Y[0], BOARD_HALF],
                            [BOARD_X, BOARD_Y[1], BOARD_HALF], [BOARD_X, BOARD_Y[1], -BOARD_HALF]]}
-    if c.get("floor") and expand(c["floor"]).exists():
+    m = c.get("mosaic") or {}
+    if m.get("image") and expand(m["image"]).exists():
+        import cv2
+
+        img = cv2.cvtColor(cv2.imread(str(expand(m["image"])), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        count = cv2.imread(str(expand(m["count"])), cv2.IMREAD_UNCHANGED) if m.get("count") else np.ones(img.shape[:2], np.uint16)
+        hole = cv2.imread(str(expand(m["hole"])), cv2.IMREAD_UNCHANGED) if m.get("hole") else None
+        canvas = json.loads(expand(m["camera"]).read_text())
+        floor, seen, hardwood = floor_from_mosaic(img, count, hole, canvas, m.get("res", 0.02))
+        cv2.imwrite(str(w.path("court/floor.jpg")), cv2.cvtColor(floor, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 90])
+        sp.write_png(w.path("court/floor-seen.png"), (seen * 255).astype(np.uint8))
+        block.update({"floor": "court/floor.jpg", "floorSeen": "court/floor-seen.png", "hardwood": c.get("hardwood", hardwood)})
+        w.piece("floor", True, f"top-down from the pan mosaic ({100 * seen.mean():.1f}% of the court seen), hardwood {hardwood}")
+    elif c.get("floor") and expand(c["floor"]).exists():
         block["floor"] = w.copy(expand(c["floor"]), "court/floor" + expand(c["floor"]).suffix)
         block["floorSeen"] = w.copy(expand(c["floorSeen"]), "court/floor-seen.png")
         block["hardwood"] = c["hardwood"]
