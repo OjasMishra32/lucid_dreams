@@ -21,7 +21,7 @@
 # agree = recon --source-agree, solid from every side but a few cm off the real camera); REALS ("0 1 2": how many of
 # the run's other real views (real/extras.json, in order, with their weights) train beside A's frame); CAPS (300000);
 # METRICS (1: per variant a recon holding out every 8th view and every unused real view, weight 0); ITERS (15000);
-# FACE (2.0); TAG (results in $L/runs/$ID/$TAG); SEED + SEED_FLAG (4DAnyone's seed and its flag); MIN_SCRATCH_GB
+# FACE (2.0); TAG (results in $L/runs/$ID/$TAG); SEED (4DAnyone's seed; SEED_FLAG, default --seed); MIN_SCRATCH_GB
 # (200); KEEP_MB (900: past that the recon PLYs stay behind).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
@@ -30,7 +30,8 @@ L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 DATA=$L/data/court/$ID; OUTD=$L/runs/$ID${TAG:+/$TAG}
 VARIANTS=${VARIANTS:-"raw:default raw:agree"}; REALS=${REALS:-"0 1 2"}; CAPS=${CAPS:-300000}; METRICS=${METRICS:-1}
 [[ -z ${TAG:-} || $TAG =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "court-job: bad tag '$TAG'" >&2; exit 1; }
-[[ -z ${SEED:-} || ( $SEED =~ ^[0-9]+$ && -n ${SEED_FLAG:-} ) ]] || { echo "court-job: SEED needs a number and SEED_FLAG" >&2; exit 1; }
+SEED_FLAG=${SEED_FLAG:---seed}  # 4DAnyone inference.py's own seed option (default 42 when not given)
+[[ -z ${SEED:-} || $SEED =~ ^[0-9]+$ ]] || { echo "court-job: SEED must be a whole number" >&2; exit 1; }
 S=${TMPDIR:-/tmp}/court-$ID${TAG:+-$TAG}-${SLURM_JOB_ID:-$$}
 log() { echo "[court-job $(date +%T)] $*"; }
 for v in $VARIANTS; do

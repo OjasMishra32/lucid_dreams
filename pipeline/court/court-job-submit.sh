@@ -4,7 +4,7 @@
 # Checks first, for every id, and submits nothing if any fails: the id, the uploaded files and the K frame's masks, the
 # ids inside job.json and court-run.json, never submitted before (per tag), and the group's free space (MIN_GB,
 # default 2: results only come back).
-# SEEDS=N: N jobs per id, 4DAnyone seeds 1..N (needs SEED_FLAG), results in $L/runs/<id>/seed<k>/; or TAG=<name>
+# SEEDS=N: N jobs per id, 4DAnyone seeds 1..N, results in $L/runs/<id>/seed<k>/; or TAG=<name>
 # (e.g. winner) for one more job per id into $L/runs/<id>/<name>/. Env passed to the jobs: VARIANTS, REALS, CAPS,
 # METRICS, ITERS, FACE, SEED, SEED_FLAG; NGPU (GPUs per job, default 4), MEM and TIME (sbatch overrides); DRY=1.
 set -euo pipefail
@@ -15,11 +15,10 @@ TAGS=(); SEEDV=()
 if [ -n "${SEEDS:-}" ]; then
   [[ $SEEDS =~ ^[1-9][0-9]?$ ]] || fail "SEEDS=$SEEDS"
   [ -z "${TAG:-}${SEED:-}" ] || fail "SEEDS goes alone (no TAG or SEED)"
-  [ -n "${SEED_FLAG:-}" ] || fail "SEEDS needs SEED_FLAG (4DAnyone's seed option)"
   for ((k = 1; k <= SEEDS; k++)); do TAGS+=("seed$k"); SEEDV+=("$k"); done
 else
   [[ -z ${TAG:-} || $TAG =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "TAG=$TAG"
-  [[ -z ${SEED:-} || ( $SEED =~ ^[0-9]+$ && -n ${SEED_FLAG:-} ) ]] || fail "SEED needs a number and SEED_FLAG"
+  [[ -z ${SEED:-} || $SEED =~ ^[0-9]+$ ]] || fail "SEED=$SEED"
   TAGS=("${TAG:-}"); SEEDV=("${SEED:-}")
 fi
 seen=" "

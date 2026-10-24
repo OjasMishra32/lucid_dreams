@@ -231,9 +231,12 @@ class Job(unittest.TestCase):
         views = next(c for c in self.calls if c["args"][0].endswith("inference.py"))
         self.assertEqual(views["args"][-2:], ["--seed", "2"])
         self.assertTrue((self.L / "runs" / self.id / "seed2" / "bundle-raw-default-r0-300k" / "dream.json").exists())
-        p = self.run_job(TAG="seed3", SEED="3")
+        p = self.run_job(TAG="seed3", SEED="3", VARIANTS="raw:default", METRICS="0")  # 4DAnyone's own --seed
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        views = [c for c in self.calls if c["args"][0].endswith("inference.py")][-1]
+        self.assertEqual(views["args"][-2:], ["--seed", "3"])
+        p = self.run_job(TAG="seed4", SEED="x")
         self.assertNotEqual(p.returncode, 0)
-        self.assertIn("SEED_FLAG", p.stderr)
 
     def test_caps_are_checked(self):
         for caps in ("300k", "300000 300400"):
@@ -331,14 +334,13 @@ class Submit(unittest.TestCase):
 
     def test_seeds_one_job_each(self):
         a = make_data(self.root, "court-main-s2")
-        rc, out = dryrun(a, SEEDS="3", SEED_FLAG="--seed")
+        rc, out = dryrun(a, SEEDS="3")
         self.assertEqual(rc, 0, out)
         c = calls(out)
         self.assertEqual([re.search(r"TAG=(\S*?),SEED=(\d+)", x).groups() for x in c],
                          [("seed1", "1"), ("seed2", "2"), ("seed3", "3")])
-        rc, out = dryrun(a, SEEDS="3")
+        rc, out = dryrun(a, SEEDS="3", TAG="x")
         self.assertNotEqual(rc, 0)
-        self.assertIn("SEED_FLAG", out)
 
     def test_bad_id(self):
         rc, out = dryrun(make_data(self.root, "Court-Main"))
