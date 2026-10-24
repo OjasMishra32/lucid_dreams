@@ -1,0 +1,75 @@
+// Stockfish 19 (lite, single-threaded WASM) as a separate Web Worker, spoken to over UCI.
+
+export interface Strength {
+  id: string;
+  label: string;
+  elo: number | null; // null = full strength
+}
+
+export const STRENGTHS: Strength[] = [
+  { id: "club", label: "Club", elo: 1400 },
+  { id: "expert", label: "Expert", elo: 2000 },
+  { id: "master", label: "Master", elo: 2400 },
+  { id: "gm", label: "Grandmaster", elo: 2700 },
+  { id: "max", label: "Engine", elo: null },
+];
+
+export class Engine {
+  private worker = new Worker("/engine/stockfish-19-lite-single.js");
+  private listeners: ((line: string) => void)[] = [];
+  private ready: Promise<void>;
+
+  constructor() {
+    this.worker.onmessage = (e) => {
+      const line = String(e.data);
+      for (const l of [...this.listeners]) l(line);
+    };
+    this.ready = this.until("uciok", "uci").then(() => this.until("readyok", "isready")).then(() => {});
+  }
+
+  private send(cmd: string) {
+    this.worker.postMessage(cmd);
+  }
+
+  private until(token: string, cmd?: string): Promise<string> {
+    return new Promise((resolve) => {
+      const l = (line: string) => {
+        if (line.startsWith(token)) {
+          this.listeners = this.listeners.filter((x) => x !== l);
+          resolve(line);
+        }
+      };
+      this.listeners.push(l);
+      if (cmd) this.send(cmd);
+    });
+  }
+
+  async setStrength(s: Strength) {
+    await this.ready;
+    if (s.elo === null) {
+      this.send("setoption name UCI_LimitStrength value false");
+    } else {
+      this.send("setoption name UCI_LimitStrength value true");
+      // Stockfish's UCI_Elo floor is about 1320
+      this.send(`setoption name UCI_Elo value ${Math.max(1320, s.elo)}`);
+    }
+    await this.until("readyok", "isready");
+  }
+
+  /** Best move for a FEN, in UCI notation (e.g. "e2e4", "e7e8q"). Thinks a little longer at higher strengths. */
+  async bestMove(fen: string, s: Strength): Promise<string> {
+    await this.ready;
+    this.send(`position fen ${fen}`);
+    const ms = s.elo === null ? 1500 : s.elo >= 2600 ? 1200 : s.elo >= 2200 ? 900 : 600;
+    const line = await this.until("bestmove", `go movetime ${ms}`);
+    return line.split(/\s+/)[1];
+  }
+
+  newGame() {
+    this.send("ucinewgame");
+  }
+
+  dispose() {
+    this.worker.terminate();
+  }
+}

@@ -13,6 +13,7 @@ export interface Dream {
   frames: { dir: string; pattern: string; spz?: string; reality?: string | null; gaussiansPerFrame?: number; spzBytesTotal?: number } | null;
   avatar: { file: string; rig: string; motion: string } | null;
   audio: string | null;
+  voice?: string | null; // the speaking voice, separated from background noise and music
   preview: string | null;
   thumb: string | null;
   metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null; seenFraction?: number | null };

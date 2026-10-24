@@ -163,6 +163,30 @@ def render(g: Gaussians, viewmat: np.ndarray, width: int, height: int, bg: np.nd
     return (out.clamp(0, 1) * 255).round().byte().cpu().numpy()
 
 
+def isolate_voice(audio: Path, out: Path) -> bool:
+    """The speaking voice alone (Demucs two-stem separation: vocals vs everything else), so an old home video sounds
+    like the person rather than the room. Returns False if Demucs isn't installed or finds nothing."""
+    import shutil
+    import tempfile
+
+    if shutil.which("demucs") is None:
+        try:
+            import demucs  # noqa: F401
+        except ImportError:
+            return False
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run(["python", "-m", "demucs", "--two-stems", "vocals", "-n", "htdemucs", "-o", tmp, str(audio)],
+                           capture_output=True, text=True)
+        stems = list(Path(tmp).rglob("vocals.wav"))
+        if r.returncode != 0 or not stems:
+            print("[export] voice isolation skipped:", r.stderr[-300:])
+            return False
+        # gentle clean-up: high-pass the rumble, even out the level, then AAC
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(stems[0]), "-af",
+                        "highpass=f=70,loudnorm=I=-18:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "160k", str(out)], check=False)
+    return out.exists()
+
+
 def main(argv=None):
     a = parse_args(argv)
     frame_paths = sorted((a.recon / "frames").glob("*.ply"))
@@ -217,6 +241,7 @@ def main(argv=None):
     Image.fromarray(thumb).save(a.out / "thumb.jpg", quality=92)
 
     audio = None
+    voice = None
     source = None
     if a.clip and a.clip.exists():
         probe = json.loads(subprocess.run(
@@ -229,6 +254,8 @@ def main(argv=None):
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(a.clip), "-vn", "-c:a", "aac", "-b:a", "160k",
                             "-t", f"{len(placed_frames) / a.fps:.3f}", str(a.out / "audio.m4a")], check=False)
             audio = "audio.m4a" if (a.out / "audio.m4a").exists() else None
+            if audio and isolate_voice(a.out / "audio.m4a", a.out / "voice.m4a"):
+                voice = "voice.m4a"
 
     reports = [json.loads(p.read_text()) for p in sorted(a.recon.glob("recon-*.json"))]
     per_frame = [f for r in reports for f in r.get("frames", [])]
@@ -256,6 +283,7 @@ def main(argv=None):
         },
         "avatar": None,
         "audio": audio,
+        "voice": voice,
         "preview": "preview.mp4",
         "thumb": "thumb.jpg",
         "source": source,

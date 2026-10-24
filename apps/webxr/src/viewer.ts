@@ -107,8 +107,29 @@ export async function renderViewer(root: HTMLElement, id: string) {
   $("#controls").hidden = false;
 
   // ---------------- playback ----------------
-  const audio = dream.audio ? new Audio(dreamUrl(dream.id, dream.audio)) : null;
-  if (audio) audio.preservesPitch = true;
+  // Their voice comes from where they stand: positional (HRTF) audio at mouth height, heard through the headset or
+  // the laptop the way a real person in the room would sound. Prefers the cleaned-up voice track when the bundle has one.
+  const track = dream.voice ?? dream.audio;
+  const audio = track ? new Audio(dreamUrl(dream.id, track)) : null;
+  const listener = new THREE.AudioListener();
+  camera.add(listener);
+  if (audio) {
+    audio.crossOrigin = "anonymous";
+    audio.preservesPitch = true;
+    const voice = new THREE.PositionalAudio(listener);
+    voice.setMediaElementSource(audio);
+    voice.setDistanceModel("inverse");
+    voice.setRefDistance(1.2);
+    voice.setRolloffFactor(1.1);
+    voice.panner.panningModel = "HRTF";
+    const mouth = dream.bounds ? dream.bounds.max[1] - 0.13 : 1.6;
+    voice.position.set(0, mouth, -0.08); // the person's front is -Z in their own space
+    person.add(voice);
+  }
+  // browsers only start audio after a tap or click
+  const wake = () => listener.context.state !== "running" && listener.context.resume().catch(() => {});
+  addEventListener("pointerdown", wake);
+  addEventListener("keydown", wake);
   let playing = true;
   let speed = 1;
   let t = 0; // seconds into the clip
@@ -211,7 +232,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
       $("#room").hidden = !supported;
     },
   });
-  $("#room").addEventListener("click", () => xr.toggleXr());
+  $("#room").addEventListener("click", () => {
+    wake();
+    xr.toggleXr();
+  });
 
   const head = new THREE.Vector3();
   const forward = new THREE.Vector3();

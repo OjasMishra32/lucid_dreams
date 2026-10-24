@@ -15,7 +15,7 @@ export TORCH_CUDA_ARCH_LIST="8.9;10.0;12.0" MAX_JOBS=8 BUILD_NO_CUDA=0
 module load conda/26.7 cuda/12.8.1
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/4danyone
-pip install -q ninja plyfile lpips
+pip install -q ninja plyfile lpips demucs
 pip install -q --no-build-isolation --force-reinstall --no-deps "git+https://github.com/nerfstudio-project/gsplat.git@v1.5.3"
 python -c "import gsplat, torch; print('gsplat', gsplat.__version__, 'torch', torch.__version__)"
 echo INSTALL_OK

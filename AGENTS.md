@@ -126,6 +126,7 @@ dreams/<id>/
   preview.mp4            orbit render for the web app card
   thumb.jpg
   audio.m4a              optional, the clip's sound
+  voice.m4a              optional, the speaking voice alone (separated from music and noise); players prefer it
   frames/000000.ply ...  replay: one Gaussian file per frame (3DGS PLY; may switch to compressed later)
   avatar/avatar.ply      avatar: Gaussians in the rig's rest pose
   avatar/motion.json     avatar: the motion to play

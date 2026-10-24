@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@sparkjsdev/spark": "2.4.0",
+    "chess.js": "^1.4.0",
+    "stockfish": "^19.0.1",
     "three": "0.186.1"
   },
   "devDependencies": {
