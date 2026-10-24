@@ -33,7 +33,8 @@ if [ "${DRY:-0}" != 1 ]; then
   $SSH "$HOST" true 2>/dev/null || { echo "open the HiPerGator connection first: ssh $HOST true" >&2; exit 3; }
 fi
 run $SSH "$HOST" "mkdir -p $L/code/pipeline/court $L/data/court"
-run rsync -a -e "$SSH" "$HERE"/court-*.sh "$HERE"/court-*.sbatch "$HERE"/court_*.py "$HOST:$L/code/pipeline/court/"
+run rsync -a -e "$SSH" "$HERE"/{court-job.sbatch,court-job-submit.sh,court-lib.sh,court_fetch_seedvr2.py,court_grid_report.py} \
+  "$HOST:$L/code/pipeline/court/"
 for id in "${IDS[@]}"; do
   run rsync -a -e "$SSH" "$RUNS/$id/" "$HOST:$L/data/court/$id/"
 done
