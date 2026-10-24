@@ -185,6 +185,31 @@ Locally, without a GPU: `uv run python -m lucid_avatars head-swap dreams/<person
 --smplx SMPLX_NEUTRAL.npz --flame-ids SMPL-X__FLAME_vertex_ids.npy [--flame-expr flame2023_expr.npz]` does the swap
 alone.
 
+## Blinks and the living idle for any SMPL-X avatar (no head swap needed)
+
+`head_swap` writes `avatar/expr.bin` only for LAM's heads. SMPL-X's own head has FLAME's topology (SMPL-X vertex
+`ids[j]` is FLAME vertex j), so any SMPL-X bundle (a DiGS photo avatar, an LHM++ one) can blink too, in place:
+
+```
+sbatch --export=ALL,BUNDLE=<id> avatars/hpg/blink.sbatch          # CPU; KEEP_MOTION=1 keeps the motion
+python -m lucid_avatars blink dreams/<id> --smplx SMPLX_NEUTRAL.npz --flame-ids SMPL-X__FLAME_vertex_ids.npy \
+  --flame-expr flame2023_expr.npz [--keep-motion]                  # locally, same thing
+```
+
+`any_face.py`: the avatar's rest SMPL-X vertices (the bundle's betas, checked against skeleton.json to 2 mm) are fitted
+to FLAME's template (Umeyama); the blink is fitted to those eyelids in FLAME's frame and, with FLAME expressions 0-8,
+carried into the avatar's frame by the fit's scale and rotation. Head Gaussians (dominant skin joint head, jaw or an
+eye) each blend their 3 nearest FLAME vertices' offsets (eyeball vertices excluded); one within 1.05 eyeball radii of an
+eye centre is the eye itself: zero offsets, it turns with the eye joint. `expr.bin` needs the head as one range at the
+end, so the Gaussians are reordered (body first, then head, each in original order) and the same permutation goes to
+`skin.bin` and `reality.ply`; `dream.json` gets `expr`/`exprChannels` and, unless `--keep-motion` or the motion is a
+performance or a fine-tune's clip, the 20 s living idle with blinks. `face.json` next to `dream.json` has the numbers:
+`expr.blink.openFraction` (0 = shut; look for near 0), FLAME fit RMS, Gaussians per part. Running it twice changes
+nothing. It refuses (writing nothing) an id in `dreams/.held`, a bundle without skinning, a skeleton that isn't this
+SMPL-X, a FLAME that doesn't fit the head (over 3 cm RMS: wrong ids), and a head swap's own LAM-fitted `expr.bin`. Eyes
+FLAME can't shut skip `expr.bin` and the reorder (reason in `face.json` `expr.skipped`) but still get the idle. It adds
+no likeness, so there is no consent gate. Not yet run on a real DiGS or LHM++ bundle.
+
 ## Seated at the chess board
 
 `seated_idle(rest, betas)` (`idle.py`) is the opponent's idle: hips on a 0.45 m seat, feet on the floor, forearms on a

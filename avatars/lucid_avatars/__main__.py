@@ -1,5 +1,5 @@
 """Command line: `python -m lucid_avatars validate dreams/<id>`, `... idle motion.json`, `... bake dreams/<id>`,
-`... results <run>-tuned.work`, `... head-swap dreams/<id> heads/<person>/heads --person <person> ...`."""
+`... results <run>-tuned.work`, `... head-swap dreams/<id> heads/<person>/heads --person <person> ...`, `... blink dreams/<id> --smplx ...`."""
 
 import argparse
 import sys
@@ -40,6 +40,13 @@ def main() -> int:
     h.add_argument("--flame-expr", help="FLAME extract from flame_expr_npz.py: adds avatar/expr.bin (expressions and "
                    "this face's blink) and the 20 s living idle")
     h.add_argument("--keep-motion", action="store_true", help="keep the source's motion.json even if it is an idle")
+    bl = sub.add_parser("blink", help="any SMPL-X avatar bundle -> blinks (avatar/expr.bin) and the 20 s living idle, "
+                        "in place")
+    bl.add_argument("bundle", help="the bundle to update, dreams/<id>")
+    bl.add_argument("--smplx", required=True, help="SMPLX_NEUTRAL.npz (the model the avatar was built with)")
+    bl.add_argument("--flame-ids", required=True, help="SMPL-X__FLAME_vertex_ids.npy")
+    bl.add_argument("--flame-expr", required=True, help="FLAME extract from flame_expr_npz.py")
+    bl.add_argument("--keep-motion", action="store_true", help="keep the bundle's motion.json even if it is an idle")
     args = parser.parse_args()
 
     if args.cmd == "validate":
@@ -71,6 +78,25 @@ def main() -> int:
             print(f"wrote {c} ({c.stat().st_size // 1024} KB)")
         print(f"wrote {here / 'README.md'} (Results section)")
         return 0
+    if args.cmd == "blink":
+        from pathlib import Path
+
+        from . import any_face as A
+
+        src = Path(args.bundle)
+        refused = A.held_errors(src)
+        if refused:
+            print("REFUSED", *refused, sep="\n     ")
+            return 2
+        try:
+            root = A.add_face(src, args.smplx, args.flame_ids, args.flame_expr, keep_motion=args.keep_motion)
+        except ValueError as e:
+            print("REFUSED", str(e), sep="\n     ")
+            return 2
+        errors = validate_bundle(root)
+        print((root / A.FACE_FILE).read_text().strip())
+        print(f"{'FAIL' if errors else 'OK  '} {root}", *errors, sep="\n     ")
+        return 1 if errors else 0
     if args.cmd == "head-swap":
         from pathlib import Path
 
