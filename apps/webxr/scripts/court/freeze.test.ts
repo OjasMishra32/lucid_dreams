@@ -6,6 +6,8 @@ import { FADE_NEAR, FADE_S, FADE_TO, capsuleDistance, fadeStep, inBounds, nearBo
 import { cameraOf, project } from "../../src/court/camera.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
 import { standinBundle } from "./standin.mjs";
+import { openEye } from "./look/proximity.mjs";
+import { boundsCase } from "./look/bounds.mjs";
 
 const { court, frames } = structuredClone(standinBundle()) as { court: Court; frames: ShowFrame[] };
 const HZ = 72;
@@ -87,4 +89,47 @@ test("bounds (P34): an extra stays in the room only with its feet inside the bou
   assert.ok(inBounds(0.5, 2.5, [...ell].reverse()), "clockwise too");
   assert.ok(!inBounds(1, 1, null), "no bounds: nothing is inside");
   assert.ok(!inBounds(1, 1, [[0, 0], [2, 0]]), "fewer than 3 corners: nothing is inside");
+});
+
+test("P17's ball check leans in from the open side: a ball held at the hip, inside the torso's radius, still has room", () => {
+  // a held ball as real bodies have it: centre 0.19 m from the torso's axis, the capsule 0.22 m round, at the hip
+  const torso = { a: [0, 0.95, 0] as Vec3, b: [0, 1.45, 0] as Vec3, r: 0.22 };
+  const head = { a: [0, 1.62, 0] as Vec3, b: [0, 1.72, 0] as Vec3, r: 0.11 };
+  const other = { a: [1.1, 0.95, 0.3] as Vec3, b: [1.1, 1.45, 0.3] as Vec3, r: 0.2 };
+  const players = [{ capsules: [torso, head] }, { capsules: [other] }];
+  const ball = { centre: [0.0, 1.0, 0.19] as Vec3, radius: 0.12 };
+  const { eye, gap } = openEye(ball, players, 0.3);
+  close(Math.hypot(...eye.map((v: number, i: number) => v - ball.centre[i])), ball.radius + 0.3, 1e-9, "0.3 m from the ball's surface");
+  close(gap, Math.min(...[torso, head, other].map((c) => capsuleDistance(eye, c))), 1e-9, "the gap is freeze.ts's own distance");
+  assert.ok(gap > FADE_NEAR, `the open side clears every capsule: ${gap.toFixed(3)} m`);
+  assert.ok(eye[1] > 0, "above the floor");
+  // the old aim (away from the pair's centre, which here runs along his side, 20 deg back toward him) lands 0.176 m
+  // from his torso: inside the fade, rightly
+  const a = (20 * Math.PI) / 180;
+  const side: Vec3 = [ball.centre[0] - 0.42 * Math.cos(a), ball.centre[1], ball.centre[2] - 0.42 * Math.sin(a)];
+  close(capsuleDistance(side, torso), 0.176, 2e-3, "the review's 0.176 m");
+  assert.ok(nearBody(side, [torso, head]), "along his side the holder fades");
+});
+
+test("P34's bounds case comes from court.json, whatever order the people load in: the extra inside one room, beyond the other", () => {
+  const extra = court.freeze.others[0];
+  assert.ok(extra, "the stand-in has an extra");
+  // the extra standing close to either player, with the players and the extras listed in every order
+  const order = <T,>(xs: T[], k: number) => xs.map((_, i) => xs[(i + k) % xs.length]);
+  for (const near of court.freeze.players) {
+    const foot: Vec3 = [near.bounds.max[0] + 0.3, 0, (near.bounds.min[2] + near.bounds.max[2]) / 2];
+    for (let k = 0; k < court.freeze.players.length; k++) {
+      const c = structuredClone(court);
+      c.freeze.others = [{ ...extra, foot }, ...c.freeze.others.slice(1)];
+      c.freeze.players = order(c.freeze.players, k);
+      const kase = boundsCase(c)!;
+      assert.equal(kase.id, extra.id, "the extra by its id");
+      assert.ok(inBounds(foot[0], foot[2], kase.inside), `inside: next to ${near.id}, order ${k}`);
+      assert.ok(!inBounds(foot[0], foot[2], kase.beyond), `beyond: next to ${near.id}, order ${k}`);
+    }
+  }
+  // the page looks the extra up by id: a shuffled load order finds the same one
+  const people = [...court.freeze.players.map((p) => ({ id: p.id, pair: true })), ...court.freeze.others.map((o) => ({ id: o.id, pair: false }))];
+  for (let k = 0; k < people.length; k++) assert.equal(order(people, k).find((p) => p.id === boundsCase(court)!.id)?.id, extra.id, `load order ${k}`);
+  assert.equal(boundsCase({ ...court, freeze: { ...court.freeze, others: [] } }), null, "no extras, no case");
 });

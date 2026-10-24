@@ -3,10 +3,10 @@
 // clock and the hand-off; P44 through court.ts's own phases is the handoff scenario's.
 //   P33: alpha 255 on every frame. P44: no light change over 1 grey level per display frame (the 16 x 9 grid; the
 //   CPU twin in lightfield.test.ts holds it per pixel on the encoded byte, dither included, up to SAFE_GREY). P28: the
-//   house goes down while the pair's own pixels move <= 1 grey level. P23: the Reality check tints what was never
-//   filmed. (P17, the capsule fade, is scenarios/proximity.mjs.)
+//   house goes down while the pair's own pixels move <= 1 grey level. P23: the Reality check tints the floor the
+//   bundle marks as never filmed and leaves the filmed floor alone. (P17, the capsule fade, is scenarios/proximity.mjs.)
 // Owner: stream E.
-import { HZ, alphaOk, blueRatio, lumaAt, runLight, sitAtSeat, worstStep } from "../look/view.mjs";
+import { HZ, alphaOk, blueRedAt, lumaAt, realityPoints, runLight, sitAtSeat, worstStep } from "../look/view.mjs";
 
 export const owner = "E (look)";
 export const needs = ["light", "world", "freeze"];
@@ -27,7 +27,7 @@ export default async function look(ctx) {
   const a = await runLight(ctx, ease);
   const atF = await ctx.save("look-freeze");
   const b = await runLight(ctx, open);
-  await ctx.save("look-open");
+  const opened = await ctx.save("look-open");
   const all = [...a, ...b];
   ctx.check("opaque through the ease and the pool (P33)", alphaOk(all), `alpha min ${Math.min(...all.map((f) => f.alphaMin))} over ${all.length} frames`);
   const s = worstStep(all);
@@ -42,13 +42,26 @@ export default async function look(ctx) {
   const before = lumaAt(ctx, "look-watch", watch.view, torsos);
   const after = lumaAt(ctx, "look-freeze", atF.view, torsos);
   ctx.check("the pair stays at 1.0 through the time stop (P28: <= 1 grey level)", Math.abs(after - before) <= 1, `torso luma ${before.toFixed(2)} -> ${after.toFixed(2)}`);
-  // the Reality check: everything not filmed goes blue
+  // the Reality check, judged on the floor the bundle marks: what was never filmed goes clearly blue, and what was
+  // filmed doesn't move (a tint missing and a tint leaking onto real footage both fail)
   await ctx.pressFrames("reality", 3);
   await ctx.save("look-reality");
   await ctx.pressFrames("reality", 3);
-  const r0 = blueRatio(ctx, "look-open");
-  const r1 = blueRatio(ctx, "look-reality");
-  ctx.check("the Reality check tints what was never filmed blue (P23)", r1 > r0 * 1.2, `blue / red ${r0.toFixed(2)} -> ${r1.toFixed(2)}`);
+  const sets = await realityPoints(ctx, opened.view);
+  const rise = (pts) => blueRedAt(ctx, "look-reality", opened.view, pts) / blueRedAt(ctx, "look-open", opened.view, pts);
+  const [imagined, seen] = [rise(sets.imagined), rise(sets.seen)];
+  const ratios = (pts) => `${blueRedAt(ctx, "look-open", opened.view, pts).toFixed(3)} -> ${blueRedAt(ctx, "look-reality", opened.view, pts).toFixed(3)}`;
+  ctx.check(
+    "the Reality check tints the imagined floor blue (P23: blue / red up at least 50%)",
+    sets.imagined.length >= 12 && imagined >= 1.5,
+    `${sets.imagined.length} imagined points: blue / red ${ratios(sets.imagined)} (x${imagined.toFixed(2)})`,
+  );
+  ctx.check(
+    "the Reality check leaves the filmed floor alone (P23: blue / red within 2%)",
+    sets.seen.length >= 12 && Math.abs(seen - 1) <= 0.02,
+    `${sets.seen.length} filmed points: blue / red ${ratios(sets.seen)} (x${seen.toFixed(3)})`,
+  );
+  ctx.report.reality = { imagined: { points: sets.imagined.length, rise: imagined }, seen: { points: sets.seen.length, rise: seen } };
   // the hoop and the house lights take the field's light the frame it moves: court.ts calls the world's per-frame
   // methods (update, room, then edge) and moves the field after them, so here the field moves right after edge()
   const sync = await ctx.page.evaluate(async (hz) => {
