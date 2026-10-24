@@ -153,6 +153,66 @@ class Placement(unittest.TestCase):
         self.assertLess(g.angle_deg(to_cam, want), 0.5)
 
 
+class ReconFiles(unittest.TestCase):
+    def test_run_files_put_the_player_back_on_the_court(self):
+        """court-run.json's still camera, recon's source-camera JSON (rig world) and the export's placement (rig ->
+        bundle) read back into the same court points the clip was cut from."""
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        rng = np.random.default_rng(5)
+        P_court = person(rng, foot=(6.0, 1.2), facing=-0.4)
+        full = look(np.array([-16.0, 0.8, 2.5]), [6.0, 1.0, 1.2], w=3840, h=2160, f=22000.0)
+        x0, y0 = 1300, 0
+        crop = g.Cam(full.C, full.R, full.f, full.cx - x0, full.cy - y0, 1216, 2160)
+        # the rig's world: some similarity of the court; the recon solved its source camera there
+        s_r, A_r, T_r = 0.95, g.rot_y(2.0) @ g.quat_to_matrix([0.005, 0, 0.003, 1]), np.array([0.3, -1.0, 2.0])
+        to_rig = lambda X: s_r * (np.asarray(X) @ A_r.T) + T_r  # noqa: E731
+        Q = g.pixel_grid_rotation(g.Cam(crop.C, crop.R, crop.f, 607.5, 1079.5, 1216, 2160), crop)
+        c2w = np.eye(4)
+        c2w[:3, :3], c2w[:3, 3] = A_r @ crop.R @ Q, to_rig(crop.C)
+        # the export: rig -> bundle, a turn about +y and a shift (lucid/export.py `placement`)
+        rot, t = g.rot_y(0.7), np.array([0.1, 0.05, -0.2])
+        P_bundle = to_rig(P_court) @ rot.T + t
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "src.json").write_text(json.dumps({"camera_to_world": c2w.tolist(), "K": [[crop.f, 0, 607.5], [0, crop.f, 1079.5], [0, 0, 1]],
+                                                    "image_width": 1216, "image_height": 2160, "iou": 0.96}))
+            (d / "dream.json").write_text(json.dumps({"placement": {"rot": rot.tolist(), "t": t.tolist()}}))
+            (d / "run.json").write_text(json.dumps({"K": 118, "crop": [x0, y0, 1216, 2160], "still": {
+                "R": full.R.T.tolist(), "C": full.C.tolist(), "K": [[crop.f, 0, crop.cx], [0, crop.f, crop.cy], [0, 0, 1]]}}))
+            src, dst = A.recon_cameras({"sourceCamera": d / "src.json", "dream": d / "dream.json", "courtRun": d / "run.json"})
+        sim, info = g.place_by_camera(P_bundle, src, dst)
+        np.testing.assert_allclose(sim.apply(P_bundle), P_court, atol=0.03)
+        self.assertLess(info["tilt_deg"], 1.5)
+
+
+class Ball(unittest.TestCase):
+    def test_ball_on_its_pixel_at_the_hands_depth(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        rng = np.random.default_rng(6)
+        cam = look(np.array([-16.0, 0.8, 2.5]), [6.0, 1.0, 1.5], w=3840, h=2160, f=22000.0)
+        ball = np.array([5.8, 1.0, 1.3])
+        # the holder's front surface around the ball: a hand-sized patch of points on the ball's camera-facing side
+        d = rng.normal(size=(3000, 3))
+        shell = ball + d / np.linalg.norm(d, axis=1, keepdims=True) * A.BALL_RADIUS
+        toward = (cam.C - ball) / np.linalg.norm(cam.C - ball)
+        front = shell[(shell - ball) @ toward > 0.05]
+        body = np.concatenate([person(rng, foot=(6.0, 1.5)), front])
+        u, v, _ = cam.project(ball[None])
+        with tempfile.TemporaryDirectory() as tmp:
+            w = A.Writer(Path(tmp))
+            got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "luka"}}, {}, [{"id": "luka"}], cam, {"luka": body})
+        np.testing.assert_allclose(got["centre"], ball, atol=0.03)
+        self.assertEqual(got["erase"], [{"player": "luka", "radius": 0.15}])
+
+
 class Spots(unittest.TestCase):
     def test_spots_clear_every_body(self):
         bounds = [([4.6, 0, 1.2], [5.4, 2.0, 2.0]), ([5.8, 0, 0.0], [6.9, 2.6, 1.0])]

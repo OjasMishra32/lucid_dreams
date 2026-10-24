@@ -122,21 +122,32 @@ class Writer:
 
 # ---------------------------------------------------------------- the pieces
 
-def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTrack | None):
-    """The video block, its frames.json (each show frame's camera from the calibration) and cards.json; the camera
-    block's timing. Returns (video block, frames, camera timing, camera centre or None)."""
+def show_dir(cfg: dict) -> tuple[Path | None, str]:
+    """The real show's folder (holding video.json) and whose cameras its frames use: "show" (the ones it was baked
+    with, the default when its frames.json carries q and f) or "calib" (re-read from the calibration)."""
     show = cfg.get("show")
-    real = bool(show) and (expand(show) / "video.json").exists()
+    if not show:
+        return None, "calib"
+    d = expand(show["dir"] if isinstance(show, dict) else show)
+    return (d if (d / "video.json").exists() else None), (show.get("cameras", "show") if isinstance(show, dict) else "show")
+
+
+def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTrack | None):
+    """The video block, its frames.json (each show frame's own camera) and the rest of video/; the timing of the clip
+    the frames count in. Returns (video block, frames, timing {sourceFps, captureFps, slow, centre?})."""
+    d, cams = show_dir(cfg)
+    real = d is not None
     if real:
-        d = expand(show)
         manifest = json.loads((d / "video.json").read_text())
         video = manifest["video"] if "video" in manifest else manifest
         timing = manifest.get("camera", {})
         for rel in bundle_paths(video):
-            name = rel.split("/", 1)[1] if rel.startswith("video/") else rel
-            w.copy(d / name, rel)
+            w.copy(d / (rel.split("/", 1)[1] if rel.startswith("video/") else rel), rel)
         frames = json.loads((d / Path(video["frames"]).name).read_text())
         w.piece("show", True, str(d))
+        own = all("q" in fr and "f" in fr for fr in frames)
+        if cams == "show" and not own:
+            cams = "calib"
     else:
         video = json.loads(json.dumps(S["video"]))
         for rel in bundle_paths(video):
@@ -144,20 +155,24 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
         frames = json.loads((standin / video["frames"]).read_text())
         timing = {k: S["camera"][k] for k in ("sourceFps", "captureFps", "slow")}
         w.piece("show", False, "stand-in show stream, frames, cards and freeze images (synthetic players)")
-    centre = timing.get("centre")
-    src_cfg = cfg.get("source", {})
-    if calib is not None:
-        # the show's clock -> the calibrated clip's source frames: same moment F, same real time
-        f_show, f_real = video["freezeSource"], src_cfg.get("freezeSource", video["freezeSource"])
+    if real and cams == "show":
+        if "centre" not in timing:
+            raise ValueError(f"{d / 'video.json'}: camera.centre is needed with the show's own cameras (the centre it was baked with)")
+        if calib is not None and np.linalg.norm(np.subtract(timing["centre"], calib.C)) > 0.01:
+            w.notes.append(f"the show's cameras have centre {timing['centre']}, the calibration {rnd(calib.C, 3)}: the show's are used")
+        w.piece("cameras", True, "the show's own per-frame cameras (the ones it was baked with)")
+    elif calib is not None:
+        # the show's clock -> the calibrated clip's source frames: the same moment F, the same real time
+        src_cfg = cfg.get("source", {})
+        f_show = video["freezeSource"]
+        f_real = f_show if real else src_cfg.get("freezeSource", f_show)
         rate_show = timing.get("sourceFps", 1) * timing.get("slow", 1)
-        rate_real = src_cfg.get("sourceFps", rate_show) * src_cfg.get("slow", 1) if not real else rate_show
+        rate_real = rate_show if real else src_cfg.get("sourceFps", rate_show) * src_cfg.get("slow", 1)
         k = rate_real / rate_show
         for fr in frames:
             q, f = calib.at(f_real + (fr["src"] - f_show) * k)
             fr["q"], fr["f"] = rnd(q, 9), round(float(f), 4)
-        if centre is not None and np.linalg.norm(np.subtract(centre, calib.C)) > 0.01:
-            w.notes.append(f"the show was baked with camera centre {centre}, the calibration has {calib.C.tolist()}; "
-                           "the calibration's is used")
+        timing = {**timing, "centre": rnd(calib.C)}
         w.piece("cameras", True, f"every show frame's camera from the calibration ({calib.clamped} frames outside its "
                 f"range {calib.range} held at its ends)", clamped=calib.clamped)
     else:
@@ -167,16 +182,16 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
 
 
 def camera_block(cfg: dict, S: dict, timing: dict, calib: geo.CalibTrack | None, real_show: bool) -> dict:
-    """The source camera: the calibration's centre and image; the timing of the clip the show's frames count in (the
-    stand-in show keeps its own clock; a real show's manifest, else the config's `source`)."""
-    if calib is None:
+    """The source camera: the centre the frames' cameras go with, the calibrated image, and the timing of the clip the
+    show's frames count in (the stand-in show keeps its own clock; a real show's manifest, else the config's `source`)."""
+    if calib is None and not real_show:
         return dict(S["camera"])
     t = {**cfg.get("source", {}), **timing} if real_show else timing
-    missing = [k for k in ("sourceFps", "captureFps", "slow") if k not in t]
+    missing = [k for k in ("sourceFps", "captureFps", "slow", "centre") if k not in t]
     if missing:
-        raise ValueError(f"the show's clip timing is missing {missing} (video.json camera, or the config's source)")
-    W, H = calib.size
-    return {"centre": rnd(calib.C), "width": W, "height": H, "cx": (W - 1) / 2, "cy": (H - 1) / 2, "k1": 0,
+        raise ValueError(f"the show's clip is missing {missing} (video.json's camera, or the config's source and calib)")
+    W, H = calib.size if calib is not None else (S["camera"]["width"], S["camera"]["height"])
+    return {"centre": rnd(t["centre"]), "width": W, "height": H, "cx": (W - 1) / 2, "cy": (H - 1) / 2, "k1": 0,
             "sourceFps": t["sourceFps"], "captureFps": t["captureFps"], "slow": t["slow"]}
 
 
@@ -210,6 +225,25 @@ def standin_camera_f(S: dict, standin: Path) -> geo.Cam:
     return frame_camera(S["camera"], frames, S["video"])
 
 
+def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
+    """(the run's solved source camera in the PLY's bundle space, the court camera it was cut from) from the run's
+    files: recon's source-camera-<K>.json (the rig's world, OpenCV camera_to_world, K for source-4k.mkv's crop), the
+    export's dream.json `placement` (rig -> bundle: x' = rot x + t) and court-run.json's still camera (court space,
+    camera-from-world R, K with the crop's own principal point)."""
+    c = json.loads(expand(slot["sourceCamera"]).read_text())
+    pl = json.loads(expand(slot["dream"]).read_text())["placement"]
+    run = json.loads(expand(slot["courtRun"]).read_text())
+    rot, t = np.asarray(pl["rot"], float), np.asarray(pl["t"], float)
+    c2w = np.asarray(c["camera_to_world"], float)
+    K = np.asarray(c["K"], float)
+    W, H = int(c["image_width"]), int(c["image_height"])
+    src = geo.Cam(rot @ c2w[:3, 3] + t, rot @ c2w[:3, :3], float(K[0, 0]), float(K[0, 2]), float(K[1, 2]), W, H)
+    st = run["still"]
+    Ks = np.asarray(st["K"], float)
+    dst = geo.Cam(np.asarray(st["C"], float), np.asarray(st["R"], float).T, float(Ks[0, 0]), float(Ks[0, 2]), float(Ks[1, 2]), W, H)
+    return src, dst
+
+
 def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: geo.Cam, camF_standin: geo.Cam) -> dict:
     """One main player: their Gaussians placed in court space, the reality copy, the splat-depth proxy from camera F,
     capsules, bounds, floor maps. Returns the court.json entry plus private diagnostics under "_"."""
@@ -217,7 +251,7 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
     real = bool(slot.get("splats")) and expand(slot["splats"]).exists()
     if real:
         s = sp.read_ply(expand(slot["splats"]))
-        cam_pos = np.asarray((slot.get("camera") or {}).get("centre", [0.0, 1.0, -20.0]), float)
+        cam_pos = np.array([0.0, 1.0, -25.0])  # the export turns the source camera onto -z
         name = slot.get("name", pid)
     else:
         sp_in = S["freeze"]["players"][i]
@@ -227,11 +261,21 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
     feet = slot.get("foot")
     feet = np.asarray(feet, float).reshape(-1, 2) if feet is not None else None
     P = sp.solid(s)
-    if slot.get("place", "feet") == "camera" and real and (slot.get("camera") or {}).get("source"):
-        src = (slot["camera"])["source"]
-        src_cam = geo.Cam(np.asarray(src["centre"], float), np.asarray(src["R"], float), src["f"], src["cx"], src["cy"], src["w"], src["h"])
-        dst = geo.Cam(camF.C, camF.R, camF.f, src["dst_cx"], src["dst_cy"], src["w"], src["h"])
-        sim, info = geo.place_by_camera(P, src_cam, dst)
+    has_cams = real and all(slot.get(k) and expand(slot[k]).exists() for k in ("sourceCamera", "dream", "courtRun"))
+    if has_cams:
+        src_cam, dst_cam = recon_cameras(slot)
+        cam_pos = src_cam.C
+        # the clip was cut from the calibration's camera F: say so if the bundle's camera F isn't that camera
+        drift = (geo.rot_angle_deg(dst_cam.R, camF.R), float(np.linalg.norm(dst_cam.C - camF.C)), dst_cam.f / camF.f - 1)
+        if drift[0] > 0.01 or drift[1] > 0.01 or abs(drift[2]) > 1e-4:
+            w.notes.append(f"{pid}: the clip's still camera differs from the bundle's camera F by {drift[0]:.3f} deg, "
+                           f"{drift[1]:.3f} m, focal {100 * drift[2]:+.3f}%")
+    if slot.get("place", "camera" if has_cams else "feet") == "camera":
+        if not has_cams:
+            raise ValueError(f"{pid}: place 'camera' needs sourceCamera, dream and courtRun")
+        sim, info = geo.place_by_camera(P, src_cam, dst_cam)
+        if feet is not None:
+            info["vsFeet"] = round(float(np.linalg.norm(sp.contact_points_xz(sim.apply(P)) - feet.mean(0))), 3)
     else:
         if feet is None:
             # no calibrated soles: keep the stand-in's own spot (its feet in the stand-in court)
