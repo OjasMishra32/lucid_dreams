@@ -13,7 +13,7 @@ const VIDEO = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
 const PHOTO = new Set([".jpg", ".jpeg", ".png", ".webp", ".heic"]);
 const MAX_BYTES = 8 * 1024 ** 3;
 
-/** POST /api/jobs, multipart: file, name, kind -> { id }. The file streams to disk, never into memory. */
+/** POST /api/jobs, multipart: file, name, kind, optional startS -> { id }. The file streams to disk, never into memory. */
 export async function POST(req: Request) {
   if (!req.body || !req.headers.get("content-type")?.startsWith("multipart/form-data")) {
     return json({ error: "Send multipart/form-data with file, name and kind." }, 400);
@@ -60,8 +60,11 @@ export async function POST(req: Request) {
   if (!name) return fail("Give the dream a name.");
   if (!isKind(kind)) return fail('kind must be "replay" or "avatar".');
   if (PHOTO.has(f.ext) && kind === "replay") return fail("A photo can only become an avatar. Replays need a video.");
+  if (VIDEO.has(f.ext) && kind === "avatar") return fail("Avatars start from one photo. Use a photo, or make this video a replay.");
+  const startS = fields.startS ? Number(fields.startS) : 0;
+  if (!Number.isFinite(startS) || startS < 0 || startS > 3600) return fail("startS is where the 5 seconds start, in seconds (0 or more).");
 
-  const job = createJob({ id: newJobId(name), name, kind, file: f.path, fileName: f.name });
+  const job = createJob({ id: newJobId(name), name, kind, file: f.path, fileName: f.name, startS: PHOTO.has(f.ext) ? 0 : startS });
   return json({ id: job.id }, 201);
 }
 

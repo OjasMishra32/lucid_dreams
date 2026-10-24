@@ -2,6 +2,7 @@ import "server-only";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Dream } from "../dream";
+import { fetching } from "./fetches";
 
 /** The repo root: the nearest folder above apps/web that holds AGENTS.md. */
 function findRepo(): string {
@@ -52,6 +53,31 @@ export function listDreams(): Dream[] {
     .filter((x): x is { d: Dream; when: number } => x !== null)
     .sort((a, b) => b.when - a.when)
     .map((x) => x.d);
+}
+
+/** An avatar has its avatar.ply, which a plain fetch leaves out (the autopilot fetches every run without PLYs). */
+export function avatarComplete(d: Dream): boolean {
+  return d.kind !== "avatar" || !d.avatar?.file || existsSync(join(DREAMS_DIR, d.id, d.avatar.file));
+}
+
+/**
+ * The whole bundle is here, not just the dream.json a fetch lands first: preview, thumb, every SPZ frame and (for an
+ * avatar) its PLY. Players and the job status only treat a dream as there once this holds.
+ */
+export function bundleComplete(d: Dream): boolean {
+  const has = (f?: string | null) => !f || existsSync(join(DREAMS_DIR, d.id, f));
+  if (!avatarComplete(d) || !has(d.preview) || !has(d.thumb)) return false;
+  if (d.frames?.spz && d.frameCount > 0) {
+    const dir = join(DREAMS_DIR, d.id, d.frames.dir);
+    if (!existsSync(dir)) return false;
+    return readdirSync(dir).filter((f) => f.endsWith(".spz") && !f.includes(".reality.")).length >= d.frameCount;
+  }
+  return true;
+}
+
+/** What players and pages list: whole bundles only, never one still being copied back. */
+export function listReady(dreams: Dream[] = listDreams()): Dream[] {
+  return dreams.filter((d) => !fetching(d.id) && bundleComplete(d));
 }
 
 /** The dream a page should lead with: newest real person with a 360 preview (test bundles last). */

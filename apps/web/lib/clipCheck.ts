@@ -1,7 +1,7 @@
 // Checks a clip or photo in the browser against "Clips that work" in AGENTS.md, before anything is uploaded.
 // Each check says what we measured and, when it falls short, exactly what to fix.
 
-export type Level = "ok" | "warn" | "bad";
+export type Level = "ok" | "warn" | "bad" | "wait"; // wait: still being checked
 export interface Check {
   level: Level;
   title: string;
@@ -17,8 +17,9 @@ export interface Inspected {
   checks: Check[];
 }
 
-// The pipeline takes 121 frames at 25 fps from the start of the clip (pipeline/runner/lucid_runner.py).
-const MIN_S = 121 / 25;
+// The pipeline rebuilds 121 frames at 25 fps from where the window starts (startS; pipeline/runner/lucid_runner.py).
+export const WINDOW_S = 121 / 25;
+const MIN_S = WINDOW_S;
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|mkv)$/i;
 const PHOTO_EXT = /\.(jpe?g|png|webp|heic)$/i;
 
@@ -104,11 +105,7 @@ function videoChecks({ width, height, durationS }: Meta): Check[] {
       detail: "The pipeline is tuned for 9:16. Crop to 9:16 around the person for the best result.",
     });
   } else {
-    checks.push({
-      level: "warn",
-      title: "Landscape",
-      detail: "We'll crop a fixed 9:16 window around the person. Keep them near the middle, or shoot in portrait.",
-    });
+    checks.push({ level: "ok", title: "Landscape", detail: "We'll frame them for you." });
   }
 
   if (durationS != null && Number.isFinite(durationS)) {
@@ -122,9 +119,7 @@ function videoChecks({ width, height, durationS }: Meta): Check[] {
       checks.push({
         level: "ok",
         title: `${durationS.toFixed(1)} seconds`,
-        detail: durationS > MIN_S + 1
-          ? "We use the first 5 seconds, so start the clip right as the move begins."
-          : "Just enough. We use all 5 seconds.",
+        detail: durationS > MIN_S + 0.3 ? "Choose the 5 seconds we rebuild below the preview." : "Just enough. We use all 5 seconds.",
       });
     }
   }

@@ -1,22 +1,24 @@
 import "server-only";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { JobStatus } from "../dream";
-import { REPO, readDream } from "./dreams";
+import { promisify } from "node:util";
+import type { Dream, JobStatus } from "../dream";
+import { REPO, avatarComplete, bundleComplete as complete, isRunId, readDream } from "./dreams";
+import { fetches, fetching } from "./fetches";
+import { ensureGuide } from "./guide";
 import { getJob, updateJob, type JobRecord } from "./store";
 
 // Real jobs: every call goes through Ojasva's pipeline/runner/lucid_runner.py, which prints one JSON object.
 const RUNNER = join(REPO, "pipeline", "runner", "lucid_runner.py");
 const STATUS_TTL_MS = 4000;
 const FETCH_TRIES = 3;
+const FETCH_BACKOFF_MS = 60_000; // a Wi-Fi drop shouldn't burn every retry in seconds
+const run = promisify(execFile);
 
-const g = globalThis as unknown as {
-  __lucidRunner?: {
-    status: Map<string, { at: number; value: Promise<JobStatus> }>;
-    fetching: Map<string, { state: "running" | "failed"; tries: number; error?: string }>;
-  };
-};
-const state = (g.__lucidRunner ??= { status: new Map(), fetching: new Map() });
+type Live = { status: Map<string, { at: number; value: Promise<JobStatus> }>; submitting: Set<string> };
+const g = globalThis as unknown as { __lucidRunner?: Live };
+const state: Live = (g.__lucidRunner ??= { status: new Map(), submitting: new Set() });
 
 function runner(args: string[]): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -42,37 +44,73 @@ function runner(args: string[]): Promise<unknown> {
 
 /** Called once the upload is on disk. Sending the clip to HiPerGator can take a while, so it runs in the background. */
 export function startRunnerJob(job: JobRecord) {
-  if (job.kind === "avatar") return; // not wired to the pipeline yet; status says so
   updateJob(job.id, { submit: "running" });
-  runner(["submit", job.file, "--name", job.name, "--id", job.id])
+  state.submitting.add(job.id);
+  submitInput(job)
+    .then((file) => {
+      // --name=<value> in one token, so a name starting with "-" can't read as an option
+      const args = ["submit", file, `--name=${job.name}`, `--id=${job.id}`, `--kind=${job.kind}`];
+      if (job.kind === "replay" && job.startS > 0) args.push(`--start-s=${job.startS.toFixed(2)}`);
+      return runner(args);
+    })
     .then(() => updateJob(job.id, { submit: "done" }))
-    .catch((e: Error) => updateJob(job.id, { submit: "failed", error: e.message }));
+    .catch((e: Error) => updateJob(job.id, { submit: "failed", error: e.message }))
+    .finally(() => state.submitting.delete(job.id));
+}
+
+/** iPhone photos arrive as HEIC, which the avatar stage can't open: hand it a JPEG made on the Mac instead. */
+async function submitInput(job: JobRecord): Promise<string> {
+  if (!/\.heic$/i.test(job.file)) return job.file;
+  const jpg = job.file.replace(/\.heic$/i, ".jpg");
+  if (!existsSync(jpg)) await run("sips", ["-s", "format", "jpeg", job.file, "--out", jpg], { timeout: 60_000 });
+  return jpg;
 }
 
 export async function runnerStatus(id: string): Promise<JobStatus | null> {
+  if (!isRunId(id)) return null; // ids go into an SSH command inside lucid_runner.py
   const job = getJob(id);
   const base = { id, etaS: null } as const;
 
-  if (job?.kind === "avatar") {
-    return { ...base, status: "failed", stage: "check", progress: 0.05,
-      message: "Avatars aren't connected to the pipeline yet. Make a replay for now." };
+  if (job && !job.submit) {
+    // recorded before this bridge sent avatars on (they were held back then): it never reached HiPerGator
+    return { ...base, status: "failed", stage: "upload", progress: 0, message: "This one was never sent to the GPUs. Make it again." };
   }
   if (job?.submit === "running") {
-    return { ...base, status: "running", stage: "upload", progress: 0.02, message: "Sending your clip to HiPerGator" };
+    if (state.submitting.has(id)) {
+      return { ...base, status: "running", stage: "upload", progress: 0.02, message: "Sending your clip to HiPerGator" };
+    }
+    // the bridge restarted mid-send: ask HiPerGator whether the run made it there
+    try {
+      await cachedStatus(id);
+      updateJob(id, { submit: "done" });
+    } catch {
+      updateJob(id, { submit: "failed", error: "interrupted" });
+      return { ...base, status: "failed", stage: "upload", progress: 0.02, message: "The upload was cut off. Make it again." };
+    }
   }
   if (job?.submit === "failed") {
     return { ...base, status: "failed", stage: "upload", progress: 0.02,
       message: "Couldn't reach HiPerGator. Check Ojasva's connection and try again." };
   }
-  if (readDream(id)) {
+  // dream.json lands first in a fetch: only call it done once the whole bundle is here
+  if (fetching(id)) return bringingHome(id);
+  const dream = readDream(id);
+  if (dream && complete(dream)) {
+    fetches.delete(id); // complete on disk, however it got here (a manual fetch after a failed one counts)
     return { ...base, status: "done", stage: "export", progress: 1, etaS: 0, message: "Ready" };
   }
-
-  const f = state.fetching.get(id);
-  if (f?.state === "running") return bringingHome(id);
-  if (f?.state === "failed" && f.tries >= FETCH_TRIES) {
+  const f = fetches.get(id);
+  if (f?.state === "failed") {
+    if (f.tries < FETCH_TRIES) {
+      if (Date.now() - (f.at ?? 0) >= FETCH_BACKOFF_MS) startFetch(id);
+      return bringingHome(id);
+    }
     return { ...base, status: "failed", stage: "export", progress: 0.99,
       message: "The dream is made but couldn't be copied back. Ojasva can run lucid_runner.py fetch." };
+  }
+  if (dream) {
+    startFetch(id); // half here (an avatar without its .ply, or a fetch that broke off): finish copying it
+    return bringingHome(id);
   }
 
   let remote: JobStatus;
@@ -102,21 +140,46 @@ function cachedStatus(id: string): Promise<JobStatus> {
   return value;
 }
 
+/**
+ * Copy the bundle back. The runner leaves .ply files out unless asked (a replay's PLY frames are huge; players stream
+ * the SPZ copies), but an avatar's only Gaussian file is avatar/avatar.ply, so avatars come with their PLYs.
+ */
 function startFetch(id: string) {
-  const prev = state.fetching.get(id);
+  const prev = fetches.get(id);
   if (prev?.state === "running") return;
   const tries = (prev?.tries ?? 0) + 1;
-  state.fetching.set(id, { state: "running", tries });
+  fetches.set(id, { state: "running", tries });
   if (getJob(id)) updateJob(id, { fetch: "running" });
-  runner(["fetch", id])
+  const avatar = getJob(id)?.kind === "avatar" || readDream(id)?.kind === "avatar";
+  runner(["fetch", id, ...(avatar ? ["--with-ply"] : [])])
+    .then((dream) => {
+      // a run this bridge didn't start (the autopilot's) only shows it's an avatar once its dream.json is here
+      if (!avatar && (dream as { kind?: string } | null)?.kind === "avatar") return runner(["fetch", id, "--with-ply"]);
+    })
     .then(() => {
-      state.fetching.delete(id);
+      const d = readDream(id);
+      if (d && !complete(d)) {
+        // a whole fetch came back and the bundle is still short: it's missing on HiPerGator too; stop asking
+        fetches.set(id, { state: "failed", tries: FETCH_TRIES, at: Date.now(), error: "the bundle on HiPerGator is incomplete" });
+        if (getJob(id)) updateJob(id, { fetch: "failed", error: "the bundle on HiPerGator is incomplete" });
+        return;
+      }
+      fetches.delete(id);
       if (getJob(id)) updateJob(id, { fetch: "done" });
+      ensureGuide(id);
     })
     .catch((e: Error) => {
-      state.fetching.set(id, { state: "failed", tries, error: e.message });
+      fetches.set(id, { state: "failed", tries, at: Date.now(), error: e.message });
       if (getJob(id)) updateJob(id, { fetch: "failed", error: e.message });
     });
+}
+
+/**
+ * Bring back avatar.ply for avatars that arrived without it. The autopilot fetches every run without PLYs, which for
+ * an avatar is the only Gaussian file; the library listing calls this so the headset never gets an empty avatar.
+ */
+export function repairAvatars(dreams: Dream[]) {
+  for (const d of dreams) if (!avatarComplete(d) && !fetching(d.id) && (fetches.get(d.id)?.tries ?? 0) < FETCH_TRIES) startFetch(d.id);
 }
 
 function bringingHome(id: string): JobStatus {

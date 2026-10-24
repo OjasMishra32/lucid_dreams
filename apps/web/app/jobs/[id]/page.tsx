@@ -12,6 +12,8 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const { id } = await params;
   const status = await jobStatus(id);
   if (!status) notFound();
-  const name = getJob(id)?.name ?? readDream(id)?.name ?? id;
-  return <JobProgress id={id} name={name} initial={status} />;
+  const job = getJob(id);
+  const dream = readDream(id);
+  const name = job?.name ?? dream?.name ?? id;
+  return <JobProgress id={id} name={name} kind={job?.kind ?? dream?.kind ?? "replay"} initial={status} />;
 }

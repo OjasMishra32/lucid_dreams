@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ViewerLink } from "./ViewInRoom";
 
 export default function Nav() {
   const path = usePathname();
@@ -11,6 +12,7 @@ export default function Nav() {
       <div className="nav-inner">
         <Link href="/" className="wordmark">Lucid Dreams</Link>
         <Link href="/library" className={on("/library")}>Library</Link>
+        <ViewerLink query="mode=chess" className="nav-link nav-chess">Chess</ViewerLink>
         <Link href="/new" className="btn btn-sm">Make a dream</Link>
       </div>
     </nav>

@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import ViewInRoom from "@/components/ViewInRoom";
+import DreamStage from "@/components/DreamStage";
+import GuidePanel from "@/components/GuidePanel";
+import ShareButton from "@/components/ShareButton";
+import ViewInRoom, { ViewerLink } from "@/components/ViewInRoom";
 import { readDream } from "@/lib/bridge/dreams";
+import { ensureGuide } from "@/lib/bridge/guide";
+import { publicOrigin } from "@/lib/bridge/http";
 import { dreamFile, formatCount, heightM, type Dream } from "@/lib/dream";
 import { formatDate, seenPercent } from "@/lib/format";
 
@@ -10,15 +16,28 @@ export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ id: string }> };
 
+/** Shared links unfurl with the dream's thumbnail. The bridge has no fixed address, so the base comes from the request. */
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const d = readDream((await params).id);
-  return { title: d?.name ?? "Not found" };
+  if (!d) return { title: "Not found" };
+  const origin = publicOrigin(await headers());
+  const description = `${d.name}, rebuilt in 3D from one video. Life size, in your room.`;
+  const images = d.thumb ? [{ url: dreamFile(d.id, d.thumb), alt: d.name }] : [];
+  return {
+    title: d.name,
+    description,
+    metadataBase: new URL(origin),
+    openGraph: { title: d.name, description, images, type: "video.other" },
+    twitter: { card: "summary_large_image", title: d.name, description, images: images.map((i) => i.url) },
+  };
 }
 
 export default async function DreamPage({ params }: Props) {
   const d = readDream((await params).id);
   if (!d) notFound();
 
+  const guide = ensureGuide(d.id);
+  const shareUrl = `${publicOrigin(await headers())}/library/${encodeURIComponent(d.id)}`;
   const seen = seenPercent(d);
   const facts = basics(d);
   const fidelity = metrics(d);
@@ -27,19 +46,13 @@ export default async function DreamPage({ params }: Props) {
     <div className="wrap">
       <Link href="/library" className="back">Library</Link>
       <div className="detail">
-        <div className="frame">
-          {d.preview ? (
-            <video
-              src={dreamFile(d.id, d.preview)}
-              poster={d.thumb ? dreamFile(d.id, d.thumb) : undefined}
-              autoPlay
-              muted
-              loop
-              playsInline
-            />
-          ) : d.thumb ? (
-            <img src={dreamFile(d.id, d.thumb)} alt={d.name} />
-          ) : null}
+        <div className="stage-col">
+          <DreamStage
+            src={d.preview ? dreamFile(d.id, d.preview) : null}
+            poster={d.thumb ? dreamFile(d.id, d.thumb) : null}
+            name={d.name}
+            captions={d.captions ? dreamFile(d.id, d.captions) : null}
+          />
         </div>
 
         <div>
@@ -48,17 +61,28 @@ export default async function DreamPage({ params }: Props) {
           {d.createdAt && <p className="detail-date">Made {formatDate(d.createdAt)}</p>}
           <div className="detail-actions">
             <ViewInRoom id={d.id} />
+            {d.kind === "avatar" && (
+              <ViewerLink query={`mode=chess&opponent=${encodeURIComponent(d.id)}`} className="btn secondary">
+                Play chess with them
+              </ViewerLink>
+            )}
+            <ShareButton title={d.name} url={shareUrl} />
           </div>
 
+          <GuidePanel id={d.id} durationS={d.durationS} initial={guide} />
+
           {facts.length > 0 && (
-            <div className="facts">
-              {facts.map(([value, label]) => (
-                <div className="fact" key={label}>
-                  <b>{value}</b>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
+            <>
+              <h2>The person</h2>
+              <div className="facts">
+                {facts.map(([value, label]) => (
+                  <div className="fact" key={label}>
+                    <b>{value}</b>
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
 
           {seen !== null && (
@@ -74,9 +98,7 @@ export default async function DreamPage({ params }: Props) {
                   <span>imagined</span>
                 </div>
               </div>
-              <p className="note">
-                In your room, turn on Reality check to see every imagined part tinted blue.
-              </p>
+              <p className="note">In your room, turn on Reality check to see every imagined part tinted blue.</p>
             </>
           )}
 

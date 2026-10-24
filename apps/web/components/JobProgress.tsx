@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { STAGE_LABELS, STAGES, formatEta, type JobStatus, type Stage } from "@/lib/dream";
+import { STAGE_LABELS, STAGES, formatEta, type JobKind, type JobStatus, type Stage } from "@/lib/dream";
 import { useJob } from "@/lib/useJob";
 
 const CHECK = (
@@ -15,13 +15,30 @@ const CROSS = (
   </svg>
 );
 
-export default function JobProgress({ id, name, initial }: { id: string; name: string; initial: JobStatus }) {
+/** What to do when a run stops: by what went wrong, so it never contradicts the runner's message shown above it. */
+function nextStep(s: JobStatus): { text: string; again: boolean } {
+  const m = s.message.toLowerCase();
+  if (m.includes("copied back")) {
+    return { text: "Nothing is lost: the dream is finished on HiPerGator and appears in your library once it's copied over.", again: false };
+  }
+  if (m.includes("cut off") || m.includes("never sent")) return { text: "Nothing reached the GPUs, so nothing is lost. Make it again.", again: true };
+  if (s.stage === "upload") return { text: "The clip never reached the GPUs. Once HiPerGator is back, make it again.", again: true };
+  if (s.stage === "check") return { text: "The clip didn't pass the checks: one person, head to toe, camera still, at least 5 seconds.", again: true };
+  if (m.includes("on it")) return { text: "Ojasva has the logs. If it was the clip, one person, full body and a still camera work best.", again: true };
+  if (s.stage === "views") {
+    return { text: "4DAnyone couldn't imagine the other angles. One person, full body, a plain background and a still camera work best.", again: true };
+  }
+  return { text: "Something broke on the GPUs, not in your clip. Try again in a few minutes.", again: true };
+}
+
+export default function JobProgress({ id, name, kind, initial }: { id: string; name: string; kind: JobKind; initial: JobStatus }) {
   const s = useJob(id, initial) ?? initial;
   const done = s.status === "done";
   const failed = s.status === "failed";
   const current = STAGES.indexOf(s.stage);
-  // upscale is skipped while the pipeline has it off; only list it once it is actually the stage
-  const stages = STAGES.filter((st) => st !== "upscale" || s.stage === "upscale");
+  // upscale is skipped while the pipeline has it off (listed only once it is actually the stage);
+  // avatars come from one photo, so there are no other angles to imagine
+  const stages = STAGES.filter((st) => (st !== "upscale" || s.stage === "upscale") && !(kind === "avatar" && st === "views"));
 
   function state(st: Stage): "done" | "now" | "bad" | "" {
     const i = STAGES.indexOf(st);
@@ -37,6 +54,7 @@ export default function JobProgress({ id, name, initial }: { id: string; name: s
       <p className="job-message" aria-live="polite">
         {done ? "They're ready to stand in your room." : s.message}
       </p>
+      {failed && <p className="job-next">{nextStep(s).text}</p>}
 
       <div className={failed ? "bar failed" : "bar"} role="progressbar" aria-valuenow={Math.round(s.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
         <span style={{ width: `${Math.max(1.5, s.progress * 100)}%` }} />
@@ -66,12 +84,13 @@ export default function JobProgress({ id, name, initial }: { id: string; name: s
         </div>
       ) : failed ? (
         <div className="job-actions">
-          <Link href="/new" className="btn">Try another clip</Link>
-          <Link href="/library" className="more">Back to the library</Link>
+          {nextStep(s).again && <Link href="/new" className="btn">Make it again</Link>}
+          <Link href="/library" className={nextStep(s).again ? "more" : "btn"}>Back to the library</Link>
         </div>
       ) : (
         <p className="job-note">
-          This takes about half an hour on the GPUs. You can close this page: the dream appears in your library when it's ready.
+          {kind === "avatar" ? "This takes a few minutes on the GPUs." : "This takes about half an hour on the GPUs."} You can
+          close this page: the dream appears in your library when it&apos;s ready.
         </p>
       )}
     </div>

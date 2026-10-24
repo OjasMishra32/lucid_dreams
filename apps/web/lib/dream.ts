@@ -20,8 +20,9 @@ export interface Dream {
     gaussiansPerFrame?: number;
     spzBytesTotal?: number;
   } | null;
-  avatar: { file: string; rig: string; motion: string } | null;
+  avatar: { file: string; rig: string; motion: string; skin?: string; skeleton?: string } | null;
   audio: string | null;
+  voice?: string | null; // "voice.m4a": the speaking voice alone, separated from music and noise
   preview: string | null;
   thumb: string | null;
   source?: { clip: string; width: number; height: number } | null;
@@ -32,8 +33,31 @@ export interface Dream {
     views: number | null;
     seenFraction?: number | null;
   } | null;
+  guide?: string | null; // "guide.json": the Gemini guide, written by the bridge (see Guide below)
+  captions?: string | null; // "captions.vtt": WebVTT of what the person says, on the clip's own clock
   createdAt?: string;
 }
+
+/** guide.json in a bundle. Step times are seconds into the motion: the same clock as the frames and preview.mp4. */
+export interface Guide {
+  move: string;
+  category: string;
+  summary: string;
+  steps: { t: number; title: string; cue: string }[];
+  tips: string[];
+  narration: string;
+  audio: string | null; // "guide.m4a": the narration, spoken
+  durationS?: number; // the clock the step times are on (the motion's length)
+  source: "clip" | "preview"; // what Gemini watched
+  model: string;
+  createdAt: string;
+}
+
+export type GuideState =
+  | { state: "ready"; guide: Guide }
+  | { state: "working" }
+  | { state: "failed"; message: string }
+  | { state: "off" }; // no Gemini key, or nothing to watch
 
 export type JobKind = "replay" | "avatar";
 export type JobState = "queued" | "running" | "done" | "failed";

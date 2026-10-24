@@ -2,8 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import TrimPicker from "@/components/TrimPicker";
 import type { JobKind } from "@/lib/dream";
-import { formatBytes, inspect, mediaOf, nameFromFile, type Check, type Inspected } from "@/lib/clipCheck";
+import { WINDOW_S, formatBytes, inspect, mediaOf, nameFromFile, type Check, type Inspected } from "@/lib/clipCheck";
+import { personChecks } from "@/lib/personCheck";
 
 const ICONS: Record<Check["level"], React.ReactNode> = {
   ok: (
@@ -25,21 +27,74 @@ const ICONS: Record<Check["level"], React.ReactNode> = {
       <path d="M7.2 7.2l5.6 5.6M12.8 7.2l-5.6 5.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   ),
+  wait: <span className="check-wait" aria-hidden="true"><span className="pulse" /></span>,
 };
 
 export default function MakeDream() {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
+  const preview = useRef<HTMLVideoElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [info, setInfo] = useState<Inspected | null>(null);
   const [name, setName] = useState("");
   const [typed, setTyped] = useState(false); // a name the person typed survives choosing another file
   const [kind, setKind] = useState<JobKind>("replay");
+  const [startS, setStartS] = useState(0);
+  const [people, setPeople] = useState<Check[] | "looking" | null>(null); // null: the pose model couldn't run here
+  const [consent, setConsent] = useState(false);
   const [over, setOver] = useState(false);
   const [sent, setSent] = useState<number | null>(null); // upload progress 0-1 while sending
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => () => void (info && URL.revokeObjectURL(info.url)), [info]);
+
+  // a finite length only: browser-recorded WebM often reports Infinity until it's played through
+  const lengthS = info?.durationS ?? NaN;
+  const trimmable = !!info?.readable && info.media === "video" && Number.isFinite(lengthS) && lengthS > WINDOW_S + 0.3;
+
+  // "One person, head to toe": checked on the photo, or across the chosen window of the clip (after it settles).
+  useEffect(() => {
+    if (!info?.readable) return setPeople(null);
+    let alive = true;
+    setPeople("looking");
+    const timer = setTimeout(() => {
+      personChecks(info.media, info.url, { startS, lengthS: Math.min(WINDOW_S, info.durationS ?? WINDOW_S) })
+        .then((checks) => alive && setPeople(checks))
+        .catch(() => alive && setPeople(null));
+    }, info.media === "video" ? 400 : 0);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [info, startS]);
+
+  // The preview plays just the chosen 5 seconds, on a loop, wrapping at frame accuracy (no flash of the clip's start).
+  useEffect(() => {
+    const v = preview.current;
+    if (!v || !trimmable) return;
+    const end = startS + WINDOW_S;
+    const wrap = () => {
+      if (v.ended || v.currentTime >= end - 0.03 || v.currentTime < startS - 0.1) {
+        v.currentTime = startS;
+        v.play().catch(() => {});
+      }
+    };
+    v.currentTime = startS;
+    v.play().catch(() => {});
+    let handle = 0;
+    const frames = typeof v.requestVideoFrameCallback === "function";
+    const tick = () => {
+      wrap();
+      handle = frames ? v.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
+    };
+    tick();
+    v.addEventListener("ended", wrap);
+    return () => {
+      if (frames) v.cancelVideoFrameCallback(handle);
+      else cancelAnimationFrame(handle);
+      v.removeEventListener("ended", wrap);
+    };
+  }, [startS, trimmable]);
 
   async function choose(f: File | undefined) {
     if (!f) return;
@@ -48,6 +103,8 @@ export default function MakeDream() {
     const inspected = await inspect(f);
     setFile(f);
     setInfo(inspected);
+    setStartS(0);
+    setConsent(false);
     if (!typed) setName(nameFromFile(f));
     setKind(inspected.media === "photo" ? "avatar" : "replay");
   }
@@ -66,6 +123,7 @@ export default function MakeDream() {
     const body = new FormData();
     body.append("name", name.trim());
     body.append("kind", kind);
+    if (trimmable) body.append("startS", startS.toFixed(2));
     body.append("file", file);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/jobs");
@@ -127,7 +185,15 @@ export default function MakeDream() {
     );
   }
 
-  const blocked = info.checks.some((c) => c.level === "bad");
+  const photo = info.media === "photo";
+  const checks: Check[] = [
+    ...info.checks,
+    ...(people === "looking"
+      ? [{ level: "wait" as const, title: "Looking for the person", detail: "Checking they're alone in frame, head to toe." }]
+      : people ?? []),
+  ];
+  const blocked = checks.some((c) => c.level === "bad");
+  const needsConsent = photo && !consent;
   const sending = sent !== null;
 
   return (
@@ -135,8 +201,11 @@ export default function MakeDream() {
       <div>
         {info.readable && (
           <div className="frame" style={{ aspectRatio: `${info.width} / ${info.height}` }}>
-            {info.media === "video" ? <video src={info.url} autoPlay muted loop playsInline /> : <img src={info.url} alt="" />}
+            {photo ? <img src={info.url} alt="" /> : <video ref={preview} src={info.url} autoPlay muted loop={!trimmable} playsInline />}
           </div>
+        )}
+        {trimmable && (
+          <TrimPicker url={info.url} durationS={lengthS} windowS={WINDOW_S} startS={startS} onChange={setStartS} />
         )}
         <p className="muted" style={{ fontSize: 14, margin: "14px 0 0" }}>
           {file.name} · {formatBytes(file.size)}
@@ -149,8 +218,8 @@ export default function MakeDream() {
       </div>
 
       <div>
-        <ul className="checks">
-          {info.checks.map((c) => (
+        <ul className="checks" aria-live="polite">
+          {checks.map((c) => (
             <li key={c.title} className={c.level}>
               {ICONS[c.level]}
               <div>
@@ -162,7 +231,7 @@ export default function MakeDream() {
         </ul>
         {!blocked && (
           <p className="muted" style={{ fontSize: 15, margin: "-16px 0 36px" }}>
-            We can&apos;t check the rest from here: one person, head to toe, camera still, bright even light.
+            {`We can't check the rest from here: ${people === null ? "one person, head to toe, " : ""}${photo ? "bright, even light." : "camera still, bright even light."}`}
           </p>
         )}
 
@@ -184,19 +253,29 @@ export default function MakeDream() {
         <div className="field">
           <span>Make them a</span>
           <div className="choice">
-            <button type="button" className={kind === "replay" ? "on" : ""} onClick={() => setKind("replay")} disabled={sending || info.media === "photo"}>
+            <button type="button" className={kind === "replay" ? "on" : ""} onClick={() => setKind("replay")} disabled={sending || photo}>
               <b>Replay</b>
-              <span>{info.media === "photo" ? "Needs a video" : "Moves exactly like the clip"}</span>
+              <span>{photo ? "Needs a video" : "Moves exactly like the clip"}</span>
             </button>
-            <button type="button" className={kind === "avatar" ? "on" : ""} onClick={() => setKind("avatar")} disabled={sending}>
+            <button type="button" className={kind === "avatar" ? "on" : ""} onClick={() => setKind("avatar")} disabled={sending || !photo}>
               <b>Avatar</b>
-              <span>Can learn any move</span>
+              <span>{photo ? "Can learn any move" : "Needs a photo"}</span>
             </button>
           </div>
         </div>
 
+        {photo && (
+          <label className="consent">
+            <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} disabled={sending} />
+            <span>
+              <b>I have permission to bring this person in.</b>
+              They, or their family, said yes to being rebuilt in 3D.
+            </span>
+          </label>
+        )}
+
         <div className="submit-row">
-          <button className="btn" onClick={send} disabled={blocked || !name.trim() || sending}>
+          <button className="btn" onClick={send} disabled={blocked || needsConsent || !name.trim() || sending}>
             {sending ? "Uploading" : "Make dream"}
           </button>
           {sending && (

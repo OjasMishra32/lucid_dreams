@@ -12,6 +12,7 @@ export interface JobRecord {
   mode: "mock" | "runner";
   file: string; // the uploaded clip or photo on this Mac
   fileName: string;
+  startS: number; // where the 5-second window starts in a long clip
   createdAt: number;
   // runner mode
   submit?: "running" | "done" | "failed";

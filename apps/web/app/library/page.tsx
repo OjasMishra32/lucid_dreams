@@ -2,15 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import DreamCard from "@/components/DreamCard";
 import JobTile from "@/components/JobTile";
-import { activeJobs } from "@/lib/bridge";
-import { listDreams } from "@/lib/bridge/dreams";
+import { activeJobs, tend } from "@/lib/bridge";
+import { listDreams, listReady } from "@/lib/bridge/dreams";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Library" };
 
 export default async function Library() {
   const jobs = await activeJobs(); // first: a job that just finished turns into a dream here
-  const dreams = listDreams();
+  const all = listDreams();
+  tend(all);
+  const dreams = listReady(all);
 
   return (
     <div className="wrap">
@@ -39,7 +41,7 @@ export default async function Library() {
 
       {dreams.length > 0 ? (
         <section>
-          {jobs.length > 0 && <h2 className="row-title">Ready</h2>}
+          <h2 className={jobs.length > 0 ? "row-title" : "sr-only"}>Ready</h2>
           <div className="grid">
             {dreams.map((d) => (
               <DreamCard key={d.id} dream={d} />

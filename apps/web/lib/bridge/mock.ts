@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFil
 import { join } from "node:path";
 import type { JobStatus, Stage } from "../dream";
 import { DREAMS_DIR, listDreams, readDream } from "./dreams";
+import { ensureGuide } from "./guide";
 import { allJobs, type JobRecord } from "./store";
 
 // Same weights and words as pipeline/lucid/status.py, so the mock feels exactly like a real run, only faster.
@@ -30,6 +31,9 @@ export function mockStatus(job: JobRecord): JobStatus {
         return { id: job.id, status: "queued", stage: "views", progress: round(progress), etaS: eta(elapsed), message: step.message };
       }
       progress += WEIGHTS[step.stage] * frac;
+      if (job.kind === "avatar" && (step.stage === "views" || step.stage === "reconstruct")) {
+        return { id: job.id, status: "running", stage: "reconstruct", progress: round(progress), etaS: eta(elapsed), message: "Building them in 3D" };
+      }
       return { id: job.id, status: "running", stage: step.stage, progress: round(progress), etaS: eta(elapsed), message: step.message };
     }
     t -= step.share;
@@ -39,7 +43,8 @@ export function mockStatus(job: JobRecord): JobStatus {
 }
 
 function finish(job: JobRecord): JobStatus {
-  const made = readDream(job.id) ?? standIn(job);
+  let made = readDream(job.id);
+  if (!made && (made = standIn(job))) ensureGuide(job.id);
   if (!made) {
     return {
       id: job.id, status: "failed", stage: "export", progress: 0.9, etaS: null,
@@ -60,10 +65,11 @@ function standIn(job: JobRecord) {
   const dst = join(DREAMS_DIR, job.id);
   mkdirSync(dst, { recursive: true });
   for (const entry of readdirSync(src)) {
-    if (entry === "dream.json" || existsSync(join(dst, entry))) continue;
+    // the guide is written for each dream from its own clip, never inherited from the sample
+    if (entry === "dream.json" || entry.startsWith("guide.") || existsSync(join(dst, entry))) continue;
     symlinkSync(join(src, entry), join(dst, entry));
   }
-  const dream = { ...sample, id: job.id, name: job.name, createdAt: new Date().toISOString() };
+  const dream = { ...sample, id: job.id, name: job.name, guide: null, createdAt: new Date().toISOString() };
   writeFileSync(join(dst, "dream.json"), JSON.stringify(dream, null, 2));
   return dream;
 }

@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
-import { DREAMS_DIR, listDreams } from "@/lib/bridge/dreams";
+import { DREAMS_DIR, listReady } from "@/lib/bridge/dreams";
 import { CORS, json, preflight } from "@/lib/bridge/http";
 
 const TYPES: Record<string, string> = {
@@ -9,6 +9,7 @@ const TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
   ".m4a": "audio/mp4",
   ".wav": "audio/wav",
+  ".vtt": "text/vtt; charset=utf-8",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
@@ -22,7 +23,7 @@ const TYPES: Record<string, string> = {
  */
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
-  if (path.length === 1 && path[0] === "index.json") return json(listDreams());
+  if (path.length === 1 && path[0] === "index.json") return json(listReady());
 
   const file = resolve(DREAMS_DIR, ...path);
   if (!file.startsWith(DREAMS_DIR + sep) || !existsSync(file) || !statSync(file).isFile()) {
@@ -34,7 +35,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     ...CORS,
     "Content-Type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
     "Accept-Ranges": "bytes",
-    "Cache-Control": file.endsWith("dream.json") ? "no-store" : "public, max-age=3600",
+    // dream.json and the guide change in place (the guide is added later, and can be rewritten): never cache them
+    "Cache-Control": /(^|\/)(dream|guide|captions)\.[a-z0-9]+$/.test(file) ? "no-store" : "public, max-age=3600",
   };
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");
