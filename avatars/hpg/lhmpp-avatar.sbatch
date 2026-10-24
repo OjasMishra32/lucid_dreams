@@ -5,7 +5,7 @@
 #SBATCH --partition=hpg-turin
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=3
-#SBATCH --mem=24G
+#SBATCH --mem=16G
 #SBATCH --time=02:00:00
 #SBATCH --output=/blue/iruchkin/vishalnaveen/lucid/jobs/%x-%j.log
 # Many photos of one person -> one animatable Gaussian person. LHM++ (aigc3d/LHM-plusplus, March 2026; code Apache-2.0,
@@ -17,7 +17,8 @@
 # (~1.2 GB) into models/lhmpp; later runs only infer.
 #   sbatch --export=ALL,NAME=magnus-carlsen,TITLE="Magnus Carlsen" lhmpp-avatar.sbatch
 # In:  data/avatars/photos/$NAME/*.jpg (up to 16, one session: same clothes, hair; faces clear, no hand over the face;
-#      at least one extended pose), optional crops.json (see avatars/lhmpp_avatar.py) and credit.txt there.
+#      at least one extended pose; black and white is fine, it gets DDColor's colour), optional crops.json (see
+#      avatars/lhmpp_avatar.py) and credit.txt there.
 # Out: data/avatars/lhmpp/$NAME/: prep/ (what LHM++ saw), <variant>/$ID/ bundles, renders/ (front, 45, 90, 180
 #      portrait + full body, compare.jpg), report.json; and dreams/$ID (the $VARIANT bundle). Only people who agreed,
 #      or public figures for the demo, labelled (AGENTS.md, rule 5).
@@ -96,10 +97,14 @@ fi
 ln -sfn $P $R/pretrained_models
 du -sh $M $V $R
 
-# 1. tight crops around the person (rembg lives in the DiGS env)
-( conda activate $L/envs/digs && python -u $CODE/lhmpp_avatar.py prep --photos "$PHOTOS" --work "$WORK" )
+# 1. black-and-white photos get natural colour (DDColor, cached weights), on the photo; the rest pass through
+[ -d $L/repos/DDColor ] || git clone -q https://github.com/piddnad/DDColor.git $L/repos/DDColor
+( conda activate $L/envs/lam && HF_HOME=$L/cache/hf PYTHONPATH=$L/repos/DDColor \
+  python -u $CODE/lhmpp_avatar.py colour --photos "$PHOTOS" --out "$WORK/colour" )
+# 2. tight crops around the person (rembg lives in the DiGS env)
+( conda activate $L/envs/digs && python -u $CODE/lhmpp_avatar.py prep --photos "$WORK/colour" --work "$WORK" )
 
-# 2. LHM++ -> bundles, renders, comparison
+# 3. LHM++ -> bundles, renders, comparison
 . $V/bin/activate
 cd $R
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
@@ -108,7 +113,7 @@ python -u $CODE/lhmpp_avatar.py build --work "$WORK" --model $W --smplx $L/model
   ${COMPARE:+--compare-with $COMPARE} 2>&1 | grep -vE '^\s*$|FutureWarning|warnings.warn'
 [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 
-# 3. the chosen variant becomes the dream
+# 4. the chosen variant becomes the dream
 rm -rf "$DREAMS/$ID" && cp -r "$WORK/$VARIANT/$ID" "$DREAMS/$ID"
 ls -la "$DREAMS/$ID" "$DREAMS/$ID/avatar" "$WORK/renders"
 blue_quota 2>/dev/null | sed -n 4p || true

@@ -7,7 +7,10 @@ photo shapes the same person instead of one photo guessing the rest. We ship onl
 refiner that LHM++ renders through in its paper and demo can't run on a Quest, so every render here is our own gsplat
 render of the bundle's avatar.ply, posed by the bundle's own skin.bin and motion.json.
 
-Three subcommands, two environments (avatars/hpg/lhmpp-avatar.sbatch runs them):
+Four subcommands, three environments (avatars/hpg/lhmpp-avatar.sbatch runs them):
+  colour  envs/lam + DDColor photos/ -> <work>/colour/: black-and-white photos get natural colour (DDColor, ICCV 2023,
+                             Apache-2.0, as lam-head.sbatch does), on the photo, never on the Gaussians; colour
+                             photos and crops.json are linked through unchanged
   prep    envs/digs (rembg)  photos/*.jpg [+ crops.json] -> <work>/prep/{raw,matte}/*.jpg: a tight crop around the
                              person (raw keeps the background, as LHM++'s own examples do; matte puts it on white)
   build   envs/lhmpp, GPU, from the LHM++ checkout (it reads ./pretrained_models)
@@ -56,6 +59,49 @@ def photos_in(folder: Path, limit: int) -> list[Path]:
     if not photos:
         raise SystemExit(f"no photos in {folder}")
     return photos[:limit]
+
+
+# --------------------------------------------------------------------------------------------------------- colour
+def is_grey(path: Path) -> bool:
+    """Black and white (or sepia): the same test as lucid.monochrome and lam-head.sbatch."""
+    from PIL import Image
+
+    img = np.asarray(Image.open(path).convert("RGB").resize((256, 256)), dtype=np.float32)
+    return bool(np.percentile(img.max(axis=2) - img.min(axis=2), 95) < 12)
+
+
+def colour(args) -> None:
+    import os
+
+    folder, out = Path(args.photos), Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for f in out.iterdir():
+        f.unlink()
+    pipe = None
+    for p in sorted(folder.iterdir()):
+        if p.name.startswith("."):
+            continue
+        if p.suffix.lower() not in PHOTO_EXT or not is_grey(p):
+            os.symlink(p.resolve(), out / p.name)
+            continue
+        if pipe is None:
+            import torch
+            from ddcolor import ColorizationPipeline, DDColor
+            from huggingface_hub import PyTorchModelHubMixin
+
+            class DDColorHF(DDColor, PyTorchModelHubMixin):
+                def __init__(self, config=None, **kwargs):
+                    if isinstance(config, dict):
+                        kwargs = {**config, **kwargs}
+                    super().__init__(**kwargs)
+
+            model = DDColorHF.from_pretrained("piddnad/ddcolor_modelscope").cuda().eval()
+            pipe = ColorizationPipeline(model, input_size=512, device=torch.device("cuda"))
+        import cv2
+
+        cv2.imwrite(str(out / p.name), pipe.process(cv2.imread(str(p))), [cv2.IMWRITE_JPEG_QUALITY, 95])
+        print(f"[colour] {p.name}: black and white, colourised")
+    print("COLOUR_OK")
 
 
 # ----------------------------------------------------------------------------------------------------------- prep
@@ -654,6 +700,9 @@ def build(args) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("colour")
+    c.add_argument("--photos", required=True)
+    c.add_argument("--out", required=True)
     a = sub.add_parser("prep")
     a.add_argument("--photos", required=True)
     a.add_argument("--work", required=True)
@@ -671,7 +720,7 @@ def main() -> None:
     b.add_argument("--credit", default=None)
     b.add_argument("--compare-with", nargs="*", help="label=bundle_dir: render these the same way, side by side")
     args = p.parse_args()
-    {"prep": prep, "build": build}[args.cmd](args)
+    {"colour": colour, "prep": prep, "build": build}[args.cmd](args)
 
 
 if __name__ == "__main__":
