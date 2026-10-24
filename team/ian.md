@@ -27,7 +27,7 @@ generated views the fit never saw):
 | Dream | PSNR vs the real frame | Held-out PSNR | SSIM | Seen by the camera |
 | --- | --- | --- | --- | --- |
 | Tai chi (`taichi-01`) | 46.6 dB | 27.5 dB | 0.97 | 57% |
-| LeBron (`lebron-jumper-hq`) | 43.7 dB | 26.4 dB | 0.97 | 49% |
+| LeBron (`lebron-shot`, the one in the library, with his release) | 43.3 dB | 25.2 dB | 0.97 | 43% |
 | Dance (`dance-01`) | 40.3 dB | 30.3 dB | 0.98 | 53% |
 | Jump shot (`jump-shot-hq`) | 35.3 dB | 24.7 dB | 0.96 | 54% |
 | Golf (`golf-01`) | 33.0 dB | 25.8 dB | 0.96 | 49% |
@@ -43,6 +43,27 @@ What's new since your draft, all in the library or on main:
 - **Golf**: a real 7-iron in your hands and a ball on a tee you can hit. **Basketball**: a ball you can shoot at the
   regulation hoop (landing now). The real ball moves in LeBron's and the jump shots' hands (tracked in 3D).
 - **Five new full-quality people** (dance, golf, tai chi, guitar, LeBron) at 50-step 4DAnyone views.
+New since 5:50 AM (Sat 8:35 AM), also on main:
+- **The library is one of each**: LeBron (`lebron-shot`), Jump shot (`jump-shot-hq`), dance, golf, tai chi, guitar,
+  Magnus, Bobby. Jump shot 2, the old LeBron and the older legend bodies are held.
+- **Follow along** in every lesson: `joints.json` (the clip's 22 body joints, checked against the reconstruction)
+  puts glowing targets where your head and wrists should be, mirrored when they face you; a match score on the step
+  card and a chime when you hold the pose on your turn.
+- **Basketball you can really play**: hold the ball naturally (one or two hands), dribble while walking, shoot with
+  the release at the peak of your push (a natural shot usually goes in), pass to LeBron and he catches, shoots with
+  his real release and passes back. The real ball in the jump shot is now tracked as one ball (it used to jump
+  between his shins and his face).
+- **Guitar**: steady at your waist, the left hand along the neck picks the lesson's chord, a strum is the right hand
+  through a generous box. **Mirror** for dance and tai chi.
+- **The legends' faces**: Bobby Fischer now has a UIKA head (likeness to his photos 0.34 -> 0.53, face sharpness
+  10.6 -> 70.7); Magnus sits on his all-round LHM++ body with a UIKA head (0.68 front). An all-angle cleanup of both
+  (hands, jacket, collar, hair, floaters, nothing passing through the pieces) is running now.
+- **Coming, not in the library yet**: tennis against Roger Federer (`?mode=tennis`: serves, every stroke, full
+  scoring), held until his likeness is right; a replay cleanup pass (floaters, ghost limbs) measured against the real
+  frames.
+- **Sharper and faster on the headset**: full resolution, no foveation; worlds start once a quarter of their frames
+  is in.
+- Yours: **Talk with them** (grandma, family consent, AI voice labelled).
 Rules for the text: numbers only from the table above (or newer logs), "not yet measured on a Quest" where true, no
 claims of real-time fps we haven't measured. Ojasva reviews by Sun 10 AM.
 
