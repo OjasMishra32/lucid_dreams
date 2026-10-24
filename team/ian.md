@@ -32,6 +32,34 @@ in `chess/game.ts`); match it in the Quest app, in this order:
 Then check on the real headset with your own hands, and log what you measured.
 
 
+## IAN'S UPDATE (Sat 5:16 AM): where things stand, and what's next
+
+**Done and pushed:** eye contact in the Quest app and WebXR (companion / play turn their head toward you);
+passthrough only (Place button, places and panoramas gone, APK 45 MB). HandsCheck and HeadLookCheck pass.
+
+**Grandma (moment 4), decided: the replay is her demo version.** `ian-grandma`, from the frontal home video:
+121 frames, 1.69 m, held-out PSNR 28.5 dB / SSIM 0.98, 58% seen; her own voice. Private: held on both Macs, never
+in git, never on the site, kiosk or showcase. Family consent is in, including her voice. Every avatar route was
+tried and is held, not used, because none of the faces read as her yet:
+- `ian-grandma-avatar-head`: DiGS body + LAM head. Colours fixed by Vishal's tone fix; still wide and messy at 3/4.
+- `ian-grandma-lhm` / `ian-grandma-lhm2`: LHM++ from 16 photos, then 16 frames with no glasses (identity 0.36
+  front, 0.42 at 45°). Holds together from every side, but the face is smooth and generic, and she comes out
+  1.77 m tall (the replay measures 1.69 m).
+- `ian-grandma-lhm2-head`: LAM's face on the LHM++ body. LAM's own render looks like her; after the swap the face
+  is wider with rounder eyes, the same as on DiGS, so the loss is in the swap step (reported to Vishal).
+- Still broken for everyone: blinks. `avatars/hpg/flame.sh` calls `huggingface-cli`, which no longer works on
+  HiPerGator (`hf download` does).
+
+**Now:** the hands lockdown above, steps 1 to 4 in order.
+
+**Next, mine: talk with grandma.** You speak, she answers in her own voice from where she stands, with captions.
+Her replies are written by Gemini and always labelled as AI, not her; her voice is a clone from recordings of her,
+with the family's yes to both. The replay can't move its lips, so the voice comes from her position. Needs: a
+minute or more of clean recordings of her speaking (I'm collecting voice messages), speech-to-text for the
+language we talk in, Gemini on the bridge (Vishal's area now) and a GPU for the voice model (Ojasva). I'll post
+the plan and any bundle field in the Status log before touching shared parts.
+
+
 ## NOW (Sat 4:20 AM): what changed, and what's yours
 
 1. **Your grandma: use LHM++.** It builds one person from many photos at once and beat the one-photo route by far
