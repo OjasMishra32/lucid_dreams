@@ -51,7 +51,9 @@ Five background agents were running in the old session; they stop when that sess
   xr/menu.ts}`
 - `avatars/avatar_audit.py`
 
-Finish, or `git diff` and decide; run `npx tsc --noEmit` in apps/webxr.
+Finish, or `git diff` and decide; run `npx tsc --noEmit` in apps/webxr. Also:
+- `avatars/{lhmpp_avatar.py, lhmpp_cleanup.py, uika_head.py}` and `avatars/tests/` were being edited (items 4-5);
+- `apps/webxr/public/__famous_test.js` is a test file from item 1. **Never commit it; delete it.**
 1. **Chess "famous moves":** `apps/webxr/src/chess/famous.ts`, hooks in game.ts. Find the legend's real move from
    positions in their real games; positions must be verified by replaying the PGN legally and by Stockfish. The
    legend nods (`nod()`) or shakes his head (`headShake()` in seated.ts).
@@ -81,6 +83,69 @@ Finish, or `git diff` and decide; run `npx tsc --noEmit` in apps/webxr.
    - Bobby's collar points are a bit patchy;
    - dance sits ~2 cm into the floor (left alone);
    - LeBron's ball track covers fewer frames.
+
+## The demo video (3:00 max, on Devpost): make it land emotionally
+Start from Ian's draft `demo/video.md` (story spine, shot list, edit rules, footage still needed). This adds the
+craft and the tooling.
+
+**Story (emotion first, tech second).** Judges remember a feeling and one clear "how".
+
+| Time | Beat | Notes |
+| --- | --- | --- |
+| 0:00-0:12 | **Hook** | Black screen and one line of voice-over (Ojasva's own voice). Cut to the single most magical shot: a real person appearing life-size in a real room, the camera walking around them. No logo yet. |
+| 0:12-0:30 | **Why** | Someone you can't be in a room with: a teacher, a legend, someone you lost. One sentence: "Any photo or video, plus one sentence, and they're here." |
+| 0:30-1:50 | **Three moments, each a 20-25 s mini story** | **Learn:** follow a dance or tai chi teacher, glowing targets, the score climbing, a chime. **Play:** Magnus shakes your hand, then moves his own piece; a Federer rally. **Connect:** the family moment (below). |
+| 1:50-2:30 | **How it works, 30-40 s** | One phone clip, then 4DAnyone's 48 generated views flying into a ring (apps/site has this animation), then 4D Gaussians, then life-size on your floor. Say what's new (4DAnyone, Aug 2026; LHM++ / UIKA 2026) and one honest number from `team/ian.md`. |
+| 2:30-2:55 | **Close** | Back to the most emotional shot, quiet. Tagline: "Anyone from any video, standing in your room." Logo, team names. |
+
+**The family moment** (Ian's grandma, Talk with them) only if Ian confirms the family agreed to it being shown.
+Otherwise use a teammate's own photo or clip, or cut it. Talk replies are always labelled "AI voice" on screen.
+
+**Emotional craft:**
+- Real faces: film the person wearing the headset (a phone on a tripod), their hands reaching and their reaction.
+- Let the big moments breathe: 1-2 s of silence or a music drop before the reveal; hold the family moment 5-8 s
+  with music low.
+- Music: one track that starts as soft piano or strings and swells at the reveal. Use a commercial-use-OK track
+  from CapCut's library or the YouTube Audio Library, credited.
+- Cuts on the beat; one dip to black before the family moment; no flashy transitions; slow push-ins on stills.
+- Captions on every spoken line. Lower thirds: 2-4 words, white, one clean sans font.
+
+**Honesty rules** (judges and AGENTS.md):
+- Don't claim headset frame rates or "real-time" unless filmed that way.
+- Label anything composited or rendered offline.
+- Every public figure on screen gets "Not affiliated."; no logos.
+- No tunnel URLs, keys or the Mac's IP on screen.
+- Credit the Pexels creators, Commons photographers and models (`demo/credits.md`) on Devpost.
+
+**Capturing footage:**
+- **Inside the headset:** the Quest's own recorder (Meta button, Camera, Record). Check that passthrough shows up in
+  WebXR recordings. Or mirror it live to the Mac with `scrcpy` over adb (USB) and screen-record that.
+- **Third person:** a phone on a tripod filming the wearer, plus the in-headset view, cut together.
+- **Clean renders:** QuickTime screen recordings of the WebXR desktop view (`http://localhost:5181/?dream=…`;
+  `?mode=chess…`, `?mode=tennis`), the public site (`:5190`) for the how-it-works animation, and each bundle's
+  `preview.mp4` orbit.
+- Keep raw files in `~/Movies/LucidDreams-video/{raw,music,vo,export}`, never in the repo.
+
+**CapCut (desktop) workflow:**
+- 16:9, 1920x1080, 30 fps (60 if the captures are).
+- Tracks:
+  - V1 shots, V2 titles and labels;
+  - A1 voice-over, A2 music ducked under the voice, A3 sound effects (the chime, the chess clack).
+- Auto captions (Captions, Auto captions), then fix the words.
+- Export H.264 1080p at a high bitrate; at most 3:00. Upload to YouTube (public or unlisted) for the Devpost link.
+
+**Letting Claude drive it, efficiently:** computer use is slow, so Claude does the prep in the shell and the user
+or Claude only assembles.
+1. ffmpeg cuts every chosen shot to an exact numbered segment (`01_hook.mp4`, `02_why.mp4`, …), already trimmed and
+   at 1080p30.
+2. Write the voice-over script and a caption `.srt` timed to the cut list.
+3. Pick the music cue points.
+4. Optionally make an ffmpeg rough cut (concat plus music) to review.
+5. In CapCut (computer use: `request_access` for CapCut): import the folder, drop the segments in order, add the
+   music and voice-over, captions and lower thirds, export.
+
+Checklist before export: under 3:00, the labels and credits, the family consent confirmed, captions on, the voice
+clear over the music.
 
 ## Running services on Ojasva's Mac
 - **Ports:**
