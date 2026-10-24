@@ -4,11 +4,15 @@ import { dirname, join, resolve } from "node:path";
 import type { Dream } from "../dream";
 import { fetching } from "./fetches";
 
-/** The repo root: the nearest folder above apps/web that holds AGENTS.md. */
+/**
+ * The repo root: the nearest folder above apps/web that holds AGENTS.md and pipeline/. AGENTS.md alone isn't enough:
+ * `next dev` writes its own apps/web/AGENTS.md when it runs under a coding agent, which put dreams/ and the runner
+ * inside apps/web.
+ */
 function findRepo(): string {
   let dir = process.cwd();
   for (let i = 0; i < 6; i++) {
-    if (existsSync(join(dir, "AGENTS.md"))) return dir;
+    if (existsSync(join(dir, "AGENTS.md")) && existsSync(join(dir, "pipeline"))) return dir;
     dir = dirname(dir);
   }
   return resolve(process.cwd(), "../..");
