@@ -1,0 +1,1298 @@
+{
+ "about": "Court Side QA checklist: every P-row of the plan's section 0. checks are what qa/run.mjs can run today (kind unit | e2e | qa | tool | pending); manual points at qa/HEADSET.md items. owner is the build stream. Tests and e2e checks name their rows by tagging P<number> in the test or check name.",
+ "rows": [
+  {
+   "id": "P1",
+   "group": "Seat and arrival",
+   "requirement": "Seat on camera F's optical ray at D' from the pair: floor point under the seated head, court yaw = camera yaw, eye at the judge's own seated height.",
+   "how": "seatmath.test.ts; e2e arrival seat pose log; every seat row also tested at the plan's camera-to-eye offset",
+   "threshold": "floor point <= 0.10 m from the ray point at D' (default 5 m, ?seat= 4-7 m); yaw error <= 0.5 deg",
+   "owner": "C core (seatmath.ts)",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "seatmath.test.ts",
+     "needs": [
+      "seatmath"
+     ]
+    },
+    {
+     "kind": "e2e",
+     "scenario": "arrival"
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     2,
+     6
+    ]
+   }
+  },
+  {
+   "id": "P2",
+   "group": "Seat and arrival",
+   "requirement": "The projected footage lands on the 3D court lines and rim at life size; the calibration passes its gate.",
+   "how": "check_align.py; calibration gate; e2e seat overlay",
+   "threshold": "court points <= 0.02 deg median, <= 0.05 deg p95; rim 3.05 +/- 0.03 m; A-B triangulation agrees <= 0.05 deg",
+   "owner": "A geo (calibrate.py, check_align.py)",
+   "checks": [
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/check_align.py",
+     "args": null
+    },
+    {
+     "kind": "e2e",
+     "scenario": "layers",
+     "needs": [
+      "video",
+      "proxies",
+      "world"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     6
+    ]
+   }
+  },
+  {
+   "id": "P3",
+   "group": "Seat and arrival",
+   "requirement": "Footage edges fall into the rendered court and the dark arena, never a hard video edge; the lit region follows the pan.",
+   "how": "e2e layers at 6 head yaws (0, +/-60, +/-120, 180 deg) and looking up, through a pan",
+   "threshold": "brightness step across the frustum edge <= 3 grey levels per pixel",
+   "owner": "E look (world.ts) + D handoff (proxies.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "layers",
+     "needs": [
+      "world",
+      "video",
+      "proxies"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     9
+    ]
+   }
+  },
+  {
+   "id": "P4",
+   "group": "Playback",
+   "requirement": "One video frame per display frame at exact display times.",
+   "how": "e2e cadence capture + smooth_metrics.py",
+   "threshold": "0 held frames in pass 1 and pass 2; judder CV <= 0.15; 0 skipped show frames",
+   "owner": "D handoff (video.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "cadence",
+     "needs": [
+      "video",
+      "clock"
+     ]
+    },
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/smooth_metrics.py",
+     "args": null
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     8
+    ]
+   }
+  },
+  {
+   "id": "P5",
+   "group": "Playback",
+   "requirement": "Decode never shows: two WebCodecs decoders, queue never starved.",
+   "how": "e2e decode log; Q0/Q1 isConfigSupported and decode timing",
+   "threshold": "queue 1-4, never empty; decode p99 <= 3 ms on the Quest; no decoder reset or seek at a press",
+   "owner": "D handoff (video.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "cadence",
+     "needs": [
+      "video"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     8
+    ]
+   }
+  },
+  {
+   "id": "P6",
+   "group": "Ease into the freeze",
+   "requirement": "The ease lands exactly on F on the C2 speed curve, with no step.",
+   "how": "clock.test.ts; e2e ease",
+   "threshold": "every press before the cutoff lands on F (0 frames off); speed change <= 0.02 per frame; motion max/median <= 2.5; clock step = round(dt x displayHz)",
+   "owner": "C core (clock.ts) + A eases",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "clock.test.ts",
+     "match": "ease|step =|smootherstep|travel"
+    },
+    {
+     "kind": "e2e",
+     "scenario": "ease",
+     "needs": [
+      "clock",
+      "video"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     15
+    ]
+   }
+  },
+  {
+   "id": "P7",
+   "group": "Ease into the freeze",
+   "requirement": "In-between frames are honest and clean: no ghost hands or ball, each listed, share shown in the Reality check.",
+   "how": "contact sheet of every interpolated run by eye (last 0.3 s first); Reality check label",
+   "threshold": "no ghost hands or ball; each in frames.json; Reality check shows the interpolated share",
+   "owner": "A geo (video_ramp.py)",
+   "checks": [
+    {
+     "kind": "pending",
+     "reason": "contact sheet of interpolated runs is by eye on the real bundle"
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     14,
+     19
+    ]
+   }
+  },
+  {
+   "id": "P8",
+   "group": "Hand-off",
+   "requirement": "Same pixels at the dolly seat: the 3D under the video layer is the video layer.",
+   "how": "handoff_check.py (mono renders at the seat and at camera F); e2e handoff per eye at 2-10 cm sideways and 40 cm up",
+   "threshold": "<= 0.05 deg p95 mono, <= 0.055 deg per eye; PSNR >= 30 dB players, >= 32 dB elsewhere",
+   "owner": "D handoff (handoff.ts) + G assemble",
+   "checks": [
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/handoff_check.py",
+     "args": null
+    },
+    {
+     "kind": "e2e",
+     "scenario": "handoff",
+     "needs": [
+      "handoff",
+      "video",
+      "proxies",
+      "freeze",
+      "world",
+      "lightfield"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     17
+    ]
+   }
+  },
+  {
+   "id": "P9",
+   "group": "Hand-off",
+   "requirement": "No jump in light, colour or sharpness through the fade; no shimmer in a held frame.",
+   "how": "e2e capture through the fade; held still frame under head sway",
+   "threshold": "mid-fade SSIM >= 0.95; <= 1 grey level luma per frame at 72 Hz; player Delta-E <= 2; Laplacian ratio 0.8-1.25",
+   "owner": "D handoff + E look",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "handoff",
+     "needs": [
+      "handoff",
+      "video",
+      "proxies",
+      "freeze",
+      "world",
+      "lightfield"
+     ]
+    },
+    {
+     "kind": "e2e",
+     "scenario": "layers",
+     "needs": [
+      "video",
+      "proxies"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     7,
+     17
+    ]
+   }
+  },
+  {
+   "id": "P10",
+   "group": "Hand-off",
+   "requirement": "The video layer fades out over fully drawn, sorted 3D; splat opacity is never faded in.",
+   "how": "handoff.test.ts on handoff(p); e2e handoff",
+   "threshold": "splats drawn from 0.45 s before F; fade 1.0 s +/- 1 frame; opacity constant; head rise > 10 cm finishes the fade in 0.3 s",
+   "owner": "D handoff (handoff.ts)",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "handoff.test.ts",
+     "needs": [
+      "handoff"
+     ]
+    },
+    {
+     "kind": "e2e",
+     "scenario": "handoff",
+     "needs": [
+      "handoff",
+      "video",
+      "freeze"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     17
+    ]
+   }
+  },
+  {
+   "id": "P11",
+   "group": "The 3D freeze",
+   "requirement": "Sharp players, faces and hands; no floaters.",
+   "how": "freeze_check.py at 6 ring poses and 1.5 m; floater count; held-out PSNR",
+   "threshold": "sharpness >= 0.7x the source crop on each body, face and both hands; 0 floaters > 5 cm off the body",
+   "owner": "E look (freeze_check.py) + B HiPerGator",
+   "checks": [
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/freeze_check.py",
+     "args": null
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     18
+    ]
+   }
+  },
+  {
+   "id": "P12",
+   "group": "The 3D freeze",
+   "requirement": "Feet on the floor at real size.",
+   "how": "foot_check.py; scale from the calibrated court",
+   "threshold": "every sole in contact within 1.5 cm of y = 0; body scale within 3% of listed heights",
+   "owner": "E look (foot_check.py)",
+   "checks": [
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/foot_check.py",
+     "args": null
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     18
+    ]
+   }
+  },
+  {
+   "id": "P13",
+   "group": "The 3D freeze",
+   "requirement": "Lit like the arena: contact shadows, soft reflections, one grade.",
+   "how": "estimate_light.py; e2e",
+   "threshold": "shadow under every contact foot; court/pool chroma error vs the players' white <= 0.02",
+   "owner": "E look (estimate_light.py)",
+   "checks": [
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/estimate_light.py",
+     "args": null
+    },
+    {
+     "kind": "e2e",
+     "scenario": "walk",
+     "needs": [
+      "freeze",
+      "world"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     18
+    ]
+   }
+  },
+  {
+   "id": "P14",
+   "group": "Walking",
+   "requirement": "Zero drift while walking.",
+   "how": "e2e walk (17 poses, our maths only); Q2 tape check at a floor mark",
+   "threshold": "0 mm in e2e; <= 1 cm after a 2-minute walk on the Quest",
+   "owner": "C core (seat.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "walk",
+     "needs": [
+      "seat"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     21
+    ]
+   }
+  },
+  {
+   "id": "P15",
+   "group": "Walking",
+   "requirement": "Full frame rate while walking and leaning in.",
+   "how": "Q1-Q3 stats.ts frame log + OVR Metrics Tool",
+   "threshold": "0 dropped frames in a 60 s walk; GPU p95 <= 85% of 13.9 ms",
+   "owner": "Integrator + all streams",
+   "checks": [],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     22
+    ]
+   }
+  },
+  {
+   "id": "P16",
+   "group": "Walking",
+   "requirement": "Every other player reads as a solid 3D person from every reachable spot.",
+   "how": "e2e contact sheet at every viewing spot (and the ring poses); by eye",
+   "threshold": "no card edge-on (relief only < 15 deg); no holes; feet on the floor; a contact shadow",
+   "owner": "E look (freeze.ts) + G assemble",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "walk",
+     "needs": [
+      "freeze"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     23
+    ]
+   }
+  },
+  {
+   "id": "P17",
+   "group": "Walking",
+   "requirement": "You never enter a body, and leaning in never fades one.",
+   "how": "e2e poses in walk",
+   "threshold": "eye 0.2 m from torso/head: that player fades to 30% within 300 ms; eye 0.3 m from ball or hand: no fade",
+   "owner": "E look (freeze.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "walk",
+     "needs": [
+      "freeze"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     24
+    ]
+   }
+  },
+  {
+   "id": "P18",
+   "group": "Back to the seat",
+   "requirement": "The 3D folds back into the footage, then the play runs on through the make.",
+   "how": "e2e capture; clock.test.ts",
+   "threshold": "P8 and P9 in reverse; resume 0 -> 0.6x over 0.8 s (<= 0.02 per frame); ball drops through the rim before the window dims",
+   "owner": "D handoff (handoff.ts) + C core (clock.ts)",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "clock.test.ts",
+     "match": "resume"
+    },
+    {
+     "kind": "e2e",
+     "scenario": "handoff",
+     "needs": [
+      "handoff",
+      "clock",
+      "video"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     30
+    ]
+   }
+  },
+  {
+   "id": "P19",
+   "group": "Sound",
+   "requirement": "No commentary, no voices; mix level on target.",
+   "how": "VAD on the final mix, then Whisper, then one listen",
+   "threshold": "0 voiced frames, 0 words; -23 LUFS +/- 1; <= -1 dBTP",
+   "owner": "F sound (sound.ts) + A bed",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "sound.test.ts",
+     "needs": [
+      "sound"
+     ]
+    },
+    {
+     "kind": "pending",
+     "reason": "VAD + Whisper on the final mix has no tool yet (real bed)"
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     12
+    ]
+   }
+  },
+  {
+   "id": "P20",
+   "group": "Sound",
+   "requirement": "The time stop: hush as time slows, rush back on play.",
+   "how": "sound.test.ts (OfflineAudioContext render)",
+   "threshold": "low-pass and about -14 dB over the 1.2 s ease; rush back over 0.6 s; no clicks",
+   "owner": "F sound (sound.ts)",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "sound.test.ts",
+     "needs": [
+      "sound"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     16,
+     30
+    ]
+   }
+  },
+  {
+   "id": "P21",
+   "group": "UI and honesty",
+   "requirement": "Palm menu only; no gesture acts by itself.",
+   "how": "e2e controls",
+   "threshold": "Step in / Back / Walk closer / Next view / Reality / Replay / See my room work; pinches, grabs, swipes change nothing",
+   "owner": "C core (ui.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "controls",
+     "needs": [
+      "ui",
+      "seat"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     5
+    ]
+   }
+  },
+  {
+   "id": "P22",
+   "group": "UI and honesty",
+   "requirement": "Caption, honesty label and credit are always there.",
+   "how": "e2e controls text check",
+   "threshold": "label text exact: Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.; caption names who, which game, the moment",
+   "owner": "C core (ui.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "controls",
+     "needs": [
+      "ui"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     11
+    ]
+   }
+  },
+  {
+   "id": "P23",
+   "group": "UI and honesty",
+   "requirement": "Reality check marks everything the camera never saw.",
+   "how": "e2e controls on/off",
+   "threshold": "unseen splats, unfilmed court, floor/stands, inpainted plate, filled holes, extras tinted blue; seen % per player; interpolated share shown",
+   "owner": "E look (freeze.ts, world.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "controls",
+     "needs": [
+      "freeze",
+      "world",
+      "ui"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     19
+    ]
+   }
+  },
+  {
+   "id": "P24",
+   "group": "See my room and safety",
+   "requirement": "Nothing moves the world but you.",
+   "how": "e2e: world transform per phase",
+   "threshold": "constant, except the walking anchoring and re-seats, each behind a <= 0.3 s fade",
+   "owner": "C core (seat.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "walk",
+     "needs": [
+      "seat"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     2,
+     20
+    ]
+   }
+  },
+  {
+   "id": "P25",
+   "group": "Reliability",
+   "requirement": "Zero console errors or warnings; ten full runs in a row without a reload.",
+   "how": "e2e console; Q1-Q3 remote devtools",
+   "threshold": "0 console errors or warnings from court code; 10 full runs at Q3",
+   "owner": "Integrator (court.ts) + every stream",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "smoke"
+    }
+   ],
+   "manual": {
+    "q": "Q3",
+    "items": [
+     36
+    ]
+   }
+  },
+  {
+   "id": "P26",
+   "group": "Reliability",
+   "requirement": "Starts fast and fits in memory.",
+   "how": "Q1 cold start and tab memory",
+   "threshold": "cold start from cache <= 10 s; every asset in memory before the cable comes off; tab memory <= Q0 ceiling minus 30%",
+   "owner": "Integrator (sw.js, serve.mjs)",
+   "checks": [],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     34
+    ]
+   }
+  },
+  {
+   "id": "P27",
+   "group": "Seat and arrival",
+   "requirement": "Arrival waits for the judge: black and room tone until the page is visible and the head is seated and still; no menu first.",
+   "how": "e2e arrival with a simulated visibilitychange and head poses",
+   "threshold": "black + room tone while hidden; lights-up within 1.1 s of a still seated head after Seat here",
+   "owner": "Integrator (court.ts) + C core",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "arrival",
+     "needs": [
+      "seat",
+      "world"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     3
+    ]
+   }
+  },
+  {
+   "id": "P28",
+   "group": "Ease into the freeze",
+   "requirement": "The time stop looks like one light field: crowd and floor dim while the pair stays lit.",
+   "how": "e2e ease capture; the darker alternative shown at Q2",
+   "threshold": "crowd 0.45, floor outside the pool 0.30, pair 1.0 (players' pixels change <= 1 grey level)",
+   "owner": "E look (lightfield.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "ease",
+     "needs": [
+      "lightfield",
+      "clock",
+      "video"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     16
+    ]
+   }
+  },
+  {
+   "id": "P29",
+   "group": "Walking",
+   "requirement": "The walking layout keeps 1 m clear of each body and the bodies fit the floor.",
+   "how": "seatmath.test.ts",
+   "threshold": "chair and ring points >= 1.0 m from both bodies; at 3.5 x 3.5 m both bodies >= 0.3 m inside the play area",
+   "owner": "C core (seatmath.ts)",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "seatmath.test.ts",
+     "needs": [
+      "seatmath"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     25
+    ]
+   }
+  },
+  {
+   "id": "P30",
+   "group": "Walking",
+   "requirement": "The courtside plate never reads as a poster.",
+   "how": "e2e contact sheet at every viewing spot, by eye",
+   "threshold": "plate dims steadily with the angle off the camera ray, dark by ~45 deg; front row, photographers, ref on depth cards",
+   "owner": "D handoff (Proxies.dim)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "walk",
+     "needs": [
+      "proxies"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     23
+    ]
+   }
+  },
+  {
+   "id": "P31",
+   "group": "Sound",
+   "requirement": "The crowd is around you: HRTF sources at the stands, none head-locked.",
+   "how": "sound.test.ts audio graph; e2e arrival; by ear at Q1",
+   "threshold": "at least 4 HRTF sources at the stands, none head-locked",
+   "owner": "F sound (sound.ts)",
+   "checks": [
+    {
+     "kind": "unit",
+     "file": "sound.test.ts",
+     "needs": [
+      "sound"
+     ]
+    },
+    {
+     "kind": "e2e",
+     "scenario": "arrival",
+     "needs": [
+      "sound"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     12
+    ]
+   }
+  },
+  {
+   "id": "P32",
+   "group": "Seat and arrival",
+   "requirement": "Seat here is a 2 s hold button; setup can't be hit by accident.",
+   "how": "e2e controls",
+   "threshold": "acts only after 2.0 s; a 1 s press changes nothing",
+   "owner": "C core (ui.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "controls",
+     "needs": [
+      "ui"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "P33",
+   "group": "See my room and safety",
+   "requirement": "Arena mode is fully opaque.",
+   "how": "e2e room alpha read-back",
+   "threshold": "alpha 255 at every pixel of every frame, except where the edge fade opens the room",
+   "owner": "E look (world.ts)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "room",
+     "needs": [
+      "world"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     28
+    ]
+   }
+  },
+  {
+   "id": "P34",
+   "group": "See my room and safety",
+   "requirement": "See my room works in all 9 phases.",
+   "how": "e2e room toggle in all 9 phases, alpha read-back",
+   "threshold": "fades 0.6 s out and 0.8 s back +/- 1 frame; player matte identical through the toggle; alpha 0 on room pixels, > 0 on players and shadows; extras beyond bounds hidden; Walk closer and Next view hidden",
+   "owner": "E look (world.ts) + C core",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "room",
+     "needs": [
+      "world"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     26,
+     27
+    ]
+   }
+  },
+  {
+   "id": "P35",
+   "group": "See my room and safety",
+   "requirement": "The room always opens near the edge.",
+   "how": "e2e with a simulated bounds polygon; Q0/Q1 at a wall; presenter's wall-walk",
+   "threshold": "starts fading in 0.6 m from the bounds, fully visible at 0.3 m; the Quest boundary still draws in the opaque session",
+   "owner": "E look (world.edge) + C core (bounds)",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "room",
+     "needs": [
+      "world"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     31,
+     32
+    ]
+   }
+  },
+  {
+   "id": "P36",
+   "group": "Reliability",
+   "requirement": "The court bundle is never public.",
+   "how": "qa never-public: serve.mjs bind and Host checks, vite does not serve the bundle; tunnel curl at the demo",
+   "threshold": "bundle not served by vite; serve.mjs answers only on 127.0.0.1",
+   "owner": "Integrator (serve.mjs)",
+   "checks": [
+    {
+     "kind": "qa",
+     "scenario": "never-public"
+    }
+   ]
+  },
+  {
+   "id": "P37",
+   "group": "Reliability",
+   "requirement": "A reload works with the cable off.",
+   "how": "Q1: unplug, reload, play",
+   "threshold": "back to a seated arrival from the Service Worker cache within 45 s",
+   "owner": "Integrator (sw.js)",
+   "checks": [],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     34
+    ]
+   }
+  },
+  {
+   "id": "P38",
+   "group": "Reliability",
+   "requirement": "The hand-over keeps the session through headset off and on.",
+   "how": "Q0/Q1: headset off, then on",
+   "threshold": "the session survives visible-blurred; the arrival starts on visible",
+   "owner": "Integrator (court.ts)",
+   "checks": [],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     33
+    ]
+   }
+  },
+  {
+   "id": "P39",
+   "group": "Playback",
+   "requirement": "No flashes in the baked show.",
+   "how": "smooth_metrics.py --flash on the baked show",
+   "threshold": "no single-frame luma spike > 8 grey levels against both neighbours; 0 WCAG 2.3.1 general flashes",
+   "owner": "A geo (bake_show.py) + D tools",
+   "checks": [
+    {
+     "kind": "tool",
+     "tool": "pipeline/court/smooth_metrics.py",
+     "args": null
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     10
+    ]
+   }
+  },
+  {
+   "id": "P40",
+   "group": "Playback",
+   "requirement": "No broadcast branding in the show, plates or our UI.",
+   "how": "contact sheet of the show and plates; diff inside the watermark box (see private plan)",
+   "threshold": "watermark gone from every show frame and plate; no NBA or team marks in our UI",
+   "owner": "A geo (clean_plate.py)",
+   "checks": [
+    {
+     "kind": "pending",
+     "reason": "no tool for the watermark-box diff yet (stream A, real bundle only)"
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     10
+    ]
+   }
+  },
+  {
+   "id": "P41",
+   "group": "Reliability",
+   "requirement": "Every fallback flag is tested against its own P-rows.",
+   "how": "qa fallbacks table (each flag loads and passes its rows); recorded on the headset at Q2",
+   "threshold": "each flag of the plan's risk table loads, passes its own rows, and is recorded at Q2",
+   "owner": "Integrator + QA (fallback flags)",
+   "checks": [
+    {
+     "kind": "qa",
+     "scenario": "fallbacks"
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     37
+    ]
+   }
+  },
+  {
+   "id": "P42",
+   "group": "The 3D freeze",
+   "requirement": "The real view really trained the freeze.",
+   "how": "each freeze run's recon-*.json fields and peek-source image (private run folders)",
+   "threshold": "focalHeld true; focal = FOCAL; silhouette iou >= 0.95; the peek matches by eye",
+   "owner": "A geo + B HiPerGator",
+   "checks": [
+    {
+     "kind": "pending",
+     "reason": "reads private run folders (recon-*.json); no checker yet"
+    }
+   ]
+  },
+  {
+   "id": "P43",
+   "group": "Playback",
+   "requirement": "No doubled or torn bodies in the watch: every person on their own card, the plate has no people.",
+   "how": "e2e layers on a stand-in with a gap between the pair and a third person",
+   "threshold": "no doubled or torn body > 0.1 deg in any display frame",
+   "owner": "D handoff (proxies.ts) + A cards",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "layers",
+     "needs": [
+      "video",
+      "proxies"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q2",
+    "items": [
+     7
+    ]
+   }
+  },
+  {
+   "id": "P44",
+   "group": "Hand-off",
+   "requirement": "The light moves smoothly and matches through the ease, hand-off, pool and stands.",
+   "how": "e2e stepped capture from the seat; by eye on the Quest",
+   "threshold": "MAD <= 1 grey level video vs 3D; every light change <= 1 grey level per frame at 72 Hz; dark gradients dithered",
+   "owner": "E look (lightfield.ts) + D handoff",
+   "checks": [
+    {
+     "kind": "e2e",
+     "scenario": "handoff",
+     "needs": [
+      "handoff",
+      "lightfield",
+      "video"
+     ]
+    }
+   ],
+   "manual": {
+    "q": "Q1",
+    "items": [
+     13,
+     17
+    ]
+   }
+  }
+ ],
+ "scenarios": {
+  "smoke": {
+   "needs": []
+  },
+  "arrival": {
+   "needs": [
+    "seat",
+    "seatmath",
+    "world"
+   ]
+  },
+  "layers": {
+   "needs": [
+    "video",
+    "proxies"
+   ]
+  },
+  "cadence": {
+   "needs": [
+    "video",
+    "clock"
+   ]
+  },
+  "ease": {
+   "needs": [
+    "clock",
+    "video",
+    "lightfield"
+   ]
+  },
+  "handoff": {
+   "needs": [
+    "handoff",
+    "video",
+    "proxies",
+    "freeze",
+    "world",
+    "lightfield"
+   ]
+  },
+  "room": {
+   "needs": [
+    "world"
+   ]
+  },
+  "controls": {
+   "needs": [
+    "ui",
+    "seat"
+   ]
+  },
+  "walk": {
+   "needs": [
+    "seat",
+    "seatmath",
+    "freeze",
+    "world"
+   ]
+  }
+ },
+ "fallbacks": [
+  {
+   "id": "show-small",
+   "flag": "show=small",
+   "rows": [
+    "P4",
+    "P5",
+    "P9",
+    "P25",
+    "P33"
+   ],
+   "needs": [
+    "video"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court/court.ts"
+    ],
+    "pattern": "\"show\"\\)\\s*===\\s*\"small\""
+   },
+   "note": "the small show copy (1280 wide)",
+   "standinStream": "small"
+  },
+  {
+   "id": "hz-90",
+   "flag": "hz=90",
+   "rows": [
+    "P4",
+    "P6",
+    "P25"
+   ],
+   "needs": [
+    "video",
+    "clock"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court/court.ts"
+    ],
+    "pattern": "\"hz\"\\)\\s*===\\s*\"90\""
+   },
+   "note": "the pre-built 90 Hz bake when the 72 Hz lock is refused",
+   "standinStream": "hz90"
+  },
+  {
+   "id": "video-element",
+   "flag": "video=element",
+   "rows": [
+    "P5",
+    "P25",
+    "P33"
+   ],
+   "needs": [
+    "video"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court/court.ts"
+    ],
+    "pattern": "\"video\"\\)\\s*===\\s*\"element\""
+   },
+   "note": "pass 1 on a <video> element if WebCodecs fails"
+  },
+  {
+   "id": "seat-4",
+   "flag": "seat=4",
+   "rows": [
+    "P1",
+    "P8",
+    "P25"
+   ],
+   "needs": [
+    "seat",
+    "seatmath"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court/court.ts"
+    ],
+    "pattern": "params\\.has\\(\"seat\"\\)"
+   },
+   "note": "D' at the near end of the range"
+  },
+  {
+   "id": "seat-7",
+   "flag": "seat=7",
+   "rows": [
+    "P1",
+    "P8",
+    "P25"
+   ],
+   "needs": [
+    "seat",
+    "seatmath"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court/court.ts"
+    ],
+    "pattern": "params\\.has\\(\"seat\"\\)"
+   },
+   "note": "D' at the far end of the range"
+  },
+  {
+   "id": "def-body",
+   "flag": "def=body",
+   "rows": [
+    "P11",
+    "P25"
+   ],
+   "needs": [
+    "freeze"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court"
+    ],
+    "pattern": "[\"']def[\"']"
+   },
+   "note": "body model posed to the freeze pose when a player's input has holes"
+  },
+  {
+   "id": "cap",
+   "flag": "cap=",
+   "rows": [
+    "P15",
+    "P25"
+   ],
+   "needs": [
+    "freeze"
+   ],
+   "detect": {
+    "in": [
+     "apps/webxr/src/court"
+    ],
+    "pattern": "[\"']cap[\"']"
+   },
+   "note": "main pair to the next pre-trained splat cap down (needs a value from the bundle: wired when the flag lands)"
+  },
+  {
+   "id": "res-0.9",
+   "flag": "res=0.9",
+   "rows": [
+    "P15",
+    "P25",
+    "P33"
+   ],
+   "needs": [],
+   "detect": {
+    "in": [
+     "apps/webxr/src/xr/quality.ts"
+    ],
+    "pattern": "num\\(\"res\""
+   },
+   "note": "eye buffer 0.9"
+  },
+  {
+   "id": "res-0.8",
+   "flag": "res=0.8",
+   "rows": [
+    "P15",
+    "P25",
+    "P33"
+   ],
+   "needs": [],
+   "detect": {
+    "in": [
+     "apps/webxr/src/xr/quality.ts"
+    ],
+    "pattern": "num\\(\"res\""
+   },
+   "note": "eye buffer 0.8"
+  },
+  {
+   "id": "fov-0.3",
+   "flag": "fov=0.3",
+   "rows": [
+    "P15",
+    "P25",
+    "P33"
+   ],
+   "needs": [],
+   "detect": {
+    "in": [
+     "apps/webxr/src/xr/quality.ts"
+    ],
+    "pattern": "num\\(\"fov\""
+   },
+   "note": "fixed foveation 0.3"
+  }
+ ]
+}
