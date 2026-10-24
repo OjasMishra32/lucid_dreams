@@ -3,11 +3,17 @@
 **Court Side replaces Ghost Coach for Vishal. Ghost Coach is paused.** One clip only: **Steph's three over LeBron,
 2018 Finals G4**, from the best low, fixed courtside angle that exists. You start in a courtside seat where that camera
 stood, about 2 s plays in real 3D, you pause on the palm menu and it eases into a freeze at the release, then you stand
-up and walk a ring about 1.5 m around the pair; it plays on or replays. Ojasva's bar: if two players aren't passing
-by noon, ship Steph alone. Updated Sat 6:44 AM.
+up and walk a ring about 1.5 m around the pair; it plays on or replays. **Full immersion in VR, not passthrough**
+(Vishal, 6:50 AM): headset on, your room is gone and you're courtside in the arena. Ojasva's bar: if two players
+aren't passing by noon, ship Steph alone. Updated Sat 6:49 AM.
 
 ## Asks for Ojasva (newest first)
 
+8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only.** Vishal (6:50 AM) wants full
+   immersion, like Apple Vision Pro's courtside NBA view: WebXR `immersive-vr` with `local-floor` (the court floor
+   exactly on the real floor, safe to walk), the arena where the camera saw it and darkness beyond the court lights
+   where it didn't. This is an exception to your passthrough-only rule (Sat 3:30 AM) for court mode alone; every other
+   mode stays passthrough. The players are lit like the footage's arena, not matched to the room.
 7. **Ready now (Ian or Ojasva, ~15 min on the Quest 3S): the first real headset number for Court Side.** Vishal
    sends you `dropin.zip` (a throwaway test page, never commit it). (1) Unzip it: put `court-quest.html` in
    `apps/webxr/` and `src/spike6/` in `apps/webxr/src/`. (2) On the Quest, open your usual dev server or tunnel at
@@ -17,6 +23,7 @@ by noon, ship Steph alone. Updated Sat 6:44 AM.
    appears. Photo it. (4) Exit from the palm menu and repeat with 0.75x and 1x. Add `&hz=90` once at the best scale.
    (5) Then once more with `?per=100000` (synthetic people at the planned 100k/250k budget). (6) Send the photos and
    anything odd (tab reload, black flicker), then delete both files. Desktop proof: it runs end to end, 0 errors.
+   **Update 6:55 AM:** a VR version (immersive-vr, full arena drawn) replaces it within ~30 min; use that one.
 6. **Yes (Ojasva, Sat 6:05 AM).** 100k per player per frame for playback and the freeze frame alone at 250k is right for the
    Quest browser; keep `aniso`, the real-frame view (`sourceView`) and 50-step views for the final run. Original ask: playback frames with `recon.py --cap 100000`, plus the
    freeze frame trained again on its own at `--cap 250000` (one frame, one GPU, minutes). Both are existing flags
@@ -30,11 +37,10 @@ by noon, ship Steph alone. Updated Sat 6:44 AM.
 
 ## Now
 
-Planning resumed 6:30 AM in a fresh session. Running now: which low, fixed courtside angles exist for this play (exact
-video + timestamps for Vishal), Apple Vision Pro's courtside feel and the best walk-around freeze effects, a stereo
-Quest test page that can load two real replays (ask 7, page next), a prototype rig for the 3 transition directions,
-and spikes for low-camera calibration, smooth slow-down into the freeze, and real contact shadows. Waiting for the
-clip file.
+Adopting full-immersion VR (6:50 AM): the prototypes, the shadow spike and the Quest test page are being switched to
+immersive-vr, and S5's walk checks re-run in VR. Also running: the angle research (exact video + timestamps for
+Vishal), VR immersion research (arrival, arena light, sound, boundary), spikes for low-camera calibration, smooth
+slow-down into the freeze, and contact shadows + floor reflections. Waiting for the clip file.
 
 ## Verdict so far
 
@@ -69,6 +75,9 @@ player size in a 720p broadcast, LeBron's hand overlapping Steph at the freeze, 
 
 ## Decisions
 
+- Full immersion: `immersive-vr` + `local-floor` for `?mode=court` only; the arena from the footage where the camera
+  saw it, darkness beyond the court lights elsewhere; players lit like the footage's arena (Vishal, 6:50 AM; Ojasva to
+  confirm, ask 8).
 - One clip: Steph's three over LeBron, 2018 Finals G4, from a low, fixed courtside camera; the seat sits where it
   stood; 121 native 60 fps frames (Vishal, 6:20 AM). Plan and prototype only until Vishal approves the plan.
 - Target the WebXR viewer; the Quest app is only an ask to Ian (Vishal, 5:45 AM).
