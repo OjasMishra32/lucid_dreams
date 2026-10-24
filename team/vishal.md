@@ -6,6 +6,29 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## RESEARCH (Sat 2:50 AM): the models to use, checked against their repos and weights
+
+- **Bodies: LHM++** (aigc3d/LHM-plusplus, 700M weights; code Apache-2.0, weights CC BY-NC 4.0). Takes 1-16
+  pose-free photos or video frames and outputs ~160K Gaussians on SMPL-X, at 27.8 dB vs ExAvatar's 26.6 dB from 2
+  views. Judge only its plain Gaussian render, never its neural refiner (the Quest gets Gaussians). Skin weights
+  come from the nearest SMPL-X vertex. Being tested on Magnus now.
+- **Heads: UIKA** (ant-research/UIKA, CVPR 2026 Highlight, MIT). A folder of photos becomes ~130K Gaussians on
+  FLAME: 21.7 dB / identity 0.738 vs LAM's 18.3 / 0.602. FlexAvatar (TUM, CVPR 2026) is the backup with the best
+  identity scores, but it's slower and needs Pixel3DMM tracking. LAM is retired (its repo is deleted to free disk;
+  the heads it already made stay in `data/avatars/heads/`).
+- **How to combine them (what went wrong with LAM):** never paste a head model's Gaussians onto a body; LAM's are
+  a 25%-opacity shell that falls apart outside its own renderer. Use the head model as a teacher instead:
+  1. Render its neutral head from 60-100 views in its own renderer.
+  2. Delete the body's Gaussians above the neck seam.
+  3. Start new Gaussians on the SMPL-X head vertices and fit them to those renders with gsplat for a few thousand
+     steps, with a minimum opacity.
+  4. Skin them from the nearest SMPL-X vertex.
+
+  That gives a solid head. Your `head_swap.py` alignment (FLAME to SMPL-X) is exactly the first step of this; it's
+  the obvious next version of your head swap, for Ian's grandma.
+- **Avoid:** Pippo (no weights), Avat3r and HumanRAM (no code), and the single-photo full-body models (IDOL,
+  AniGS, PSHuman: same class as DiGS).
+
 ## NEW (Sat 2:35 AM): LHM++ may replace the two-model chain; your bridge is up
 
 1. **LHM++ is under test** (aigc3d/LHM-plusplus, March 2026, from LAM's lab). It builds one animatable full-body
