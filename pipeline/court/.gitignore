@@ -1,0 +1,7 @@
+# Court Side clip tools: code only. Footage, frames, masks, calibrations, clips and run folders stay outside the repo.
+*
+!.gitignore
+!*.py
+!*.sbatch
+!*.sh
+!*.md
