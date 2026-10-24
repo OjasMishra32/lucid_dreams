@@ -10,15 +10,13 @@ The `.gitignore` admits only `*.py`, `*.sbatch`, `*.sh` and `*.md`. Run Python w
 | `camgeom.py` | Camera maths shared with the calibration (one centre, per-frame R, f, k1) |
 | `player_clip.py` | Builds one player's clip set: the window on the replay's grid of unique frames, the union of the player's mask boxes on the still camera, a fixed 9:16 clip window composited onto a plain background (the people in front of them are cut out and never fill the hole), `input.mp4` at 25 fps, `source-4k.mkv` (frame k = the reference frame's native pixels around the player), `masks/` and `ignore/` at k, `court-run.json`, `job.json`, and contact sheets to check by eye |
 | `check_prepped.py` | After a run's views: are `prepped.mp4`'s 121 frames ours, in order, at 40 dB or better? |
-| `court-submit.sh` | On HiPerGator: preflight, then one run's chain (views, three freeze caps + a metrics recon, exports, cleanups). K and FOCAL come from the run's `court-run.json` |
-| `court-freeze.sbatch`, `court-export.sbatch`, `court-clean.sbatch` | The jobs it chains |
-| `court-grid.sh` (Mac) + `court-grid-hpg.sh` | The freeze A/B grid in one command: uploads, then per run its views and, per variant (raw views, SeedVR2 2x), a 300k freeze, a held-out metrics recon and an export; waves sized to the group's free space; views dropped as their recons end |
-| `court-winner.sh` | The grid's winner gets its 250k and 200k caps, then its views go |
-| `court-ab.sh` | One labelled A/B freeze (`views`, `up`, `agree`) into `ab-*`; `--source-agree` is refused anywhere else |
-| `court_grid_report.py` | The grid's numbers side by side (held-out PSNR/SSIM, real-frame PSNR, face, IoU, focal) |
-| `court-turbo-clean.sh` | Deletes one Turbo check's run folder by id (never via `$RUN`) |
 | `extra_view.py` | Another calibrated camera's frame of the freeze, cropped natively around one player, with mask, ignore, focal and camera |
-| `court-dryrun.sh` | Runs any of the scripts above here against a fake `$L` with `sbatch` and `blue_quota` stubbed, and prints the chain |
+| `court-job.sbatch` | One run's whole freeze grid on one GPU node, in node-local scratch: views, SeedVR2 2x, per variant (`raw`/`up` x `default`/`agree`) a freeze per cap, a held-out metrics recon and an export; only results come back to `$L/runs/<id>/`. K and FOCAL are read from the uploaded `court-run.json` when each recon starts |
+| `court-job-submit.sh` | Login node (bash and awk only): checks every run, then one `sbatch` per run |
+| `court-grid.sh` | From the Mac: uploads the scripts and the run folders, then runs `court-job-submit.sh` there |
+| `court_grid_report.py` | The numbers side by side (held-out PSNR/SSIM, real-frame PSNR, face, IoU, focal) |
+| `court_fetch_seedvr2.py` | SeedVR2's weights into scratch, hash-checked |
+| `court-dryrun.sh` | Runs a login-node script here against a fake `$L` with `sbatch` and `blue_quota` stubbed |
 
 ## Make the clips (Mac)
 
@@ -31,22 +29,13 @@ Look at `<out>/<set>/sheet.jpg`, `edge-<k>.png` and `k-vs-ref.png` before upload
 
 ## Upload and submit
 
+With the HiPerGator session open (`ssh hpg true`):
 ```bash
-# Mac, once per run id
-pipeline/court/court-dryrun.sh <out>/runs/<id>                     # the exact chain, nothing submitted
-rsync -a <out>/runs/<id>/ <hpg>:<L>/data/court/<id>/
-# HiPerGator (the code synced to <L>/code/pipeline/court/ from a checkout of court-side)
-bash <L>/code/pipeline/court/court-submit.sh <id>                   # full quality
-VIEWS_ONLY=1 bash <L>/code/pipeline/court/court-submit.sh <id>      # the Turbo checks (job.json "turbo": true)
+PLAN=1 pipeline/court/court-grid.sh <out>/runs [id...]    # uploads, runs the checks, submits nothing
+NGPU=4 pipeline/court/court-grid.sh <out>/runs [id...]    # one court-job per run; job ids printed
+python3 <L>/code/pipeline/court/court_grid_report.py <L>/runs/court-*   # on a compute node or the Mac, once fetched
 ```
-`court-submit.sh` submits nothing if a file is missing, the ids or the focal disagree, the run was submitted before,
-or the group quota has less than `MIN_GB` (20) free.
-
-The grid instead (HiPerGator session open with `ssh hpg true`):
-```bash
-PLAN=1 pipeline/court/court-grid.sh <out>/runs     # uploads, shows waves, GPU-hours and peak disk; submits nothing
-pipeline/court/court-grid.sh <out>/runs            # submits everything
-```
+The winner's other caps: a new run id for the same set, with `VARIANTS=<views:mode> CAPS="250000 200000" METRICS=0`.
 
 ## Tests
 

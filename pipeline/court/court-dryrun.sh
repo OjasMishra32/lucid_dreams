@@ -1,13 +1,14 @@
 #!/bin/bash
-# Court Side: run court-submit.sh (or SCRIPT=court-grid-hpg.sh, court-ab.sh, court-winner.sh) on this machine against a
-# fake $L, with sbatch and blue_quota stubbed, to see the exact chain it would submit.
+# Court Side: run court-job-submit.sh (or SCRIPT=<another login-node script>) on this machine against a fake $L, with
+# sbatch and blue_quota stubbed, to see exactly what it would submit.
 # Usage: court-dryrun.sh <run folder>... [more args]   (each folder's name is a run id; other args follow the ids)
 # The folders go to $L/data/court/<id> (or INTO=runs: $L/runs/<id>, as after a submit).
-# Env: FREE_T (the stub quota's free space in TB, default 0.2), SEEDVR2=0 (its weights absent), plus anything the
-# script reads (VIEWS_ONLY, CAPS, VARIANTS...). The stub sbatch refuses a script that doesn't exist in this checkout.
+# Env: FREE_T (the stub quota's free space in TB, default 0.2), NO_PYTHON=1 (fail on any python call), SEEDVR2=0
+# (its weights absent), plus anything the
+# script reads (VARIANTS, NGPU, DRY...). The stub sbatch refuses a script that doesn't exist in this checkout.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-SCRIPT=${SCRIPT:-court-submit.sh}; INTO=${INTO:-data/court}
+SCRIPT=${SCRIPT:-court-job-submit.sh}; INTO=${INTO:-data/court}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/code" "$T/$INTO" "$T/models/seedvr2"
@@ -45,11 +46,16 @@ blue2         4k     0k       0k       -              1
 EOF
 SH
 chmod +x "$T/bin/sbatch" "$T/bin/blue_quota"
+if [ "${NO_PYTHON:-0}" = 1 ]; then  # a login node: any python call is a failure
+  for py in python python3; do printf '#!/bin/sh\necho "$0 $*" >> "%s/python.log"; exit 99\n' "$T" > "$T/bin/$py"; done
+  chmod +x "$T/bin/python" "$T/bin/python3"
+fi
 touch "$T/sbatch.log"
 set +e
 L=$T SBATCH_LOG=$T/sbatch.log PATH="$T/bin:$PATH" bash "$HERE/$SCRIPT" ${IDS[@]+"${IDS[@]}"} ${ARGS[@]+"${ARGS[@]}"}
 rc=$?
 set -e
+if [ -s "$T/python.log" ]; then echo "PYTHON WAS CALLED: $(cat "$T/python.log")"; rc=1; fi
 echo "--- exit $rc; sbatch calls:"
 sed "s#$T#\$L#g" "$T/sbatch.log" 2>/dev/null || echo "(none)"
 for id in ${IDS[@]+"${IDS[@]}"}; do
