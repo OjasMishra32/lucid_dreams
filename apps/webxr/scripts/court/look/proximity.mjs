@@ -1,4 +1,4 @@
-// P17 (stream E's part of scenarios/walk.mjs, and look.mjs): an eye 0.2 m from a torso or head capsule fades that
+// P17 (scenarios/proximity.mjs): an eye 0.2 m from a torso or head capsule fades that
 // player to 30% within 300 ms (+1 frame); an eye 0.3 m from the ball fades nothing. Freeze.update runs once a display
 // frame with the eye in court space: court.ts's own call in the open world, else this drives it (the phases that
 // reach the freeze wait on the clock and the hand-off).

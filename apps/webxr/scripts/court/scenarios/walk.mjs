@@ -2,8 +2,6 @@
 // placement never changes after Seat here; seat.ts is its only writer), and P17 once the freeze is built (an eye 0.2 m
 // from a torso or head capsule fades that player to 30% within 300 ms; 0.3 m from the ball or a hand fades nothing).
 // Owner: stream C (P17: stream E).
-import { checkProximity } from "../look/proximity.mjs";
-
 export const owner = "C (core)";
 export const needs = ["seat", "seatmath"];
 
@@ -22,6 +20,6 @@ export default async function walk(ctx) {
     worst = Math.max(worst, Math.hypot(...w.position.map((v, k) => v - placed.position[k])) * 1000, Math.abs(w.yaw - placed.yaw) * 1000);
   }
   ctx.check("no drift over 17 poses", worst === 0, `worst ${worst.toFixed(3)} mm (or mrad of yaw)`);
-  if (ctx.modules.freeze) await checkProximity(ctx); // stream E's P17 (scripts/court/look/proximity.mjs)
+  if (ctx.modules.freeze) ctx.check("P17: capsule fade", false, "not written yet (stream E)");
   else ctx.report.proximity = "waiting on freeze (stream E)";
 }

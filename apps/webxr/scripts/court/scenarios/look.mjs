@@ -2,11 +2,11 @@
 // field, the world, the freeze), driven straight through the light field before Seat here, so it runs ahead of the
 // clock and the hand-off; P44 through court.ts's own phases is the handoff scenario's.
 //   P33: alpha 255 on every frame. P44: no light change over 1 grey level per display frame (the 16 x 9 grid; the
-//   CPU twin in lightfield.test.ts holds it per pixel up to SAFE_LUMA). P28: the house goes down while the pair's own
-//   pixels move <= 1 grey level. P23: the Reality check tints what was never filmed. P17: the capsule fade.
+//   CPU twin in lightfield.test.ts holds it per pixel on the encoded byte, dither included, up to SAFE_GREY). P28: the
+//   house goes down while the pair's own pixels move <= 1 grey level. P23: the Reality check tints what was never
+//   filmed. (P17, the capsule fade, is scenarios/proximity.mjs.)
 // Owner: stream E.
 import { HZ, alphaOk, blueRatio, lumaAt, runLight, sitAtSeat, worstStep } from "../look/view.mjs";
-import { checkProximity } from "../look/proximity.mjs";
 
 export const owner = "E (look)";
 export const needs = ["light", "world", "freeze"];
@@ -49,7 +49,6 @@ export default async function look(ctx) {
   const r0 = blueRatio(ctx, "look-open");
   const r1 = blueRatio(ctx, "look-reality");
   ctx.check("the Reality check tints what was never filmed blue (P23)", r1 > r0 * 1.2, `blue / red ${r0.toFixed(2)} -> ${r1.toFixed(2)}`);
-  await checkProximity(ctx);
   ctx.report.luma = { watch: a[0].luma, freeze: a.at(-1).luma, open: b.at(-1).luma, pairBefore: before, pairAfter: after };
   ctx.report.frames = all.map(({ thumb, view, ...f }) => f);
 }

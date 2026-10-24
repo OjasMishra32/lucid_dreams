@@ -46,6 +46,21 @@ export function fadeStep(opacity: number, near: boolean, dt: number): number {
   return near ? Math.max(FADE_TO, opacity - step) : Math.min(1, opacity + step);
 }
 
+/**
+ * Whether court (x, z) is inside the bounds polygon ([x, z] corners in order, either way round; even-odd rule). No
+ * bounds, or fewer than 3 corners: nothing is inside.
+ */
+export function inBounds(x: number, z: number, bounds: readonly (readonly [number, number])[] | null): boolean {
+  if (!bounds || bounds.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = bounds.length - 1; i < bounds.length; j = i++) {
+    const [xi, zi] = bounds[i];
+    const [xj, zj] = bounds[j];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 /** A court point in camera F's image, as a texture coordinate of a frame scaled to any width (v up, flipY images). */
 export function projectUv(cam: { centre: Vec3; q: Quat; f: number; cx: number; cy: number; width: number; height: number }, p: Vec3): [number, number] | null {
   const [x, y, z, w] = cam.q;
@@ -216,6 +231,9 @@ interface Person {
   floorK: { value: number };
   /** A relief extra's (unlit) materials, faded like splats. */
   reliefMats: THREE.Material[];
+  /** Court [x, z] under them, and whether that is inside the room's bounds (an extra there stays in the room). */
+  foot: [number, number];
+  inside: boolean;
 }
 
 export class Freeze {
@@ -232,6 +250,7 @@ export class Freeze {
   private readonly realityU = { value: 0 };
   private revealP = 0;
   private realityOn = false;
+  private roomBounds: [number, number][] | null = null;
 
   /** Splats and maps go in `world` (court space). */
   constructor(world: THREE.Group, bundle: CourtBundle, spark: SparkRenderer, light: LightField) {
@@ -321,7 +340,7 @@ export class Freeze {
       if (reality) reality.visible = false;
       const person: Person = {
         id: p.id, pair: p.pair, fromC: p.fromC, normal, reality, splats: meshes, capsules: p.capsules, opacity: 1,
-        lightPerson, lit, floorK: { value: 0 }, reliefMats,
+        lightPerson, lit, floorK: { value: 0 }, reliefMats, foot: p.foot, inside: inBounds(p.foot[0], p.foot[1], this.roomBounds),
       };
       const sub = new THREE.Group();
       sub.name = `court-freeze-${p.id}`;
@@ -394,6 +413,16 @@ export class Freeze {
     }
   }
 
+  /**
+   * The room's bounds in court space, [x, z] corners in order (court.ts after Seat here and every seat move; null when
+   * there are none): in See my room an extra whose feet are inside stays, one beyond them goes with the arena (P34).
+   */
+  bounds(points: [number, number][] | null): void {
+    this.roomBounds = points && points.length >= 3 ? points.map(([x, z]) => [x, z] as [number, number]) : null;
+    for (const p of this.people) p.inside = inBounds(p.foot[0], p.foot[1], this.roomBounds);
+    this.applyOpacity();
+  }
+
   /** Once a frame: the capsule proximity fade (head in court space); the reflections follow their person's light. */
   update(head: Head, dt: number): void {
     for (const p of this.people) {
@@ -409,17 +438,18 @@ export class Freeze {
   }
 
   /**
-   * The splats' opacity: the proximity fade (P17), and the extras going with the arena in the room (their feet are
-   * outside a room-sized boundary; the pair and the ball always stay). Spark regenerates a mesh only when its opacity
+   * The splats' opacity: the proximity fade (P17), and the extras beyond the room's bounds going with the arena in the
+   * room (the pair, the ball and extras inside the bounds stay). Spark regenerates a mesh only when its opacity
    * changes. Shadows and reflections come up with reveal.
    */
   private applyOpacity(): void {
     const room = this.light.arenaOpacity().floor;
     for (const p of this.people) {
-      const k = p.opacity * (p.pair ? 1 : room);
+      const stays = p.pair || p.inside;
+      const k = p.opacity * (stays ? 1 : room);
       for (const m of p.splats) if (m.opacity !== k) m.opacity = k;
       for (const m of p.reliefMats) m.opacity = k;
-      p.floorK.value = this.revealP * (p.pair ? 1 : room);
+      p.floorK.value = this.revealP * (stays ? 1 : room);
     }
   }
 }

@@ -27,12 +27,35 @@ export default async function room(ctx) {
     const inRoom = out.at(-1);
     ctx.check("open world: the room shows once the veil is off (P34)", inRoom.alphaMin === 0, `alpha min ${inRoom.alphaMin} at 2.2 s`);
     ctx.check("open world: the players and their shadows stay (P34: alpha > 0 on them)", inRoom.alphaMean > 0.5, `alpha mean ${inRoom.alphaMean} (0 = nothing kept)`);
+    // extras beyond the bounds go with the arena, one inside them stays (P34); court.ts hands freeze.bounds the room
+    const kept = await ctx.page.evaluate(() => {
+      const fz = window.__courtLook.freeze;
+      const extras = fz.people.filter((p) => !p.pair);
+      const opacity = () => extras.map((p) => p.splats[0]?.opacity ?? NaN);
+      const around = ([x, z], r) => [[x - r, z - r], [x + r, z - r], [x + r, z + r], [x - r, z + r]];
+      const pair = fz.people.find((p) => p.pair).foot;
+      fz.bounds(null);
+      const none = opacity();
+      fz.bounds(extras.length ? around(extras[0].foot, 1) : null);
+      const inside = opacity();
+      fz.bounds(around(pair, 1.5));
+      const beyond = opacity();
+      const pairStays = fz.people.filter((p) => p.pair).every((p) => p.splats[0]?.opacity === 1);
+      fz.bounds(null);
+      return { extras: extras.map((p) => p.id), none, inside, beyond, pairStays };
+    });
+    if (kept.extras.length)
+      ctx.check(
+        "open world: an extra inside the bounds stays, one beyond them goes (P34)",
+        kept.none[0] === 0 && kept.inside[0] === 1 && kept.beyond[0] === 0 && kept.pairStays,
+        `${kept.extras[0]}: ${kept.none[0]} with no bounds, ${kept.inside[0]} inside, ${kept.beyond[0]} beyond; the pair ${kept.pairStays ? "stays" : "went"}`,
+      );
     const back = await ctx.pressFrames("room", Math.round(0.8 * HZ) + 4);
     const backAt = back.findIndex((f) => f.roomP <= 0);
     ctx.check("open world: back in 0.8 s (P34)", Math.abs(backAt + 1 - 0.8 * HZ) <= 1, `arena back after ${backAt + 1} frames`);
     ctx.check("open world: opaque before and after (P33)", alphaOk(before) && back.at(-1).alphaMin === 255, `alpha min ${Math.min(...before.map((f) => f.alphaMin))} / ${back.at(-1).alphaMin}`);
     await ctx.page.evaluate(() => window.__courtLook.freeze.reveal(0));
-    ctx.report.open = { outAt: outAt + 1, backAt: backAt + 1, veil: veil.alphaMin, inRoom: { alphaMin: inRoom.alphaMin, alphaMean: inRoom.alphaMean } };
+    ctx.report.open = { outAt: outAt + 1, backAt: backAt + 1, veil: veil.alphaMin, inRoom: { alphaMin: inRoom.alphaMin, alphaMean: inRoom.alphaMean }, bounds: kept };
   }
 
   // the edge, always on (P35): whole from 0.6 m, opening between, fully open at 0.3 m and past it
@@ -52,6 +75,7 @@ export default async function room(ctx) {
 
   // See my room in each phase the stubs reach
   await ctx.seatHere();
+  if (ctx.handOver) await ctx.handOver(); // the arrival waits for the hand-over after Seat here (P38)
   const phases = ctx.modules.clock ? ["arrival", "watching"] : ["arrival"];
   for (const phase of phases) {
     if (phase !== "arrival") await ctx.until(phase, HZ * 8);

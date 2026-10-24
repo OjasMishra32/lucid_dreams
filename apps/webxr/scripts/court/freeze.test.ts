@@ -2,7 +2,7 @@
 //   node --experimental-transform-types --test apps/webxr/scripts/court/freeze.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FADE_NEAR, FADE_S, FADE_TO, capsuleDistance, fadeStep, nearBody, projectUv } from "../../src/court/freeze.ts";
+import { FADE_NEAR, FADE_S, FADE_TO, capsuleDistance, fadeStep, inBounds, nearBody, projectUv } from "../../src/court/freeze.ts";
 import { cameraOf, project } from "../../src/court/camera.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
 import { standinBundle } from "./standin.mjs";
@@ -73,4 +73,18 @@ test("the ball's pixels: projectUv is camera.ts's projection from camera F, as a
   const uv = projectUv(cam, court.freeze.ball.centre)!;
   assert.ok(uv[0] > 0 && uv[0] < 1 && uv[1] > 0 && uv[1] < 1, "the ball is in F's frame");
   assert.equal(projectUv(cam, [court.camera.centre[0] - 3, 1, court.camera.centre[2]]), null, "behind the camera");
+});
+
+test("bounds (P34): an extra stays in the room only with its feet inside the bounds; no bounds, none stay", () => {
+  const square: [number, number][] = [[0, 0], [2, 0], [2, 2], [0, 2]];
+  assert.ok(inBounds(1, 1, square), "inside");
+  assert.ok(!inBounds(3, 1, square), "beyond the side");
+  assert.ok(!inBounds(1, -0.01, square), "just past the edge");
+  // a room that isn't convex: an L, walked either way round
+  const ell: [number, number][] = [[0, 0], [3, 0], [3, 1], [1, 1], [1, 3], [0, 3]];
+  assert.ok(inBounds(0.5, 2.5, ell) && inBounds(2.5, 0.5, ell), "in both legs");
+  assert.ok(!inBounds(2, 2, ell), "in the notch");
+  assert.ok(inBounds(0.5, 2.5, [...ell].reverse()), "clockwise too");
+  assert.ok(!inBounds(1, 1, null), "no bounds: nothing is inside");
+  assert.ok(!inBounds(1, 1, [[0, 0], [2, 0]]), "fewer than 3 corners: nothing is inside");
 });
