@@ -34,6 +34,8 @@ elif a and a[0].endswith("inference.py"):
     (out / "metadata.json").write_text("{}"); (out / "gvhmr" / "m.pt").write_bytes(b"x")
 elif a and a[0].endswith("court_fetch_seedvr2.py"):
     rec(); Path(a[1]).mkdir(parents=True, exist_ok=True)
+    if os.environ.get("STUB_FAIL") == "fetch":
+        sys.exit(4)
 elif a and a[0].endswith("inference_cli.py"):
     rec(); out = Path(opt("--output")); out.mkdir(parents=True, exist_ok=True)
     for f in Path(a[1]).glob("*.mp4"):
@@ -176,6 +178,23 @@ class Job(unittest.TestCase):
         self.assertTrue((out / "bundle-raw-default-300k" / "dream.json").exists())
         self.assertFalse((out / "bundle-up-agree-300k").exists())
 
+    def test_seedvr2_failure_keeps_the_raw_variants(self):
+        p = self.run_job(STUB_FAIL="fetch")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("SeedVR2 FAILED: going on with raw:default raw:agree", p.stdout)
+        out = self.L / "runs" / self.id
+        self.assertTrue((out / "bundle-raw-default-300k" / "dream.json").exists())
+        self.assertTrue((out / "bundle-raw-agree-300k" / "dream.json").exists())
+        self.assertEqual(len(self.recons()), 4)
+        self.assertTrue(all(f"--source-masks {self.data}/masks " in " ".join(c["args"]) for c in self.recons()))
+
+    def test_caps_are_checked(self):
+        for caps in ("300k", "300000 300400"):
+            p = self.run_job(CAPS=caps)
+            self.assertNotEqual(p.returncode, 0, caps)
+            self.assertIn("cap", p.stderr)
+        self.assertEqual(self.calls, [])
+
     def test_too_little_scratch_stops_before_anything(self):
         p = self.run_job(MIN_SCRATCH_GB="999999999")
         self.assertNotEqual(p.returncode, 0)
@@ -244,6 +263,24 @@ class Submit(unittest.TestCase):
         self.assertEqual(calls(out), [])
         rc, out = dryrun(make_data(self.root, "court-def-s2"), NGPU="2")
         self.assertIn("--gres=gpu:2 ", calls(out)[0])
+
+    def test_same_id_twice(self):
+        a = make_data(self.root, "court-main-s2")
+        rc, out = dryrun(a, a)
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(calls(out), [])
+
+    def test_mask_at_k_must_be_there(self):
+        d = make_data(self.root, "court-def-s1", k=117)
+        (d / "court-run.json").write_text(json.dumps({"id": "court-def-s1", "K": 118, "FOCAL": 1.0}, indent=1))
+        rc, out = dryrun(d)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("masks/000118.png", out)
+
+    def test_slow_quota_output_is_read_to_the_end(self):
+        rc, out = dryrun(make_data(self.root, "court-main-s2"), QUOTA_SLOW="1")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(calls(out)), 1)
 
     def test_bad_id(self):
         rc, out = dryrun(make_data(self.root, "Court-Main"))

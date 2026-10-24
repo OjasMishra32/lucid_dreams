@@ -9,11 +9,15 @@ set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 source "$(dirname "$0")/court-lib.sh"
 (( $# )) || fail "no run ids"
+seen=" "
 for id in "$@"; do
   [[ $id =~ ^court-[a-z0-9][a-z0-9-]*$ ]] || fail "id '$id'"
+  [[ $seen != *" $id "* ]] || fail "$id given twice"; seen="$seen$id "
   d=$L/data/court/$id
   for f in input.mp4 job.json court-run.json source-4k.mkv; do test -s "$d/$f" || fail "missing $d/$f"; done
-  ls "$d"/masks/*.png "$d"/ignore/*.png >/dev/null 2>&1 || fail "no masks/ or ignore/ PNG in $d"
+  K=$(grep -Eo '"K": *[0-9]+' "$d/court-run.json" | grep -Eo '[0-9]+$' || true)
+  [[ $K =~ ^[0-9]+$ ]] && (( K <= 120 )) || fail "$d/court-run.json has no K (0-120)"
+  for f in "masks/$(printf %06d "$K").png" "ignore/$(printf %06d "$K").png"; do test -s "$d/$f" || fail "missing $d/$f"; done
   for f in job.json court-run.json; do
     grep -Eq "\"id\": *\"$id\"" "$d/$f" || fail "$d/$f is not for $id"
   done
