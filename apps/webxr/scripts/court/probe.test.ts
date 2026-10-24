@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { project } from "../../src/court/camera.ts";
-import { viewOf } from "../../src/court/probe.ts";
+import { Probe, STAMP, viewOf } from "../../src/court/probe.ts";
 
 /** The pixel (OpenCV: (0, 0) the top-left pixel's centre) three.js draws a court point at, inside the eye's viewport. */
 function drawnAt(eye: THREE.PerspectiveCamera, world: THREE.Object3D, p: [number, number, number]): [number, number] {
@@ -75,4 +75,98 @@ test("viewOf: the viewport is reported top-down for the read-back frame", () => 
   const view = viewOf(eye, world, 1280, 720);
   assert.deepEqual(view.viewport, [640, 360, 640, 360]);
   assert.equal(view.width, 640);
+});
+
+/** A WebGL stand-in for the probe's read-back: scissored clears really paint its buffer (rows bottom up, as GL's). */
+function fakeGl(w: number, h: number) {
+  const px = new Uint8Array(w * h * 4);
+  let scissor = false;
+  let box = [0, 0, w, h];
+  let clear = [0, 0, 0, 0];
+  const gl = {
+    FRAMEBUFFER: 1, RGBA: 2, UNSIGNED_BYTE: 3, SCISSOR_TEST: 4, SCISSOR_BOX: 5, COLOR_CLEAR_VALUE: 6, COLOR_WRITEMASK: 7, COLOR_BUFFER_BIT: 8,
+    drawingBufferWidth: w,
+    drawingBufferHeight: h,
+    bindFramebuffer: () => {},
+    isEnabled: () => scissor,
+    enable: () => (scissor = true),
+    disable: () => (scissor = false),
+    getParameter: (p: number) => (p === 5 ? Int32Array.from(box) : p === 6 ? Float32Array.from(clear) : [true, true, true, true]),
+    colorMask: () => {},
+    scissor: (x: number, y: number, bw: number, bh: number) => (box = [x, y, bw, bh]),
+    clearColor: (r: number, g: number, b: number, a: number) => (clear = [r, g, b, a]),
+    clear: () => {
+      const [x0, y0, bw, bh] = scissor ? box : [0, 0, w, h];
+      for (let y = y0; y < Math.min(h, y0 + bh); y++)
+        for (let x = x0; x < Math.min(w, x0 + bw); x++) px.set(clear.map((c) => Math.round(c * 255)), (y * w + x) * 4);
+    },
+    readPixels: (_x: number, _y: number, _w: number, _h: number, _f: number, _t: number, out: Uint8Array) => out.set(px),
+    state: () => ({ scissor, box, clear }),
+  };
+  return gl;
+}
+
+/** The capture's stamp reader (capture.mjs checkStamps), on GL's bottom-up rows: row r's value. */
+function readStamp(px: Uint8Array, w: number, row: number): number {
+  let v = 0;
+  for (let b = 0; b < STAMP.bits; b++) {
+    const x = (b + 2) * STAMP.cell + STAMP.cell / 2;
+    const y = row * STAMP.cell + STAMP.cell / 2;
+    v = (v << 1) | (px[(y * w + x) * 4] >= 128 ? 1 : 0);
+  }
+  return v;
+}
+
+function probeFor(query: string, frame: { frame: number; onScreen: number }) {
+  const g = globalThis as unknown as { window?: unknown; location?: unknown };
+  g.window = globalThis;
+  g.location = { search: query };
+  const clock = { frame: frame.frame, segment: "pass1", ease: null, speed: 1, nextEase: null, nextJump: null, armed: false, pass: 1, segmentFrame: 0 };
+  return new Probe("capture", {
+    snapshot: () => ({ phase: "watching", setup: false, clock, onScreen: frame.onScreen, still: 0, lightsUp: 0, tF: 0, roomP: 0, fed: frame.frame, lightBeat: "", lightT: 0, xrHz: 72, clockHz: 72 }),
+    seatHere: () => {},
+    press: () => {},
+    modules: {},
+    stats: () => null,
+    view: () => null,
+  });
+}
+
+test("lockstep: the frame loop runs only the frames step() asks for, and each step resolves with its own frame", async () => {
+  const probe = probeFor("?mode=court", { frame: 7, onScreen: 7 });
+  const gl = fakeGl(320, 48) as unknown as WebGL2RenderingContext;
+  assert.equal(probe.run(), true, "free-running until lockstep");
+  probe.api.lockstep(true);
+  assert.equal(probe.run(), false, "held: no frame was asked for");
+  const one = probe.api.step(false);
+  const two = probe.api.step(true);
+  assert.equal(probe.run(), true);
+  probe.afterRender(gl, 1);
+  assert.equal(probe.run(), true);
+  probe.afterRender(gl, 1);
+  assert.equal(probe.run(), false, "two steps, two frames, then held again");
+  const [a, b] = await Promise.all([one, two]);
+  assert.deepEqual([a.n, b.n], [0, 1]);
+  assert.equal(a.pixels, undefined);
+  assert.equal(Buffer.from(b.pixels!, "base64").length, 320 * 48 * 4);
+  probe.api.lockstep(false);
+  assert.equal(probe.run(), true);
+});
+
+test("stamp: ?stamp paints the display frame, the show frame and the frame on screen, and puts GL's state back", async () => {
+  const probe = probeFor("?mode=court&stamp", { frame: 1234, onScreen: -1 });
+  const fake = fakeGl(320, 48);
+  const gl = fake as unknown as WebGL2RenderingContext;
+  probe.api.lockstep(true);
+  const steps = [probe.api.step(false), probe.api.step(false), probe.api.step(true)];
+  for (let i = 0; i < 3; i++) {
+    probe.run();
+    probe.afterRender(gl, 1);
+  }
+  const f = (await Promise.all(steps))[2];
+  const px = new Uint8Array(Buffer.from(f.pixels!, "base64"));
+  assert.deepEqual([0, 1, 2].map((row) => readStamp(px, 320, row)), [2, 1234, 0xffff]);
+  assert.equal(px[(STAMP.cell / 2) * 320 * 4 + (STAMP.cell / 2) * 4], 255, "white guard");
+  assert.equal(px[(STAMP.cell / 2) * 320 * 4 + (STAMP.cell + STAMP.cell / 2) * 4], 0, "black guard");
+  assert.deepEqual(fake.state(), { scissor: false, box: [0, 0, 320, 48], clear: [0, 0, 0, 0] });
 });
