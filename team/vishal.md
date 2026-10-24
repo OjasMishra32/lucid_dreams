@@ -141,3 +141,15 @@ teammate**, never a public figure's face (the legends stay engine ratings only; 
 1. **Your own avatar first** (after the fine-tune table): a head-to-toe photo of you -> `digs-sample` -> bundle `vishal`.
    That one avatar is the chess opponent, the "you, perfected" subject and the first avatar in the demo.
 2. Then the seated idle and reach-and-place motions (above), so the opponent sits and moves its own pieces.
+
+## Log in to HiPerGator from anywhere (2 minutes, once)
+
+You don't need to be at Ojasva's Mac. Do this once:
+1. Put an SSH key on your GitHub: `ssh-keygen -t ed25519` (if you have none), then paste `~/.ssh/id_ed25519.pub`
+   at github.com/settings/keys. Tell Ojasva when it's there.
+2. Ojasva runs `zsh pipeline/hpg/share-login.sh` and texts you the `ssh ...@uptermd.upterm.dev` line it prints.
+3. Run that line in your own terminal: type your HiPerGator password, approve Duo. It closes by itself.
+
+Only your GitHub keys can join, you get nothing but that login (no shell or files on his Mac), and your password
+goes straight from your keyboard to HiPerGator. Each of us getting our own HiPerGator account under the group is the
+proper fix after the weekend.
