@@ -480,6 +480,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     stats?.frame(phase, interval, performance.now() - frameStart);
   };
   renderer.setAnimationLoop((time) => {
+    if (probe && !probe.run()) return; // the capture's lockstep: only the frames it steps (probe.ts)
     frameStart = performance.now();
     try {
       onFrame(time);

@@ -4,6 +4,10 @@
 // - `?probe=capture`: every rendered frame read back in the page right after renderer.render (readPixels on IWER's
 //   default framebuffer), logged as alpha min/mean, mean luma and a 16 x 9 luma thumbnail; full frames on request
 //   (save(name) hands RGBA to window.__courtSave, which the runner writes as a PNG);
+// - `?probe=capture` lockstep (scripts/court/capture/capture.mjs): the loop runs only the frames step() asks for, so
+//   a slow read-back never costs a display frame; step(true) hands back that frame's raw pixels, and `&stamp` paints
+//   the display frame, the clock's show frame and the frame on the video texture into the bottom-left corner as
+//   black / white cells (STAMP), which the capture reads back out of the encoded video;
 // - `?probe=timing`: no read-back; CPU ms per frame and GPU ms per renderer.render, per phase (stats.ts);
 // - window.__court: the test API (state, seatHere, press, stepping);
 // - every captured frame carries the view it was drawn from (court space), so the e2e can render the stand-in's true
@@ -68,6 +72,17 @@ export interface ProbeView {
   viewport: [number, number, number, number];
 }
 
+/** The stamp's cells: three rows (display frame, clock frame, frame on screen; bottom row first) of a white and a black
+ * guard cell then 16 bits, most significant first, each STAMP.cell pixels square from the bottom-left corner. */
+export const STAMP = { cell: 12, bits: 16, rows: 3 } as const;
+
+/** A lockstep frame: its log, plus its pixels when asked (RGBA, bottom row first, base64). */
+export interface ProbeGrab extends ProbeFrame {
+  width: number;
+  height: number;
+  pixels?: string;
+}
+
 /** What court.ts gives the probe. */
 export interface ProbeHooks {
   snapshot(): { phase: Phase; setup: boolean; clock: ClockState; onScreen: number; still: number; lightsUp: number; tF: number; roomP: number; fed: number; lightBeat: string; lightT: number; xrHz: number; clockHz: number; [k: string]: unknown };
@@ -102,6 +117,10 @@ export interface CourtTestApi {
   timing(): ReturnType<FrameStats["report"]> | null;
   /** Step every XR frame by 1 / hz s instead of one display frame of the show (a 90 Hz headset playing the 72 Hz bake), or back with null. */
   setRate(hz: number | null): void;
+  /** Lockstep on: the frame loop runs only the frames step() asks for (capture only); off: every XR frame again. */
+  lockstep(on: boolean): void;
+  /** Lockstep: run one frame; resolves with its log, and its pixels when `grab`. */
+  step(grab: boolean): Promise<ProbeGrab>;
 }
 
 declare global {
@@ -120,6 +139,10 @@ export class Probe {
   private saves: { name: string; done: (f: ProbeFrame) => void }[] = [];
   private buf: Uint8Array | null = null;
   private readonly hooks: ProbeHooks;
+  private locked = false;
+  private granted = 0;
+  private steps: { grab: boolean; done: (f: ProbeGrab) => void }[] = [];
+  private readonly stamp = new URLSearchParams(location.search).has("stamp");
 
   constructor(param: string | null, hooks: ProbeHooks) {
     this.mode = param === "timing" ? "timing" : "capture";
@@ -154,6 +177,13 @@ export class Probe {
       setRate: (hz) => {
         this.rate = hz && hz > 0 ? hz : null;
       },
+      lockstep: (on) => {
+        this.locked = on && this.mode === "capture";
+      },
+      step: (grab) => {
+        this.granted++;
+        return new Promise((done) => this.steps.push({ grab, done }));
+      },
     };
     this.api = api;
     window.__court = api;
@@ -162,6 +192,14 @@ export class Probe {
   /** The dt every probed frame advances by: one period of the headset's rate (or 1 / the rate setRate chose). */
   dt(xrHz: number): number {
     return 1 / (this.rate ?? xrHz);
+  }
+
+  /** Whether this XR frame runs (court.ts asks at the top of every frame): always, unless lockstep holds it. */
+  run(): boolean {
+    if (!this.locked) return true;
+    if (!this.granted) return false;
+    this.granted--;
+    return true;
   }
 
   /** Right after renderer.render, inside the XR frame: read back (capture), log, wake the waiters. */
@@ -179,6 +217,7 @@ export class Probe {
       if (!this.buf || this.buf.length !== w * h * 4) this.buf = new Uint8Array(w * h * 4);
       const px = this.buf;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (this.stamp) paintStamp(gl, [this.n - 1, s.clock.frame, s.onScreen]);
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
       let aMin = 255;
       let aSum = 0;
@@ -206,6 +245,8 @@ export class Probe {
       const view = this.hooks.view();
       if (view) f.view = view;
       if (this.saves.length) this.flushSaves(px, w, h, f);
+      const step = this.steps.shift();
+      if (step) step.done({ ...f, width: w, height: h, ...(step.grab ? { pixels: toBase64(px) } : {}) });
     }
     this.waiters.splice(0).forEach((resolve) => resolve(f));
   }
@@ -213,9 +254,7 @@ export class Probe {
   private flushSaves(px: Uint8Array, w: number, h: number, f: ProbeFrame): void {
     const flipped = new Uint8Array(w * h * 4);
     for (let y = 0; y < h; y++) flipped.set(px.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
-    let bin = "";
-    for (let i = 0; i < flipped.length; i += 0x8000) bin += String.fromCharCode(...flipped.subarray(i, i + 0x8000));
-    const b64 = btoa(bin);
+    const b64 = toBase64(flipped);
     for (const s of this.saves.splice(0)) {
       const send = window.__courtSave;
       const done = () => s.done(f);
@@ -226,6 +265,36 @@ export class Probe {
       }
     }
   }
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** The stamp (STAMP) on the bound framebuffer: one row per value, -1 as all ones; the GL state it touches is put back. */
+function paintStamp(gl: WebGL2RenderingContext, values: number[]): void {
+  const scissor = gl.isEnabled(gl.SCISSOR_TEST);
+  const box = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
+  const clear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array;
+  const mask = gl.getParameter(gl.COLOR_WRITEMASK) as boolean[];
+  gl.enable(gl.SCISSOR_TEST);
+  gl.colorMask(true, true, true, true);
+  const c = STAMP.cell;
+  values.forEach((value, row) => {
+    const v = value & 0xffff;
+    for (let k = 0; k < STAMP.bits + 2; k++) {
+      const on = k === 0 || (k > 1 && (v >> (STAMP.bits - 1 - (k - 2))) & 1);
+      gl.scissor(k * c, row * c, c, c);
+      gl.clearColor(on ? 1 : 0, on ? 1 : 0, on ? 1 : 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+  });
+  if (!scissor) gl.disable(gl.SCISSOR_TEST);
+  gl.scissor(box[0], box[1], box[2], box[3]);
+  gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
+  gl.colorMask(mask[0], mask[1], mask[2], mask[3]);
 }
 
 // three's camera looks down -z with y up; OpenCV's looks down +z with y down: a half turn about x
