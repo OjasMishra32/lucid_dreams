@@ -400,25 +400,45 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
     return entry
 
 
-def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, splats_by_id: dict) -> dict:
+def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, splats_by_id: dict, k1F: float = 0.0) -> dict:
+    """The ball at F (plan 2: placed by hand, a 23.9 cm sphere; F's ball pixels are projected onto it at runtime and
+    its unseen side is Reality-marked there). From the config: its centre, or F's ball pixel (`pixel` in the bundle's
+    undistorted source pixels, or `pixelRaw` in the raw frame, undone with camera F's k1) on F's ray at the holder's
+    depth: their nearest Gaussians on that ray, or while their body is the stand-in's, the vertical plane through
+    their soles facing the camera."""
     b = cfg.get("ball") or {}
     first = players[0]["id"]
     erase = [{"player": p["id"], "radius": 0.15} for p in players[:1]]
     if b.get("centre"):
         w.piece("ball", True, "config centre")
         return {"centre": rnd(b["centre"]), "radius": BALL_RADIUS, "erase": erase}
-    if b.get("pixel") and b.get("depthFrom") in splats_by_id:
-        # F's ball pixel on its ray, at the holding player's depth there (the ball's visible face is at the hand)
-        ray = camF.rays(np.array([b["pixel"][0]]), np.array([b["pixel"][1]]))[0]
-        P = splats_by_id[b["depthFrom"]]
+    px = b.get("pixel")
+    if b.get("pixelRaw"):
+        import assemble_stands as stx
+
+        xn, yn = stx.undistort(np.array([(b["pixelRaw"][0] - camF.cx) / camF.f]), np.array([(b["pixelRaw"][1] - camF.cy) / camF.f]), k1F)
+        px = [camF.cx + camF.f * float(xn[0]), camF.cy + camF.f * float(yn[0])]
+    holder = b.get("depthFrom")
+    if px and holder in splats_by_id:
+        ray = camF.rays(np.array([px[0]]), np.array([px[1]]))[0]
+        P = splats_by_id[holder]
         t = (P - camF.C) @ ray
         off = np.linalg.norm((P - camF.C) - np.outer(t, ray), axis=1)
         near = t[off < BALL_RADIUS]
-        if len(near) < 10:
-            raise ValueError(f"ball: fewer than 10 of {b['depthFrom']}'s Gaussians lie on the ball's ray")
-        centre = camF.C + (np.percentile(near, 10) + BALL_RADIUS) * ray
-        w.piece("ball", True, f"F's ball pixel at {b['depthFrom']}'s depth")
-        return {"centre": rnd(centre), "radius": BALL_RADIUS, "erase": [{"player": b["depthFrom"], "radius": 0.15}]}
+        real_body = w.pieces.get(f"player:{holder}", {}).get("source") == "real"
+        if len(near) >= 10:
+            centre = camF.C + (np.percentile(near, 10) + BALL_RADIUS) * ray
+            how = f"F's ball pixel at {holder}'s depth there"
+        elif not real_body:
+            p = next(pl for pl in players if pl["id"] == holder)
+            foot = np.array([p["_"]["contact"][0], 0.0, p["_"]["contact"][1]])
+            n = np.array([ray[0], 0.0, ray[2]])
+            centre = camF.C + float((foot - camF.C) @ n / (ray @ n)) * ray
+            how = f"F's ball pixel at the depth of {holder}'s soles (the body is still the stand-in's)"
+        else:
+            raise ValueError(f"ball: fewer than 10 of {holder}'s Gaussians lie on the ball's ray; check the ball pixel")
+        w.piece("ball", True, how, pixel=rnd(px, 2))
+        return {"centre": rnd(centre), "radius": BALL_RADIUS, "erase": [{"player": holder, "radius": 0.15}]}
     # the stand-in ball, carried with the first player's placement (it sits in their hand)
     sim = players[0]["_"]["sim"]
     w.piece("ball", False, f"stand-in ball carried with {first}'s placement")
@@ -664,7 +684,11 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         slots = cfg.get("players") or [{} for _ in S["freeze"]["players"]]
         players = [place_player(w, slot, i % len(S["freeze"]["players"]), standin, S, camF, camF_standin) for i, slot in enumerate(slots)]
         splats_by_id = {p["id"]: sp.solid(sp.read_ply(tmp / p["splats"])) for p in players}
-        ball = ball_piece(w, cfg, S, players, camF, splats_by_id)
+        k1F = 0.0
+        if calib is not None:
+            f_real = (cfg.get("source") or {}).get("freezeSource", video["freezeSource"])
+            k1F = calib.k1[int(np.argmin(np.abs(np.asarray(calib.src) - f_real)))]
+        ball = ball_piece(w, cfg, S, players, camF, splats_by_id, k1F)
         seat_cfg = {**SEAT, **(cfg.get("seat") or {})}
         pair = np.mean([p["_"]["contact"] for p in players], 0)
         pair_centre = [round(float(pair[0]), 3), 0.0, round(float(pair[1]), 3)]
