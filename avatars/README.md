@@ -37,13 +37,14 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | `detail.py` | Hands and face pass: face and hand regions from posed joints, 2x close-up cameras, the view resampled into them |
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
 | `results_page.py` | `python -m lucid_avatars results <work dir>`: a fine-tune's table and renders into this README's Results section |
+| `frame_pick.py` | A clip's best frames for LHM++: sharpness (Laplacian variance on the person region), near-duplicate and junk rejection, a greedy pick spread over the clip, a PNG contact sheet |
 | `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
 | `head_swap.py` | LAM's one-photo head on a consenting person's own avatar: consent gate, FLAME-to-SMPL-X fit, jaw-line seam, skinning, skin tone, the `<id>-head` bundle |
 | `head_distill_core.py` | The head distill's plain parts: consent gates, the teacher's view sphere and cameras.json, cameras into the avatar's frame, seeding on SMPL-X head faces with barycentric skinning, the opacity floor, seam masks, colour from the teacher's views, the bundle |
 
 GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
 4DAnyone views; `digs_perform.py` an avatar doing someone else's move; `gvhmr_motion.py` and `prep_views.py`
-(4DAnyone env) feed them; `head_swap_render.py` (4DAnyone env) renders a head swap's turntable and side-by-side.
+(4DAnyone env) feed them; `video_frames.py` (numpy + ffmpeg, any env) turns a phone clip into LHM++'s photo folder; `head_swap_render.py` (4DAnyone env) renders a head swap's turntable and side-by-side.
 
 ## One photo -> avatar on HiPerGator (Ojasva submits)
 
@@ -248,7 +249,49 @@ performance or a fine-tune's clip, the 20 s living idle with blinks. `face.json`
 nothing. It refuses (writing nothing) an id in `dreams/.held`, a bundle without skinning, a skeleton that isn't this
 SMPL-X, a FLAME that doesn't fit the head (over 3 cm RMS: wrong ids), and a head swap's own LAM-fitted `expr.bin`. Eyes
 FLAME can't shut skip `expr.bin` and the reorder (reason in `face.json` `expr.skipped`) but still get the idle. It adds
-no likeness, so there is no consent gate. Not yet run on a real DiGS or LHM++ bundle.
+no likeness, so there is no consent gate. Not yet run on a real DiGS or LHM++ bundle; `tests/test_any_face_lhmpp.py` runs it on a bundle written the way `lhmpp_avatar.py` writes one (10 betas on a 400-component SMPL-X, no SH rest bands, 8 s idle, no `reality`, a `source` without `motion`). LHM++'s own export accepts up to 5 mm between its rest joints and ours, any_face 2 mm; both are float noise for the same model and betas, and any_face refuses with the number if it ever isn't (`skeleton.json is N mm from this SMPL-X model`; check `joint_gap_mm` in LHM++'s `report.json`).
+
+## A family clip -> an LHM++ avatar (phone video to photo folder)
+
+LHM++ (`hpg/lhmpp-avatar.sbatch`) wants many photos of one person from one session. A phone clip is that:
+`video_frames.py` keeps the best 8-12 frames as the photos folder. Only people who agreed (AGENTS.md rule 5; a family's
+yes, and for Ian's grandma `team/ian.md`). The tool never uploads anything and writes only inside `--out` (plus
+`--contact`'s path if you give one); on HiPerGator the clip stays there.
+
+```
+# 1. frames: numpy + ffmpeg only (the bridge Mac, or the 4DAnyone env: source pipeline/hpg/env.sh)
+python avatars/video_frames.py clip.mov --out data/avatars/photos/grandma --contact grandma-sheet.png
+#    on the cluster (CPU, minutes): sbatch --export=ALL,NAME=grandma,VIDEO=/blue/.../clip.mov avatars/hpg/video-frames.sbatch
+# 2. look at grandma-sheet.png and photos/grandma/pick.json (drop a frame by deleting its jpg; keep one session, faces clear)
+# 3. the avatar (Ojasva submits; it reads data/avatars/photos/$NAME/*.jpg, up to 16)
+sbatch --export=ALL,NAME=grandma,TITLE="Grandma" avatars/hpg/lhmpp-avatar.sbatch
+# 4. blinks and the living idle, in place (README, "Blinks and the living idle for any SMPL-X avatar")
+sbatch --export=ALL,BUNDLE=grandma-lhm avatars/hpg/blink.sbatch
+```
+
+Moving the photos from the Mac to the cluster is Ojasva's rsync, as for any photo folder. How it picks, per frame
+sampled at `--fps` (default 3), decoded by ffmpeg into a pipe as raw RGB (no image files while scoring):
+
+- **Sharpness**: variance of the Laplacian of the grey region downscaled to at most 256 px, over the person: `--box
+  x0,y0,x1,y1` (fractions of the frame), `--box auto` (what moves, on a still camera; the centre if the camera moves
+  too) or by default the centre 60%. Values compare only inside one clip with one box.
+- **Rejected, with counts in `pick.json`**: mostly black or white, flat (a fade), either side of a cut (`transition`),
+  under 35% of the clip's 90th-percentile sharpness (`blurred`).
+- **Picked greedily**: start at the sharpest; each next frame is the one that differs most (24 x 24 contrast-normalised
+  thumbnail of the region) from every pick, weighted by sharpness, at least `--min-gap` seconds (default 0.25-1 s by
+  clip length) and a set distance from every pick, so no near-duplicates and turns and poses are covered. If that gives
+  under 8, the gap and the limit are halved (`relaxed` in `pick.json`); if it still can't, it says "only N distinct
+  frames" instead of padding with copies. At most `--count` (default 10), never more than 16.
+- **Written**: `frame-01.jpg` ... in time order at full resolution by ffmpeg (upright for a rotated phone clip), and
+  `pick.json` (source name, every frame's time, sharpness and sample number, box, rejected, settings). `--crops` adds
+  `crops.json` from the box (LHM++'s prep cuts every photo to it: use it when a neighbour stands beside her).
+  `--contact` writes a PNG sheet without Pillow, outside the folder (LHM++ reads every png in it). The folder must hold
+  no other photo, and an earlier run's frames need `--overwrite`.
+
+Clips that work best: one person, the whole session in one outfit, light on the face, the person turning a little and
+at least one extended pose (arms out, a step); 20-60 s is plenty. An HDR iPhone clip can look washed out (no tone
+mapping here). Not yet run on a real family clip: tested on synthetic clips, with the frame choice read off a
+contact sheet.
 
 ## Their own voice moves their lips (voice-consenting people only)
 
