@@ -434,6 +434,25 @@ class Job(unittest.TestCase):
         self.assertEqual(a[a.index("--models") + 1], str(d / "models" / "facefix"))
         self.assertFalse((self.L / "envs" / "facefix").exists())
 
+    def test_facefix_env_built_beside_the_job_while_the_views_run(self):
+        hold = self.t / "hold"
+        ref = self.facefix_stack(hold)  # built only once the views have started
+        (hold / "envs" / "facefix" / ".court-facefix-ok").write_text("ok")
+        hook = (f"mkdir -p {self.L}/models && mv {hold}/envs/facefix {self.L}/envs/ && "
+                f"mv {hold}/models/facefix {self.L}/models/")
+        p = self.run_job(FACEFIX=str(ref), FACEFIX_WAIT="5", FACEFIX_POLL_S="0.1", STUB_AFTER_PREP=hook,
+                         VARIANTS="raw:default", REALS="0", METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("the env isn't built yet", p.stdout)
+        k = self.kinds()
+        self.assertLess(k.index("inference.py"), k.index("facefix-refs"))  # checked after the views, once built
+        self.assertLess(k.index("facefix-refs"), k.index("facefix"))
+        self.assertLess(k.index("facefix"), k.index("lucid.recon"))
+        p = self.run_job(FACEFIX=str(ref), FACEFIX_WAIT="5", TAG="again", VARIANTS="raw:default", REALS="0",
+                         METRICS="0")  # built by now: checked up front as usual
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn("the env isn't built yet", p.stdout)
+
     def test_facefix_failure_stops_before_anything_trains(self):
         ref = self.facefix_stack()
         p = self.run_job(FACEFIX=str(ref), STUB_FAIL="facefix", VARIANTS="raw:default", METRICS="0")
@@ -628,6 +647,11 @@ class Submit(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("no facefix env", out)
         self.assertEqual(calls(out), [])
+        rc, out = dryrun(a, FACEFIX=str(ref), FACEFIX_WAIT="40")  # being built beside the job: not checked here
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(calls(out)), 1)
+        rc, out = dryrun(a, FACEFIX=str(ref), FACEFIX_WAIT="x")
+        self.assertIn("FACEFIX_WAIT=x", out)
         for bad, says in ((self.root / "faces" / "none", "no .jpg/.png crops"), ("faces/shooter", "absolute path"),
                           (f"{ref};x", "absolute path")):
             rc, out = dryrun(a, FACEFIX=str(bad), FACEFIX_STACK="1")
