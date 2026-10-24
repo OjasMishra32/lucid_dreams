@@ -413,21 +413,53 @@ for (const hz of [72, 90])
     }
   });
 
+/** Every ±10% pattern a matched display can throw: Codex's slow-then-fast run, correlated runs of many lengths, slow drifts, one-sided runs, dropped frames among them. */
+function matchedPatterns(hz: number): [string, number[]][] {
+  const at = (x: number) => x / hz;
+  const out: [string, number[]][] = [["slow 10 then fast 10 (Codex)", [...Array(10).fill(at(1.09)), ...Array(10).fill(at(0.91))]]];
+  for (const run of [1, 2, 3, 5, 7, 10, 15, 20, 30, 60, 121, 250])
+    out.push([`runs of ${run} slow / ${run} fast`, Array.from({ length: 2000 }, (_, i) => at(Math.floor(i / run) % 2 ? 0.901 : 1.099))]);
+  for (const period of [40, 300, 1000]) out.push([`a drift over ${period} frames`, Array.from({ length: 3000 }, (_, i) => at(1 + 0.099 * Math.sin((2 * Math.PI * i) / period)))]);
+  out.push(["1000 slow, then 1000 fast", Array.from({ length: 2000 }, (_, i) => at(i < 1000 ? 1.099 : 0.901))]);
+  out.push(["runs of 20 with a dropped frame every 37", Array.from({ length: 2000 }, (_, i) => at((i % 37 === 36 ? 2 : 1) * (Math.floor(i / 20) % 2 ? 0.92 : 1.08)))]);
+  for (let seed = 1; seed <= 60; seed++) {
+    out.push([`dt wandering, seed ${seed}`, dtJitter(hz, 1000, 0.099, seed)]);
+    out.push([`vsync-locked with drops, seed ${seed}`, vsyncJitter(hz, 1000, 0.1, 41, seed)]);
+  }
+  return out;
+}
+
+for (const hz of [72, 90])
+  test(`cadence with no known rate at ${hz}/${hz}: never leaves round(dt x displayHz) under any +-10% pattern (correlated runs, drifts, drops)`, () => {
+    for (const [name, dts] of matchedPatterns(hz)) {
+      const c = new Cadence(hz);
+      dts.forEach((dt, i) => {
+        assert.equal(c.steps(dt), stepFrames(dt, hz), `${name}: frame ${i} (dt ${(dt * hz).toFixed(3)} frames)`);
+        assert.ok(c.matched(), `${name}: left the matched rate at frame ${i}`);
+      });
+    }
+  });
+
 for (const out of [60, 90, 120])
-  test(`cadence at ${out} Hz out for a 72 Hz show: real time within one show frame over 10 s (rate known or estimated, jittered and with dropped frames)`, () => {
+  test(`cadence at ${out} Hz out for a 72 Hz show: real time within one show frame throughout 10 s (the session's rate: locked from the first frame; estimated: within 4, 2 at 90 and 120 Hz)`, () => {
     for (const known of [out, null])
-      for (const drop of [0, 53]) {
+      for (const [name, dts] of [["exact", Array.from({ length: 10 * out }, () => 1 / out)], ["jittered", vsyncJitter(out, 10 * out)], ["jittered, drops", vsyncJitter(out, 10 * out, 0.1, 53)]] as const) {
         const c = new Cadence(72);
         c.setOutputHz(known);
         let wall = 0;
         let shown = 0;
         let worst = 0;
-        for (const dt of vsyncJitter(out, 10 * out, 0.1, drop)) {
+        let lock = -1;
+        dts.forEach((dt, i) => {
           wall += dt;
           shown += c.steps(dt);
+          if (lock < 0 && !c.matched()) lock = i + 1;
           worst = Math.max(worst, Math.abs(shown / 72 - wall));
-        }
-        assert.ok(worst <= 1 / 72 + 1e-9, `${known ?? "estimated"} ${out} Hz, drop ${drop}: ${(worst * 72).toFixed(2)} show frames off real time`);
+        });
+        const what = `${known ? "known" : "estimated"} ${out} Hz, ${name}`;
+        assert.ok(lock >= 1 && lock <= (known ? 1 : out === 60 ? 4 : 2), `${what}: locked after ${lock} frames`);
+        assert.ok(worst <= 1 / 72 + 1e-9, `${what}: ${(worst * 72).toFixed(2)} show frames off real time`);
+        assert.ok(Math.abs(shown / 72 - wall) <= 1 / 72, `${what}: ${((shown / 72 - wall) * 72).toFixed(2)} frames off at 10 s`);
         assert.ok(Math.abs(c.outputHz() - out) < 0.5, `rate ${c.outputHz()}`);
       }
   });

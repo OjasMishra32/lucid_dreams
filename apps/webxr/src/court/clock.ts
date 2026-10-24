@@ -24,24 +24,33 @@ export function stepFrames(dt: number, displayHz: number): number {
 
 /** Display rates an output rate snaps to within SNAP (after the show's own rate, which always wins), Hz. */
 const STANDARD_HZ: readonly number[] = [24, 25, 30, 48, 50, 60, 72, 75, 80, 90, 100, 120, 144, 165, 240];
-/** How close an output rate must be to snap, as a fraction (72 and 75 Hz stay apart)... */
+/** How close a rate must be to snap to the show's or a standard rate, as a fraction. */
 const SNAP = 0.02;
-/** ...or, for an estimate, within this many times its uncertainty (a few jittered frame times can't tell 72 from 70). */
-const SNAP_ERRORS = 3;
+/**
+ * An estimated rate counts as a different display only this far from the show's, as a fraction: past the +-10% a
+ * matched display's frame times may wander (P6), so no jitter pattern, however correlated, ever gets there...
+ */
+const MISMATCH = 0.15;
+/** ...and only after this many frames in a row there (the lock: soon enough that the frames stepped by the old rule meanwhile never put the show a frame off real time). */
+const MISMATCH_FRAMES = 2;
 /** Frame times kept for the output-rate estimate when the XR session doesn't give one (a desktop capture). */
 const RATE_SAMPLES = 121;
-/** The newest frame times whose median is the rough period (only to count each frame's periods for the estimate). */
+/** The newest frame times whose lower quartile is the rough period (only to count each frame's periods: dropped frames, the long ones, never move it). */
 const ROUGH_SAMPLES = 15;
-/** Frame times longer than this (a hitch, a tab in the background) never enter the estimate, seconds. */
+/** Frame times outside these (a hitch, a tab in the background; two callbacks at once) never enter the estimate, seconds. */
+const RATE_MIN_DT = 0.002;
 const RATE_MAX_DT = 0.05;
 
 /**
  * Show frames per output frame at any display rate. Each output frame counts the output periods it spans,
  * round(dt x outputHz), which shrugs off +-10% jitter and counts a dropped frame as 2; a Bresenham accumulator turns
  * periods into show frames at displayHz / outputHz, so the show keeps real time at 60, 90 or 120 Hz and steps as
- * evenly as it can (72 on 90: 4 of every 5 frames). At a matched rate that is exactly stepFrames, frame for frame.
- * outputHz is the XR session's frameRate when known (setOutputHz); else it is estimated from the frame times (the
- * time they span over the periods they count, the periods read against their median), snapped to a standard rate.
+ * evenly as it can (72 on 90: 4 of every 5 frames). At a matched rate it is exactly stepFrames, frame for frame.
+ * outputHz is the XR session's frameRate when known (setOutputHz). Otherwise the cadence assumes the show's rate, the
+ * old rule exactly, until the frame times' estimate (the periods they count over the time they span) has been
+ * MISMATCH off it for MISMATCH_FRAMES frames in a row: then it locks onto the estimate (snapped to a standard rate)
+ * and settles the frames it showed at the wrong rate meanwhile, so real time holds from the lock on. A display within
+ * 15% of the show's rate (75 Hz for 72) is only told apart by the session's frameRate.
  */
 export class Cadence {
   readonly showHz: number;
@@ -52,11 +61,16 @@ export class Cadence {
   private next = 0;
   /** Show frames owed, a fraction: starts half a frame in so steps land mid-period; reset whenever the rate matches. */
   private owed = 0.5;
-  /** The last estimate: its rate, Hz, and its relative uncertainty (Infinity from one frame time). */
-  private readonly estimated = { hz: 0, error: Infinity };
+  /** The rate stepped at: the show's (matched) or the output's. */
+  private rate: number;
+  /** Frames in a row the estimate has been MISMATCH off the show's rate, and their time and the show frames they stepped. */
+  private far = 0;
+  private farTime = 0;
+  private farShown = 0;
 
   constructor(showHz: number) {
     this.showHz = showHz;
+    this.rate = showHz;
   }
 
   /** The XR session's frameRate; null, undefined or 0 estimates it from the frame times. */
@@ -64,47 +78,59 @@ export class Cadence {
     this.known = hz && hz > 0 ? hz : null;
   }
 
-  /**
-   * The output rate in use, Hz: the session's, or the estimate; snapped to the show's rate, else the nearest standard
-   * rate, within SNAP (an estimate: within SNAP or SNAP_ERRORS times its uncertainty, whichever is wider); the show's before any frame.
-   */
+  /** The output rate the last step used, Hz (the show's while matched). */
   outputHz(): number {
-    let hz = this.known;
-    let band = SNAP;
-    if (hz === null) {
-      if (!this.estimate()) return this.showHz;
-      hz = this.estimated.hz;
-      band = Math.max(SNAP, SNAP_ERRORS * this.estimated.error);
-    }
-    if (Math.abs(hz / this.showHz - 1) <= band) return this.showHz;
-    let best: number | null = null;
-    for (const c of STANDARD_HZ) if (Math.abs(hz / c - 1) <= band && (best === null || Math.abs(hz - c) < Math.abs(hz - best))) best = c;
-    return best ?? hz;
+    return this.rate;
+  }
+
+  /** True while stepping by the old rule, round(dt x displayHz). */
+  matched(): boolean {
+    return this.rate === this.showHz;
   }
 
   /** Show frames to advance for one output frame of `dt` seconds. */
   steps(dt: number): number {
-    if (dt > 0 && dt <= RATE_MAX_DT) {
+    if (dt >= RATE_MIN_DT && dt <= RATE_MAX_DT) {
       this.dts[this.next] = dt;
       this.next = (this.next + 1) % RATE_SAMPLES;
       this.count = Math.min(this.count + 1, RATE_SAMPLES);
     }
-    const out = this.outputHz();
-    const periods = stepFrames(dt, out);
-    if (out === this.showHz) {
-      this.owed = 0.5; // matched: P6's cadence exactly
-      return periods;
+    const was = this.rate;
+    let settle = 0;
+    if (this.known !== null) {
+      this.rate = snap(this.known, this.showHz);
+      this.far = 0;
+    } else {
+      const hz = this.estimate();
+      if (hz !== null && Math.abs(hz / this.showHz - 1) > MISMATCH) {
+        if (this.far++ === 0) this.farTime = this.farShown = 0;
+        if (this.far >= MISMATCH_FRAMES) {
+          if (was === this.showHz) settle = this.farTime * this.showHz - this.farShown; // the frames shown at the wrong rate
+          this.rate = snap(hz, this.showHz);
+        }
+      } else {
+        this.far = 0;
+        this.rate = this.showHz;
+      }
     }
-    this.owed += (periods * this.showHz) / out;
-    const n = Math.floor(this.owed);
+    if (this.rate === this.showHz) {
+      this.owed = 0.5; // matched: P6's cadence exactly
+      const n = stepFrames(dt, this.showHz);
+      this.farTime += dt;
+      this.farShown += n;
+      return n;
+    }
+    if (was === this.showHz) this.owed = 0.5 + settle;
+    this.owed += (stepFrames(dt, this.rate) * this.showHz) / this.rate;
+    const n = Math.max(0, Math.floor(this.owed));
     this.owed -= n;
     return n;
   }
 
-  /** Estimate the output rate from the kept frame times into `estimated`; false before any. */
-  private estimate(): boolean {
-    if (!this.count) return false;
-    // the rough period: the median of the newest few (an insertion sort into a scratch array, no allocation)
+  /** The output rate from the kept frame times, Hz (null before any): the periods they count over the time they span. */
+  private estimate(): number | null {
+    if (!this.count) return null;
+    // the rough period: the lower quartile of the newest few (an insertion sort into a scratch array, no allocation)
     const m = Math.min(this.count, ROUGH_SAMPLES);
     const r = this.rough;
     for (let i = 0; i < m; i++) {
@@ -113,34 +139,23 @@ export class Cadence {
       for (; j >= 0 && r[j] > x; j--) r[j + 1] = r[j];
       r[j + 1] = x;
     }
-    const period = r[(m - 1) >> 1];
-    // the rate: the periods counted over the time they span; its uncertainty: how far the frames stray from that line
-    // (vsync-locked times stay within a frame's jitter, so it shrinks as 1/n; times that wander, as 1/sqrt(n))
-    const first = this.count < RATE_SAMPLES ? 0 : this.next;
+    const period = r[(m - 1) >> 2];
     let time = 0;
     let periods = 0;
     for (let i = 0; i < this.count; i++) {
-      const dt = this.dts[(first + i) % RATE_SAMPLES];
-      time += dt;
-      periods += Math.max(1, Math.round(dt / period));
+      time += this.dts[i];
+      periods += Math.max(1, Math.round(this.dts[i] / period));
     }
-    const slope = time / periods;
-    let t = 0;
-    let k = 0;
-    let lo = 0;
-    let hi = 0;
-    for (let i = 0; i < this.count; i++) {
-      const dt = this.dts[(first + i) % RATE_SAMPLES];
-      t += dt;
-      k += Math.max(1, Math.round(dt / period));
-      const off = t - slope * k;
-      lo = Math.min(lo, off);
-      hi = Math.max(hi, off);
-    }
-    this.estimated.hz = periods / time;
-    this.estimated.error = this.count > 1 ? (hi - lo) / time : Infinity;
-    return true;
+    return periods / time;
   }
+}
+
+/** A rate snapped to the show's, else the nearest standard rate, within SNAP; else as it is. */
+function snap(hz: number, showHz: number): number {
+  if (Math.abs(hz / showHz - 1) <= SNAP) return showHz;
+  let best: number | null = null;
+  for (const c of STANDARD_HZ) if (Math.abs(hz / c - 1) <= SNAP && (best === null || Math.abs(hz - c) < Math.abs(hz - best))) best = c;
+  return best ?? hz;
 }
 
 /** 6u^5 - 15u^4 + 10u^3 on [0, 1] (C2: zero slope and curvature at both ends). */
