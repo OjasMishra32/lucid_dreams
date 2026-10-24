@@ -12,6 +12,8 @@
 # code/, data/ and runs/ and what env.sh points at) and ENV_SH (the environment script the jobs source) reach the jobs
 # too; QUOTA_GROUP picks whose /blue space is checked. COURT_DATA_L: uploads, results and these scripts live there
 # instead of under $L (free space then from df); CPUS: --cpus-per-task.
+# FACEFIX=<dir of the player's real face crops, on this cluster> reaches the jobs (court-job.sbatch: the identity swap
+# on the views); checked here with its env and models (FACEFIX_PY, FACEFIX_MODELS; defaults under $L).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack the jobs source (env.sh): only read
 D=${COURT_DATA_L:-$L}; C=$D/code/pipeline/court  # uploads, results and these scripts (COURT_DATA_L: elsewhere)
@@ -34,6 +36,14 @@ if [ -n "${VIEWS_FROM:-}" ]; then  # one run's own earlier views, for one tagged
   [[ $VIEWS_FROM == "$D/runs/$1/"* ]] || fail "VIEWS_FROM must be under $D/runs/$1/ (that run's own views)"
   test -s "$VIEWS_FROM/cameras.json" && ls "$VIEWS_FROM"/videos/[0-9][0-9].mp4 > /dev/null 2>&1 ||
     fail "VIEWS_FROM $VIEWS_FROM has no videos/NN.mp4 + cameras.json"
+fi
+if [ -n "${FACEFIX:-}" ]; then
+  [[ $FACEFIX =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "FACEFIX='$FACEFIX' (an absolute path)"
+  compgen -G "$FACEFIX/*.jpg" > /dev/null || compgen -G "$FACEFIX/*.png" > /dev/null || fail "no .jpg/.png crops in $FACEFIX"
+  test -x "${FACEFIX_PY:-$L/envs/facefix/bin/python}" || fail "no facefix env (court-facefix-env.sh)"
+  for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
+    test -s "${FACEFIX_MODELS:-$L/models/facefix}/$m" || fail "no ${FACEFIX_MODELS:-$L/models/facefix}/$m"
+  done
 fi
 for v in ACCOUNT QOS PARTITION; do
   [[ -z ${!v:-} || ${!v} =~ ^[A-Za-z0-9_.,-]+$ ]] || fail "$v='${!v}'"
@@ -74,7 +84,7 @@ fi
 (( ${FREE:-0} >= ${MIN_GB:-2} )) || fail "group quota has ${FREE:-?} GB free, need ${MIN_GB:-2} for the results"
 echo "OK: $# run(s) x ${#TAGS[@]} job(s) = $(( $# * ${#TAGS[@]} )) job(s) of ${NGPU:-4} GPU(s), ${FREE} GB free $WHERE;" \
   "variants ${VARIANTS:-raw:default raw:agree}, real views ${REALS:-0 1 2}" \
-  "${ACCOUNT:+; account $ACCOUNT}${QOS:+, qos $QOS}${PARTITION:+, partition $PARTITION}"
+  "${ACCOUNT:+; account $ACCOUNT}${QOS:+, qos $QOS}${PARTITION:+, partition $PARTITION}${FACEFIX:+; face from $FACEFIX}"
 [ "${DRY:-0}" = 1 ] && { echo "DRY: nothing submitted"; exit 0; }
 for id in "$@"; do
   for i in "${!TAGS[@]}"; do

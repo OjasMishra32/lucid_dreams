@@ -60,6 +60,25 @@ else:
     os.execvp("python3", ["python3", *a])
 '''
 
+STUB_FF = r'''#!/usr/bin/env python3
+import json, os, shutil, sys
+from pathlib import Path
+a = sys.argv[1:]
+with open(os.environ["STUB_LOG"], "a") as fh:
+    fh.write(json.dumps({"args": a, "cuda": os.environ.get("CUDA_VISIBLE_DEVICES"), "facefix": True}) + "\n")
+if a[1] == "refs":
+    print("crop-1.jpg: 0.9 to the others"); sys.exit(4 if os.environ.get("STUB_FAIL") == "facefix-refs" else 0)
+if os.environ.get("STUB_FAIL") == "facefix":
+    print("facefix: no face model"); sys.exit(5)
+out = Path(a[a.index("--out") + 1]); out.mkdir(parents=True, exist_ok=True)
+vids = [Path(x) for x in a if x.endswith(".mp4")]
+for v in vids:
+    if int(v.stem) % 4 == 0:  # a face to swap in every fourth view; the rest are left as they are
+        shutil.copy(os.environ["STUB_TINY2"], out / v.name)
+Path(a[a.index("--report") + 1]).write_text(json.dumps({"videos": [v.name for v in vids]}))
+print(f"[facefix] {len(vids)} video(s)")
+'''
+
 NVIDIA = '''#!/bin/bash
 case "$*" in
   -L) echo "GPU 0: NVIDIA B200 (UUID: a)"; echo "GPU 1: NVIDIA B200 (UUID: b)" ;;
@@ -313,6 +332,123 @@ class Job(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertEqual(self.calls, [])
 
+    def facefix_stack(self) -> Path:
+        """The facefix env (a stub that 'fixes' every fourth view), its models and a ref dir with one crop."""
+        b = self.L / "envs" / "facefix" / "bin"
+        b.mkdir(parents=True)
+        (b / "python").write_text(STUB_FF)
+        (b / "python").chmod(stat.S_IRWXU)
+        m = self.L / "models" / "facefix"
+        m.mkdir(parents=True)
+        for f in ("det_10g.onnx", "w600k_r50.onnx", "inswapper_128.onnx", "inswapper_emap.npy"):
+            (m / f).write_bytes(b"m")
+        ref = self.t / "ref"
+        ref.mkdir()
+        (ref / "crop-1.jpg").write_bytes(b"j")
+        return ref
+
+    def kinds(self) -> list[str]:
+        def kind(c):
+            a = c["args"]
+            if c.get("facefix"):
+                return "facefix" if a[1] == "fix" else "facefix-" + a[1]
+            if a[0].endswith(("inference.py", "inference_cli.py")):
+                return Path(a[0]).name
+            return a[1] if a[:1] == ["-m"] else Path(a[0]).name
+        return [kind(c) for c in self.calls]
+
+    def test_facefix_off_by_default(self):
+        self.facefix_stack()
+        p = self.run_job(VARIANTS="up:default", METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn("facefix", self.kinds())
+        self.assertNotIn("FACEFIX", p.stdout + p.stderr)
+        self.assertFalse((self.L / "runs" / self.id / "views-facefix").exists())
+        up = next(c for c in self.calls if c["args"][0].endswith("inference_cli.py"))
+        self.assertIn("--resolution 32 ", " ".join(up["args"]))  # SeedVR2 on the views as 4DAnyone made them
+
+    def test_facefix_runs_after_the_views_and_before_anything_trains(self):
+        ref = self.facefix_stack()
+        p = self.run_job(FACEFIX=str(ref), VARIANTS="raw:default up:default", METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        k = self.kinds()
+        first_recon = k.index("lucid.recon")
+        self.assertLess(k.index("facefix-refs"), k.index("inference.py"))  # crops and models checked first
+        self.assertLess(k.index("inference.py"), k.index("facefix"))
+        last_fix = max(i for i, x in enumerate(k) if x == "facefix")
+        self.assertLess(last_fix, min(k.index("inference_cli.py"), first_recon))
+        ff = [c for c in self.calls if c.get("facefix") and c["args"][1] == "fix"]
+        self.assertEqual(sorted(c["cuda"] for c in ff), ["0", "1"])  # one share of the views per GPU
+        self.assertEqual(sorted(Path(x).name for c in ff for x in c["args"] if x.endswith(".mp4")),
+                         [f"{i:02d}.mp4" for i in range(48)])
+        a = ff[0]["args"]
+        self.assertTrue(a[0].endswith("court/court_facefix.py"))
+        self.assertEqual((a[1], a[a.index("--ref") + 1], a[a.index("--models") + 1]),
+                         ("fix", str(ref), str(self.L / "models" / "facefix")))
+        out = self.L / "runs" / self.id
+        self.assertEqual(sorted(x.name for x in (out / "views-facefix" / "videos").iterdir()),
+                         ["00.mp4", "04.mp4", "08.mp4", "12.mp4"])  # the fixed samples; 02, 06... had no face
+        tiny, tiny2 = (self.t / "tiny.mp4").read_bytes(), (self.t / "tiny2.mp4").read_bytes()
+        self.assertEqual((out / "views" / "videos" / "00.mp4").read_bytes(), tiny)  # the gate samples as generated
+        self.assertEqual((out / "views-facefix" / "videos" / "00.mp4").read_bytes(), tiny2)
+        self.assertTrue((out / "views-facefix" / "report-1.json").exists())
+        self.assertTrue((out / "views-facefix" / "facefix-0.log").exists())
+        up = next(c for c in self.calls if c["args"][0].endswith("inference_cli.py"))
+        self.assertIn("--resolution 64 ", " ".join(up["args"]))  # SeedVR2 read the fixed 00.mp4
+        self.assertIn("FACEFIX: 12 of 48 views got the face", p.stdout)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_facefix_on_saved_views(self):
+        """VIEWS_FROM + FACEFIX: the saved views are copied in, get the face in scratch, then SeedVR2 and the recon."""
+        ref = self.facefix_stack()
+        v = self.saved_views()
+        before = {str(x): x.read_bytes() for x in v.rglob("*") if x.is_file()}
+        p = self.run_job(VIEWS_FROM=str(v), FACEFIX=str(ref), TAG="faces-up-v", VARIANTS="up:default", REALS="0",
+                         METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        k = self.kinds()
+        self.assertNotIn("inference.py", k)  # no new views
+        last_fix = max(i for i, x in enumerate(k) if x == "facefix")
+        self.assertLess(last_fix, min(k.index("inference_cli.py"), k.index("lucid.recon")))
+        self.assertIn("FACEFIX: 12 of 48 views got the face", p.stdout)
+        up = next(c for c in self.calls if c["args"][0].endswith("inference_cli.py"))
+        self.assertIn("--resolution 64 ", " ".join(up["args"]))  # SeedVR2 read the fixed 00.mp4
+        self.assertEqual({str(x): x.read_bytes() for x in v.rglob("*") if x.is_file()}, before)  # the saved set untouched
+        out = self.L / "runs" / self.id / "faces-up-v"
+        self.assertTrue((out / "bundle-up-default-r0-300k" / "dream.json").exists())
+        self.assertTrue((out / "views-facefix" / "videos" / "00.mp4").exists())
+
+    def test_facefix_failure_stops_before_anything_trains(self):
+        ref = self.facefix_stack()
+        p = self.run_job(FACEFIX=str(ref), STUB_FAIL="facefix", VARIANTS="raw:default", METRICS="0")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("FACEFIX FAILED", p.stdout)
+        self.assertIn("facefix: no face model", p.stdout)
+        self.assertEqual(self.recons(), [])
+        out = self.L / "runs" / self.id
+        self.assertTrue((out / "views-facefix" / "facefix-0.log").exists())
+        self.assertTrue((out / "views" / "videos" / "00.mp4").exists())
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_facefix_checked_before_the_views(self):
+        ref = self.facefix_stack()
+        (self.L / "models" / "facefix" / "inswapper_128.onnx").unlink()
+        p = self.run_job(FACEFIX=str(ref), VARIANTS="raw:default")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("FACEFIX: no " + str(self.L / "models" / "facefix" / "inswapper_128.onnx"), p.stdout)
+        self.assertNotIn("inference.py", self.kinds())
+        (self.L / "models" / "facefix" / "inswapper_128.onnx").write_bytes(b"m")
+        (ref / "crop-1.jpg").unlink()
+        p = self.run_job(FACEFIX=str(ref), VARIANTS="raw:default")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("no .jpg/.png face crops", p.stdout)
+        self.assertNotIn("inference.py", self.kinds())
+        (ref / "crop-1.jpg").write_bytes(b"j")
+        p = self.run_job(FACEFIX=str(ref), VARIANTS="raw:default", STUB_FAIL="facefix-refs")  # a crop without a face
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("FACEFIX: the face crops or models", p.stdout)
+        self.assertNotIn("inference.py", self.kinds())
+
 
 def dryrun(*args, **env) -> tuple[int, str]:
     p = subprocess.run(["bash", str(HERE / "court-dryrun.sh"), *map(str, args)], capture_output=True, text=True,
@@ -463,6 +599,49 @@ class Submit(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("PREFLIGHT FAIL: id", out)
 
+    def test_facefix_is_checked_then_reaches_the_job(self):
+        ref = self.root / "faces" / "shooter"
+        ref.mkdir(parents=True)
+        (ref / "crop-1.jpg").write_bytes(b"j")
+        a = make_data(self.root, "court-main-s2")
+        rc, out = dryrun(a, FACEFIX=str(ref), FACEFIX_STACK="1", NO_PYTHON="1")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(calls(out)), 1)
+        self.assertIn("face from " + str(ref), out)
+        rc, out = dryrun(a, FACEFIX=str(ref))  # no env or models built there
+        self.assertNotEqual(rc, 0)
+        self.assertIn("no facefix env", out)
+        self.assertEqual(calls(out), [])
+        for bad, says in ((self.root / "faces" / "none", "no .jpg/.png crops"), ("faces/shooter", "absolute path"),
+                          (f"{ref};x", "absolute path")):
+            rc, out = dryrun(a, FACEFIX=str(bad), FACEFIX_STACK="1")
+            self.assertNotEqual(rc, 0, bad)
+            self.assertIn(says, out)
+            self.assertEqual(calls(out), [])
+
+
+class FacefixEnv(unittest.TestCase):
+    """court-facefix-env.sh: the one-off env build, on another allocation's burst QOS."""
+
+    def test_submits_the_cpu_build_once(self):
+        rc, out = dryrun(SCRIPT="court-facefix-env.sh", NO_PYTHON="1", ACCOUNT="lab2", QOS="lab2-b")
+        self.assertEqual(rc, 0, out)
+        c = calls(out)
+        self.assertEqual(len(c), 1, out)
+        self.assertTrue(c[0].endswith("court/court-facefix-env.sbatch"), c[0])
+        self.assertIn("--account=lab2 --qos=lab2-b --output=", c[0])
+        self.assertNotIn("--partition", c[0])
+        self.assertIn("SUBMITTED court-facefix-env job=1001", out)
+        rc, out = dryrun(SCRIPT="court-facefix-env.sh", FACEFIX_STACK="built")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("already built", out)
+        self.assertEqual(calls(out), [])
+        rc, out = dryrun(SCRIPT="court-facefix-env.sh", STACK="0")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("envs/4danyone", out)
+        rc, out = dryrun(SCRIPT="court-facefix-env.sh", DRY="1")
+        self.assertEqual((rc, calls(out)), (0, []))
+
 
 class GridCheck(unittest.TestCase):
     """court-grid.sh CHECK=1: one read-only ssh (stubbed to run here), no upload, no mkdir."""
@@ -546,6 +725,12 @@ class GridDry(unittest.TestCase):
                           QUOTA_GROUP="grp2")
         self.assertIn("ENV_SH=/blue/grp2/user2/lucid/env.sh", lines[-1])
         self.assertIn("QUOTA_GROUP=grp2", lines[-1])
+
+    def test_facefix_reaches_the_hpg_side(self):
+        lines = self.grid(FACEFIX="/blue/grp2/faces/defender")
+        self.assertIn("court_facefix.py", lines[1])  # uploaded with the other scripts
+        self.assertIn("FACEFIX=/blue/grp2/faces/defender", lines[-1])
+        self.assertNotIn("FACEFIX", self.grid()[-1])
 
     def test_data_root_on_another_disk(self):
         lines = self.grid(COURT_DATA_L="/home/u/court-runs", CPUS="8")
