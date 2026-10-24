@@ -194,6 +194,19 @@ class Layers(unittest.TestCase):
             cv2.imwrite(str(m / "p-alpha.png"), np.full((4, 4), 51, np.uint8))
             self.assertAlmostEqual(float(extra_view.read_matte(m, "p", 7, 4, 4).max()), 0.2)
 
+    def test_edge_check_cuts_out_the_real_frame_not_the_clip(self):
+        import cv2
+        real = np.full((300, 300, 3), 40, np.uint8)
+        alpha = np.zeros((300, 300), np.float32)
+        alpha[100:300, 80:220] = 1  # the player in the real frame's window
+        grey = np.full((500, 280, 3), 128, np.uint8)  # the clip's window: elsewhere, all background here
+        K = {"real": real, "comp": grey, "alpha": alpha, "ignore": np.zeros((300, 300), np.float32), "raw": real}
+        with tempfile.TemporaryDirectory() as tmp:
+            pc._sheets(Path(tmp), {"first": grey, "last": grey, "K": K}, 5)
+            edge = cv2.imread(str(Path(tmp) / "edge-5.png"))
+        mid = edge[:, edge.shape[1] // 3: 2 * edge.shape[1] // 3].astype(int)
+        self.assertGreater(int((mid < 60).all(axis=-1).sum()), 0)
+
     def test_composite_is_exact_at_full_and_zero_alpha(self):
         rgb = np.full((20, 20, 3), 200, np.uint8)
         out = pc.composite(rgb, self.back, (128, 128, 128))

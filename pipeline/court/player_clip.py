@@ -586,7 +586,8 @@ def _sheets(d: Path, sst: dict, k: int):
     r = 110
     H, W = Kd["alpha"].shape
     a, b = int(np.clip(cx - r, 0, W - 2 * r)), int(np.clip(cy - r, 0, H - 2 * r))
-    tiles = [Kd["real"][b:b + 2 * r, a:a + 2 * r], Kd["comp"][b:b + 2 * r, a:a + 2 * r],
+    comp = composite(Kd["real"], Kd["alpha"], (128, 128, 128))  # the real frame's own window, cut out like the clip
+    tiles = [Kd["real"][b:b + 2 * r, a:a + 2 * r], comp[b:b + 2 * r, a:a + 2 * r],
              m3(Kd["ignore"][b:b + 2 * r, a:a + 2 * r])]
     edge = np.concatenate([cv2.resize(t, (6 * r, 6 * r), interpolation=cv2.INTER_NEAREST) for t in tiles], 1)
     cv2.imwrite(str(d / f"edge-{k}.png"), cv2.cvtColor(edge, cv2.COLOR_RGB2BGR))
