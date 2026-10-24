@@ -15,6 +15,23 @@ who submits GPU jobs. Read `AGENTS.md` first.
 5. Keep the Mac **plugged in, awake and online** while we submit jobs and move files. Jobs already running on
    HiPerGator don't need the Mac.
 
+## Photoreal everywhere (Sat 1:40 AM): the bar for every person we show
+
+Ojasva's bar: every person, in every scene, should look like a real person standing there, as real as he looks
+in person. Nothing creepy reaches the library: `dreams/.held` keeps a dream out (the autopilot skips it) until its
+truth-vs-render strip and a front and side check pass. Where each run loses realism, and the fix:
+
+| Where | What was wrong | Fix | State |
+| --- | --- | --- | --- |
+| Views (4DAnyone) | Every run so far was 4-step Turbo: the flag we passed (`--turbo`) doesn't exist, it's `--enable_turbo` | Base model, 50 steps | Fixed; all four clips re-running as `<id>-hq` |
+| Views resolution | 704x1280 views from a 4K clip; the face is ~70 px tall | SeedVR2 video upscaling, 2x | Being tested on one view; adopted only if sharper without flicker |
+| Real frame | The sharpest data we have (4K) isn't used in training | Solve the source camera against frame 0, add the real frame as a high-weight view | Next |
+| Reconstruction | Needle-shaped Gaussians: right from trained views, streaks from the sides | Stretch penalty (`--aniso`), A/B on held-out views | A/B running; HQ runs use 0.05 until it reports |
+| Every run | Only PSNR, no look | `peek-*.jpg`: truth beside render, front, sides and back, for every chunk | Done |
+| Previews | Orbit aimed at frame 0's spot, so a moving person drifts out; 720p | Orbit follows the person; 1080x1920 | Done |
+| Photo people | Face guessed from ~60 px; B&W recolour painted skin flat; dead eyes | LAM head (one photo -> real 3D head), DDColor on the photo, idle life (blink, breathing, gaze) | LAM building; head swap and idle life with Vishal |
+| In the headset | Brighter or bluer than the room; low resolution; floating feet | Room-matched light, 1.3-1.5x eye buffer, contact shadow, eye contact | Ian |
+
 ## What you own
 
 | Piece | Done means |

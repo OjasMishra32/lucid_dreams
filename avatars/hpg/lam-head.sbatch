@@ -40,8 +40,9 @@ if [ ! -f $L/envs/lam/.ok ]; then
   pip install -q torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
   pip install -q xformers==0.0.26.post1 --index-url https://download.pytorch.org/whl/cu121
   # gradio is only for LAM's web demo; the CUDA packages are built below against the module's nvcc
-  grep -vE '^(git\+|nvdiffrast|gradio)' requirements.txt > $TMP/lam-req.txt
+  grep -vE '^(git\+|nvdiffrast|gradio|chumpy)' requirements.txt > $TMP/lam-req.txt
   pip install -q -r $TMP/lam-req.txt
+  pip install -q --no-build-isolation chumpy  # its setup.py imports pip, which an isolated build doesn't have
   python -c "import pytorch3d" 2>/dev/null || pip install -q pytorch3d \
     -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt230/download.html \
     || pip install -q --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git"
