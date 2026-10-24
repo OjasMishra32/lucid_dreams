@@ -235,6 +235,27 @@ class Bundle(unittest.TestCase):
         self.assertEqual(asm["pieces"]["show"]["source"], "stand-in")
         self.assertTrue(any("changed while" in n for n in asm["notes"]), asm["notes"])
 
+    def test_a_shows_cameras_carry_the_calibrations_flags(self):
+        """A show with its own cameras: compared with the calibration's, and the frames the calibration interpolated or
+        flagged inside the show are named in the cameras piece and the notes."""
+        calib = json.loads((self.tmp / "calib.json").read_text())
+        srcs = [fr["source_frame"] for fr in calib["frames"]]
+        mid = srcs[len(srcs) // 2]
+        for fr in calib["frames"]:
+            fr["source"] = "layers+interp" if fr["source_frame"] in (mid, mid + 1) else "layers+lines"
+        calib["flags"] = {"no_lines": [[mid - 1, mid + 2]], "offset_gt_1p5px": [srcs[-1] + 50]}
+        (self.tmp / "calib-flags.json").write_text(json.dumps(calib))
+        show, manifest = self.staged_show("show-flags")
+        self.stage(show, manifest)
+        code, out = self.assemble_with("flags", show=str(show), calib=str(self.tmp / "calib-flags.json"))
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        cams = asm["pieces"]["cameras"]
+        self.assertEqual(cams["calibFlags"], {"interp": [[mid, mid + 1]], "no_lines": [[mid - 1, mid + 2]]})
+        self.assertLess(cams["vsCalib"]["maxDeg"], 0.05)
+        self.assertGreater(cams["vsCalib"]["frames"], 0)
+        self.assertTrue(any(n.startswith("cameras: the calibration flags") and f"interp {mid}-{mid + 1}" in n for n in asm["notes"]), asm["notes"])
+
     def test_an_extras_declared_foot_and_height_are_kept(self):
         court = json.loads((self.out / "court.json").read_text())
         others = {o["id"]: o for o in court["freeze"]["others"]}

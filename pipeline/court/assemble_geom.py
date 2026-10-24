@@ -80,6 +80,15 @@ def angle_deg(a, b) -> float:
     return math.degrees(math.acos(max(-1.0, min(1.0, c))))
 
 
+def quat_angle_deg(qa, qb) -> float:
+    """The rotation between two quaternions [x, y, z, w] in degrees (exactly 0 for the same one)."""
+    a, b = np.asarray(qa, float), np.asarray(qb, float)
+    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+    if a @ b < 0:
+        b = -b
+    return math.degrees(4 * math.atan2(float(np.linalg.norm(a - b)), float(np.linalg.norm(a + b))))
+
+
 def rot_angle_deg(ra, rb) -> float:
     c = (np.trace(np.asarray(ra) @ np.asarray(rb).T) - 1) / 2
     return math.degrees(math.acos(max(-1.0, min(1.0, c))))
@@ -151,10 +160,34 @@ class CalibTrack:
         self.f = [float(fr["f"]) for fr in frames]
         self.k1 = [float(fr.get("k1", 0.0)) for fr in frames]
         self.clamped = 0
+        # the calibration's own warnings: frames it interpolated or saw a strobe in, and its `flags` lists
+        self.marks = {"interp": [[n, n] for n, fr in zip(self.src, frames) if str(fr.get("source", "")).endswith("interp")],
+                      "strobe": [[n, n] for n, fr in zip(self.src, frames) if fr.get("strobe")]}
+        for k, v in (calib.get("flags") or {}).items():
+            self.marks[k] = [[int(x), int(x)] if isinstance(x, (int, float)) else [int(x[0]), int(x[-1])] for x in v]
 
     @property
     def range(self) -> tuple[int, int]:
         return self.src[0], self.src[-1]
+
+    def flagged(self, lo: float, hi: float) -> dict:
+        """The calibration's warnings for source frames lo..hi, each as merged [a, b] spans clipped to lo..hi; only
+        the non-empty ones."""
+        lo, hi = math.ceil(lo), math.floor(hi)
+        out = {}
+        for k, spans in self.marks.items():
+            got: list[list[int]] = []
+            for a, b in sorted(spans):
+                a, b = max(a, lo), min(b, hi)
+                if a > b:
+                    continue
+                if got and a <= got[-1][1] + 1:
+                    got[-1][1] = max(got[-1][1], b)
+                else:
+                    got.append([a, b])
+            if got:
+                out[k] = got
+        return out
 
     def has(self, src: float) -> bool:
         return self.src[0] <= src <= self.src[-1]

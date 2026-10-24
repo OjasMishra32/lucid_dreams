@@ -287,11 +287,32 @@ def take_show(w: Writer, d: Path, manifest: dict) -> tuple[dict, list]:
     return video, frames
 
 
+def vs_calib(frames: list, calib: geo.CalibTrack) -> dict:
+    """How far a show's own cameras are from the calibration's at the same source frames (those inside its range):
+    the largest rotation in degrees and where, and the largest relative focal difference."""
+    worst, at, focal, n = 0.0, None, 0.0, 0
+    for fr in frames:
+        if not calib.has(fr["src"]):
+            continue
+        q, f = calib.at(fr["src"])
+        d = geo.quat_angle_deg(fr["q"], q)
+        if d > worst:
+            worst, at = d, fr["src"]
+        focal = max(focal, abs(fr["f"] / f - 1))
+        n += 1
+    return {"frames": n, "maxDeg": round(worst, 6), "maxDegAt": at, "maxFocal": round(focal, 6)}
+
+
+def spans_text(spans: list) -> str:
+    return ", ".join(f"{a}" if a == b else f"{a}-{b}" for a, b in spans)
+
+
 def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTrack | None):
     """The video block, its frames.json (each show frame's own camera) and the rest of video/; the timing of the clip
     the frames count in. Returns (video block, frames, timing {sourceFps, captureFps, slow, centre?})."""
     d, cams = show_dir(cfg)
     real = False
+    span = None  # the show's source frames in the calibration's clock
     if d is not None:
         manifest = json.loads((d / "video.json").read_text())
         try:
@@ -317,6 +338,12 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
         if calib is not None and np.linalg.norm(np.subtract(timing["centre"], calib.C)) > 0.01:
             w.notes.append(f"the show's cameras have centre {timing['centre']}, the calibration {rnd(calib.C, 3)}: the show's are used")
         w.piece("cameras", True, "the show's own per-frame cameras (the ones it was baked with)")
+        if calib is not None:
+            vs = w.pieces["cameras"]["vsCalib"] = vs_calib(frames, calib)
+            if vs["maxDeg"] > 0.05 or vs["maxFocal"] > 0.005:
+                w.notes.append(f"cameras: the show's differ from the calibration by up to {vs['maxDeg']} deg (source frame "
+                               f"{vs['maxDegAt']}) and {vs['maxFocal'] * 100:.2f}% in focal: one of the two is not the camera truth")
+            span = (min(fr["src"] for fr in frames), max(fr["src"] for fr in frames))
     elif calib is not None:
         # the show's clock -> the calibrated clip's source frames: the same moment F, the same real time
         src_cfg = cfg.get("source", {})
@@ -332,6 +359,7 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
                 fr["q"], fr["f"] = rnd(q, 9), round(float(f), 4)
 
         recamera(frames)
+        span = tuple(f_real + (x - f_show) * k for x in (min(fr["src"] for fr in frames), max(fr["src"] for fr in frames)))
         hz90 = (video.get("fallbacks") or {}).get("hz90")
         if hz90 and hz90.get("frames"):
             other = json.loads((w.root / hz90["frames"]).read_text())
@@ -344,6 +372,11 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
             w.pieces["cameras"]["source"] = "partial"
     else:
         w.piece("cameras", False, "the stand-in show's own cameras")
+    flags = calib.flagged(*span) if calib is not None and span is not None else {}
+    if flags:
+        w.pieces["cameras"]["calibFlags"] = flags
+        w.notes.append(f"cameras: the calibration flags source frames inside the show's ({span[0]:g}-{span[1]:g}): "
+                       + "; ".join(f"{k} {spans_text(v)}" for k, v in flags.items()))
     w.json(video["frames"], frames)
     return video, frames, timing
 
@@ -884,8 +917,11 @@ def audio_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
 
 def metrics_piece(cfg: dict, calib_json: dict | None, camF: geo.Cam, frames: list, players: list) -> dict:
     rep = {"median": None, "p95": None}
-    if calib_json and (calib_json.get("summary") or {}).get("click_reproj_px"):
-        px = calib_json["summary"]["click_reproj_px"]
+    px = ((calib_json or {}).get("summary") or {}).get("click_reproj_px")
+    if not px and (cfg.get("metrics") or {}).get("reprojFrom"):
+        # a per-frame calibration built on another solve keeps that solve's clicks: the config names it
+        px = (json.loads(expand(cfg["metrics"]["reprojFrom"]).read_text()).get("summary") or {}).get("click_reproj_px")
+    if px:
         rep = {k: round(math.degrees(math.atan(px[k] / camF.f)), 5) for k in ("median", "p95")}
     held = {p["id"]: (cfg_player(cfg, p["id"]).get("metrics") or {}).get("heldOutPsnr") for p in players}
     seat = (cfg.get("metrics") or {}).get("seatPsnr", {"players": None, "background": None})
