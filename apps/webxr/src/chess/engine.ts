@@ -16,7 +16,7 @@ export const STRENGTHS: Strength[] = [
   // legends: the engine set to the player's peak FIDE rating, with their likeness across the board when we have it
   // (the face-swapped bundle first, then the photo avatar). They never speak, and they're always labelled as the
   // engine: not the person, and never presented as them.
-  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer", avatar: ["bobby-fischer-head", "bobby-fischer"] },
+  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer", avatar: ["bobby-fischer-lhm"] },
   { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen", avatar: ["magnus-carlsen-lhm"] },
   { id: "max", label: "Engine", elo: null },
 ];

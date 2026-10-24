@@ -10,8 +10,12 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
    avatar's jacket hem doesn't streak over the lap.
 2. Clothes (everything but head and hands): a Gaussian whose colour is far from its 24 nearest neighbours' median
    (a garbled logo, a stray speck) takes that median.
+   Trousers are one cloth too: a light blob on a thigh or hip side (a newspaper or a hand in one of the photos) takes
+   the cloth colour; the shirt down the middle stays.
 3. Hair (head joint, above the eyes): colour blended halfway to its neighbours' median, so it reads as hair, not
    blotches.
+4. --mute F (for avatars colourised from black and white photos): the torso's clothes keep their brightness but only F
+   of their guessed colour, so a tie the photos showed only in grey doesn't come out loud.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ def main(argv=None) -> None:
     p.add_argument("--hand-max-m", type=float, default=0.006)
     p.add_argument("--hand-ratio", type=float, default=3.0)
     p.add_argument("--speck", type=float, default=0.22, help="colour distance from the neighbours' median that counts")
+    p.add_argument("--mute", type=float, default=1.0, help="share of guessed colour the torso's clothes keep (1 = all)")
     a = p.parse_args(argv)
 
     root = a.bundle
@@ -105,15 +110,31 @@ def main(argv=None) -> None:
     else:
         logo = arms & False
 
+    # 2c. trousers: a light blob on a thigh or the side of the hips takes the cloth colour (the shirt runs down the middle)
+    LEGS = [J["left_hip"], J["right_hip"], J["left_knee"], J["right_knee"]]
+    legs = (np.isin(dom, LEGS) | ((dom == J["pelvis"]) & (np.abs(g.xyz[:, 0]) > 0.07))) & ~hands
+    blob = legs & False
+    if legs.sum() > 64:
+        lum = out @ np.array([0.299, 0.587, 0.114])
+        mid = np.median(lum[legs])
+        blob = legs & (lum > mid + 0.25)
+        trousers = np.median(out[legs & (lum <= mid)], axis=0)
+        out[blob] = trousers * (0.9 + 0.2 * np.clip(lum[blob, None] - mid, 0, 1))
+
     # 3. hair: halfway to the neighbours
     eyes_y = (joints[J["left_eye"], 1] + joints[J["right_eye"], 1]) / 2
     hair = head & (g.xyz[:, 1] > eyes_y + 0.01)
     out[hair] = 0.5 * out[hair] + 0.5 * med[hair]
 
+    # 4. guessed colour on the torso's clothes, muted (skin is on the head, neck and hands, which keep theirs)
+    torso = np.isin(dom, [J["pelvis"], J["spine1"], J["spine2"], J["spine3"]]) & ~hands
+    grey = (out[torso] @ np.array([0.299, 0.587, 0.114]))[:, None]
+    out[torso] = grey + a.mute * (out[torso] - grey)
+
     write_ply(ply, replace(g, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale))
     write_skin_bin(skin, idx, q)
-    report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()), "hair": int(hair.sum()),
-              "of": len(g)}
+    report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()),
+              "trouserBlobs": int(blob.sum()), "hair": int(hair.sum()), "mute": a.mute, "of": len(g)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
 
