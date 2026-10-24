@@ -125,9 +125,11 @@ def write_needs(entries: Iterable, path: Path, frame_pattern: str = "{src:06d}.j
 class Inbetweens:
     """read(src) -> raw RGB uint8 frame; rife_dir: a fetched RIFE results folder (needs.json + its outputs)."""
 
-    def __init__(self, read: Callable[[int], np.ndarray], rife_dir: Path | None = None, method: str = "dis"):
+    def __init__(self, read: Callable[[int], np.ndarray], rife_dir: Path | None = None, method: str = "dis",
+                 w_tol: float = 1e-3):
         self.read = read
         self.method = method
+        self.w_tol = w_tol  # a listed result within this time fraction of the asked w is used (timeline tweaks)
         self.rife = {}
         if rife_dir is not None:
             man = Path(rife_dir) / "needs.json"
@@ -137,8 +139,16 @@ class Inbetweens:
                     if f.exists():
                         self.rife[(int(p["a"]), int(p["b"]), _wkey(p["w"]))] = f
 
-    def get(self, a: int, b: int, w: float):
+    def _lookup(self, a: int, b: int, w: float):
         f = self.rife.get((int(a), int(b), _wkey(w)))
+        if f is not None or self.w_tol <= 0:
+            return f
+        near = [(abs(k[2] - _wkey(w)), p) for k, p in self.rife.items() if k[0] == int(a) and k[1] == int(b)]
+        near = [x for x in near if x[0] <= self.w_tol * 1e6]
+        return min(near, key=lambda x: x[0])[1] if near else None
+
+    def get(self, a: int, b: int, w: float):
+        f = self._lookup(a, b, w)
         if f is not None:
             img = cv2.imread(str(f), cv2.IMREAD_COLOR)
             if img is not None:

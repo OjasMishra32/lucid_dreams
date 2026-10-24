@@ -135,7 +135,12 @@ class WatermarkModel:
     stays, so over time std(I) = (1 - alpha) std(B) and mean(I) = (1 - alpha) mean(B) + c, with mean(B) and std(B)
     filled in from the region around the box (the crowd's statistics vary slowly across the corner). Removing it
     un-blends B = (I - c) / (1 - alpha), so what is behind the logo (a head, the crowd) stays real; where the logo is
-    nearly opaque the un-blend is too noisy and an inpaint takes over."""
+    nearly opaque the un-blend is too noisy and an inpaint takes over.
+
+    Measured: on the synthetic clip it beats the box inpaint ~3x (box MAD 5.4 vs 14.5). On the real clip's corner
+    (a defocused crowd under a logo up to ~0.8 opaque, 1080p JPEG) it leaves a bright residual of the logo's white
+    parts and colour fringes at its edges, while the box inpaint reads as clean blurred crowd. So the real bake uses
+    the inpaint (leave BakeConfig.watermark_model unset) until the fit is better."""
 
     def __init__(self, alpha: np.ndarray, c: np.ndarray, region, size):
         self.alpha, self.c = alpha.astype(np.float32), c.astype(np.float32)
