@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { RigCamera } from "@/lib/three/story";
 
@@ -101,7 +100,7 @@ export default function HomeStory(p: HomeStoryProps) {
           </div>
           <div className="story-buttons">
             <a href="#scenes" className="pill pill-quiet">See the scenes</a>
-            <Link href="/new" className="pill">Make a dream</Link>
+            <a href="#make" className="pill">Make a dream</a>
           </div>
         </div>
         <p className="story-caption">Live 3D, rendered in your browser. Drag to turn her.</p>

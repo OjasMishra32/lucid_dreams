@@ -31,13 +31,14 @@
 .tech .katex { color: var(--t-ink); }
 
 /* the opening */
-.t-hero { padding: 160px var(--t-gutter) 120px; text-align: center; position: relative; }
+.t-hero { padding: 150px 0 120px; text-align: center; position: relative; }
 .t-hero::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(60% 50% at 50% 38%, rgba(41, 151, 255, 0.16), rgba(41, 151, 255, 0) 70%);
 }
+.t-hero > :not(.math-strip) { margin-left: var(--t-gutter); margin-right: var(--t-gutter); }
 .t-eyebrow { font-size: 21px !important; font-weight: 600; color: var(--t-ink-3) !important; margin: 0 0 12px; position: relative; }
-.t-hero h1 {
+.t-hero .t-title {
   font-size: clamp(48px, 8.4vw, 104px); line-height: 1.02; letter-spacing: -0.035em; margin: 0 auto; max-width: 1000px; position: relative;
   background: linear-gradient(180deg, #fff 40%, #b8c6da); -webkit-background-clip: text; background-clip: text; color: transparent;
 }
@@ -165,12 +166,6 @@
 .fill-facts dt { font-size: 13px; color: var(--t-ink-3); }
 .fill-facts dd { margin: 2px 0 0; font-size: 17px; color: var(--t-ink); font-variant-numeric: tabular-nums; }
 
-/* the close */
-.t-close { text-align: center; padding: 160px var(--t-gutter) 140px; border-top: 1px solid var(--t-line); }
-.t-close h2 { font-size: clamp(40px, 6vw, 80px); line-height: 1.04; letter-spacing: -0.03em; margin: 0; }
-.t-actions { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 36px; }
-.t-credits { max-width: 640px; margin: 48px auto 0; }
-
 @media (max-width: 1023px) {
   .t-chapter, .t-fill { grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 96px var(--t-gutter); }
   .fill { grid-template-columns: minmax(0, 1fr); }
@@ -194,3 +189,7 @@
 @media (prefers-reduced-motion: reduce) {
   .atlas-step, .hs-cap, .fill-bar i { transition: none; }
 }
+
+.t-fine { margin: 14px 0 0; line-height: 1.5 !important; }
+/* sections the nav scrolls to land under the bar */
+.tech [id], .home [id] { scroll-margin-top: calc(var(--nav-h, 48px) + 8px); }

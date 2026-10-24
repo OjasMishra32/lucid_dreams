@@ -84,8 +84,8 @@ export default function JobProgress({ id, name, kind, initial }: { id: string; n
         </div>
       ) : failed ? (
         <div className="job-actions">
-          {nextStep(s).again && <Link href="/new" className="btn">Make it again</Link>}
-          <Link href="/library" className={nextStep(s).again ? "more" : "btn"}>Back to the library</Link>
+          {nextStep(s).again && <a href="/#make" className="btn">Make it again</a>}
+          <a href="/#scenes" className={nextStep(s).again ? "more" : "btn"}>Back to every scene</a>
         </div>
       ) : (
         <p className="job-note">

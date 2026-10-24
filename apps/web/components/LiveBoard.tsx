@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { formatDuration } from "@/lib/format";
 import { formatEta, type LiveGpus, type LivePeek, type LiveRun, type LiveStage, type LiveState } from "@/lib/dream";
@@ -98,8 +97,8 @@ export default function LiveBoard({ initial, pinned }: { initial: LiveState; pin
           <p className="live-message">Make a dream and watch it happen here: the stages, the GPUs and the real frame beside our render of it.</p>
         </header>
         <div className="job-actions">
-          <Link href="/new" className="btn">Make a dream</Link>
-          <Link href="/library" className="more">Library</Link>
+          <a href="/#make" className="btn">Make a dream</a>
+          <a href="/#scenes" className="more">Every scene</a>
         </div>
       </div>
     );

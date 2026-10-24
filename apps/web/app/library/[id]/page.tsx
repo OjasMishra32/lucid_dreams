@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import DreamStage from "@/components/DreamStage";
 import DreamExperience from "@/components/DreamExperience";
@@ -159,7 +158,7 @@ export default async function DreamPage({ params }: Props) {
 
   return (
     <div className="wrap detail">
-      <Link href="/library" className="back">Library</Link>
+      <a href="/#scenes" className="back">Every scene</a>
       <div className="dstage">
         <div className="dstage-media">
           <DreamStage id={d.id} src={preview} poster={poster} name={name} captions={d.captions ? mediaUrl(d, d.captions) : null} />

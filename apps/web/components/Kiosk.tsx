@@ -110,7 +110,7 @@ export default function Kiosk({ slides }: { slides: KioskSlide[] }) {
       {n === 0 ? (
         <div className="kiosk-empty">
           <h1 className="section-title">No dreams yet.</h1>
-          <Link href="/new" className="btn">Make a dream</Link>
+          <a href="/#make" className="btn">Make a dream</a>
         </div>
       ) : (
         slides.map((s, k) => {

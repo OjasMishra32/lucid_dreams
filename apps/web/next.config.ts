@@ -20,7 +20,13 @@ const config: NextConfig = {
   agentRules: false,
   // One website: the home page shows every scene, so the old showcase page sends you there
   async redirects() {
-    return [{ source: "/showcase", destination: "/#scenes", permanent: false }];
+    // one page, one scroll: the old separate pages send you to their section of it
+    return [
+      { source: "/showcase", destination: "/#scenes", permanent: false },
+      { source: "/library", destination: "/#scenes", permanent: false },
+      { source: "/technology", destination: "/#technology", permanent: false },
+      { source: "/new", destination: "/#make", permanent: false },
+    ];
   },
   // /xr/ keeps its slash: the headset app's own links are relative to it ("./" is its library)
   skipTrailingSlashRedirect: true,

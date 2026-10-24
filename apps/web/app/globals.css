@@ -27,6 +27,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body {
   min-height: 100vh; display: flex; flex-direction: column;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -0.003em; font-size: 17px; line-height: 1.47;
@@ -728,7 +730,7 @@ main:focus, .compose:focus { outline: none; }
 }
 @media (max-width: 520px) {
   .facts { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
-  .nav-chess, .nav-live { display: none; }
+  .nav-how, .nav-room { display: none; }
   .nav-inner { gap: 18px; }
   .hero { padding-top: 84px; }
   .choice { grid-template-columns: 1fr; }

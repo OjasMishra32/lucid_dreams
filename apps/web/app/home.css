@@ -29,6 +29,11 @@
 .nav.nav-light .wordmark, .nav.nav-light .nav-link.on, .nav.nav-light .nav-link:hover { color: #1d1d1f; }
 .nav.nav-light .nav-link { color: rgba(0, 0, 0, 0.72); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .nav.nav-light { background: #fafafc; } }
+.nav.nav-light { transition: background-color 0.35s ease, border-color 0.35s ease; }
+.nav.nav-light .wordmark, .nav.nav-light .nav-link { transition: color 0.35s ease; }
+.nav.nav-light.nav-over-dark { background: rgba(22, 22, 23, 0.8); border-bottom-color: rgba(255, 255, 255, 0.1); }
+.nav.nav-light.nav-over-dark .wordmark, .nav.nav-light.nav-over-dark .nav-link:hover { color: #f5f5f7; }
+.nav.nav-light.nav-over-dark .nav-link { color: rgba(255, 255, 255, 0.78); }
 
 /* ---------------------------------------------------------------- the opening */
 .story { position: relative; height: 640vh; margin-top: calc(-1 * var(--nav-h)); }
@@ -311,9 +316,6 @@
 }
 
 /* ---------------------------------------------------------------- the math, a strip of it */
-.math-teaser { background: #000; color: #f5f5f7; padding: 40px 0 150px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.1); }
-.math-teaser .eyebrow-x { padding-top: 110px; }
-.math-teaser .section-head, .math-teaser .section-sub { padding: 0 22px; }
 .math-strip {
   margin: 72px 0 0; overflow: hidden;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
@@ -323,5 +325,9 @@
 .math-item .katex { font-size: clamp(26px, 3.2vw, 40px); color: #f5f5f7; }
 .math-item:nth-child(3n + 2) .katex { color: #8cc8ff; }
 @keyframes math-run { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-.math-go { margin: 64px 0 0; }
 @media (prefers-reduced-motion: reduce) { .math-run { animation: none; } }
+
+/* ---------------------------------------------------------------- make one, right here */
+.make-x { background: #000; color: #f5f5f7; padding: 140px 22px 120px; border-top: 1px solid rgba(255, 255, 255, 0.1); text-align: center; }
+.make-x .section-sub { color: #a1a1a6; }
+.make-x-form { max-width: var(--page, 1080px); margin: 64px auto 0; text-align: left; }

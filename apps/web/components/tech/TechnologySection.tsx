@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import Atlas, { type AtlasStep } from "@/components/tech/Atlas";
@@ -8,17 +7,21 @@ import Trajectories from "@/components/tech/Trajectories";
 import FillRate from "@/components/tech/FillRate";
 import HeadsetStage from "@/components/tech/HeadsetStage";
 import { MeasuredTable, TruthSlider } from "@/components/home/Measured";
-import { ViewerLink } from "@/components/ViewInRoom";
 import { heroFrames, heroJoints, measured, rigCameras } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
 import "./tech.css";
 
-export const metadata: Metadata = {
-  title: "Technology",
-  description: "The mathematics of Lucid Dreams: anisotropic 3D Gaussians, EWA projection, front-to-back compositing, 4DAnyone's 48 cameras, MCMC densification, SMPL-X, Magnus lift and the fill rate of a Quest 3S.",
-};
-
-export const dynamic = "force-dynamic";
+// the equations the opening's strip runs through: one for each chapter below
+const MATH = [
+  String.raw`\Sigma=R\,S\,S^{\top}R^{\top}`,
+  String.raw`\Sigma'=J\,W\,\Sigma\,W^{\top}J^{\top}`,
+  String.raw`C=\sum_i c_i\,\alpha_i\prod_{j<i}(1-\alpha_j)`,
+  String.raw`\lambda\,\tilde{\mathbf x}=K\,[R\mid\mathbf t]\,\tilde{\mathbf X}`,
+  String.raw`\mathcal L=0.8\,\mathcal L_1+0.2\,(1-\mathrm{SSIM})`,
+  String.raw`M(\boldsymbol\beta,\boldsymbol\theta)=W(\bar T+B_S+B_P,\,J,\,\boldsymbol\theta,\,\mathcal W)`,
+  String.raw`\dot{\mathbf v}=\mathbf g-k_D\lVert\mathbf v\rVert\mathbf v+k_L C_L\lVert\mathbf v\rVert^2\,\hat{\boldsymbol\omega}\times\hat{\mathbf v}`,
+  String.raw`N_{\mathrm{px}}=\sum_i 4k^2\sigma_{1i}\sigma_{2i}(f/z_i)^2`,
+];
 
 /** Display math, typeset on the server (no client JavaScript for the equations). */
 function Eq({ tex, label }: { tex: string; label?: string }) {
@@ -35,7 +38,8 @@ function M({ tex }: { tex: string }) {
   return <span dangerouslySetInnerHTML={{ __html: katex.renderToString(tex, { throwOnError: false, output: "html", strict: false }) }} />;
 }
 
-export default function TechnologyPage() {
+/** The technology chapters, a section of the one page (#technology): the real math, each idea with a live visual. */
+export default function TechnologySection() {
   const hero = heroFrames();
   const cams = rigCameras() as RigCamera[];
   const joints = heroJoints(0);
@@ -153,10 +157,10 @@ export default function TechnologyPage() {
   ];
 
   return (
-    <div className="tech">
+    <section id="technology" className="tech" aria-labelledby="tech-title">
       <header className="t-hero">
         <p className="t-eyebrow">Technology</p>
-        <h1>The mathematics of being in the room.</h1>
+        <h2 id="tech-title" className="t-title">The mathematics of being in the room.</h2>
         <p className="t-lede">
           Every person here is a few hundred thousand anisotropic 3D Gaussians, fitted to 48 views of a moment no camera
           filmed, then projected, sorted and blended for each eye 72 times a second by the phone-class GPU strapped to
@@ -164,6 +168,13 @@ export default function TechnologyPage() {
         </p>
         <div className="t-hero-eq">
           <Eq tex={String.raw`C(\mathbf p)=\sum_{i=1}^{N} c_i\,\alpha_i(\mathbf p)\prod_{j<i}\big(1-\alpha_j(\mathbf p)\big)`} />
+        </div>
+        <div className="math-strip" aria-hidden="true">
+          <div className="math-run">
+            {[...MATH, ...MATH].map((tex, i) => (
+              <span key={i} className="math-item" dangerouslySetInnerHTML={{ __html: katex.renderToString(tex, { throwOnError: false, output: "html", strict: false }) }} />
+            ))}
+          </div>
         </div>
         <ol className="t-toc">
           <li><a href="#primitive">One Gaussian</a></li>
@@ -251,6 +262,11 @@ export default function TechnologyPage() {
           {rows.length > 0 && (
             <div className="t-measured">
               <MeasuredTable rows={rows} />
+              <p className="quiet t-fine">
+                Views PSNR and SSIM compare our render with the 4DAnyone views it was fitted to (every eighth of 48 cameras,
+                the median over the frames; none held out). Seen is the share of Gaussians the real camera could see. The
+                rest is imagined, and the Reality check shows it in blue.
+              </p>
             </div>
           )}
         </div>
@@ -293,18 +309,6 @@ export default function TechnologyPage() {
         <FillRate />
       </section>
 
-      <section className="t-close">
-        <h2>Now stand next to them.</h2>
-        <p className="t-lede">Open it in a Quest&apos;s browser, or on any laptop.</p>
-        <div className="t-actions">
-          <ViewerLink query="dream=dance-01" className="pill">Open the dancer</ViewerLink>
-          <a className="pill pill-quiet" href="https://github.com/OjasMishra32/lucid_dreams">Read the source</a>
-        </div>
-        <p className="quiet t-credits">
-          Built on 4DAnyone (Ant Research, 2026), gsplat with MCMC densification, GVHMR and SMPL-X, LHM++ and UIKA,
-          Spark 2 for three.js, Stockfish 19. Credits and licences in the repository.
-        </p>
-      </section>
-    </div>
+    </section>
   );
 }
