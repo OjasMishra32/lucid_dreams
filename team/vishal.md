@@ -25,8 +25,10 @@ when a replay finishes and `ASSETS_OK` is in `$L/jobs/lucid-digs-assets-*.log`, 
 
 **3. Your head-to-toe photo, tonight.** It becomes the `vishal` avatar: the chess opponent, the "you, perfected"
 subject and the first avatar in the demo. Full body with feet in frame, arms slightly away from the body, plain
-background, even light, phone at chest height about 3 m away. AirDrop it to Ojasva's Mac; he submits
-`digs-sample` with `ID=vishal`. Then check `vishal.work/ref_check.png` (photo vs re-render should overlap) and
+background, even light, phone at chest height about 3 m away. AirDrop it to Ojasva's Mac into
+`~/Downloads/lucid-photos/` named `vishal.jpg` (HEIC is fine): the autopilot submits it as avatar `vishal` once
+`ASSETS_OK` exists, and fetches the bundle into `dreams/vishal/` when it's done. Its work dir is
+`$L/runs/vishal/out/vishal.work/`. Check `ref_check.png` there (photo vs re-render should overlap) and
 `thumb.jpg` (must show your front; if it shows your back, apply the 180-degree turn in `avatar.ply`).
 
 **4. When the fine-tune table lands** (`$L/data/avatars/finetune/jump-shot/dreams/jump-shot-tuned.work/results.md`):
@@ -34,7 +36,7 @@ if fine-tuned doesn't beat one-photo on the held-out views, fix it before anythi
 Then copy the numbers and `compare.png` into a Results section in `avatars/README.md`. This is our research claim.
 
 **5. "You, perfected":** after 3 and the first replay, Ojasva runs
-`digs-perform.sbatch AVATAR=$L/data/avatars/dreams/vishal.work/code.pt RUN_ID=jump-shot ID=vishal-jumper`.
+`digs-perform.sbatch AVATAR=$L/runs/vishal/out/vishal.work/code.pt RUN_ID=jump-shot ID=vishal-jumper`.
 Check that the feet stay on the floor through the jump.
 
 **6. Code while the GPUs work (no HiPerGator needed):**

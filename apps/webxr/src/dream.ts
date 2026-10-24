@@ -14,6 +14,7 @@ export interface Dream {
   avatar: { file: string; rig: string; motion: string; skin?: string; skeleton?: string } | null;
   audio: string | null;
   voice?: string | null; // the speaking voice, separated from background noise and music
+  captions?: string | null; // WebVTT of what the person says, in the clip's own time
   preview: string | null;
   thumb: string | null;
   metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null; seenFraction?: number | null };

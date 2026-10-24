@@ -128,3 +128,8 @@ pipeline wants a sharp 1080p portrait clip. Find out how much a restoration pass
 
 Devpost draft (noon), video script (noon), README with credits (8 PM; add whisper.cpp and Real-ESRGAN, both MIT/BSD),
 slides, judge Q&A. Use Codex for the two scripts above; they're each well under 200 lines.
+
+Family photo, once the written yes is in: AirDrop it into `~/Downloads/lucid-photos/` on Ojasva's Mac, named the way
+it should appear (`grandma-rose.jpg` -> "Grandma Rose"). It becomes an avatar with a breathing, blinking idle by itself.
+Only photos with consent recorded in `demo/consent.md` go in that folder.
+

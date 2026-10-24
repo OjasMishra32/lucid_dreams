@@ -2,7 +2,7 @@ import { dreamUrl, formatCount, listDreams } from "./dream";
 
 export async function renderLibrary(root: HTMLElement) {
   root.innerHTML = `
-    <nav class="nav"><div class="wordmark">Lucid Dreams</div><a class="nav-link" href="https://github.com/OjasMishra32/lucid_dreams">Source</a></nav>
+    <nav class="nav"><div class="wordmark">Lucid Dreams</div><div class="nav-links"><a class="nav-link" href="?mode=chess">Chess</a><a class="nav-link" href="https://github.com/OjasMishra32/lucid_dreams">Source</a></div></nav>
     <header class="hero">
       <p class="eyebrow">Lucid Dreams</p>
       <h1>Anyone from any video,<br />standing in your room.</h1>
@@ -23,15 +23,16 @@ export async function renderLibrary(root: HTMLElement) {
     feature.hidden = false;
     feature.innerHTML = `<a href="?dream=${encodeURIComponent(lead.id)}" class="feature-frame">
         <video src="${dreamUrl(lead.id, lead.preview!)}" autoplay muted loop playsinline></video></a>
-      <p class="feature-caption">${escapeHtml(lead.name)}. Rebuilt from one video, walked all the way around.</p>`;
+      <p class="feature-caption">${escapeHtml(lead.name)}. ${lead.kind === "avatar" ? "One photo, and now they can move." : "Rebuilt from one video, walked all the way around."}</p>`;
   }
   root.querySelector<HTMLElement>("#grid-title")!.hidden = false;
   grid.innerHTML = dreams
     .map((d) => {
-      const meta = [`${d.durationS.toFixed(1)} s`, d.frames?.gaussiansPerFrame ? `${formatCount(d.frames.gaussiansPerFrame)} Gaussians` : ""]
+      const meta = [d.kind === "avatar" ? "From a photo" : `${d.durationS.toFixed(1)} s`, d.frames?.gaussiansPerFrame ? `${formatCount(d.frames.gaussiansPerFrame)} Gaussians` : ""]
         .filter(Boolean)
         .join(" · ");
-      const thumb = d.thumb ? `<img src="${dreamUrl(d.id, d.thumb)}" alt="" loading="lazy" />` : "";
+      // no render yet: the name's first letter, set quietly, instead of an empty tile
+      const thumb = d.thumb ? `<img src="${dreamUrl(d.id, d.thumb)}" alt="" loading="lazy" />` : `<span class="initial">${escapeHtml(d.name.trim().charAt(0).toUpperCase())}</span>`;
       const preview = d.preview ? `<video src="${dreamUrl(d.id, d.preview)}" muted loop playsinline preload="none"></video>` : "";
       return `<a class="card" href="?dream=${encodeURIComponent(d.id)}">
         <div class="thumb">${thumb}${preview}</div>

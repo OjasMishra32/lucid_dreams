@@ -4,6 +4,8 @@
 Every minute: any new video in ~/Downloads/lucid-clips/ (once it has finished copying) is submitted to HiPerGator;
 finished runs are fetched into <repo>/dreams/<id>/, where the viewer's library picks them up. With --seed-samples it
 also runs 4DAnyone's sample clips of real people. Waits until SMPL-X is installed on HiPerGator before submitting.
+A photo in ~/Downloads/lucid-photos/ (a consenting person, head to toe; iPhone HEIC is fine) becomes an avatar, named
+after the file (vishal.jpg -> "Vishal", id vishal), once the avatar assets are installed.
 A queue item's "then" jobs, e.g. [{"job": "avatars/hpg/digs-finetune.sbatch", "env": {}}], are submitted with
 RUN_ID=<its id> once its run is done and the avatar assets are installed.
 
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -22,6 +25,8 @@ import lucid_runner as runner
 
 DROP = Path.home() / "Downloads" / "lucid-clips"
 VIDEO = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+PHOTOS = Path.home() / "Downloads" / "lucid-photos"
+PHOTO = {".jpg", ".jpeg", ".png", ".heic"}
 SAMPLES = runner.REMOTE + "/repos/4DAnyone/data/source/pexels"
 SMPLX = runner.REMOTE + "/repos/4DAnyone/models/body_models/smplx/SMPLX_NEUTRAL.npz"
 ASSETS_READY = f"grep -l ASSETS_OK {runner.REMOTE}/jobs/lucid-digs-assets-*.log >/dev/null 2>&1 && echo yes || echo no"
@@ -41,6 +46,7 @@ def main():
     state_path = runner.DEFAULT_DEST / ".autopilot.json"
     runner.DEFAULT_DEST.mkdir(parents=True, exist_ok=True)
     DROP.mkdir(parents=True, exist_ok=True)
+    PHOTOS.mkdir(parents=True, exist_ok=True)
     state = json.loads(state_path.read_text()) if state_path.exists() else {"submitted": {}, "fetched": []}
     sizes: dict[str, int] = {}
     seeded = state.get("seeded", False)
@@ -87,6 +93,30 @@ def main():
                 elif st["status"] == "failed":
                     log(f"{run_id} failed at {st['stage']}")
                     state["fetched"].append(run_id)
+            # photos -> avatars (Vishal's DiGS job needs its assets first)
+            photos = [f for f in sorted(PHOTOS.iterdir()) if f.suffix.lower() in PHOTO
+                      and str(f) not in [v["clip"] for v in state["submitted"].values()]]
+            settled = []
+            for f in photos:
+                size = f.stat().st_size
+                if sizes.get(str(f)) == size:
+                    settled.append(f)
+                sizes[str(f)] = size
+            if ready and settled and runner.remote(ASSETS_READY).strip() != "yes":
+                log(f"{len(settled)} photo(s) wait for the avatar assets")
+            elif ready:
+                for f in settled:
+                    src = f
+                    if f.suffix.lower() == ".heic":  # DiGS reads JPEG/PNG
+                        src = runner.DEFAULT_DEST / ".photos" / (f.stem + ".jpg")
+                        src.parent.mkdir(parents=True, exist_ok=True)
+                        subprocess.run(["sips", "-s", "format", "jpeg", str(f), "--out", str(src)], check=True,
+                                       capture_output=True)
+                    rid = runner.slug(f.stem)
+                    out = runner.submit(src, f.stem.replace("_", " ").replace("-", " ").strip().title(), rid, False, 6,
+                                        0.0, kind="avatar")
+                    state["submitted"][out["id"]] = {"clip": str(f), "at": time.time(), "kind": "avatar"}
+                    log(f"submitted photo {f.name} as avatar {out['id']}")
             # follow-up jobs on finished runs (job paths are relative to the repo clone on HiPerGator)
             followed = state.setdefault("followed", [])
             for item in queue:

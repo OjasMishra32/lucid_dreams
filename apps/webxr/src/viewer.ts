@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "./avatar";
+import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
+import { fingertips, handOccluder, XrButton } from "./xr/hands";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
 // "local-floor" space, so y = 0 is the real floor and nothing is ever scaled: the person is exactly their real size.
@@ -12,6 +14,8 @@ const PAUSE = `<svg viewBox="0 0 16 16"><path d="M3.5 2h3v12h-3zM9.5 2h3v12h-3z"
 const BACK = `<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const PLACE_DISTANCE = 1.8; // meters in front of you when you enter the room
 const LOAD_CONCURRENCY = 4;
+const LONG_PINCH_MS = 800; // hold a pinch this long to bring the person in front of you
+const SPEEDS = [1, 0.5, 0.25];
 
 export async function renderViewer(root: HTMLElement, id: string) {
   root.innerHTML = `
@@ -20,12 +24,14 @@ export async function renderViewer(root: HTMLElement, id: string) {
     <div class="loader" id="loader"><div class="loader-inner">
       <svg class="ring" viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="19"/><circle class="bar" id="ring" cx="22" cy="22" r="19"/></svg>
       <h2 id="loading-title">Bringing them in</h2><p id="loading-pct">0%</p></div></div>
+    <p class="cue" id="cue" hidden></p>
     <div class="controls" id="controls" hidden>
       <button class="play" id="play" aria-label="Play">${PAUSE}</button>
       <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Scrub" />
       <span class="time" id="time">0.0 / 0.0 s</span>
       <div class="segmented" id="speeds"><button data-speed="0.25">0.25×</button><button data-speed="0.5">0.5×</button><button data-speed="1" class="on">1×</button></div>
       <button class="pill" id="reality" hidden aria-pressed="false">Reality check</button>
+      <button class="pill on" id="cc" hidden aria-pressed="true">Captions</button>
       <button class="cta" id="room" hidden>View in your room</button>
     </div>`;
   const $ = <T extends HTMLElement>(s: string) => root.querySelector<T>(s)!;
@@ -164,10 +170,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!playing && !audio.paused) audio.pause();
   };
   const playBtn = $("#play");
+  let xrPlay: XrButton | null = null;
+  let xrSpeed: XrButton | null = null;
   const setPlaying = (p: boolean) => {
     playing = p;
     playBtn.innerHTML = p ? PAUSE : PLAY;
     playBtn.setAttribute("aria-label", p ? "Pause" : "Play");
+    xrPlay?.setLabel(p ? "Pause" : "Play");
     syncAudio();
   };
   playBtn.addEventListener("click", () => setPlaying(!playing));
@@ -176,13 +185,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
     t = Number(scrub.value) * duration;
     syncAudio();
   });
-  root.querySelectorAll<HTMLButtonElement>("#speeds button").forEach((b) =>
-    b.addEventListener("click", () => {
-      speed = Number(b.dataset.speed);
-      root.querySelectorAll("#speeds button").forEach((x) => x.classList.toggle("on", x === b));
-      syncAudio();
-    }),
-  );
+  const setSpeed = (v: number) => {
+    speed = v;
+    root.querySelectorAll<HTMLButtonElement>("#speeds button").forEach((x) => x.classList.toggle("on", Number(x.dataset.speed) === v));
+    xrSpeed?.setLabel(`${v}×`);
+    syncAudio();
+  };
+  root.querySelectorAll<HTMLButtonElement>("#speeds button").forEach((b) => b.addEventListener("click", () => setSpeed(Number(b.dataset.speed))));
   addEventListener("keydown", (e) => {
     if (e.code === "Space") {
       e.preventDefault();
@@ -196,7 +205,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const seenPct = dream.metrics?.seenFraction != null ? Math.round(dream.metrics.seenFraction * 100) : null;
   if (dream.kind === "replay" && dream.frames?.reality) realityBtn.hidden = false;
   let realityLoaded: Promise<void> | null = null;
-  realityBtn.addEventListener("click", async () => {
+  const toggleReality = async (): Promise<boolean> => {
     const on = active === frames;
     if (on && !realityLoaded) {
       realityBtn.textContent = "Loading…";
@@ -210,14 +219,65 @@ export async function renderViewer(root: HTMLElement, id: string) {
     realityBtn.setAttribute("aria-pressed", String(on));
     $("#subtitle").textContent = on && seenPct != null ? `${seenPct}% seen by the camera · blue was imagined` : "";
     show(shown < 0 ? 0 : shown, true);
+    return on;
+  };
+  realityBtn.addEventListener("click", () => void toggleReality());
+
+  // ---------------- captions: what they say, beside them ----------------
+  let cues: Cue[] = [];
+  let captionsOn = true;
+  const cueEl = $("#cue");
+  const ccBtn = $("#cc");
+  const spoken = new SpatialCaption();
+  // in front of them at chest height, toward you (their front is -Z), so it never cuts through their body
+  spoken.mesh.position.set(0, height * 0.6, -0.42);
+  spoken.mesh.rotation.y = Math.PI;
+  person.add(spoken.mesh);
+  if (dream.captions)
+    fetch(dreamUrl(dream.id, dream.captions), { cache: "no-cache" })
+      .then((r) => (r.ok ? r.text() : ""))
+      .then((vtt) => {
+        cues = parseVtt(vtt);
+        ccBtn.hidden = cues.length === 0;
+      })
+      .catch(() => {});
+  ccBtn.addEventListener("click", () => {
+    captionsOn = !captionsOn;
+    ccBtn.classList.toggle("on", captionsOn);
+    ccBtn.setAttribute("aria-pressed", String(captionsOn));
   });
 
   // ---------------- your room (WebXR passthrough) ----------------
-  const caption = spatialCaption(dream.name, "Pinch to pause  ·  Squeeze to bring them here");
+  // hands only: your real hands stay in front of the person, and a small bar of fingertip buttons sits within reach
+  const hands = [0, 1].map((i) => renderer.xr.getHand(i));
+  hands.forEach((h) => scene.add(h));
+  const occluders = hands.map((h) => handOccluder(h, scene));
+  const bar = new THREE.Group();
+  const tilt = new THREE.Group();
+  tilt.rotation.x = -0.75; // faces up toward your eyes
+  bar.add(tilt);
+  bar.visible = false;
+  scene.add(bar);
+  const xrButtons: XrButton[] = [];
+  xrPlay = new XrButton("play", "Pause", () => setPlaying(!playing));
+  xrSpeed = new XrButton("speed", "1×", () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]));
+  xrButtons.push(xrPlay, xrSpeed);
+  if (!realityBtn.hidden) {
+    const xrReality: XrButton = new XrButton("reality", "Reality check", () => void toggleReality().then((on) => xrReality.setOn(on)));
+    xrButtons.push(xrReality);
+  }
+  xrButtons.push(new XrButton("here", "Bring here", () => (placeNextFrame = true)));
+  xrButtons.forEach((b, i) => {
+    b.mesh.position.x = (i - (xrButtons.length - 1) / 2) * 0.1;
+    tilt.add(b.mesh);
+  });
+
+  const caption = spatialCaption(dream.name, "Pinch to pause  ·  Hold the pinch to bring them here");
   caption.visible = false;
   person.add(caption);
   let captionUntil = 0;
   let placeNextFrame = false;
+  const pinches = new Map<XRInputSource, number>();
   const xr = new SparkXr({
     renderer,
     mode: "ar",
@@ -228,15 +288,21 @@ export async function renderViewer(root: HTMLElement, id: string) {
       scene.background = null;
       placeNextFrame = true;
       const session = renderer.xr.getSession();
-      session?.addEventListener("select", () => {
+      // a quick pinch pauses or plays; holding it brings them in front of you (works with hands or controllers)
+      session?.addEventListener("selectstart", (e) => pinches.set(e.inputSource, performance.now()));
+      session?.addEventListener("selectend", (e) => {
+        if (!pinches.delete(e.inputSource)) return; // already used as a long pinch
         setPlaying(!playing);
         captionUntil = performance.now() + 4000;
       });
       session?.addEventListener("squeeze", () => (placeNextFrame = true));
+      bar.visible = true;
       caption.visible = true;
       captionUntil = performance.now() + 7000;
     },
     onExitXr: () => {
+      bar.visible = false;
+      pinches.clear();
       person.position.set(0, 0, 0);
       person.rotation.y = Math.PI;
       caption.visible = false;
@@ -261,6 +327,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
     forward.normalize();
     person.position.set(head.x + forward.x * PLACE_DISTANCE, 0, head.z + forward.z * PLACE_DISTANCE);
     person.rotation.y = Math.atan2(forward.x, forward.z); // front (-Z) turned to face you
+    // the control bar: within reach, a little below your eyes, between you and them
+    bar.position.set(head.x + forward.x * 0.42, Math.max(0.7, head.y - 0.42), head.z + forward.z * 0.42);
+    bar.rotation.y = Math.atan2(-forward.x, -forward.z);
   };
 
   // ---------------- loop ----------------
@@ -273,9 +342,20 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const timeLabel = $("#time");
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.1);
-    if (renderer.xr.isPresenting && placeNextFrame) {
-      placeInFrontOfYou();
-      placeNextFrame = false;
+    if (renderer.xr.isPresenting) {
+      const now = performance.now();
+      for (const [src, t0] of pinches)
+        if (now - t0 > LONG_PINCH_MS) {
+          pinches.delete(src);
+          placeNextFrame = true;
+        }
+      if (placeNextFrame) {
+        placeInFrontOfYou();
+        placeNextFrame = false;
+      }
+      occluders.forEach((o) => o());
+      const tips = fingertips(hands);
+      for (const b of xrButtons) b.touch(tips, now);
     }
     if (playing) t = (t + dt * speed) % duration;
     reveal = Math.min(1, reveal + dt / 1.4);
@@ -284,6 +364,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const m = caption.material as THREE.MeshBasicMaterial;
       m.opacity += (target - m.opacity) * Math.min(1, dt * 4);
     }
+    const cue = captionsOn ? cueAt(cues, t) : null;
+    if (cueEl.textContent !== (cue?.text ?? "")) cueEl.textContent = cue?.text ?? "";
+    cueEl.hidden = !cue || renderer.xr.isPresenting;
+    if (cue) spoken.set(cue.text);
+    spoken.fade(!!cue && renderer.xr.isPresenting, dt);
     if (avatar) {
       avatar.pose(t);
       avatar.mesh.opacity = reveal;
