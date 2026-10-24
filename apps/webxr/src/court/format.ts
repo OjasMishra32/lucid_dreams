@@ -1,0 +1,824 @@
+// The court bundle format: the types of court.json and video/frames.json, a validator that names every bad field in
+// plain words, and loadCourt (fetch + validate). DOM-free and dependency-free (it runs under node --test and in the
+// page alike), so it is also the reference for a Unity or visionOS reader: README.md beside this file documents it
+// with a worked example. Owned by the integrator (frozen at T0); a change here is a contract change for every stream.
+//
+// Conventions used by every field below:
+// - Court space: metres; origin at centre court on the floor; +Y up; +X toward the basket the play attacks; +Z to the
+//   right when facing +X (right-handed). Every position in the bundle is in court space unless it says otherwise.
+// - Show frames: the baked stream's frames, 0-based; show frame i is displayed at t = i / video.displayHz.
+// - Source frames: the source clip's own frame numbers (A's, at camera.sourceFps), fractional for an in-between. One
+//   second of real action is camera.sourceFps x camera.slow source frames (A: 59.94 x 2.67 = 160); camera.captureFps
+//   is the capture's own rate, which says which display frames can be real (A's repeats make the two differ).
+// - Cameras: OpenCV axes (+x right, +y down, +z forward), world-from-camera rotation, intrinsics in source pixels
+//   (camera.width x camera.height), pixel centres at whole numbers. An image of another width w is scaled by
+//   s = w / camera.width as u' = (u + 0.5) s - 0.5 (camera.ts `scaled`).
+// - Paths are relative to court.json's folder, never absolute, never "..", never a URL.
+// - Unknown fields are ignored, so the format can grow (as every Lucid Dreams contract does).
+
+/** A point in court space, metres: [x, y, z]. */
+export type Vec3 = [number, number, number];
+/** A unit quaternion [x, y, z, w]. */
+export type Quat = [number, number, number, number];
+/** An inclusive range of show frames: [first, last]. */
+export type FrameRange = [number, number];
+/**
+ * A rectangle on the floor (y = 0) in court metres: [minX, minZ, maxX, maxZ]. An image laid on it runs left to right
+ * from minX to maxX and top to bottom from minZ to maxZ.
+ */
+export type FloorRect = [number, number, number, number];
+/** A file inside the bundle, relative to court.json's folder ("video/show.h264"). */
+export type BundlePath = string;
+
+/** The honesty label, word for word (P22). The bundle must carry exactly this text. */
+export const LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.";
+
+/** court.json. */
+export interface Court {
+  /** Format version: 1. */
+  version: 1;
+  /** The moment's name, for the page title. */
+  title: string;
+  /** Who, which game and the moment, shown low in front of the judge ("… · Gobert closes out as Luka gathers"). */
+  caption: string;
+  /** Always exactly LABEL. */
+  label: string;
+  /** The source credit, always shown with the label. */
+  credit: string;
+  court: CourtGeometry;
+  camera: SourceCamera;
+  video: ShowVideoInfo;
+  seat: SeatInfo;
+  freeze: FreezeInfo;
+  audio: AudioInfo;
+  metrics: Metrics;
+}
+
+/** The rulebook court the footage is lined up with. */
+export interface CourtGeometry {
+  /** Baseline to baseline, metres (28.65 for the NBA). Runs along X, centred on 0. */
+  length: number;
+  /** Sideline to sideline, metres (15.24). Runs along Z, centred on 0. */
+  width: number;
+  /** Centre of the ring the play attacks, court space; y is the rim height (3.05 m +/- 0.03, P2). */
+  rim: Vec3;
+  /** Top-down image of the floor made from the footage, covering the whole court (FloorRect [-length/2, -width/2, length/2, width/2]). */
+  floor: BundlePath;
+  /** Same extent as `floor`: white where the camera really filmed the floor; everything else is rendered (Reality check). */
+  floorSeen: BundlePath;
+  /** The rendered floor's colour, matched to the footage's floor: sRGB, each 0-1. */
+  hardwood: [number, number, number];
+}
+
+/** The source camera (A): one fixed centre; its rotation and zoom change per frame (frames.json). */
+export interface SourceCamera {
+  /** The camera's optical centre, court space (fixed for the whole show). */
+  centre: Vec3;
+  /** Source image width, pixels (3840 for 4K). Every focal and principal point is in these pixels. */
+  width: number;
+  /** Source image height, pixels (2160). */
+  height: number;
+  /** Principal point, source pixels (1919.5 for a centred 3840-wide image). */
+  cx: number;
+  /** Principal point, source pixels (1079.5). */
+  cy: number;
+  /** Radial distortion left in the bundle: always 0 (the bake undistorts every frame with the solve's own k1). */
+  k1: number;
+  /** The source clip's container rate, frames per second (59.94 for A). Real time -> source frames: sourceFps x slow per second. */
+  sourceFps: number;
+  /** The real capture rate, frames per second (120 for A's high-speed replay): how many distinct real frames a second of action has. */
+  captureFps: number;
+  /** How much slower than real time the source clip plays (2.67 for A); 1 for a real-time clip. */
+  slow: number;
+}
+
+/** The show stream: the whole show baked at the headset's display times, plus its fallbacks. */
+export interface ShowVideoInfo {
+  /** Raw H.264 Annex B, -bf 0 (decode order = display order), an IDR at every segment start, undistorted, no audio. */
+  file: BundlePath;
+  /** WebCodecs codec string: "avc1.640034" (High, level 5.2) for 2560x1440 at 72 Hz. */
+  codec: string;
+  /** Coded width, pixels (2560). */
+  width: number;
+  /** Coded height, pixels (1440). */
+  height: number;
+  /** The display rate the show is baked for, Hz (72). The clock steps round(dt x displayHz) show frames per XR frame. */
+  displayHz: number;
+  /** Pre-built fallbacks (section 9), each optional. */
+  fallbacks: ShowFallbacks;
+  /** Per show frame: its source frame and camera (video/frames.json, `ShowFrame[]`). */
+  frames: BundlePath;
+  segments: ShowSegments;
+  /** The last pass-2 show frame a press can still stop on (the last ease start); later presses stop on the next pass. */
+  cutoff: number;
+  /** F: the source frame the show freezes on (1244). Every ease ends on it; it is a real frame (interp false). */
+  freezeSource: number;
+  /** Source frame where the ball drops through the net (~1602): the `make` one-shots fire as the show passes it. Required when any one-shot is cued on "make". */
+  makeSource?: number;
+  /** Frame F, lossless, at the source's aspect (any width; scale the camera by width). */
+  freeze: BundlePath;
+  /** F with the players and the watermark painted out: the clean plate under the players. */
+  freezeClean: BundlePath;
+  /** Same size as `freeze`: white where the stands and crowd are (dimmed 10-20% during the time stop). */
+  standsMask: BundlePath;
+  /** Same size as `freeze`: white where `freezeClean` was painted in (players, watermark), for the Reality check. */
+  inpaintMask?: BundlePath;
+}
+
+/** The pre-built fallbacks: a 1080p copy (same frames), a 90 Hz bake (its own frames), pass 1 for a <video> element. */
+export interface ShowFallbacks {
+  /** `?show=1080`: the same show frame for frame (same frames.json, segments and cutoff), smaller. */
+  p1080?: { file: BundlePath; codec: string; width: number; height: number };
+  /** `?hz=90`: a separate bake at 90 Hz display times, so it has its own frames.json, segments and cutoff. */
+  hz90?: { file: BundlePath; codec: string; width: number; height: number; displayHz: number; frames: BundlePath; segments: ShowSegments; cutoff: number };
+  /** `?video=element`: pass 1 as an MP4 for a <video> element (only if WebCodecs fails on the headset). */
+  element?: BundlePath;
+}
+
+/** Where each part of the show sits in the stream. Ranges are inclusive and never overlap; each starts with an IDR. */
+export interface ShowSegments {
+  /** Pass 1, the play at real speed (1x). */
+  pass1: FrameRange;
+  /** Pass 2, the replay at 0.6x; Step into the court is live here; unpressed it plays on through the make and repeats. */
+  pass2: FrameRange;
+  /** From F on through the make: 0 -> 0.6x over 0.8 s, then 0.6x. Shown after F (frame F itself is the ease's last). */
+  resume: FrameRange;
+  /** The ease ladder, in order of `start`: each slows 0.6x -> 0 (1 - smootherstep) and ends on F. */
+  eases: ShowEase[];
+}
+
+export interface ShowEase {
+  /** The pass-2 show frame the ease is entered from: after it is shown, the ease's first frame follows. */
+  start: number;
+  /** The ease's own frames; the last one is F. */
+  frames: FrameRange;
+  /** Its length, seconds (the frame count / displayHz, within one frame: 1.2, 1.0, 0.8). */
+  seconds: number;
+}
+
+/** One entry of video/frames.json per show frame. */
+export interface ShowFrame {
+  /** The source frame shown (fractional for an in-between). */
+  src: number;
+  /** True for an interpolated frame (RIFE, strobe replacements included); a real frame has a whole `src`. */
+  interp: boolean;
+  /** That frame's own solved camera rotation, world-from-camera (never smoothed; an in-between gets the slerp of its two real frames'). */
+  q: Quat;
+  /** That frame's own focal length, source pixels (an in-between gets the interpolation of its two real frames'). */
+  f: number;
+}
+
+/** Decision W: where the judge sits and the viewing places after the world opens. */
+export interface SeatInfo {
+  /** Which camera's optical ray the seat sits on: "freeze" (the camera of the show frame equal to F). */
+  ray: "freeze";
+  /** D': metres from `pairCentre` to the seat along that ray (5); `?seat=` overrides it within `distanceRange`. */
+  distance: number;
+  /** The range `?seat=` may choose from, metres: [low, high] (4-7). */
+  distanceRange: [number, number];
+  /** The pair's centre on the floor, court space (y = 0). */
+  pairCentre: Vec3;
+  /** After Walk closer, the pair's centre is this far in front of the chair, metres (2.5). */
+  closer: number;
+  /** Every viewing spot and ring point keeps this much clear of each body's bounds, metres (1.0, P29). */
+  clear: number;
+  /** The viewing spots on the floor, court space (three: front and 60 deg to either side, on the camera's side). */
+  spots: Vec3[];
+  /** The bounds that turn the walk ring on by themselves, metres: [width, depth] (4.5 x 5.5). */
+  ringArea: [number, number];
+}
+
+/** The frozen 3D: the pair, the ball, the other players, the stands. */
+export interface FreezeInfo {
+  /** The main players (the pair), each rebuilt from their own window. */
+  players: FreezePlayer[];
+  ball: FreezeBall;
+  /** The extras (3.4b): every other player or ref placed on the court. May be empty. */
+  others: FreezeExtra[];
+  stands: StandsInfo;
+}
+
+export interface FreezePlayer {
+  /** Stable id, unique among players and others ("luka"). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** The freeze-frame Gaussians: 3DGS PLY, SH degree 1, court space. */
+  splats: BundlePath;
+  /** The same Gaussians in the same order, the ones no camera saw tinted blue (Reality check). */
+  reality: BundlePath;
+  /** The splat-depth proxy: a depth mesh of these splats seen from camera F, court space (glTF binary). */
+  proxy: BundlePath;
+  /** Axis-aligned bounds of the visible body, court space. */
+  bounds: { min: Vec3; max: Vec3 };
+  /** Share of the body the cameras really saw, 0-1. */
+  seenFraction: number;
+  /** Torso and head capsules only (never arms or hands): the eye 0.2 m from one fades the player (P17). */
+  capsules: Capsule[];
+  shadow: FloorMap;
+  reflection: FloorMap;
+}
+
+/** A capsule: the segment a-b (court space) swept by radius r (metres). */
+export interface Capsule {
+  a: Vec3;
+  b: Vec3;
+  r: number;
+}
+
+/** A floor image baked from the Gaussians (contact shadow, reflection), laid on `rect`. */
+export interface FloorMap {
+  /** PNG; RGBA, alpha = coverage. */
+  image: BundlePath;
+  rect: FloorRect;
+}
+
+export interface FreezeBall {
+  /** Ball centre at F, court space. */
+  centre: Vec3;
+  /** Metres (0.1195: a 23.9 cm ball). */
+  radius: number;
+  /** Splats of these players within `radius` metres of the ball's centre are erased (the ball replaces them). */
+  erase: { player: string; radius: number }[];
+}
+
+/** An extra (3.4b): another player or ref, built one of three ways. */
+export interface FreezeExtra {
+  /** Unique among players and others ("reid"). */
+  id: string;
+  /** Display name (optional). */
+  name?: string;
+  /** splats: rebuilt like the pair (PLY); body: an LHM++ body posed to C (PLY); relief: a relief mesh from A's frame (GLB). */
+  kind: "splats" | "body" | "relief";
+  /** The model file (PLY for splats and body, GLB for relief). */
+  file: BundlePath;
+  /** The same model with what no camera saw tinted blue. */
+  reality: BundlePath;
+  /** Which camera gave the pose: "A" (seen in the show) or "C" (placed from the broadcast camera; Reality-marked). */
+  pose: "A" | "C";
+  /** Where they stand: the floor point under them, court space (y = 0). */
+  foot: Vec3;
+  /** Their height, metres (body scale check, P12). */
+  height: number;
+  /** The largest angle between camera F's ray to them and any walk-spot ray to them, degrees (a relief needs < 15, P16). */
+  maxRayAngle: number;
+  shadow: FloorMap;
+  reflection: FloorMap;
+}
+
+/** What the footage is projected onto besides the court plane and the players. */
+export interface StandsInfo {
+  /** The stands proxy: planes the footage (and the clean plate) is projected onto. */
+  proxy: { kind: "plane"; points: [Vec3, Vec3, Vec3, Vec3] }[];
+  /** Depth cards (front row, photographers, the ref), each its own image on its own quad. */
+  cards: StandCard[];
+}
+
+export interface StandCard {
+  /** Unique among cards ("front-row"). */
+  id: string;
+  /** PNG cut from the clean plate, RGBA (alpha = the card's matte). */
+  image: BundlePath;
+  /** Corners in court space: bottom-left, bottom-right, top-right, top-left of the image, as seen from the court. */
+  quad: [Vec3, Vec3, Vec3, Vec3];
+}
+
+export interface AudioInfo {
+  /** The crowd bed: B's no-vocals stem, looped seamlessly, swell cut out (AAC in MP4). */
+  bed: BundlePath;
+  /** The bed's integrated loudness, LUFS (-23). */
+  lufs: number;
+  /** At least four HRTF sources at the stands, each playing the bed from its own offset (P31). */
+  sources: { at: Vec3; offsetS: number }[];
+  /** One-shots: `make` fires as the show passes video.makeSource; `stepIn` fires softly at Step into the court. */
+  oneShots: { file: BundlePath; at: "make" | "stepIn"; gainDb: number }[];
+  /** Sounds at 3D positions (squeak, bounce, release), each fired as the show passes its source frame. May be empty. */
+  events: { frame: number; kind: string; at: Vec3; file: BundlePath }[];
+}
+
+/** The measured numbers (section 11); null (or absent from a map) until measured. */
+export interface Metrics {
+  /** Calibration reprojection error, degrees. */
+  reprojDeg: { median: number | null; p95: number | null };
+  /** Held-out PSNR per player id vs generated views, dB. */
+  heldOutPsnrVsGenerated: Record<string, number | null>;
+  /** Seat-view match (P8), dB, by part ("players", "background", or a player id). */
+  seatPsnr: Record<string, number | null>;
+  /** Share of show frames that are interpolated, 0-1 (shown by the Reality check). */
+  interpShare: number;
+}
+
+// ---------------- validation ----------------
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const show = (v: unknown): string => {
+  const s = JSON.stringify(v);
+  return s === undefined ? String(v) : s.length > 60 ? `${s.slice(0, 57)}...` : s;
+};
+
+/** Collects errors as "<field>: <what's wrong>, got <value>". */
+class Check {
+  readonly errors: string[] = [];
+
+  fail(path: string, msg: string, ...got: unknown[]): false {
+    this.errors.push(`${path}: ${msg}${got.length ? `, got ${show(got[0])}` : ""}`);
+    return false;
+  }
+
+  /** The field exists; reports "missing" when it doesn't. */
+  has(o: Record<string, unknown>, key: string, path: string): boolean {
+    return key in o && o[key] !== undefined ? true : this.fail(path, "missing");
+  }
+
+  obj(v: unknown, path: string): v is Record<string, unknown> {
+    return isObj(v) || this.fail(path, "expected an object", v);
+  }
+
+  text(v: unknown, path: string): v is string {
+    return (typeof v === "string" && v.trim().length > 0) || this.fail(path, "expected some text", v);
+  }
+
+  num(v: unknown, path: string, rule: { gt?: number; min?: number; max?: number; int?: boolean } = {}): v is number {
+    if (typeof v !== "number" || !Number.isFinite(v)) return this.fail(path, "expected a number", v);
+    if (rule.int && !Number.isInteger(v)) return this.fail(path, "expected a whole number", v);
+    if (rule.gt !== undefined && !(v > rule.gt)) return this.fail(path, `expected a number greater than ${rule.gt}`, v);
+    if (rule.min !== undefined && rule.max !== undefined && (v < rule.min || v > rule.max))
+      return this.fail(path, `expected a number between ${rule.min} and ${rule.max}`, v);
+    if (rule.min !== undefined && v < rule.min) return this.fail(path, `expected a number of at least ${rule.min}`, v);
+    if (rule.max !== undefined && v > rule.max) return this.fail(path, `expected a number of at most ${rule.max}`, v);
+    return true;
+  }
+
+  bool(v: unknown, path: string): v is boolean {
+    return typeof v === "boolean" || this.fail(path, "expected true or false", v);
+  }
+
+  /** A fixed-length list of finite numbers; each element is checked so the error names it. */
+  nums(v: unknown, n: number, path: string, what: string): v is number[] {
+    if (!Array.isArray(v) || v.length !== n) return this.fail(path, `expected ${what}`, v);
+    let ok = true;
+    v.forEach((x, i) => (ok = this.num(x, `${path}[${i}]`) && ok));
+    return ok;
+  }
+
+  vec3(v: unknown, path: string): v is Vec3 {
+    return this.nums(v, 3, path, "a point [x, y, z] in metres");
+  }
+
+  /** A list; `need` says how many in words when there is a minimum ("one ease"). */
+  list(v: unknown, path: string, min = 0, need = ""): v is unknown[] {
+    if (!Array.isArray(v)) return this.fail(path, "expected a list", v);
+    if (v.length < min) return this.fail(path, `expected at least ${need}`, v.length);
+    return true;
+  }
+
+  /** A bundle-relative file path: no scheme, no leading slash, no "..", no backslashes. */
+  file(v: unknown, path: string): v is string {
+    if (!this.text(v, path)) return false;
+    const bad = /^[a-z][a-z0-9+.-]*:/i.test(v) || v.startsWith("/") || v.includes("\\") || v.split("/").includes("..");
+    return !bad || this.fail(path, "expected a path inside the bundle (relative, no '..', no URL)", v);
+  }
+
+  range(v: unknown, path: string): v is FrameRange {
+    if (!Array.isArray(v) || v.length !== 2 || !v.every((x) => typeof x === "number" && Number.isFinite(x)))
+      return this.fail(path, "expected [first, last] show frames", v);
+    if (!v.every((x) => Number.isInteger(x) && x >= 0)) return this.fail(path, "expected whole show frames (0 or more)", v);
+    if (v[0] > v[1]) return this.fail(path, "expected [first, last] with first <= last", v);
+    return true;
+  }
+
+  rect(v: unknown, path: string): v is FloorRect {
+    if (!this.nums(v, 4, path, "a floor rectangle [minX, minZ, maxX, maxZ]")) return false;
+    return (v[0] < v[2] && v[1] < v[3]) || this.fail(path, "expected [minX, minZ, maxX, maxZ] with minX < maxX and minZ < maxZ", v);
+  }
+
+  oneOf<T extends string>(v: unknown, options: readonly T[], path: string, words: string): v is T {
+    return (typeof v === "string" && (options as readonly string[]).includes(v)) || this.fail(path, `expected ${words}`, v);
+  }
+}
+
+const CODEC = /^avc1\.[0-9a-f]{6}$/i;
+
+/** Every problem with a parsed court.json, one readable line each ("seat.distance: ..."); empty when it is valid. */
+export function validateCourt(json: unknown): string[] {
+  const c = new Check();
+  if (!isObj(json)) {
+    c.fail("court.json", "expected an object (the parsed court.json)", json);
+    return c.errors;
+  }
+  const j = json;
+  if (c.has(j, "version", "version") && j.version !== 1) c.fail("version", "expected 1 (the only version so far)", j.version);
+  for (const k of ["title", "caption", "credit"]) if (c.has(j, k, k)) c.text(j[k], k);
+  if (c.has(j, "label", "label") && j.label !== LABEL) c.fail("label", `expected exactly "${LABEL}" (P22)`, j.label);
+
+  // court
+  if (c.has(j, "court", "court") && c.obj(j.court, "court")) {
+    const o = j.court;
+    for (const k of ["length", "width"]) if (c.has(o, k, `court.${k}`)) c.num(o[k], `court.${k}`, { gt: 0 });
+    if (c.has(o, "rim", "court.rim") && c.vec3(o.rim, "court.rim") && Math.abs(o.rim[1] - 3.05) > 0.03)
+      c.fail("court.rim", "expected the rim at 3.05 m (+/- 0.03) in y", o.rim);
+    for (const k of ["floor", "floorSeen"]) if (c.has(o, k, `court.${k}`)) c.file(o[k], `court.${k}`);
+    if (c.has(o, "hardwood", "court.hardwood") && c.nums(o.hardwood, 3, "court.hardwood", "an sRGB colour [r, g, b], each 0-1"))
+      o.hardwood.forEach((x, i) => c.num(x, `court.hardwood[${i}]`, { min: 0, max: 1 }));
+  }
+
+  // camera
+  let aspect: number | null = null; // the source's height / width: every stream and image keeps it
+  if (c.has(j, "camera", "camera") && c.obj(j.camera, "camera")) {
+    const o = j.camera;
+    if (c.has(o, "centre", "camera.centre")) c.vec3(o.centre, "camera.centre");
+    const w = c.has(o, "width", "camera.width") && c.num(o.width, "camera.width", { gt: 0, int: true }) ? o.width : null;
+    const h = c.has(o, "height", "camera.height") && c.num(o.height, "camera.height", { gt: 0, int: true }) ? o.height : null;
+    if (c.has(o, "cx", "camera.cx") && c.num(o.cx, "camera.cx") && w !== null && (o.cx <= 0 || o.cx >= w))
+      c.fail("camera.cx", `expected the principal point inside the image (0-${w})`, o.cx);
+    if (c.has(o, "cy", "camera.cy") && c.num(o.cy, "camera.cy") && h !== null && (o.cy <= 0 || o.cy >= h))
+      c.fail("camera.cy", `expected the principal point inside the image (0-${h})`, o.cy);
+    if (w !== null && h !== null) aspect = h / w;
+    if (c.has(o, "k1", "camera.k1") && c.num(o.k1, "camera.k1") && o.k1 !== 0)
+      c.fail("camera.k1", "expected 0: the bundle's frames are undistorted by the bake", o.k1);
+    for (const k of ["sourceFps", "captureFps", "slow"]) if (c.has(o, k, `camera.${k}`)) c.num(o[k], `camera.${k}`, { gt: 0 });
+  }
+
+  // video
+  const v = c.has(j, "video", "video") && c.obj(j.video, "video") ? j.video : null;
+  if (v) {
+    if (c.has(v, "file", "video.file")) c.file(v.file, "video.file");
+    if (c.has(v, "codec", "video.codec") && c.text(v.codec, "video.codec") && !CODEC.test(v.codec))
+      c.fail("video.codec", 'expected a WebCodecs H.264 string like "avc1.640034"', v.codec);
+    for (const k of ["width", "height"]) if (c.has(v, k, `video.${k}`)) c.num(v[k], `video.${k}`, { gt: 0, int: true });
+    sameAspect(c, v, aspect, "video");
+    if (c.has(v, "displayHz", "video.displayHz")) c.num(v.displayHz, "video.displayHz", { gt: 0 });
+    if (c.has(v, "frames", "video.frames")) c.file(v.frames, "video.frames");
+    for (const k of ["freeze", "freezeClean", "standsMask"]) if (c.has(v, k, `video.${k}`)) c.file(v[k], `video.${k}`);
+    if (v.inpaintMask !== undefined) c.file(v.inpaintMask, "video.inpaintMask");
+    if (c.has(v, "freezeSource", "video.freezeSource")) c.num(v.freezeSource, "video.freezeSource", { min: 0 });
+    if (v.makeSource !== undefined) c.num(v.makeSource, "video.makeSource", { min: 0 });
+    if (c.has(v, "fallbacks", "video.fallbacks") && c.obj(v.fallbacks, "video.fallbacks")) {
+      const fb = v.fallbacks;
+      if (fb.p1080 !== undefined && c.obj(fb.p1080, "video.fallbacks.p1080")) {
+        streamFields(c, fb.p1080, "video.fallbacks.p1080");
+        sameAspect(c, fb.p1080, aspect, "video.fallbacks.p1080");
+      }
+      if (fb.hz90 !== undefined && c.obj(fb.hz90, "video.fallbacks.hz90")) {
+        const o = fb.hz90;
+        streamFields(c, o, "video.fallbacks.hz90");
+        sameAspect(c, o, aspect, "video.fallbacks.hz90");
+        if (c.has(o, "displayHz", "video.fallbacks.hz90.displayHz")) c.num(o.displayHz, "video.fallbacks.hz90.displayHz", { gt: 0 });
+        if (c.has(o, "frames", "video.fallbacks.hz90.frames")) c.file(o.frames, "video.fallbacks.hz90.frames");
+        if (c.has(o, "segments", "video.fallbacks.hz90.segments")) segments(c, o.segments, o.cutoff, "video.fallbacks.hz90", o.displayHz);
+      }
+      if (fb.element !== undefined) c.file(fb.element, "video.fallbacks.element");
+    }
+    if (c.has(v, "segments", "video.segments")) segments(c, v.segments, v.cutoff, "video", v.displayHz);
+  }
+
+  // seat
+  if (c.has(j, "seat", "seat") && c.obj(j.seat, "seat")) {
+    const o = j.seat;
+    if (c.has(o, "ray", "seat.ray") && o.ray !== "freeze") c.fail("seat.ray", 'expected "freeze" (camera F\'s optical ray)', o.ray);
+    let lo = -Infinity;
+    let hi = Infinity;
+    if (c.has(o, "distanceRange", "seat.distanceRange")) {
+      const r = o.distanceRange;
+      if (c.nums(r, 2, "seat.distanceRange", "[low, high] metres")) {
+        if (r[0] > 0 && r[0] < r[1]) [lo, hi] = r;
+        else c.fail("seat.distanceRange", "expected [low, high] metres with 0 < low < high", r);
+      }
+    }
+    if (c.has(o, "distance", "seat.distance") && c.num(o.distance, "seat.distance", { gt: 0 }) && (o.distance < lo || o.distance > hi))
+      c.fail("seat.distance", `expected a distance inside distanceRange [${lo}, ${hi}]`, o.distance);
+    if (c.has(o, "pairCentre", "seat.pairCentre") && c.vec3(o.pairCentre, "seat.pairCentre") && Math.abs(o.pairCentre[1]) > 0.01)
+      c.fail("seat.pairCentre", "expected a point on the floor (y = 0)", o.pairCentre);
+    for (const k of ["closer", "clear"]) if (c.has(o, k, `seat.${k}`)) c.num(o[k], `seat.${k}`, { gt: 0 });
+    if (c.has(o, "spots", "seat.spots") && c.list(o.spots, "seat.spots", 1, "one viewing spot"))
+      o.spots.forEach((p, i) => c.vec3(p, `seat.spots[${i}]`));
+    if (c.has(o, "ringArea", "seat.ringArea") && c.nums(o.ringArea, 2, "seat.ringArea", "[width, depth] metres"))
+      o.ringArea.forEach((x, i) => c.num(x, `seat.ringArea[${i}]`, { gt: 0 }));
+  }
+
+  // freeze
+  if (c.has(j, "freeze", "freeze") && c.obj(j.freeze, "freeze")) {
+    const fz = j.freeze;
+    const ids = new Set<string>();
+    const unique = (id: unknown, path: string) => {
+      if (!c.text(id, path)) return;
+      if (ids.has(id)) c.fail(path, "expected an id unique among players and others", id);
+      ids.add(id);
+    };
+    const players = new Set<string>();
+    if (c.has(fz, "players", "freeze.players") && c.list(fz.players, "freeze.players", 1, "one player")) {
+      fz.players.forEach((p, i) => {
+        const at = `freeze.players[${i}]`;
+        if (!c.obj(p, at)) return;
+        if (c.has(p, "id", `${at}.id`)) {
+          unique(p.id, `${at}.id`);
+          if (typeof p.id === "string") players.add(p.id);
+        }
+        if (c.has(p, "name", `${at}.name`)) c.text(p.name, `${at}.name`);
+        for (const k of ["splats", "reality", "proxy"]) if (c.has(p, k, `${at}.${k}`)) c.file(p[k], `${at}.${k}`);
+        if (c.has(p, "bounds", `${at}.bounds`)) bounds(c, p.bounds, `${at}.bounds`);
+        if (c.has(p, "seenFraction", `${at}.seenFraction`)) c.num(p.seenFraction, `${at}.seenFraction`, { min: 0, max: 1 });
+        if (c.has(p, "capsules", `${at}.capsules`) && c.list(p.capsules, `${at}.capsules`, 1, "one capsule (torso or head)"))
+          p.capsules.forEach((cap, k) => {
+            const cp = `${at}.capsules[${k}]`;
+            if (!c.obj(cap, cp)) return;
+            if (c.has(cap, "a", `${cp}.a`)) c.vec3(cap.a, `${cp}.a`);
+            if (c.has(cap, "b", `${cp}.b`)) c.vec3(cap.b, `${cp}.b`);
+            if (c.has(cap, "r", `${cp}.r`)) c.num(cap.r, `${cp}.r`, { gt: 0 });
+          });
+        for (const k of ["shadow", "reflection"]) if (c.has(p, k, `${at}.${k}`)) floorMap(c, p[k], `${at}.${k}`);
+      });
+    }
+    if (c.has(fz, "ball", "freeze.ball") && c.obj(fz.ball, "freeze.ball")) {
+      const b = fz.ball;
+      if (c.has(b, "centre", "freeze.ball.centre")) c.vec3(b.centre, "freeze.ball.centre");
+      if (c.has(b, "radius", "freeze.ball.radius")) c.num(b.radius, "freeze.ball.radius", { gt: 0 });
+      if (c.has(b, "erase", "freeze.ball.erase") && c.list(b.erase, "freeze.ball.erase"))
+        b.erase.forEach((e, i) => {
+          const at = `freeze.ball.erase[${i}]`;
+          if (!c.obj(e, at)) return;
+          if (c.has(e, "player", `${at}.player`) && c.text(e.player, `${at}.player`) && !players.has(e.player))
+            c.fail(`${at}.player`, "expected the id of one of freeze.players (there is no player by that id)", e.player);
+          if (c.has(e, "radius", `${at}.radius`)) c.num(e.radius, `${at}.radius`, { gt: 0 });
+        });
+    }
+    if (c.has(fz, "others", "freeze.others") && c.list(fz.others, "freeze.others"))
+      fz.others.forEach((o, i) => {
+        const at = `freeze.others[${i}]`;
+        if (!c.obj(o, at)) return;
+        if (c.has(o, "id", `${at}.id`)) unique(o.id, `${at}.id`);
+        if (o.name !== undefined) c.text(o.name, `${at}.name`);
+        const kind = c.has(o, "kind", `${at}.kind`) && c.oneOf(o.kind, ["splats", "body", "relief"] as const, `${at}.kind`, "splats, body or relief") ? o.kind : null;
+        for (const k of ["file", "reality"]) if (c.has(o, k, `${at}.${k}`)) c.file(o[k], `${at}.${k}`);
+        if (c.has(o, "pose", `${at}.pose`)) c.oneOf(o.pose, ["A", "C"] as const, `${at}.pose`, "A or C (the camera that gave the pose)");
+        if (c.has(o, "foot", `${at}.foot`)) c.vec3(o.foot, `${at}.foot`);
+        if (c.has(o, "height", `${at}.height`)) c.num(o.height, `${at}.height`, { gt: 0 });
+        if (c.has(o, "maxRayAngle", `${at}.maxRayAngle`) && c.num(o.maxRayAngle, `${at}.maxRayAngle`, { min: 0, max: 180 }) && kind === "relief" && o.maxRayAngle >= 15)
+          c.fail(`${at}.maxRayAngle`, "a relief is only allowed where every walk-spot ray is within 15 deg of camera F's (P16)", o.maxRayAngle);
+        for (const k of ["shadow", "reflection"]) if (c.has(o, k, `${at}.${k}`)) floorMap(c, o[k], `${at}.${k}`);
+      });
+    if (c.has(fz, "stands", "freeze.stands") && c.obj(fz.stands, "freeze.stands")) {
+      const s = fz.stands;
+      if (c.has(s, "proxy", "freeze.stands.proxy") && c.list(s.proxy, "freeze.stands.proxy"))
+        s.proxy.forEach((p, i) => {
+          const at = `freeze.stands.proxy[${i}]`;
+          if (!c.obj(p, at)) return;
+          if (c.has(p, "kind", `${at}.kind`)) c.oneOf(p.kind, ["plane"] as const, `${at}.kind`, '"plane"');
+          if (c.has(p, "points", `${at}.points`)) quad(c, p.points, `${at}.points`);
+        });
+      const cards = new Set<string>();
+      if (c.has(s, "cards", "freeze.stands.cards") && c.list(s.cards, "freeze.stands.cards"))
+        s.cards.forEach((card, i) => {
+          const at = `freeze.stands.cards[${i}]`;
+          if (!c.obj(card, at)) return;
+          if (c.has(card, "id", `${at}.id`) && c.text(card.id, `${at}.id`)) {
+            if (cards.has(card.id)) c.fail(`${at}.id`, "expected an id unique among cards", card.id);
+            cards.add(card.id);
+          }
+          if (c.has(card, "image", `${at}.image`)) c.file(card.image, `${at}.image`);
+          if (c.has(card, "quad", `${at}.quad`)) quad(c, card.quad, `${at}.quad`);
+        });
+    }
+  }
+
+  // audio
+  let wantsMake = false;
+  if (c.has(j, "audio", "audio") && c.obj(j.audio, "audio")) {
+    const a = j.audio;
+    if (c.has(a, "bed", "audio.bed")) c.file(a.bed, "audio.bed");
+    if (c.has(a, "lufs", "audio.lufs")) c.num(a.lufs, "audio.lufs", { max: 0 });
+    if (c.has(a, "sources", "audio.sources") && c.list(a.sources, "audio.sources", 4, "4 crowd sources at the stands (P31)"))
+      a.sources.forEach((s, i) => {
+        const at = `audio.sources[${i}]`;
+        if (!c.obj(s, at)) return;
+        if (c.has(s, "at", `${at}.at`)) c.vec3(s.at, `${at}.at`);
+        if (c.has(s, "offsetS", `${at}.offsetS`)) c.num(s.offsetS, `${at}.offsetS`, { min: 0 });
+      });
+    if (c.has(a, "oneShots", "audio.oneShots") && c.list(a.oneShots, "audio.oneShots"))
+      a.oneShots.forEach((s, i) => {
+        const at = `audio.oneShots[${i}]`;
+        if (!c.obj(s, at)) return;
+        if (c.has(s, "file", `${at}.file`)) c.file(s.file, `${at}.file`);
+        if (c.has(s, "at", `${at}.at`) && c.oneOf(s.at, ["make", "stepIn"] as const, `${at}.at`, "make or stepIn")) wantsMake ||= s.at === "make";
+        if (c.has(s, "gainDb", `${at}.gainDb`)) c.num(s.gainDb, `${at}.gainDb`);
+      });
+    if (c.has(a, "events", "audio.events") && c.list(a.events, "audio.events"))
+      a.events.forEach((e, i) => {
+        const at = `audio.events[${i}]`;
+        if (!c.obj(e, at)) return;
+        if (c.has(e, "frame", `${at}.frame`)) c.num(e.frame, `${at}.frame`, { min: 0 });
+        if (c.has(e, "kind", `${at}.kind`)) c.text(e.kind, `${at}.kind`);
+        if (c.has(e, "at", `${at}.at`)) c.vec3(e.at, `${at}.at`);
+        if (c.has(e, "file", `${at}.file`)) c.file(e.file, `${at}.file`);
+      });
+  }
+  if (wantsMake && v && v.makeSource === undefined)
+    c.fail("video.makeSource", "missing: a one-shot is cued on the make, so the make's source frame is needed");
+
+  // metrics
+  if (c.has(j, "metrics", "metrics") && c.obj(j.metrics, "metrics")) {
+    const m = j.metrics;
+    if (c.has(m, "reprojDeg", "metrics.reprojDeg") && c.obj(m.reprojDeg, "metrics.reprojDeg"))
+      for (const k of ["median", "p95"])
+        if (k in m.reprojDeg && m.reprojDeg[k] !== null) c.num(m.reprojDeg[k], `metrics.reprojDeg.${k}`, { min: 0 });
+        else if (!(k in m.reprojDeg)) c.fail(`metrics.reprojDeg.${k}`, "missing (null until measured)");
+    for (const k of ["heldOutPsnrVsGenerated", "seatPsnr"])
+      if (c.has(m, k, `metrics.${k}`) && c.obj(m[k], `metrics.${k}`))
+        for (const [key, x] of Object.entries(m[k] as Record<string, unknown>)) if (x !== null) c.num(x, `metrics.${k}.${key}`);
+    if (c.has(m, "interpShare", "metrics.interpShare")) c.num(m.interpShare, "metrics.interpShare", { min: 0, max: 1 });
+  }
+  return c.errors;
+}
+
+function streamFields(c: Check, o: Record<string, unknown>, at: string) {
+  if (c.has(o, "file", `${at}.file`)) c.file(o.file, `${at}.file`);
+  if (c.has(o, "codec", `${at}.codec`) && c.text(o.codec, `${at}.codec`) && !CODEC.test(o.codec))
+    c.fail(`${at}.codec`, 'expected a WebCodecs H.264 string like "avc1.640032"', o.codec);
+  for (const k of ["width", "height"]) if (c.has(o, k, `${at}.${k}`)) c.num(o[k], `${at}.${k}`, { gt: 0, int: true });
+}
+
+/** A stream keeps the source's aspect (within a pixel), so cameras scale by width alone (camera.ts `scaled`). */
+function sameAspect(c: Check, o: Record<string, unknown>, aspect: number | null, at: string) {
+  if (aspect === null || typeof o.width !== "number" || typeof o.height !== "number") return;
+  const want = o.width * aspect;
+  if (Math.abs(o.height - want) > 1) c.fail(`${at}.height`, `expected the source's aspect: ${Math.round(want)} for width ${o.width}`, o.height);
+}
+
+/** Checks a segments block (and its cutoff); returns pass 2 when it is usable. */
+function segments(c: Check, s: unknown, cutoff: unknown, owner: string, displayHz: unknown): FrameRange | null {
+  const at = `${owner}.segments`;
+  if (!c.obj(s, at)) return null;
+  const named: [string, FrameRange][] = [];
+  for (const k of ["pass1", "pass2", "resume"]) if (c.has(s, k, `${at}.${k}`) && c.range(s[k], `${at}.${k}`)) named.push([k, s[k] as FrameRange]);
+  const pass2 = named.find(([k]) => k === "pass2")?.[1] ?? null;
+  const starts: number[] = [];
+  if (c.has(s, "eases", `${at}.eases`) && c.list(s.eases, `${at}.eases`, 1, "one ease")) {
+    s.eases.forEach((e, i) => {
+      const ep = `${at}.eases[${i}]`;
+      if (!c.obj(e, ep)) return;
+      if (c.has(e, "start", `${ep}.start`) && c.num(e.start, `${ep}.start`, { min: 0, int: true })) {
+        if (pass2 && (e.start < pass2[0] || e.start > pass2[1])) c.fail(`${ep}.start`, `expected a show frame inside pass 2 [${pass2[0]}, ${pass2[1]}]`, e.start);
+        starts.push(e.start);
+      }
+      const ok = c.has(e, "frames", `${ep}.frames`) && c.range(e.frames, `${ep}.frames`);
+      if (ok) named.push([`eases[${i}]`, e.frames as FrameRange]);
+      if (c.has(e, "seconds", `${ep}.seconds`) && c.num(e.seconds, `${ep}.seconds`, { gt: 0 }) && ok && typeof displayHz === "number" && displayHz > 0) {
+        const count = (e.frames as FrameRange)[1] - (e.frames as FrameRange)[0] + 1;
+        if (Math.abs(e.seconds * displayHz - count) > 1)
+          c.fail(`${ep}.seconds`, `expected the ease's length: its ${count} frames at ${displayHz} Hz are ${(count / displayHz).toFixed(3)} s`, e.seconds);
+      }
+    });
+    if (starts.length === s.eases.length && starts.some((x, i) => i > 0 && x <= starts[i - 1]))
+      c.fail(`${at}.eases`, "expected the eases in order of start (earliest first), each with its own start", starts);
+  }
+  // no two segments may share a show frame
+  const sorted = [...named].sort((a, b) => a[1][0] - b[1][0]);
+  for (let i = 1; i < sorted.length; i++)
+    if (sorted[i][1][0] <= sorted[i - 1][1][1])
+      c.fail(at, `expected segments that never overlap: ${sorted[i - 1][0]} ${show(sorted[i - 1][1])} and ${sorted[i][0]} ${show(sorted[i][1])} overlap`);
+  const cp = `${owner}.cutoff`;
+  if (cutoff === undefined) c.fail(cp, "missing");
+  else if (c.num(cutoff, cp, { min: 0, int: true })) {
+    if (pass2 && (cutoff < pass2[0] || cutoff > pass2[1])) c.fail(cp, `expected a show frame inside pass 2 [${pass2[0]}, ${pass2[1]}]`, cutoff);
+    else if (starts.length && cutoff > Math.max(...starts))
+      c.fail(cp, `expected at most the last ease start (${Math.max(...starts)}): a later press would find no ease to take`, cutoff);
+  }
+  return pass2;
+}
+
+function bounds(c: Check, b: unknown, at: string) {
+  if (!c.obj(b, at)) return;
+  const okMin = c.has(b, "min", `${at}.min`) && c.vec3(b.min, `${at}.min`);
+  const okMax = c.has(b, "max", `${at}.max`) && c.vec3(b.max, `${at}.max`);
+  if (okMin && okMax && !(b.min as Vec3).every((x, i) => x < (b.max as Vec3)[i])) c.fail(at, "expected min < max on every axis", b);
+}
+
+function floorMap(c: Check, m: unknown, at: string) {
+  if (!c.obj(m, at)) return;
+  if (c.has(m, "image", `${at}.image`)) c.file(m.image, `${at}.image`);
+  if (c.has(m, "rect", `${at}.rect`)) c.rect(m.rect, `${at}.rect`);
+}
+
+function quad(c: Check, q: unknown, at: string) {
+  if (!Array.isArray(q) || q.length !== 4) {
+    c.fail(at, "expected four corners [[x, y, z] x 4]", q);
+    return;
+  }
+  q.forEach((p, i) => c.vec3(p, `${at}[${i}]`));
+}
+
+/** Every problem with a parsed video/frames.json, checked against its court.json; empty when it is valid. */
+export function validateFrames(json: unknown, court: Court): string[] {
+  const c = new Check();
+  if (!Array.isArray(json) || json.length === 0) {
+    c.fail("frames.json", "expected one entry per show frame (a non-empty list)", Array.isArray(json) ? json.length : json);
+    return c.errors;
+  }
+  const frames = json;
+  frames.forEach((f, i) => {
+    const at = `frames.json[${i}]`;
+    if (!c.obj(f, at)) return;
+    const src = c.has(f, "src", `${at}.src`) && c.num(f.src, `${at}.src`, { min: 0 });
+    const interp = c.has(f, "interp", `${at}.interp`) && c.bool(f.interp, `${at}.interp`);
+    if (src && interp && f.interp === false && !Number.isInteger(f.src))
+      c.fail(`${at}.src`, "a real frame (interp false) must be a whole source frame", f.src);
+    if (c.has(f, "q", `${at}.q`) && c.nums(f.q, 4, `${at}.q`, "a quaternion [x, y, z, w]")) {
+      const n = Math.hypot(...(f.q as number[]));
+      if (Math.abs(n - 1) > 1e-3) c.fail(`${at}.q`, "expected a unit quaternion (length 1)", Number(n.toFixed(4)));
+    }
+    if (c.has(f, "f", `${at}.f`)) c.num(f.f, `${at}.f`, { gt: 0 });
+  });
+  if (c.errors.length) return c.errors;
+  const fr = frames as ShowFrame[];
+  const seg = court.video.segments;
+  const all: [string, FrameRange][] = [["pass1", seg.pass1], ["pass2", seg.pass2], ["resume", seg.resume], ...seg.eases.map((e, i) => [`ease ${i}`, e.frames] as [string, FrameRange])];
+  for (const [name, r] of all)
+    if (r[1] >= fr.length) c.fail("frames.json", `expected an entry for every show frame: ${name} ends on show frame ${r[1]} but there are only ${fr.length} entries`);
+  if (c.errors.length) return c.errors;
+  // every ease ends on F, a real frame, with one camera (camera F)
+  let camF: ShowFrame | null = null;
+  seg.eases.forEach((e, i) => {
+    const k = e.frames[1];
+    const last = fr[k];
+    if (Math.abs(last.src - court.video.freezeSource) > 1e-6)
+      c.fail(`frames.json[${k}].src`, `ease ${i} must end on F (source frame ${court.video.freezeSource})`, last.src);
+    if (last.interp) c.fail(`frames.json[${k}].interp`, "F is a real frame: expected false", last.interp);
+    if (!camF) camF = last;
+    else if (Math.abs(last.f - camF.f) > 1e-6 || last.q.some((x, n) => Math.abs(x - camF!.q[n]) > 1e-6))
+      c.fail(`frames.json[${k}]`, `ease ${i} must end on camera F, the same camera as ease 0's last frame`);
+  });
+  return c.errors;
+}
+
+// ---------------- loading ----------------
+
+/** A loaded, validated bundle: court.json, frames.json, and where its files are. */
+export interface CourtBundle {
+  /** The folder URL court.json is in, ending in "/". */
+  base: string;
+  court: Court;
+  frames: ShowFrame[];
+  /** The absolute URL of a bundle path. */
+  file(path: BundlePath): string;
+}
+
+/** Thrown by loadCourt for a bundle that fails validation; `errors` lists every problem. */
+export class CourtFormatError extends Error {
+  readonly errors: string[];
+  constructor(url: string, errors: string[]) {
+    super(`${url} is not a valid court bundle:\n  ${errors.join("\n  ")}`);
+    this.name = "CourtFormatError";
+    this.errors = errors;
+  }
+}
+
+async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
+  const res = await fetcher(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error(`${url}: not JSON (${String(e)})`);
+  }
+}
+
+/** A pre-built stream instead of the main one: `?show=1080` (p1080) or `?hz=90` (hz90). */
+export type StreamFallback = "p1080" | "hz90";
+
+/**
+ * The court with a pre-built stream swapped into `video`, so every module reads one view of the show: the 1080p copy
+ * changes only the file, codec and size; the 90 Hz bake also brings its display rate, frames.json, segments and
+ * cutoff. Null returns the court as it is. Throws when the bundle has no such stream.
+ */
+export function chooseStream(court: Court, fallback: StreamFallback | null): Court {
+  if (!fallback) return court;
+  const fb = court.video.fallbacks[fallback];
+  if (!fb) throw new Error(`this bundle has no ${fallback === "hz90" ? "90 Hz bake (video.fallbacks.hz90)" : "1080p copy (video.fallbacks.p1080)"}`);
+  const video: ShowVideoInfo = { ...court.video, file: fb.file, codec: fb.codec, width: fb.width, height: fb.height };
+  if (fallback === "hz90") {
+    const hz = court.video.fallbacks.hz90!;
+    Object.assign(video, { displayHz: hz.displayHz, frames: hz.frames, segments: hz.segments, cutoff: hz.cutoff });
+  }
+  return { ...court, video };
+}
+
+/**
+ * Fetches and validates a court bundle. `url` is court.json's URL, or its folder ending in "/"; a relative URL is
+ * resolved against the page (in node, pass an absolute one). `fallback` picks a pre-built stream (chooseStream): the
+ * returned court and frames are that stream's.
+ */
+export async function loadCourt(url: string, options: { fetcher?: typeof fetch; fallback?: StreamFallback | null } = {}): Promise<CourtBundle> {
+  const fetcher = options.fetcher ?? fetch;
+  const here = (globalThis as { location?: { href: string } }).location?.href;
+  const courtUrl = new URL(url.endsWith("/") ? `${url}court.json` : url, here).href;
+  const base = new URL("./", courtUrl).href;
+  const json = await getJson(courtUrl, fetcher);
+  const errors = validateCourt(json);
+  if (errors.length) throw new CourtFormatError(courtUrl, errors);
+  const court = chooseStream(json as Court, options.fallback ?? null);
+  const framesUrl = new URL(court.video.frames, base).href;
+  const frames = await getJson(framesUrl, fetcher);
+  const frameErrors = validateFrames(frames, court);
+  if (frameErrors.length) throw new CourtFormatError(framesUrl, frameErrors);
+  return { base, court, frames: frames as ShowFrame[], file: (path) => new URL(path, base).href };
+}
