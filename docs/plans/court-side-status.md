@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 10:02 AM. Vishal is up and runs HiPerGator himself now (his account).
+Updated Sat 10:21 AM. Vishal is up and runs HiPerGator himself now (his account).
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -13,6 +13,11 @@ private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
+19. **The demo floor, measured:** at real size the frozen pair spans about 3.1 m, so on your 3.5 x 3.5 m default the
+    judge gets one standing view (from the chair corner) plus free walking; three distinct viewing spots need about
+    5 x 5 m, the full walk-around ring about 7 x 7 m. The code picks automatically from the boundary the headset
+    reports (as you asked), so the only lever is space: when you ask for the clear corner at check-in, please aim
+    for 5 x 5 m or more. OK to ship 3.5 x 3.5 m as one view + free walking if that's all we get?
 18. **Two quality hooks, before gate 2 if you can (Vishal will submit Court Side's HiPerGator grid himself, so
     your session doesn't have to):** (a) can 4DAnyone take our own body motion (SMPL-X per frame, e.g. from GEM-X)
     instead of its built-in GVHMR, in case GVHMR gets the mid-closeout pose wrong? (b) recon with more than one
