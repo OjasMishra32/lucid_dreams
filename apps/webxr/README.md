@@ -64,5 +64,7 @@ labelled as the engine at that player's peak rating, not the player.
 
 - Magnus Carlsen: "Magnus Carlsen (2012)" by Wikimedia Commons user Autopilot, CC BY-SA 3.0,
   https://commons.wikimedia.org/wiki/File:Magnus_Carlsen_(2012).jpg
+- Juice WRLD: "Juice WRLD - Les Ardentes 2019" by Lexiou WesCudi, CC BY-SA 2.0,
+  https://commons.wikimedia.org/wiki/File:Juice_WRLD_-_Les_Ardentes_2019.jpg
 - Bobby Fischer: W. Punt for Anefo, Nationaal Archief (Dutch National Archives), 1972, CC0,
   https://commons.wikimedia.org/wiki/File:Bobby_Fischer_in_Amsterdam_voor_besprekingen_met_FIDE-voorzitter_Max_Euwe_over_d,_Bestanddeelnr_925-3509.jpg
