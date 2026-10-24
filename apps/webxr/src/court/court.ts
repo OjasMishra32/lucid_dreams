@@ -20,7 +20,7 @@ import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
-import { BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
+import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { Probe, viewOf } from "./probe";
 import { BUILT as PROXIES_BUILT, Proxies } from "./proxies";
 import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
@@ -35,8 +35,9 @@ import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
 /** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves a real bundle at /bundle/. */
 const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : "/bundle/";
-/** The arrival's lights-up, once seat.arrival says the judge is in (3.2). */
-const LIGHTS_UP_S = 2.5;
+/** The arrival's lights-up, once seat.arrival says the judge is in (3.2): the light field's own rise from black, long
+ * enough to stay under 1 grey level a frame on white (P44), so the watch starts at full light. */
+const LIGHTS_UP_S = ARRIVAL_S;
 /** See my room fades out over 0.6 s and back over 0.8 s (P34). */
 const ROOM_OUT_S = 0.6;
 const ROOM_BACK_S = 0.8;
