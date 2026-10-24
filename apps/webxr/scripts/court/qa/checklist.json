@@ -88,8 +88,8 @@
    "id": "P4",
    "group": "Playback",
    "requirement": "One video frame per display frame at exact display times.",
-   "how": "e2e cadence capture + smooth_metrics.py",
-   "threshold": "0 held frames in pass 1 and pass 2; judder CV <= 0.15; 0 skipped show frames",
+   "how": "e2e cadence capture: per-display-frame motion, judged as the detrended CV (lib.mjs judderVerdict); held and skipped frames counted",
+   "threshold": "judder = detrended CV (frame motion / its 9-frame running median) <= 0.15 over pass 1 and 2, raw CV info only; 0 held frames; 0 skipped show frames",
    "owner": "D handoff (video.ts)",
    "checks": [
     {
@@ -101,9 +101,8 @@
      ]
     },
     {
-     "kind": "tool",
-     "tool": "pipeline/court/smooth_metrics.py",
-     "args": null
+     "kind": "pending",
+     "reason": "no judder measurement source yet (detrended CV over passes 1 and 2); see lib.mjs judderVerdict"
     }
    ],
    "manual": {
@@ -111,7 +110,8 @@
     "items": [
      8
     ]
-   }
+   },
+   "note": "smooth_metrics.py (named in the plan) doesn't exist; the reference is court-spikes/smooth/py/analyze.py judder_summary plus this detrend"
   },
   {
    "id": "P5",

@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  judderCv, judderVerdict,
   combine, exitCode, insideDir, parseE2e, parseTap, renderTable, resolveRow, scanBuilt, summarize, tagsOf, validateChecklist,
 } from "./lib.mjs";
 
@@ -438,7 +439,7 @@ test("[r3-1] a check name with colons keeps its P tags (tags come from the whole
 test("[r3-2] only the harness's own 'not written yet' marker is pending; a real exception is not", () => {
   assert.equal(parseE2e("FAIL smoke: runs: TypeError: method not implemented")[0].pending, false);
   assert.equal(parseE2e("FAIL smoke: runs: feature is not built yet (stream D)")[0].pending, false);
-  assert.equal(parseE2e("FAIL room: P35: the edge opens the room: not written yet (stream E): walk the head")[0].pending, true);
+  assert.equal(parseE2e("FAIL room: the edge opens the room (P35): not written yet (stream E): walk the head")[0].pending, true);
   const row = { id: "P25", threshold: "t", checks: [{ kind: "e2e", scenario: "smoke" }] };
   const lines = parseE2e("FAIL smoke: runs: method not implemented\nFAIL smoke: console clean (P25): 1 errors");
   assert.equal(resolveRow(row, ctx({ e2e: { scenarios: { smoke: { exists: true, ran: true, lines } } } })).status, "FAIL");
@@ -450,7 +451,7 @@ test("[r3-3] any exit but 0, 1 or 3, a missing summary, or exit 1 with only a pl
   assert.equal(assignE2eRun(["smoke"], { stdout: clean, code: 0 }).smoke.lines.every((l) => l.ok), true);
   for (const code of [null, 2, 137]) assert.equal(assignE2eRun(["smoke"], { stdout: clean, code }).smoke.lines.some((l) => !l.ok), true, `exit ${code}`);
   assert.equal(assignE2eRun(["smoke"], { stdout: body, code: 0 }).smoke.lines.some((l) => !l.ok), true, "no summary line");
-  const placeholder = "FAIL room: P35: the edge: not written yet (stream E): x\nPASS room: console clean (P25): ok";
+  const placeholder = "FAIL room: the edge (P35): not written yet (stream E): x\nPASS room: console clean (P25): ok";
   assert.equal(assignE2eRun(["room"], { stdout: `${placeholder}\nE2E FAIL (1 checks failed; reports in x)`, code: 1 }).room.lines.some((l) => !l.ok && !l.pending), false, "a placeholder alone is a clean exit 1");
   assert.equal(assignE2eRun(["room"], { stdout: placeholder, stderr: "E2E RUN FAILED: Error: x", code: 1 }).room.lines.some((l) => !l.ok && !l.pending), true, "a crash after a placeholder");
 });
@@ -552,4 +553,35 @@ test("[r3-9] the P36 sandbox (bundle and canary) is in the temp folder, not in a
   } finally {
     rmSync(sb.tmp, { recursive: true, force: true });
   }
+});
+
+test("[P4] judder is the detrended CV: a slow speed change with even cadence passes, a doubled or held frame pattern fails", () => {
+  // 1.0x easing down to 0.6x over 300 display frames: the action slows, the cadence is perfect
+  const slowing = Array.from({ length: 300 }, (_, i) => 1 - 0.4 * (i / 299));
+  const ok = judderCv(slowing);
+  assert.ok(ok.raw > 0.05, "the raw CV sees the speed change");
+  assert.ok(ok.detrended < 0.02, `detrended ${ok.detrended}`);
+  assert.equal(judderVerdict(slowing).status, "PASS");
+  // a frame shown twice, then the next one advancing double, every 10th frame
+  const doubled = slowing.map((m, i) => (i % 10 === 5 ? 2 * m : m));
+  assert.ok(judderCv(doubled).detrended > 0.15);
+  assert.equal(judderVerdict(doubled).status, "FAIL");
+  // held frames (no motion) every 10th frame
+  const held = slowing.map((m, i) => (i % 10 === 5 ? 0 : m));
+  assert.equal(judderVerdict(held).status, "FAIL");
+  assert.match(judderVerdict(slowing).measured, /raw CV .* \(info only\)/);
+  assert.equal(judderVerdict([]).status, "FAIL", "no motion measured is not a pass");
+});
+
+test("[r4-tags] only parenthesised (Pnn) groups tag a line: a bare P33 in a detail never satisfies P33", () => {
+  const vacuous = parseE2e("PASS smoke: view logged: 1280x720, P33 not measured")[0];
+  assert.deepEqual(vacuous.tags, []);
+  const row = { id: "P33", threshold: "t", checks: [{ kind: "e2e", scenario: "smoke" }] };
+  const c = ctx({ e2e: { scenarios: { smoke: { exists: true, ran: true, lines: [vacuous] } } } });
+  assert.equal(resolveRow(row, c).status, "NOT-YET");
+  assert.deepEqual(parseE2e("PASS room: opaque (P33): alpha 255, P33 held over 10 of 10 frames")[0].tags, ["P33"]);
+  assert.deepEqual(parseE2e("PASS cadence: no held frames (P4, P44): 0")[0].tags, ["P4", "P44"]);
+  assert.deepEqual(parseE2e("PASS x: see P33 (as P8 says): ok")[0].tags, []);
+  assert.deepEqual(parseE2e("PASS x: (see P33): ok")[0].tags, []);
+  assert.deepEqual(parseE2e("PASS room: arrival: opaque again (P33): 255")[0].tags, ["P33"]);
 });

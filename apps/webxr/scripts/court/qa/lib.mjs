@@ -29,14 +29,22 @@ export function parseTap(text) {
   return out;
 }
 
+/** The rows a line names in parenthesised groups only: "(P33)", "(P4, P44)". A bare "P33" in free text ("P33 not measured") names nothing. */
+export function tagsInParens(text) {
+  const out = [];
+  for (const g of String(text).matchAll(/\((P\d{1,2}(?:\s*[,/&]\s*P\d{1,2})*)\)/g)) out.push(...tagsOf(g[1]));
+  return out;
+}
+
 /** e2e.mjs's "PASS <scenario>: <what>: <detail>" lines. */
 export function parseE2e(text) {
   const out = [];
   for (const line of String(text).split("\n")) {
     const m = line.match(/^(PASS|FAIL) (\S+): (.+?): (.*)$/);
     // a check's name can hold colons ("arrival: opaque again (P33)"), so name and detail can't be split reliably:
-    // the tags come from the whole line; the placeholder marker is the harness's exact ": not written yet"
-    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsOf(line.slice(m[1].length + m[2].length + 2)), pending: m[1] === "FAIL" && /: not written yet\b/.test(line) });
+    // the tags come from the parenthesised groups of the whole line (never a bare P33 in a detail); the placeholder
+    // marker is the harness's exact ": not written yet"
+    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsInParens(line.slice(m[1].length + m[2].length + 2)), pending: m[1] === "FAIL" && /: not written yet\b/.test(line) });
   }
   return out;
 }
@@ -392,4 +400,40 @@ export function writeFresh(path, data) {
 /** Where the "latest run" pointer goes: beside the run folder's real location, never beside a symlink's spelling. */
 export function latestPath(out) {
   return join(dirname(realpathLoose(out)), "latest.txt");
+}
+
+// P4 judges DISPLAY judder (held, doubled or unevenly spaced frames), not the action's real speed changes. The metric is
+// the detrended CV of the per-display-frame motion: each frame's motion divided by the median of the 9 frames around it,
+// then std / mean of those ratios; the bar is <= 0.15 over pass 1 and pass 2. The raw CV is reported beside it as info.
+// smooth_metrics.py (named in the plan) doesn't exist; the reference is court-spikes/smooth/py/analyze.py judder_summary
+// plus this detrend. No measurement source feeds it yet, so P4 stays NOT-YET (checklist.json).
+export const JUDDER_BAR = 0.15;
+
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+};
+const cv = (xs) => {
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length);
+  return mean > 0 ? sd / mean : Infinity;
+};
+
+/** { detrended, raw, n }: `motion` is the frame-to-frame motion per display frame; frames whose local median is 0 are skipped. */
+export function judderCv(motion, window = 9) {
+  const half = (window - 1) / 2;
+  const ratios = [];
+  for (let i = 0; i < motion.length; i++) {
+    const m = median(motion.slice(Math.max(0, i - half), Math.min(motion.length, i + half + 1)));
+    if (m > 0) ratios.push(motion[i] / m);
+  }
+  return { detrended: ratios.length ? cv(ratios) : Infinity, raw: motion.length ? cv(motion) : Infinity, n: ratios.length };
+}
+
+/** The P4 verdict for one pass-1 + pass-2 motion series: PASS when the detrended CV <= 0.15. */
+export function judderVerdict(motion) {
+  const { detrended, raw, n } = judderCv(motion);
+  const measured = `detrended CV ${detrended.toFixed(3)} (bar <= ${JUDDER_BAR}); raw CV ${raw.toFixed(3)} (info only), ${n} frames`;
+  return { status: n > 0 && detrended <= JUDDER_BAR ? PASS : FAIL, measured };
 }
