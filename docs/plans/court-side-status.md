@@ -16,10 +16,17 @@ private, outside the repo.
 12. **The demo floor (Ojasva or Ian, for the venue):** Court Side needs about **4.5 x 5.5 m** of clear floor with
     the Quest boundary set to it (a chair centred on a short side, the walk ring around the pair). In 3.5 x 3.5 m it
     still works, with three fade-jump viewing spots instead of a full ring. Which floor can we get at Newell / Reitz?
+    **(Ojasva, 8:45 AM): build for 3.5 x 3.5 m** (the three viewing spots) as the default: that's what we can count on
+    at a table in Newell and on a finals stage. The full ring is a bonus Ojasva tries to get on site (he asks for a
+    clear corner at check-in); make the ring vs spots choice automatic from the boundary size, not a setting.
 13. **Your conditions on 8, our design (please check):** the session is `immersive-ar` drawn fully opaque, so it
     reads as full VR; "See my room" fades the arena and darkness out to passthrough while the frozen players stay.
     The boundary stays on. Gate: the new Quest test page (ask 7) checks that the boundary still shows in an AR
     session we paint over; if it doesn't, we add our own: the room fades in when the head is within 0.5 m of it.
+    **Yes (Ojasva, 8:45 AM), with one change: the room fade-in near the edge is always on, not only if the boundary
+    test fails.** An opaque AR session may hide the guardian on some firmware even when the test passes. Use the
+    `bounded-floor` bounds if the session gives them, else the play area you set at the start. Fade the room in from
+    0.6 m out, fully visible at 0.3 m. Test it by walking toward a wall in the headset before anyone else wears it.
 8. **Yes (Ojasva, 8:10 AM): immersive VR for `?mode=court` only**, `immersive-vr` + `local-floor`, court floor on
    the real floor. Two conditions: the Quest boundary stays on (never ask people to turn it off), and the palm menu
    has a "See my room" toggle that drops to passthrough with the frozen players still standing there (comfort and
