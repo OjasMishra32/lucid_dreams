@@ -50,15 +50,16 @@ class Gate2Sheet(unittest.TestCase):
         g2.main([str(self.run), "--out", str(out), "--height", "64"])
         import cv2
         img = cv2.imread(str(out))
-        self.assertEqual(img.shape[0], 2 * (64 + 4))  # the clip + views row, then the peeks row
+        self.assertEqual(img.shape[0], 3 * (64 + 4))  # the clip + first half of the ring, the second half, the peeks
         # the clip tile, below its label, is frame 5's grey
         self.assertAlmostEqual(float(img[40:60, 2:30].mean()), 100, delta=6)
 
-    def test_more_sampled_views_are_shown_too(self):
-        before = g2.rows_for(self.run, 64, None)[0].shape[1]
-        ramp(self.run / "views" / "videos" / "06.mp4", 22, 40)
-        self.assertEqual(g2.views_of(self.run), ["00", "04", "06", "08", "12"])  # 12 is missing: still a tile
-        self.assertEqual(g2.rows_for(self.run, 64, None)[0].shape[1], before + 35)  # one more 22x40 view at 64 px
+    def test_the_whole_ring_in_two_rows(self):
+        for v in ("02", "06", "10", "14"):
+            ramp(self.run / "views" / "videos" / f"{v}.mp4", 22, 40)
+        self.assertEqual(g2.split_views(self.run), (["00", "02", "04", "06"], ["08", "10", "12", "14"]))
+        first, second = g2.rows_for(self.run, 64, None)[:2]
+        self.assertEqual(second.shape[1], 35 + 35 + 36 + 35)  # 12 is missing: a grey 36x64 tile
 
     def test_no_k_anywhere_is_one_labelled_tile(self):
         bare = Path(self.tmp.name) / "court-y"

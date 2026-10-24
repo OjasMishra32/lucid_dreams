@@ -1,5 +1,5 @@
 """Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 (and any other views fetched)
-at the freeze frame K, and,
+at the freeze frame K (the whole fetched ring in two rows: the Janus / doubled-figure gate looks at every view), and,
 when a freeze has been trained, its peeks (the real frame | render, then the views' ground truth | render).
 
     python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] <run dir>...
@@ -25,6 +25,13 @@ GREY = (90, 90, 90)
 
 def views_of(run: Path) -> list[str]:
     return sorted(set(VIEWS) | {p.stem for p in (run / "views" / "videos").glob("[0-9][0-9].mp4")})
+
+
+def split_views(run: Path) -> tuple[list[str], list[str]]:
+    """The ring in two halves (one row each). Which views show the player's back depends on the run (the ring follows
+    4DAnyone's canonical body, not the camera), so the Janus / doubled-figure gate looks at all of them."""
+    v = views_of(run)
+    return v[:(len(v) + 1) // 2], v[(len(v) + 1) // 2:]
 
 
 def run_id(run: Path) -> str:
@@ -64,8 +71,10 @@ def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
     if k is None:
         return [tile(None, h, f"{name}: no K")]
     row = [tile(frame_at(run / "prepped.mp4", k), h, f"{name} clip k={k}")]
-    row += [tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}") for v in views_of(run)]
-    out = [np.hstack(row)]
+    first, second = split_views(run)
+    row += [tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}") for v in first]
+    out = [np.hstack(row), np.hstack([tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}")
+                                      for v in second])]
     for rec in sorted(run.glob("recon-*")):
         if not rec.is_dir():
             continue
