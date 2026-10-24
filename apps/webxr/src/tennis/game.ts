@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { resilientLoop } from "../xr/loop";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "../avatar";
@@ -1072,7 +1073,7 @@ export async function renderTennis(root: HTMLElement) {
     }
     renderer.render(scene, camera);
   };
-  renderer.setAnimationLoop(frame);
+  resilientLoop(renderer, scene, camera, frame);
 
   drawBoard();
   setFooter("Loading your opponent…");

@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve, extname } from "node:path";
 
 // Dream bundles live in <repo>/dreams (pipeline/runner/lucid_runner.py fetch puts them there). Served at /dreams/,
@@ -26,6 +27,20 @@ function dreams(): Plugin {
 }
 
 function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any, next: () => void) => void) => void }) {
+  // errors from the headset (src/xr/report.ts) land in ~/Library/Logs/lucid-xr-errors.log, one JSON line each
+  middlewares.use("/__log", (req, res) => {
+    let body = "";
+    req.on("data", (c: Buffer) => (body += c.toString().slice(0, 20000)));
+    req.on("end", () => {
+      try {
+        appendFileSync(join(homedir(), "Library/Logs/lucid-xr-errors.log"), body.replace(/\n/g, " ") + "\n");
+      } catch {
+        // a log that can't be written is not worth an error page
+      }
+      res.statusCode = 204;
+      res.end();
+    });
+  });
   {
     {
       middlewares.use("/dreams", (req, res, next) => {

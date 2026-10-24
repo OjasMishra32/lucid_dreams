@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { resilientLoop } from "../xr/loop";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Chess, type Move, type Square } from "chess.js";
@@ -1116,7 +1117,7 @@ export async function renderChess(root: HTMLElement) {
     }
     renderer.render(scene, camera);
   };
-  renderer.setAnimationLoop(frame);
+  resilientLoop(renderer, scene, camera, frame);
   if (import.meta.env.DEV)
     (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame(), hands, jointsOf, handHold, inHand: () => inHand, sync: () => sync(), awaiting: (on: boolean) => (awaitingPress = on), menu, handle, lock, pressed: () => !awaitingPress };
 }

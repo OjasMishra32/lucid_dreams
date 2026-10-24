@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { resilientLoop } from "./xr/loop";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "./avatar";
@@ -763,7 +764,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   });
   const timeLabel = $("#time");
   const eyes = new THREE.Vector3();
-  renderer.setAnimationLoop(() => {
+  resilientLoop(renderer, scene, camera, () => {
     const dt = Math.min(clock.getDelta(), 0.1);
     if (renderer.xr.isPresenting) {
       if (placeNextFrame) {

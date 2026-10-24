@@ -1,5 +1,6 @@
 import { renderLibrary } from "./library";
 import { renderViewer } from "./viewer";
+import "./xr/report"; // errors from the headset reach the Mac's log
 
 const app = document.getElementById("app")!;
 const params = new URLSearchParams(location.search);
