@@ -7,9 +7,9 @@ export const needs = ["clock", "video"];
 export default async function cadence(ctx) {
   await ctx.seatHere();
   await ctx.handOver();
-  await ctx.until("watching", 72 * 8);
+  const first = (await ctx.until("watching", 72 * 8)).at(-1); // the watch's first frame: show frame 0
   const { pass1, pass2 } = ctx.court.video.segments;
-  const log = await ctx.frames(pass2[1] - pass1[0] + 1 + 36);
+  const log = [first, ...(await ctx.frames(pass2[1] - pass1[0] + 1 + 36))];
   const watch = log.filter((f) => f.segment === "pass1" || f.segment === "pass2");
   let held = 0;
   let skipped = 0;
@@ -22,6 +22,8 @@ export default async function cadence(ctx) {
   ctx.check("P4: no held frames", held === 0, `${held} held over ${watch.length} display frames`);
   ctx.check("P4: no skipped show frames", skipped === 0, `${skipped} skipped`);
   ctx.check("P5: on screen = asked for", wrong.length === 0, wrong.length ? `${wrong.length} frames off, first at show frame ${wrong[0].frame} (on screen ${wrong[0].onScreen})` : `every frame of ${watch.length}`);
-  ctx.check("covers both passes", watch.at(-1)?.frame === pass2[1] || log.some((f) => f.segment !== "pass1" && f.segment !== "pass2"), `last watched frame ${watch.at(-1)?.frame} of pass 2's ${pass2[1]}`);
+  // unpressed, pass 2 plays through and repeats, so "covered" means both ends were shown
+  const ends = [pass1[0], pass1[1], pass2[0], pass2[1]];
+  ctx.check("covers both passes", ends.every((e) => watch.some((f) => f.frame === e)), `ends shown: ${ends.filter((e) => watch.some((f) => f.frame === e)).join(", ")} of ${ends.join(", ")}`);
   ctx.report.frames = log.map(({ thumb, view, ...f }) => f);
 }

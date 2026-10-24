@@ -108,7 +108,7 @@ async function loadScenarios() {
  *   truth(view, showFrame) works: the true scene from a captured frame's view, standin.mjs truthAt);
  *   writePng(name, { width, height, rgb | rgba }) (into out/, returns the path);
  *   nextFrame(); frames(n); until(phase, max); save(name) (the next frame as out/<name>.png; resolves with its log,
- *   view included); snapshot(); seatHere(); handOver() (the headset off and on again: the session visible-blurred, then
+ *   view included); snapshot(); seatHere() (resolves once the frame that takes it has run); handOver() (the headset off and on again: the session visible-blurred, then
  *   visible; the arrival waits for it after Seat here, P27, P38); press(action); pressFrames(action, n) (press, then the next n frames,
  *   starting with the frame that acts on the press: frames run freely, so time anything that starts at a press this
  *   way, never with a separate frames() call);
@@ -148,7 +148,12 @@ function makeContext(page, check, report, bundleJson) {
     until: (phase, max) => page.evaluate(([p, m]) => window.__court.until(p, m), [phase, max]),
     save: (n) => page.evaluate((x) => window.__court.save(x), n),
     snapshot: () => page.evaluate(() => window.__court.snapshot()),
-    seatHere: () => page.evaluate(() => window.__court.seatHere()),
+    // Seat here is queued to the next XR frame: wait for that frame, so a hand-over that follows comes after it (a
+    // hand-over before Seat here has run is re-armed away by it, and the arrival would wait for another)
+    seatHere: () => page.evaluate(async () => {
+      window.__court.seatHere();
+      await window.__court.nextFrame();
+    }),
     handOver: async () => {
       await page.evaluate(() => window.__xrDevice.updateVisibilityState("visible-blurred"));
       await page.evaluate(() => window.__court.frames(20));
