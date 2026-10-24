@@ -41,9 +41,10 @@ const LIGHTS_UP_S = ARRIVAL_S;
 /** See my room fades out over 0.6 s and back over 0.8 s (P34). */
 const ROOM_OUT_S = 0.6;
 const ROOM_BACK_S = 0.8;
-/** A head rise this big mid-fade finishes the video fade within 0.3 s (P10). */
+/** A head rise this big mid-fade finishes the video fade within 0.3 s (P10): in 0.25 s from the frame that sees it,
+ * which leaves the frame or two before the rise is seen inside the bar. */
 const RISE_FINISH = 0.1;
-const RISE_FADE_S = 0.3;
+const RISE_FADE_S = 0.25;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
   document.title = "Court Side · Lucid Dreams";
@@ -113,7 +114,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           wiring: { lock: seatLock instanceof PersistentLock ? "persistent" : "other", seatXr: seatLock.xr === renderer.xr, seatDt, hands: handsLevel },
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
-          fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)),
+          fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)), mask: videoRef?.maskLevel ?? -1,
         }),
         seatHere: () => actions.get("seatHere")?.(),
         press: (action) => actions.get(action)?.(),
@@ -181,6 +182,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const euler = new THREE.Euler();
   let seatedEyeY = 1.15;
   let rushed = false; // the head rose mid-fade: the fade finishes within RISE_FADE_S
+  let rushRate = 1; // then the hand-off's seconds per real second, latched at the rise (a straight line to the fade's end)
   let restored = false; // Back to my seat: the chair reached and the world re-seated
   let handsLevel = 0; // the light the drawn hands were last given
   let seatDt = 0; // the dt seat.update was last handed
@@ -235,7 +237,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (setup || phase === "arrival") return;
     if (phase === "open" || phase === "walking" || phase === "returning") seat.restore();
     video.opacity = 1;
-    video.mask(1);
+    video.mask(0); // the watch's edge (1 is lifted)
     video.wipe(0);
     freeze.reveal(0);
     courtWorld.open(0);
@@ -335,10 +337,14 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       }
       case "handoff": {
         feed(clock.state.frame);
-        if (head.room[1] - seatedEyeY > RISE_FINISH && tF < BEATS.videoFades[1]) rushed = true;
         const [, fadeEnd] = BEATS.videoFades;
-        // rushed: whatever is left of the fade plays out in RISE_FADE_S; the light keeps the unrushed time
-        tF += rushed && tF < fadeEnd ? Math.max(dt, ((fadeEnd - tF) * dt) / RISE_FADE_S) : dt;
+        // rushed: whatever is left of the fade plays out in RISE_FADE_S, at the rate latched at the rise (P10); the
+        // light keeps the unrushed time
+        if (!rushed && head.room[1] - seatedEyeY > RISE_FINISH && tF < fadeEnd) {
+          rushed = true;
+          rushRate = (fadeEnd - tF) / RISE_FADE_S;
+        }
+        tF += rushed && tF < fadeEnd ? Math.max(dt, rushRate * dt) : dt;
         tLight += dt;
         handoff(tF, parts, tLight);
         if (tF >= HANDOFF_END) go("open");

@@ -41,9 +41,13 @@ export default async function freezehold(ctx) {
   const off = after.filter((x) => src(x.onScreen) !== F);
   ctx.check("D: F stays on screen from the hand-off on", off.length === 0, off.length ? `${off.length}/${after.length} not: ${list(off)}` : `${after.length} frames on F`);
 
-  // See my room mid-ease: the clock jumps to F, and the picture must follow it there
+  // Replay from the walk back: the watch again, with the cinema mask down (mask 0 is the watch's edge, 1 lifted)
   await ctx.press("replay");
   await ctx.until("watching", HZ * 4);
+  const replayed = await ctx.snapshot();
+  ctx.check("Replay: the watch with the cinema mask down", replayed.phase === "watching" && replayed.mask === 0, `${replayed.phase}, mask ${replayed.mask}`);
+
+  // See my room mid-ease: the clock jumps to F, and the picture must follow it there
   await toPass2();
   await ctx.press("step");
   // in one page call (frames run freely): a few frames into the ease, See my room
