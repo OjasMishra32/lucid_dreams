@@ -35,6 +35,8 @@ namespace LucidDreams
         [Range(1, 6)] public int parallelLoads = 3;
         [Tooltip("Refuse frames (the replay plus its reality check) that would take more GPU memory than this.")]
         public int gpuBudgetMB = 3072;
+        [Tooltip("Poses avatar bundles on the GPU (Shaders/AvatarSkinning.compute).")]
+        public ComputeShader avatarSkinning;
 
         public DreamBundle Dream { get; private set; }
         public bool IsReady { get; private set; }
@@ -43,12 +45,15 @@ namespace LucidDreams
         public float LoadProgress { get; private set; }
         public string Error { get; private set; }
         public FrameFormat LoadedFormat { get; private set; }
-        public int FrameCount => sequence?.FrameCount ?? 0;
-        public int Frame => sequence?.Current ?? 0;
-        public float Duration => Dream != null && Dream.fps > 0 ? FrameCount / Dream.fps : 0f;
+        public int FrameCount => rig?.FrameCount ?? sequence?.FrameCount ?? 0;
+        public int Frame => rig != null ? Mathf.Min((int)(time * rig.Fps), rig.FrameCount - 1) : sequence?.Current ?? 0;
+        public float Duration => rig != null ? rig.Duration : Dream != null && Dream.fps > 0 ? FrameCount / Dream.fps : 0f;
+        float Fps => rig?.Fps ?? Dream.fps;
+        public bool IsAvatar => rig != null;
+        public AvatarRig Rig => rig;
         public float NormalizedTime => Duration > 0 ? time / Duration : 0f;
 
-        public bool HasReality => IsReady && !string.IsNullOrEmpty(Dream.frames?.reality);
+        public bool HasReality => IsReady && !string.IsNullOrEmpty(rig != null ? Dream.avatar?.reality : Dream.frames?.reality);
         public bool ShowingReality { get; private set; }
         public bool RealityLoading { get; private set; }
         public float RealityProgress { get; private set; }
@@ -73,6 +78,7 @@ namespace LucidDreams
 
         GaussianSplat3DRenderer splat;
         DreamSequence sequence, reality;
+        AvatarRig rig;
         LoadResult loading, realityLoading;
         GaussianSplat3DAsset canonical;
         string baseUrl;
@@ -118,7 +124,7 @@ namespace LucidDreams
         {
             if (!IsReady) return;
             Pause();
-            time = (Mathf.Clamp(Frame + frames, 0, FrameCount - 1) + 0.5f) / Dream.fps;
+            time = (Mathf.Clamp(Frame + frames, 0, FrameCount - 1) + 0.5f) / Fps;
             ShowTime();
         }
 
@@ -126,6 +132,12 @@ namespace LucidDreams
         public void ToggleReality()
         {
             if (!HasReality || RealityLoading) return;
+            if (rig != null)
+            {
+                if (rig.HasRealityLoaded) SetAvatarReality(!ShowingReality);
+                else StartCoroutine(LoadAvatarReality());
+                return;
+            }
             if (ShowingReality) ShowingReality = false;
             else if (reality != null) ShowingReality = true;
             else StartCoroutine(LoadReality());
@@ -133,8 +145,9 @@ namespace LucidDreams
 
         public bool TryGetFrame(GaussianSplat3DAsset asset, out GaussianSplat3DFrame frame)
         {
-            var shown = ShowingReality && reality != null ? reality : sequence;
             frame = default;
+            if (rig != null) return rig.TryGetFrame(out frame);
+            var shown = ShowingReality && reality != null ? reality : sequence;
             return shown != null && shown.TryGetFrame(asset, out frame);
         }
 
@@ -187,6 +200,11 @@ namespace LucidDreams
 
         void ShowTime()
         {
+            if (rig != null)
+            {
+                rig.Pose(time);
+                return;
+            }
             int frame = Mathf.Min((int)(time * Dream.fps), FrameCount - 1);
             sequence.Show(frame);
             reality?.Show(frame);
@@ -201,6 +219,11 @@ namespace LucidDreams
             yield return Fetch($"{baseUrl}/dream.json", bytes => json = System.Text.Encoding.UTF8.GetString(bytes), Fail);
             if (json == null) yield break;
             Dream = DreamBundle.FromJson(json);
+            if (Dream.IsAvatar)
+            {
+                yield return LoadAvatar();
+                yield break;
+            }
             if (!Dream.IsReplay || Dream.frames == null || Dream.frameCount <= 0 || Dream.fps <= 0)
             {
                 Fail($"'{Dream.id}' is not a playable replay (kind {Dream.kind}, {Dream.frameCount} frames at {Dream.fps} fps)");
@@ -256,8 +279,13 @@ namespace LucidDreams
                 break;
             }
 
+            BecomeReady($"{Dream.frameCount} {LoadedFormat} frames, {sequence.Capacity:N0} Gaussians, {sequence.GpuBytes >> 20} MB on the GPU");
+        }
+
+        void BecomeReady(string detail)
+        {
             time = 0f;
-            sequence.Show(0);
+            ShowTime();
             IsReady = true;
             if (Experience != null && Experience.IsTeach)
             {
@@ -265,9 +293,99 @@ namespace LucidDreams
                 Lesson.Changed += OnLessonChanged;
                 Lesson.Go(0);
             }
-            Debug.Log($"[Lucid Dreams] '{Dream.name}' ready: {Dream.frameCount} {LoadedFormat} frames, {sequence.Capacity:N0} Gaussians, {sequence.GpuBytes >> 20} MB on the GPU.");
+            Debug.Log($"[Lucid Dreams] '{Dream.name}' ready: {detail}.");
             Ready?.Invoke();
             if (playWhenReady) Play();
+        }
+
+        // An avatar: the rest-pose Gaussians plus skin.bin, skeleton.json and motion.json, posed live on the GPU.
+        IEnumerator LoadAvatar()
+        {
+            var a = Dream.avatar;
+            if (a == null || string.IsNullOrEmpty(a.file) || string.IsNullOrEmpty(a.skin) || string.IsNullOrEmpty(a.skeleton) || string.IsNullOrEmpty(a.motion))
+            {
+                Fail($"'{Dream.id}' has no skinning yet (skin.bin + skeleton.json); bake it into a replay to play it");
+                yield break;
+            }
+            if (avatarSkinning == null)
+            {
+                Fail("The avatar skinning shader isn't set on the player");
+                yield break;
+            }
+
+            byte[] gaussians = null, skin = null, skeleton = null, motion = null;
+            yield return Fetch($"{baseUrl}/{a.file}", b => gaussians = b, Fail);
+            LoadProgress = 0.4f;
+            yield return Fetch($"{baseUrl}/{a.skin}", b => skin = b, Fail);
+            yield return Fetch($"{baseUrl}/{a.skeleton}", b => skeleton = b, Fail);
+            yield return Fetch($"{baseUrl}/{a.motion}", b => motion = b, Fail);
+            if (Error != null) yield break;
+            LoadProgress = 0.7f;
+
+            var parse = Task.Run(() => AvatarRig.Source.Parse(DecodeGaussians(a.file, gaussians), skin,
+                System.Text.Encoding.UTF8.GetString(skeleton), System.Text.Encoding.UTF8.GetString(motion)));
+            while (!parse.IsCompleted) yield return null;
+            if (parse.IsFaulted)
+            {
+                Fail($"'{Dream.id}': {parse.Exception?.GetBaseException().Message}");
+                yield break;
+            }
+            var source = parse.Result;
+            yield return LoadExperience();
+
+            rig = new AvatarRig(source, avatarSkinning);
+            // Generous bounds: the motion can carry them anywhere in the room around the rest pose.
+            var bounds = source.rest.bounds;
+            float reach = 0f;
+            foreach (var t in source.rootT) reach = Mathf.Max(reach, ((Vector3)t).magnitude);
+            bounds.Expand(2f * (reach + 1f));
+            canonical = DreamSequence.CreateFloatAsset(source.rest.attributes, source.rest.sh, source.rest.count, source.rest.coefficientCount,
+                bounds, $"{Dream.id}/avatar/{source.rest.count}");
+            splat.m_Asset = canonical;
+            splat.SetDeformation(this);
+            LoadProgress = 1f;
+            BecomeReady($"avatar, {rig.Count:N0} Gaussians, {rig.FrameCount} motion frames at {rig.Fps} fps, skinned on the GPU");
+        }
+
+        static GaussianFrame DecodeGaussians(string file, byte[] data) =>
+            file.EndsWith(".spz", StringComparison.OrdinalIgnoreCase) ? SpzFrameReader.Read(data) : PlyFrameReader.Read(data);
+
+        IEnumerator LoadAvatarReality()
+        {
+            RealityLoading = true;
+            RealityError = null;
+            string file = Dream.avatar.reality;
+            byte[] data = null;
+            yield return Fetch($"{baseUrl}/{file}", b => data = b, e => RealityError = e);
+            if (data != null)
+            {
+                var decode = Task.Run(() => DecodeGaussians(file, data));
+                while (!decode.IsCompleted) yield return null;
+                if (decode.IsFaulted) RealityError = decode.Exception?.GetBaseException().Message;
+                else
+                {
+                    try { rig.AddReality(decode.Result); }
+                    catch (Exception e) { RealityError = e.Message; }
+                }
+            }
+            RealityLoading = false;
+            if (RealityError != null) Debug.LogError($"[Lucid Dreams] Reality check unavailable: {RealityError}");
+            else SetAvatarReality(true);
+        }
+
+        void SetAvatarReality(bool on)
+        {
+            rig.ShowReality(on);
+            ShowingReality = rig.ShowingReality;
+            ShowTime();
+        }
+
+        // Puts the avatar at an exact moment (tests, and lessons that want a precise pose).
+        public void Seek(float seconds)
+        {
+            if (!IsReady) return;
+            time = Mathf.Clamp(seconds, 0f, Duration);
+            ShowTime();
         }
 
         IEnumerator LoadReality()
@@ -413,6 +531,8 @@ namespace LucidDreams
             }
             foreach (var s in new[] { sequence, reality, loading?.sequence, realityLoading?.sequence }) s?.Dispose();
             sequence = reality = null;
+            rig?.Dispose();
+            rig = null;
             loading = realityLoading = null;
             if (canonical != null)
             {

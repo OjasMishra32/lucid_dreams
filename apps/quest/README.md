@@ -48,6 +48,16 @@ GPU cost is 72 bytes per Gaussian per frame for PLY (SH degree 1) and 56 for SPZ
 about 2.5 GB or 1.9 GB.
 The player refuses bundles over `gpuBudgetMB` and logs the Gaussian count that would fit.
 
+## Avatars
+
+Avatar bundles (`kind: "avatar"` with `avatar.skin`, `avatar.skeleton`, `avatar.motion`) play live, posed on the
+GPU like `apps/webxr/src/avatar.ts`: the rest-pose Gaussians (`avatar.ply`, full float precision) are skinned every
+display frame by `Shaders/AvatarSkinning.compute` (4 bones per Gaussian, dual-quaternion blend, each Gaussian's
+own rotation turned too). The per-bone transforms are avatars/README.md's "Posing one frame", in the bundle's own
+space, with each joint slerped between motion frames, so 30 fps motion is smooth at 72 Hz. Everything else (lessons,
+reality check via `avatar.reality`, speed, scrub, hands) works the same as for a replay. `expr` (blinks) is ignored,
+as the README allows.
+
 ## What you came to do (experience.json)
 
 The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experience"), or guesses a plan from
@@ -94,7 +104,9 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
 `HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
 eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
 instead: placement, step timing, your turn, Back / Again / Next and the voice. With `-bridge <url>` (no bundle) it
-checks the library from an empty cache: list, download, play from the headset, then offline:
+checks the library from an empty cache: list, download, play from the headset, then offline. For an avatar bundle,
+`-expect <dir>` compares the GPU-skinned positions with reference poses (`frameN.bin` from `skinning.py`'s
+`pose_points`, `frameN.dq.bin` from a dual-quaternion blend of its `skin_matrices`):
 
 ```
 Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.HandsCheck.Run \

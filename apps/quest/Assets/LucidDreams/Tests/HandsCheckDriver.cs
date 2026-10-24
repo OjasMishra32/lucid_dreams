@@ -14,6 +14,7 @@ namespace LucidDreams.Tests
     {
         public string outputDir;
         public bool libraryMode;
+        public string expectDir;
         public bool Done { get; private set; }
         public int Failures { get; private set; }
 
@@ -50,6 +51,13 @@ namespace LucidDreams.Tests
             yield return Frames(30); // placement and the bar settle
 
             var root = placer.transform;
+            if (player.IsAvatar)
+            {
+                yield return AvatarChecks(root);
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
             if (player.Lesson != null)
             {
                 yield return TeachChecks(root);
@@ -145,6 +153,94 @@ namespace LucidDreams.Tests
 
             Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
             Done = true;
+        }
+
+        // An avatar posed on the GPU, against lucid_avatars/skinning.py's reference positions (when given).
+        IEnumerator AvatarChecks(Transform root)
+        {
+            var rig = player.Rig;
+            Check(rig.FrameCount > 1 && rig.Count > 0, $"avatar loaded: {rig.Count:N0} Gaussians, {rig.FrameCount} motion frames");
+            player.Pause();
+
+            if (!string.IsNullOrEmpty(expectDir))
+            {
+                var expect = JsonUtility.FromJson<Expect>(File.ReadAllText(Path.Combine(expectDir, "expect.json")));
+                var single = File.ReadAllBytes(Path.Combine(expectDir, "single.bin"));
+                foreach (int f in expect.frames)
+                {
+                    player.Seek(f / expect.fps);
+                    yield return Frames(2);
+                    var posed = rig.ReadBack();
+                    var lbs = ReadFloats(Path.Combine(expectDir, $"frame{f}.bin"));
+                    var dq = ReadFloats(Path.Combine(expectDir, $"frame{f}.dq.bin"));
+                    float oneBone = 0f, blendedVsDq = 0f, blendedVsLbs = 0f;
+                    for (int i = 0; i < rig.Count; i++)
+                    {
+                        var p = new Vector3(posed[i * 12], posed[i * 12 + 1], posed[i * 12 + 2]);
+                        float dl = Vector3.Distance(p, new Vector3(lbs[i * 3], lbs[i * 3 + 1], lbs[i * 3 + 2]));
+                        float dd = Vector3.Distance(p, new Vector3(dq[i * 3], dq[i * 3 + 1], dq[i * 3 + 2]));
+                        if (single[i] == 1) oneBone = Mathf.Max(oneBone, dl);
+                        else
+                        {
+                            blendedVsDq = Mathf.Max(blendedVsDq, dd);
+                            blendedVsLbs = Mathf.Max(blendedVsLbs, dl);
+                        }
+                    }
+                    // One bone: identical to skinning.py's linear blend. Blends: identical to a dual-quaternion blend of
+                    // skinning.py's matrices (what the WebXR viewer does); linear blend differs there by design.
+                    Check(oneBone < 1e-4f && blendedVsDq < 1e-4f,
+                        $"frame {f}: one-bone vs skinning.py {oneBone * 1000f:F3} mm, blends vs dual-quaternion reference {blendedVsDq * 1000f:F3} mm " +
+                        $"(vs linear blend {blendedVsLbs * 1000f:F1} mm)");
+                }
+            }
+
+            // Playing moves it, smoothly between motion frames.
+            player.Seek(0f);
+            yield return Frames(2);
+            var a = rig.ReadBack();
+            player.Play();
+            yield return new WaitForSeconds(0.4f);
+            player.Pause();
+            yield return Frames(2);
+            var b = rig.ReadBack();
+            float most = 0f;
+            for (int i = 0; i < rig.Count; i++)
+                most = Mathf.Max(most, Vector3.Distance(new Vector3(a[i * 12], a[i * 12 + 1], a[i * 12 + 2]), new Vector3(b[i * 12], b[i * 12 + 1], b[i * 12 + 2])));
+            Check(most > 0.02f, $"playing moves it ({most * 100f:F1} cm at most after 0.4 s)");
+
+            player.Seek(13f / rig.Fps);
+            yield return Frames(3);
+            Render(Path.Combine(outputDir, "avatar-front.png"), root.position + root.forward * 2.6f + Vector3.up * 1.1f, root.position + Vector3.up * 1.0f);
+            Render(Path.Combine(outputDir, "avatar-side.png"), root.position + root.right * 2.6f + Vector3.up * 1.1f, root.position + Vector3.up * 1.0f);
+
+            if (player.HasReality)
+            {
+                player.ToggleReality();
+                float until = Time.realtimeSinceStartup + 30f;
+                while (!player.ShowingReality && player.RealityError == null && Time.realtimeSinceStartup < until) yield return null;
+                yield return Frames(3);
+                Check(player.ShowingReality, $"reality check skins the reality Gaussians the same way ({player.RealityError})");
+                Render(Path.Combine(outputDir, "avatar-reality-side.png"), root.position + root.right * 2.6f + Vector3.up * 1.1f, root.position + Vector3.up * 1.0f);
+                player.ToggleReality();
+                yield return Frames(2);
+                Check(!player.ShowingReality, "and back to the real colours");
+            }
+        }
+
+        static float[] ReadFloats(string path)
+        {
+            var bytes = File.ReadAllBytes(path);
+            var f = new float[bytes.Length / 4];
+            System.Buffer.BlockCopy(bytes, 0, f, 0, bytes.Length);
+            return f;
+        }
+
+        [System.Serializable]
+        class Expect
+        {
+            public float fps;
+            public int[] frames;
+            public int count;
         }
 
         // The library against a bridge, from an empty headset: list, download, play from the cache, then offline.

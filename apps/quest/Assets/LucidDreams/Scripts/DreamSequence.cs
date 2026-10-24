@@ -65,12 +65,18 @@ namespace LucidDreams
         public GaussianSplat3DAsset CreateCanonicalAsset(GaussianFrame first, Bounds bounds, string id)
         {
             Pad(first);
-            var splats = new TextAsset(MemoryMarshal.AsBytes(paddedAttributes.AsSpan())) { name = $"{id} splats" };
-            var sh = new TextAsset(MemoryMarshal.AsBytes(paddedSH.AsSpan())) { name = $"{id} sh" };
+            return CreateFloatAsset(paddedAttributes, paddedSH, Capacity, CoefficientCount, bounds, $"{id}/{Capacity}/{FrameCount}");
+        }
+
+        // A float-source renderer asset holding the given Gaussians (renderer layout, half-float SH).
+        public static GaussianSplat3DAsset CreateFloatAsset(float[] attributes, uint[] sh, int count, int coefficientCount, Bounds bounds, string id)
+        {
+            var splatData = new TextAsset(MemoryMarshal.AsBytes(attributes.AsSpan(0, count * GaussianFrame.FloatsPerGaussian))) { name = $"{id} splats" };
+            var shData = new TextAsset(MemoryMarshal.AsBytes(sh.AsSpan(0, count * GaussianFrame.SHWordsPerGaussian(coefficientCount)))) { name = $"{id} sh" };
             var asset = ScriptableObject.CreateInstance<GaussianSplat3DAsset>();
             asset.name = id;
-            int degree = (int)Math.Round(Math.Sqrt(CoefficientCount)) - 1;
-            asset.InitializeFloat(Capacity, degree, splats, sh, bounds, Hash128.Compute($"{id}/{Capacity}/{FrameCount}"), GaussianSplatSHStorage.Float16);
+            int degree = (int)Math.Round(Math.Sqrt(coefficientCount)) - 1;
+            asset.InitializeFloat(count, degree, splatData, shData, bounds, Hash128.Compute(id), GaussianSplatSHStorage.Float16);
             return asset;
         }
 

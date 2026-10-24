@@ -1,0 +1,64 @@
+// Poses an avatar's rest-pose Gaussians with dual-quaternion skinning, as apps/webxr/src/avatar.ts does with Spark:
+// each Gaussian blends its 4 bones' skinning transforms M_j (avatars/README.md, "Posing one frame"), moves its centre
+// and rotates its own orientation; scale, opacity and colour stay. Output is the renderer's float layout.
+#pragma kernel Skin
+
+struct Attributes
+{
+    float4 positionOpacity;
+    float4 scale;
+    float4 rotation; // x, y, z, w
+};
+
+StructuredBuffer<Attributes> _Rest;
+StructuredBuffer<uint2> _Skin;    // 4 x uint8 joint index, then 4 x uint8 weight (sum 255)
+StructuredBuffer<float4> _Bones;  // per bone: real quaternion, then dual quaternion
+RWStructuredBuffer<Attributes> _Out;
+uint _Count;
+
+float4 QMul(float4 a, float4 b)
+{
+    return float4(a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz), a.w * b.w - dot(a.xyz, b.xyz));
+}
+
+float3 Rotate(float4 q, float3 v)
+{
+    float3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
+[numthreads(256, 1, 1)]
+void Skin(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Count) return;
+    Attributes rest = _Rest[i];
+    uint2 record = _Skin[i];
+
+    float4 first = _Bones[(record.x & 255u) * 2];
+    float4 real = 0;
+    float4 dual = 0;
+    [unroll]
+    for (uint k = 0; k < 4; k++)
+    {
+        float w = ((record.y >> (8u * k)) & 255u) / 255.0;
+        if (w == 0.0) continue;
+        uint bone = (record.x >> (8u * k)) & 255u;
+        float4 r = _Bones[bone * 2];
+        float4 d = _Bones[bone * 2 + 1];
+        if (dot(r, first) < 0.0) w = -w; // same hemisphere, so the blend takes the short way round
+        real += w * r;
+        dual += w * d;
+    }
+    float len = length(real);
+    real /= len;
+    dual /= len;
+
+    float3 moved = Rotate(real, rest.positionOpacity.xyz)
+                 + 2.0 * (real.w * dual.xyz - dual.w * real.xyz + cross(real.xyz, dual.xyz));
+    Attributes o;
+    o.positionOpacity = float4(moved, rest.positionOpacity.w);
+    o.scale = rest.scale;
+    o.rotation = normalize(QMul(real, rest.rotation));
+    _Out[i] = o;
+}

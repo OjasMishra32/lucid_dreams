@@ -204,3 +204,13 @@ What makes it simple, and what to do the same way in Unity:
   complete; `dream.json` is written last. Cached dreams play offline; launch replays the last one played.
 - Checked against a static stand-in for the bridge (same paths as apps/web); not yet against the real bridge.
 
+## Decisions: avatar player (Ian, Fri night)
+
+- GPU skinning in a compute shader that writes straight into the renderer's float frame (one dispatch per display
+  frame, no CPU readback); bone maths on the CPU in the bundle's right-handed space, exactly `skin_matrices`.
+- Dual-quaternion blend like the WebXR viewer. Checked against a synthetic SMPL-X-layout avatar written with
+  `lucid_avatars` itself: one-bone Gaussians match `skinning.py` to 0.001 mm; blended ones match a dual-quaternion
+  blend of `skin_matrices` to 0.001 mm (linear blend differs by up to 3.5 cm at a bent elbow, by design).
+- Avatars without skin.bin/skeleton.json show as "Soon" in the library (bake them into a replay meanwhile).
+- Not yet run with a real DiGS avatar (dreams/test-avatar is on Ojasva's Mac) or on the Quest.
+

@@ -18,6 +18,7 @@ namespace LucidDreams.Editor
         const string BundleKey = "LucidDreams.HandsCheck.bundle";
         const string OutKey = "LucidDreams.HandsCheck.out";
         const string BridgeKey = "LucidDreams.HandsCheck.bridge";
+        const string ExpectKey = "LucidDreams.HandsCheck.expect";
 
         static HandsCheck()
         {
@@ -31,6 +32,9 @@ namespace LucidDreams.Editor
             SessionState.SetString(BundleKey, bundle == "" ? bridge : bundle);
             SessionState.SetString(OutKey, output);
             SessionState.SetString(BridgeKey, bridge ?? "");
+            // An avatar bundle can come with reference poses from lucid_avatars/skinning.py to compare against.
+            string expect = OptionalArg("-expect");
+            SessionState.SetString(ExpectKey, expect != null ? Path.GetFullPath(expect) : "");
             EditorSceneManager.OpenScene(EditorBuildSettings.scenes[0].path);
             // In memory only; the scene file isn't saved.
             UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>().bundle = bundle;
@@ -54,6 +58,7 @@ namespace LucidDreams.Editor
                 driver = new GameObject("Hands Check").AddComponent<HandsCheckDriver>();
                 driver.outputDir = SessionState.GetString(OutKey, "");
                 driver.libraryMode = SessionState.GetString(BridgeKey, "") != "";
+                driver.expectDir = SessionState.GetString(ExpectKey, "");
                 return;
             }
             if (!driver.Done) return;

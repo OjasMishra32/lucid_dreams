@@ -240,6 +240,7 @@ namespace LucidDreams.Editor
             placer.person = personGo.transform;
             var player = personGo.AddComponent<DreamSequencePlayer>();
             player.bundle = ""; // the library picks: the last dream played, or it opens so you can choose
+            player.avatarSkinning = AssetDatabase.LoadAssetAtPath<ComputeShader>("Assets/LucidDreams/Shaders/AvatarSkinning.compute");
             placer.player = player;
             var controls = dreamGo.AddComponent<DreamTestControls>();
             controls.player = player;

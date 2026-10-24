@@ -158,7 +158,7 @@ namespace LucidDreams
         void Act(DreamLibrary.Entry e)
         {
             if (e == null) return;
-            if (e.cached && e.dream.IsReplay)
+            if (e.cached && Playable(e.dream))
             {
                 library.Play(e);
                 Close();
@@ -219,10 +219,10 @@ namespace LucidDreams
 
             bool playing = e.cached && library.PlayingId == e.id && (player.IsReady || player.Error == null);
             row.action.on = playing;
-            if (d.IsAvatar)
+            if (!Playable(d))
             {
                 row.action.SetLabel("Soon");
-                row.action.interactable = false; // the avatar player isn't in the headset yet
+                row.action.interactable = false; // an avatar without skinning data can't move yet
             }
             else if (e.downloading)
             {
@@ -240,6 +240,11 @@ namespace LucidDreams
                 row.action.interactable = e.cached || e.online;
             }
         }
+
+        // Replays, and avatars that carry skinning (skin.bin, skeleton.json, motion.json).
+        static bool Playable(DreamBundle d) =>
+            d.IsReplay || (d.IsAvatar && d.avatar != null && !string.IsNullOrEmpty(d.avatar.skin)
+                           && !string.IsNullOrEmpty(d.avatar.skeleton) && !string.IsNullOrEmpty(d.avatar.motion));
 
         static string Host(string url)
         {
