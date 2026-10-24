@@ -9,8 +9,16 @@ the frame it repeats.
 Strobe frames are real captures that must not be shown: they are "real" (they have a time) but not "usable"; a display
 time that lands on one is an in-between of the nearest usable real frames around it (interp True, src = the strobe).
 
-Fractional source frames: src is piecewise linear in capture time through the real frames, so an in-between at
-fraction w between real frames a and b is src = a + w (b - a). `bracket(src)` / `sample(t)` invert it.
+Source positions (frames.json `src`) have one meaning: a whole src is that container frame's own time (a repeat's is
+the frame it repeats); a fractional src lies between two consecutive real frames a < b. Between them, src runs
+linearly from s0 to b as time runs from a's to b's, where s0 = b - 1 when the frame before b is a's repeat (so the
+in-between is never a whole number, and never the repeat's index) and s0 = a otherwise: halfway from 1242 to 1244
+(1243 the repeat) is 1243.5. A whole src with interp true is a strobe replacement (that frame's own time, rebuilt from
+its neighbours). `bracket(src)` gives back (a, b, w) for any src frames.json carries.
+
+This map is not format.ts's linear "sourceFps x slow source frames per second": the repeats make container frames
+uneven in time, so the two differ by up to ~0.75 capture frames (6 ms of real time). The runtime only compares src
+values in order (sound.ts fires the make and events as src passes theirs), so the difference never reaches it.
 """
 from __future__ import annotations
 
@@ -44,9 +52,11 @@ class CapTime:
         self.repeat_mod, self.repeat_phase = repeat_mod, repeat_phase
         self.real_frames = [s for s in range(first, last + 1) if self._real(s)]
         self._rank = {s: i for i, s in enumerate(self.real_frames)}
-        self.strobes = frozenset(s for s in strobes if first <= s <= last)
+        self.strobes = frozenset(self._real_of(s) for s in strobes if first <= s <= last)  # a repeat -> its frame
         self.usable_frames = [s for s in self.real_frames if s not in self.strobes]
         self._t_real = np.arange(len(self.real_frames)) / self.capture_fps
+        # each gap between consecutive real frames: src runs linearly from s0 to the next real frame
+        self._s0 = [max(a, b - 1) for a, b in zip(self.real_frames, self.real_frames[1:])]
         self._t_usable = [self._rank[s] / self.capture_fps for s in self.usable_frames]
 
     @classmethod
@@ -55,6 +65,11 @@ class CapTime:
 
     def _real(self, s: int) -> bool:
         return s == self.first or s % self.repeat_mod != self.repeat_phase
+
+    def _real_of(self, s: int) -> int:
+        while not self._real(s):
+            s -= 1
+        return s
 
     def is_real(self, s: int) -> bool:
         return self.first <= s <= self.last and self._real(s)
@@ -66,21 +81,35 @@ class CapTime:
         """Capture time (s) of whole source frame s; a repeat gets the time of the real frame before it."""
         if not (self.first <= s <= self.last):
             raise ValueError(f"source frame {s} is outside the shot [{self.first}, {self.last}]")
-        while not self._real(s):
-            s -= 1
-        return self._rank[s] / self.capture_fps
+        return self._rank[self._real_of(s)] / self.capture_fps
 
     @property
     def duration(self) -> float:
         return (len(self.real_frames) - 1) / self.capture_fps
 
     def src_at(self, t: float) -> float:
-        """The fractional source frame at capture time t (piecewise linear through the real frames)."""
-        return float(np.interp(t, self._t_real, self.real_frames))
+        """The source position at capture time t: a real frame's index at its time, else the in-between's src."""
+        tr, rf = self._t_real, self.real_frames
+        t = min(max(t, 0.0), float(tr[-1]))
+        j = int(np.searchsorted(tr, t, side="right")) - 1  # tr[j] <= t
+        if j >= len(rf) - 1 or abs(t - tr[j]) <= 1e-12 / self.capture_fps:
+            return float(rf[min(j, len(rf) - 1)])
+        u = (t - tr[j]) / (tr[j + 1] - tr[j])
+        return float(self._s0[j] + u * (rf[j + 1] - self._s0[j]))
 
     def time_of_src(self, src: float) -> float:
-        """Inverse of src_at for any source position (whole real frames, fractions between real frames)."""
-        return float(np.interp(src, self.real_frames, self._t_real))
+        """Inverse of src_at: a whole src is that container frame's time; a fraction lies in its real-frame gap."""
+        if float(src).is_integer():
+            return self.time_of(int(src))
+        rf = self.real_frames
+        j = bisect_right(rf, src) - 1
+        if j < 0 or j >= len(rf) - 1:
+            raise ValueError(f"source position {src} is outside the shot")
+        s0 = self._s0[j]
+        if src <= s0:  # between a real frame and its own repeat: still that frame's time
+            return float(self._t_real[j])
+        u = (src - s0) / (rf[j + 1] - s0)
+        return float(self._t_real[j] + u * (self._t_real[j + 1] - self._t_real[j]))
 
     def sample(self, t: float, tol_frames: float) -> Sample:
         """What to show at capture time t. A usable real frame within tol_frames capture frames is shown as is;

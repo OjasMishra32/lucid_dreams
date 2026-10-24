@@ -125,8 +125,9 @@ class Timeline:
 
 def _snap_tol(cfg: BakeConfig, step_s: float) -> float:
     """Snap tolerance in capture frames: cfg.snap_tol at full steps, shrinking with the step so a slow ease never
-    holds a real frame for several display frames."""
-    return cfg.snap_tol * min(1.0, abs(step_s) * cfg.capture_fps)
+    holds a real frame for several display frames; never below cfg.near_real (sub-pixel: closer than that, an
+    in-between would differ from the real frame only by its own interpolation error, a visible jump on landing)."""
+    return max(cfg.snap_tol * min(1.0, abs(step_s) * cfg.capture_fps), cfg.near_real)
 
 
 def build(cfg: BakeConfig, hz: int, cap: CapTime | None = None) -> Timeline:
@@ -228,10 +229,20 @@ def _paths(tl: Timeline) -> list[tuple[str, list[float], list[float]]]:
 
 
 def check(tl: Timeline, cfg: BakeConfig) -> dict:
-    """P6 numbers: speed change per display frame on the ideal curve (<= 0.02), motion max/median of the shown
-    steps (<= 2.5) on every path, plus structural checks. `errors` is empty when all hold."""
+    """P6 numbers, `errors` empty when all hold:
+    - speed change per display frame on the ideal curve <= 0.02, on every path;
+    - no held frame (a zero step) in pass 1 or pass 2;
+    - motion max/median of the shown steps <= 2.5 where the speed is meant to be steady or easing smoothly: pass 1,
+      pass 2, each pass 2 -> ease path, each ease alone, the resume after its ramp (a ramp's own steps are judged by
+      the next rule instead, since a short resume is mostly ramp);
+    - every shown time within max(snap_tol, near_real) capture frames of its ideal time (no step off the curve).
+    Zero steps in an ease or the resume's start are the sub-pixel hold on F (near_real) and are not motion."""
     errors = []
     max_dv, max_ratio, ratios = 0.0, 0.0, {}
+    s = tl.segments
+    nr = ease_frame_count(cfg.resume_ramp_s, tl.hz)
+    steady = {"pass1", "pass2"} | {f"pass2->ease{i}" for i in range(len(s["eases"]))} | {
+        f"ease{i}" for i in range(len(s["eases"]))}
     for name, taus, ts in _paths(tl):
         speed = np.diff(taus) * tl.hz
         if len(speed) > 1:
@@ -240,7 +251,10 @@ def check(tl: Timeline, cfg: BakeConfig) -> dict:
             if dv > 0.02 + 1e-12:
                 errors.append(f"{name}: speed changes by {dv:.4f} in one display frame (> 0.02)")
         steps = np.abs(np.diff(ts))
-        moving = steps[steps > 1e-12]
+        if name in ("pass1", "pass2") and np.any(steps <= 1e-12):
+            errors.append(f"{name}: {int(np.sum(steps <= 1e-12))} held frames (zero steps)")
+        judged = steps if name in steady else (steps[1 + nr:] if name == "F->resume" else steps[:0])
+        moving = judged[judged > 1e-12]
         if len(moving):
             ratio = float(moving.max() / np.median(moving))
             ratios[name] = round(ratio, 3)
@@ -249,13 +263,19 @@ def check(tl: Timeline, cfg: BakeConfig) -> dict:
                 errors.append(f"{name}: motion max/median {ratio:.2f} (> 2.5)")
         if np.any(np.diff(ts) < -1e-12):
             errors.append(f"{name}: shown time goes backwards")
+    t_f = tl.frames[s["eases"][0]["frames"][1]].t
+    offsets = [abs(f.t - (t_f + f.tau)) * cfg.capture_fps for f in tl.frames]
+    max_off = float(max(offsets))
+    allow = max(cfg.snap_tol, cfg.near_real) + 1e-9
+    if max_off > allow:
+        errors.append(f"a shown time is {max_off:.3f} capture frames off its ideal time (> {allow:.3f})")
     for seg in ("pass2", "resume"):
         fr = tl.frames_of(seg)
         if not (fr[0].src < cfg.make < fr[-1].src):
             errors.append(f"{seg} never passes the make (source {cfg.make}): it shows {fr[0].src}-{fr[-1].src}")
-    for i, e in enumerate(tl.segments["eases"]):
+    for i, e in enumerate(s["eases"]):
         last = tl.frames[e["frames"][1]]
         if last.interp or last.src != cfg.freeze:
             errors.append(f"ease{i} does not end on F")
     return {"errors": errors, "max_speed_change": round(max_dv, 5), "max_motion_ratio": round(max_ratio, 3),
-            "motion_ratio_by_path": ratios}
+            "motion_ratio_by_path": ratios, "max_offset_frames": round(max_off, 4)}

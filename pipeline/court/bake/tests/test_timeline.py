@@ -199,3 +199,44 @@ def test_a_make_after_the_clip_end_is_reported():
     cfg = dataclasses.replace(CFG, clip_end=CFG.make)
     m = T.check(T.build(cfg, 72), cfg)
     assert any("make" in e for e in m["errors"])
+
+
+def test_a_held_frame_in_pass1_or_pass2_is_reported():
+    tl = T.build(CFG, 90)
+    k = tl.segments["pass2"][0] + 10
+    held = dataclasses.replace(tl.frames[k + 1], t=tl.frames[k].t)
+    tl.frames[k + 1] = held
+    assert any("held" in e and "pass2" in e for e in T.check(tl, CFG)["errors"])
+
+
+def test_a_short_resume_that_is_mostly_ramp_passes():
+    cfg = dataclasses.replace(CFG, clip_end=330, make=320, strobes=())
+    for hz in (72, 90):
+        m = T.check(T.build(cfg, hz), cfg)
+        assert m["errors"] == [], m["errors"]
+
+
+def test_shown_times_follow_the_ideal_curve_within_the_snap_allowance(tl):
+    m = T.check(tl, CFG)
+    assert m["max_offset_frames"] <= max(CFG.snap_tol, CFG.near_real) + 1e-9
+
+
+def test_in_betweens_within_near_real_of_a_capture_show_the_real_frame(tl):
+    c = CapTime.from_config(CFG)
+    for f in tl.frames:
+        if f.interp:
+            d = min(f.w, 1 - f.w) * (c.time_of(f.b) - c.time_of(f.a)) * CFG.capture_fps
+            assert d >= CFG.near_real - 1e-9
+    # the frames next to F in every ease and at the resume's start are F itself, a real frame
+    for e in tl.segments["eases"]:
+        assert not tl.frames[e["frames"][1] - 1].interp
+    assert not tl.frames_of("resume")[0].interp
+
+
+def test_consumers_recover_a_b_w_from_frames_json_src(tl):
+    c = CapTime.from_config(CFG)
+    for f in tl.frames:
+        a, b, w = c.bracket(f.src)
+        assert (a, b) == (f.a, f.b) and w == pytest.approx(f.w, abs=1e-9)
+        if f.interp and float(f.src).is_integer():
+            assert int(f.src) in c.strobes  # only a strobe replacement has a whole src and interp true
