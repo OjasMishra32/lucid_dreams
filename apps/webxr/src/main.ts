@@ -18,6 +18,7 @@ const emulate = import.meta.env.DEV && params.has("emulate")
 
 void emulate.then(() => {
   if (params.get("mode") === "chess") import("./chess/game").then((m) => m.renderChess(app));
+  else if (params.get("mode") === "tennis") import("./tennis/game").then((m) => m.renderTennis(app));
   else if (id) renderViewer(app, id);
   else renderLibrary(app);
 });
