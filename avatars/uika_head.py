@@ -391,13 +391,15 @@ def flame_regions(masks: dict, n: int) -> np.ndarray:
 
 
 def edit_uika(g: Gaussians, alpha: np.ndarray, near: np.ndarray, dist: np.ndarray, flame_rest: np.ndarray,
-              regions: np.ndarray, k: int = 24) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict, np.ndarray]:
+              regions: np.ndarray, k: int = 24, nape_drop: float = 0.0
+              ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict, np.ndarray]:
     """(keep mask, new RGB (n, 3), repaint weight (n,), counts, the seen hair) for UIKA's Gaussians: drop what isn't
     head (the shirt collar UIKA grew from the photos, the FLAME boundary ring, anything standing off its FLAME vertex
     further than hair can) and repaint what the photos never saw: behind the ears and above the nape the colour of
     the nearest seen hair, below the nape the colour of the nearest seen neck skin, each plus UIKA's own detail
     there (its colour minus its local mean). `near`/`dist`: each Gaussian's nearest FLAME vertex and the distance to
-    it; `flame_rest`: FLAME's vertices in its own frame."""
+    it; `flame_rest`: FLAME's vertices in its own frame; `nape_drop` moves the nape's hairline down (metres: hair
+    that reaches the collar)."""
     from scipy.spatial import cKDTree
 
     rgb = np.clip(0.5 + SH_C0 * g.f_dc, 0, 1)
@@ -405,7 +407,7 @@ def edit_uika(g: Gaussians, alpha: np.ndarray, near: np.ndarray, dist: np.ndarra
     v = flame_rest[near]
     hair, neck = np.isin(reg, HAIR_REGIONS), np.isin(reg, NECK_REGIONS)
     behind = np.clip((BACK_Z[1] - v[:, 2]) / (BACK_Z[1] - BACK_Z[0]), 0, 1)
-    above_nape = np.clip((v[:, 1] - NAPE_Y[0]) / (NAPE_Y[1] - NAPE_Y[0]), 0, 1)
+    above_nape = np.clip((v[:, 1] - (NAPE_Y[0] - nape_drop)) / (NAPE_Y[1] - NAPE_Y[0]), 0, 1)
     back_w = behind * above_nape * ((reg == "scalp") | neck)  # hair; not the ears
     skin_w = behind * (1 - above_nape) * neck  # the back of the neck under the hairline
     lum = rgb @ np.array([0.299, 0.587, 0.114])
@@ -453,18 +455,24 @@ SHELL_FRONT_Z = 0.0  # FLAME z: only the top and back of the scalp (in front of 
 
 def scalp_shell(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, seam_lo: float, flame_a: np.ndarray,
                 flame_rest: np.ndarray, regions: np.ndarray, hair_xyz: np.ndarray, hair_rgb: np.ndarray,
-                solid_xyz: np.ndarray, hair_lift: float, seed: int = 0, k: int = 24) -> Gaussians:
+                solid_xyz: np.ndarray, hair_lift: float, seed: int = 0, k: int = 24, nape_drop: float = 0.0
+                ) -> Gaussians:
     """Opaque flat Gaussians on the avatar's SMPL-X scalp (behind the hairline, above the seam band), a few mm in,
     facing out, coloured like the nearest hair the photos saw (a little darker: the hair's inner layer). Each shell
     point sits just under the local height of UIKA's opaque hair (`solid_xyz`) over the scalp (at most `hair_lift`,
     the seen hair's height), so a gap is closed at the hair's surface, never as a dent or a bulge."""
     from scipy.spatial import cKDTree
 
-    fids = D.head_faces(faces, verts, lbs, seam_lo)
+    if nape_drop > 0:  # the hair reaches the collar: the back of the neck's faces carry the shell too
+        dom = np.argmax(lbs, axis=1)
+        ok_v = np.isin(dom, (J["head"], J["jaw"], J["neck"], J["left_eye"], J["right_eye"]))
+        fids = np.flatnonzero(ok_v[faces].all(axis=1) & (verts[faces, 1].max(axis=1) > seam_lo))
+    else:
+        fids = D.head_faces(faces, verts, lbs, seam_lo)
     _, _, p, n = D.sample_surface(verts, faces, fids, SHELL_N, seed=seed)
     near = cKDTree(flame_a).query(p)[1]
     reg, v = regions[near], flame_rest[near]
-    back = (v[:, 2] < BACK_Z[1]) & (v[:, 1] > NAPE_Y[0])
+    back = (v[:, 2] < BACK_Z[1]) & (v[:, 1] > NAPE_Y[0] - nape_drop)
     ok = (((reg == "scalp") & (v[:, 2] < SHELL_FRONT_Z)) | (np.isin(reg, NECK_REGIONS) & back)) & (p[:, 1] > seam_lo)
     p, n = p[ok], n[ok]
     if len(solid_xyz) >= k:  # the local height of UIKA's hair over the scalp, along the scalp's normal
@@ -627,7 +635,8 @@ def cmd_distill(a) -> int:
     dist, near = cKDTree(flame_a).query(ug.xyz)
     with open(a.flame_masks, "rb") as fh:
         regions = flame_regions(pickle.load(fh, encoding="latin1"), len(flame_u))
-    keep_u, rgb_u, back_w, edits, seen_hair = edit_uika(ug, u_alpha, near, dist, flame_u, regions)
+    keep_u, rgb_u, back_w, edits, seen_hair = edit_uika(ug, u_alpha, near, dist, flame_u, regions,
+                                                        nape_drop=a.nape_drop)
     # the seam goes just under UIKA's chin: head_distill_core.seam_height (SMPL-X's jaw joint - 3 cm) sits at lip
     # level, where the old blurry chin would cross-fade with the new sharp one
     chin_y = float(flame_a[np.isin(regions, ("face", "lips")), 1].min())
@@ -647,7 +656,7 @@ def cmd_distill(a) -> int:
     # behind. An opaque shell on the SMPL-X scalp, just under UIKA's hair and coloured like the seen hair, closes them
     hair_lift = 0.8 * float(np.median(dist[seen_hair])) if seen_hair.any() else 0.01
     shell = scalp_shell(verts, faces, lbs, seam_lo, flame_a, flame_u, regions, ug.xyz[seen_hair], rgb_u[seen_hair],
-                        ug.xyz[keep_u & (u_alpha > 0.5)], hair_lift, seed=a.seed)
+                        ug.xyz[keep_u & (u_alpha > 0.5)], hair_lift, seed=a.seed, nape_drop=a.nape_drop)
     anchor = np.concatenate([ug.xyz[sel], shell.xyz])
     fade = np.clip((anchor[:, 1] - (np.concatenate([seam_at[sel], np.full(len(shell), seam_y)]) - H.BAND_M))
                    / H.BAND_M, 0, 1)
@@ -893,7 +902,7 @@ def cmd_distill(a) -> int:
         "exportCheck": {"psnr": round(check_psnr, 2), "alphaError": round(check_alpha, 4)},
         "size": {"uika": size_uika, "avatar": size_body},
         "body": a.body, "seam": {"y": round(seam_y, 4), "chinY": round(chin_y, 4), "jawJointY": round(float(rest[J["jaw"], 1]), 4),
-                 "bandM": H.BAND_M, "backDropM": BACK_SEAM_DROP_M, "offsetM": a.seam_offset, "bodyAbove": body_above},
+                 "bandM": H.BAND_M, "backDropM": BACK_SEAM_DROP_M, "napeDropM": a.nape_drop, "offsetM": a.seam_offset, "bodyAbove": body_above},
         "edits": edits, "seeds": n_u,
         "fit": {"steps": a.steps, "pruned": pruned, "cloned": cloned, "split": split,
                 "views": len(views), "heldOut": int(len(held)), "size": W,
@@ -1126,6 +1135,8 @@ def main() -> int:
     d.add_argument("--body", choices=("raw", "current"), default="raw",
                    help="raw: avatar.raw.ply when there (lhmpp_cleanup.py then runs on the result); current: the body as "
                         "it is now (already cleaned or slimmed: fitted in its final shape)")
+    d.add_argument("--nape-drop", type=float, default=0.0,
+                   help="move the hairline at the nape down this far (m): hair that reaches the collar")
     d.add_argument("--steps", type=int, default=7000)
     d.add_argument("--seam-offset", type=float, default=0.0, help="move the jaw-line seam up (+) or down, metres")
     d.add_argument("--flame-masks", type=Path, required=True, help="FLAME_masks.pkl (FLAME 2023's regions)")
