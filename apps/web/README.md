@@ -54,6 +54,25 @@ GEMINI_API_KEY=...
 `GET /api/dreams/<id>/experience` says where a plan stands (`ready`, `working`, `failed` with the reason, or `off`);
 `POST` to the same path writes it again.
 
+### Testing the intent box
+
+`tests/intents.json` holds forty sentences, ten per mode (the five showcase moments, instruments, sport and dance,
+cooking and crafts, companions, chess at every strength), each with the mode, place, environment, objects (and chess
+strength) it should become.
+
+```bash
+npm --prefix apps/web test                         # both of the below
+npm --prefix apps/web run test:plan                # clean()'s rules against canned model answers: no key, no network
+npm --prefix apps/web run test:intents             # all forty through Gemini (needs GEMINI_API_KEY); without one, checks the file
+npm --prefix apps/web run test:intents -- play     # one mode, or any words from a case id
+```
+
+The live check plans each sentence alone (no clip: an avatar for chess, a replay otherwise), prints every miss, and
+says how many the model got right before `clean()` applied its rules. Those rules only cover what the sentence leaves
+no doubt about: chess needs an avatar; companions and chess face you in your room; a lesson "next to me" is beside you;
+instruments beside, whole-body moves ahead, hands-on work facing; a named place wins; objects are lowercase singular
+nouns. `lib/bridge/*.ts` imports `server-only`, so the scripts run with `node --conditions=react-server` (and `tsx`).
+
 ## API (contract in AGENTS.md)
 
 | Call | Reply |

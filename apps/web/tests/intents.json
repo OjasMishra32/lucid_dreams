@@ -1,0 +1,333 @@
+{
+  "about": "Forty sentences for the intent box, ten per mode, each with the plan it should become (AGENTS.md, Contracts, Experience). scripts/check-intents.ts asks Gemini for a plan from each sentence alone (kind avatar for play, replay otherwise) and reports mismatches; tests/plan.test.ts checks that clean() keeps every right answer right. environment null means leave it out (the user's own room, same as \"room\"); objects lists the nouns that must be there, alternatives split by |, extras allowed; strength is the chess level for play.",
+  "cases": [
+    {
+      "id": "teach-piano-side-by-side",
+      "showcase": 1,
+      "name": "Piano piece",
+      "sentence": "sit next to me and teach me this piece",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "beside", "environment": "concert-hall", "objects": ["piano", "bench"] },
+      "why": "Showcase 1. An instrument lesson, side by side as asked; a piano's home is the concert hall."
+    },
+    {
+      "id": "teach-jump-shot",
+      "showcase": 2,
+      "name": "Jump shot",
+      "sentence": "teach me this jump shot",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "ahead", "environment": "court", "objects": ["basketball", "hoop"] },
+      "why": "Showcase 2. Sport form you follow from behind; a shot needs the ball and the hoop it aims at."
+    },
+    {
+      "id": "teach-strum",
+      "name": "First strum",
+      "sentence": "teach me this strum",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "beside", "environment": "concert-hall", "objects": ["guitar|ukulele"] },
+      "why": "An instrument lesson: beside you, so your strumming hand mirrors theirs from the same side; music's home is the concert hall."
+    },
+    {
+      "id": "teach-violin",
+      "name": "Violin",
+      "sentence": "help me learn this violin passage",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "beside", "environment": "concert-hall", "objects": ["violin"] },
+      "why": "An instrument lesson, beside you; the violin is named, so it is an object."
+    },
+    {
+      "id": "teach-salsa-step",
+      "name": "Salsa",
+      "sentence": "teach me this salsa step",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "ahead", "environment": "studio", "objects": [] },
+      "why": "A dance you follow like a class; dance's home is the studio; nothing to hold."
+    },
+    {
+      "id": "teach-squat-form",
+      "name": "Squats",
+      "sentence": "coach me through this squat so my form looks like his",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "ahead", "environment": "gym", "objects": [] },
+      "why": "Workout form you copy from behind; a workout's home is the gym."
+    },
+    {
+      "id": "teach-tennis-serve",
+      "name": "Serve",
+      "sentence": "break down her tennis serve for me",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "ahead", "environment": null, "objects": ["tennis racket|racket"] },
+      "why": "Sport form, ahead; the court place is a basketball court, so tennis has no home in the list."
+    },
+    {
+      "id": "teach-omelette-flip",
+      "name": "Omelette",
+      "sentence": "teach me how she flips the omelette",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "facing", "environment": null, "objects": ["pan"] },
+      "why": "Cooking: you watch their hands across the counter, facing you; no kitchen place, so no environment."
+    },
+    {
+      "id": "teach-origami-crane",
+      "name": "Paper crane",
+      "sentence": "show me how to fold this origami crane",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "facing", "environment": null, "objects": ["paper"] },
+      "why": "A craft done with the hands at a table: facing; no home."
+    },
+    {
+      "id": "teach-boxing-combo",
+      "name": "Boxing combo",
+      "sentence": "teach me this boxing combo",
+      "kind": "replay",
+      "expect": { "mode": "teach", "place": "ahead", "environment": "ring", "objects": [] },
+      "why": "A whole-body move you shadow from behind; boxing's home is the ring."
+    },
+
+    {
+      "id": "companion-sit-with-her",
+      "showcase": 4,
+      "name": "Grandma",
+      "sentence": "I just want to sit with her",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "Showcase 4. Company, not a performance: facing you, in your own room."
+    },
+    {
+      "id": "companion-be-with-me",
+      "name": "Mom",
+      "sentence": "just be with me",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "The intent box's own suggestion for a companion."
+    },
+    {
+      "id": "companion-while-i-cook",
+      "name": "Dad",
+      "sentence": "keep me company while I cook dinner",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "What the user does meanwhile (cooking) doesn't make it a lesson."
+    },
+    {
+      "id": "companion-miss-grandpa",
+      "name": "Grandpa",
+      "sentence": "I miss my grandpa, I want him here for a while",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "Someone you've lost, simply there."
+    },
+    {
+      "id": "companion-hear-her-voice",
+      "name": "Nana",
+      "sentence": "I want to hear her voice again",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "Her own recorded voice and captions come with a companion; nothing is said as her."
+    },
+    {
+      "id": "companion-birthday",
+      "name": "Mom",
+      "sentence": "have my mom here for my birthday",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "Presence for a moment in your life, at home."
+    },
+    {
+      "id": "companion-couch",
+      "name": "Grandpa",
+      "sentence": "sit next to me on the couch like old times",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "Companions face you so you can see them; 'next to me' means beside only in a lesson, where you copy them."
+    },
+    {
+      "id": "companion-mountains",
+      "name": "My brother",
+      "sentence": "take me to the mountains with my brother",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "mountains", "objects": [] },
+      "why": "A companion stays in your room unless the user names a place, and here they do."
+    },
+    {
+      "id": "companion-morning-coffee",
+      "name": "Grandma",
+      "sentence": "have coffee with me in the morning like we used to",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "A shared routine is company, not a lesson."
+    },
+    {
+      "id": "companion-stay-tonight",
+      "name": "Dad",
+      "sentence": "stay with me tonight, I don't want to be alone",
+      "kind": "replay",
+      "expect": { "mode": "companion", "place": "facing", "environment": "room", "objects": [] },
+      "why": "Comfort: simply there, facing you."
+    },
+
+    {
+      "id": "watch-show-me-doing-it",
+      "showcase": 5,
+      "name": "My jump shot",
+      "sentence": "show me doing it",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": "court", "objects": ["basketball", "hoop"] },
+      "why": "Showcase 5 (you, perfected): seeing yourself do the shot, not a lesson; the court is its home."
+    },
+    {
+      "id": "watch-ballet-solo",
+      "name": "Ballet solo",
+      "sentence": "let me watch her dance this ballet solo",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": "studio", "objects": [] },
+      "why": "A performance you watch from the front; dance's home is the studio."
+    },
+    {
+      "id": "watch-cello-piece",
+      "name": "Cello",
+      "sentence": "play this cello piece for me",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": "concert-hall", "objects": ["cello"] },
+      "why": "'Play' means playing the music back, never a game; an audience faces the player."
+    },
+    {
+      "id": "watch-follow-workout",
+      "name": "Morning workout",
+      "sentence": "I want to follow along with this workout",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "ahead", "environment": "gym", "objects": [] },
+      "why": "Following along at full speed is watch, with them ahead of you like an instructor."
+    },
+    {
+      "id": "watch-shadowboxing",
+      "name": "Shadowboxing",
+      "sentence": "let me watch his shadowboxing up close",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": "ring", "objects": [] },
+      "why": "Watching, so facing; boxing's home is the ring."
+    },
+    {
+      "id": "watch-piano",
+      "name": "Piano",
+      "sentence": "I just want to hear him play the piano",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": "concert-hall", "objects": ["piano"] },
+      "why": "A performance, not a game and not a lesson; the piano is named."
+    },
+    {
+      "id": "watch-tai-chi-mountains",
+      "name": "Tai chi",
+      "sentence": "let me watch his tai chi in the mountains",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": "mountains", "objects": [] },
+      "why": "The user names the place, so it wins."
+    },
+    {
+      "id": "watch-skateboard-trick",
+      "name": "Kickflip",
+      "sentence": "show me this skateboard trick again",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": null, "objects": ["skateboard"] },
+      "why": "Seeing it again, not learning it; skateboarding has no home in the list."
+    },
+    {
+      "id": "watch-dance-along",
+      "name": "Dance",
+      "sentence": "put her dance on so I can dance along",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "ahead", "environment": "studio", "objects": [] },
+      "why": "Dancing along at full speed: watch, ahead of you; dance's home is the studio."
+    },
+    {
+      "id": "watch-wedding-toast",
+      "name": "Wedding toast",
+      "sentence": "play back grandpa's toast from the wedding",
+      "kind": "replay",
+      "expect": { "mode": "watch", "place": "facing", "environment": null, "objects": [] },
+      "why": "Plain playback of a home video; nothing has a home, so no environment."
+    },
+
+    {
+      "id": "play-chess",
+      "showcase": 3,
+      "name": "Chess partner",
+      "sentence": "play chess with me",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "club" },
+      "why": "Showcase 3 and the intent box's suggestion: across a board at your table; no level named, so club."
+    },
+    {
+      "id": "play-carlsen",
+      "name": "Chess partner",
+      "sentence": "play chess with me at Magnus Carlsen's level",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "carlsen" },
+      "why": "The legend is only a strength: Stockfish at Carlsen's peak rating, never his likeness."
+    },
+    {
+      "id": "play-fischer",
+      "name": "Chess partner",
+      "sentence": "I want a game at Bobby Fischer's peak rating",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "fischer" },
+      "why": "'A game' means chess, the only game there is."
+    },
+    {
+      "id": "play-go-easy",
+      "name": "Chess partner",
+      "sentence": "let's play a game across the table, go easy on me",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "club" },
+      "why": "No chess word at all; going easy is the club level."
+    },
+    {
+      "id": "play-grandmaster",
+      "name": "Chess partner",
+      "sentence": "give me a grandmaster-level chess game",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "gm" },
+      "why": "A grandmaster is the gm level."
+    },
+    {
+      "id": "play-full-strength",
+      "name": "Chess partner",
+      "sentence": "play chess against me at full strength",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "max" },
+      "why": "Full strength is max."
+    },
+    {
+      "id": "play-with-dad",
+      "name": "Dad",
+      "sentence": "I want to play chess with my dad again",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "club" },
+      "why": "A family member at the board is still play, not a companion; no level named."
+    },
+    {
+      "id": "play-expert",
+      "name": "Chess partner",
+      "sentence": "a quick chess match, expert level",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "expert" },
+      "why": "The level is named."
+    },
+    {
+      "id": "play-teach-me-chess",
+      "name": "Chess partner",
+      "sentence": "teach me chess by playing a game with me",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "club" },
+      "why": "Chess is always play, even phrased as a lesson: there is no move to slow down."
+    },
+    {
+      "id": "play-chess-master",
+      "name": "Chess partner",
+      "sentence": "challenge me like a chess master would",
+      "kind": "avatar",
+      "expect": { "mode": "play", "place": "facing", "environment": "room", "objects": ["chessboard"], "strength": "master" },
+      "why": "A master is the master level, below a grandmaster."
+    }
+  ]
+}
