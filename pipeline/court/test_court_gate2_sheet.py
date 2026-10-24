@@ -70,6 +70,15 @@ class Gate2Sheet(unittest.TestCase):
         back = orbit[40:60, 4 * 36 + 2:4 * 36 + 30]  # 180 degrees: frame 6 of 12, below its label
         self.assertAlmostEqual(float(back.mean()), 120, delta=6)
 
+    def test_a_tagged_rerun_stands_in_for_its_seed(self):
+        mgpu = self.run.parent / "seed1-mgpu"
+        self.run.rename(mgpu)
+        (self.run / "logs").mkdir(parents=True)  # the cancelled seed1: a partial log only
+        out = Path(self.tmp.name) / "g.jpg"
+        g2.main([str(self.run), str(mgpu), "--out", str(out), "--height", "64"])
+        import cv2
+        self.assertEqual(cv2.imread(str(out)).shape[0], 3 * (64 + 4))  # seed1-mgpu's rows only
+
     def test_no_k_anywhere_is_one_labelled_tile(self):
         bare = Path(self.tmp.name) / "court-y"
         bare.mkdir()

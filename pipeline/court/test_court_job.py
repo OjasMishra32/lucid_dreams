@@ -162,7 +162,7 @@ class Job(unittest.TestCase):
         self.assertEqual({c["cuda"] for c in r}, {"0", "1"})
         views = next(c for c in self.calls if c["args"][0].endswith("inference.py"))
         self.assertNotIn("--enable_turbo=False", views["args"])
-        self.assertEqual(views["cuda"], "0")
+        self.assertIsNone(views["cuda"])  # every GPU the job holds (an idle allocated GPU gets the job killed)
         self.assertEqual(list(self.scratch.iterdir()), [])  # its scratch is gone
         self.assertEqual(sorted(x.name for x in self.L.iterdir()), ["code", "data", "envs", "repos", "runs"])
         self.assertIn("raw-default-r0  300k", subprocess.run(["python3", str(HERE / "court_grid_report.py"), str(out)],

@@ -15,10 +15,14 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from court_grid_report import pick_runs  # noqa: E402  (one folder per seed: seed1-mgpu stands in for seed1)
 
 VIEWS = ("00", "04", "08", "12")  # always shown (a missing one as a grey tile), with any other views fetched
 GREY = (90, 90, 90)
@@ -117,7 +121,7 @@ def main(argv=None):
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--clips", type=Path, default=None, help="local run folders, for K when the fetch has none")
     a = ap.parse_args(argv)
-    rows = [r for run in a.runs for r in rows_for(run, a.height, a.clips)]
+    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips)]
     cv2.imwrite(str(a.out), stack(rows), [cv2.IMWRITE_JPEG_QUALITY, 90])
     print(f"{a.out}: {len(a.runs)} runs, {len(rows)} rows")
 

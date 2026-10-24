@@ -10,7 +10,8 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=%x-%j.log
 # Court Side: one run's whole freeze grid on one node, entirely in node-local scratch (Slurm wipes it at the end).
-# Stages $L/data/court/$ID/ in, makes the 4DAnyone views (Turbo or 24 steps, from job.json), SeedVR2 2x views if a
+# Stages $L/data/court/$ID/ in, makes the 4DAnyone views (Turbo or 24 steps, from job.json; on all the job's GPUs, as
+# RC kills a job whose allocated GPU idles for an hour), SeedVR2 2x views if a
 # variant asks for them, then every freeze of frame K (one per variant and cap), a held-out metrics recon per variant
 # and an export per freeze, spread over the node's GPUs; copies only results back to $L/runs/$ID/ (the gate-2 view
 # samples as soon as the views exist). Writes nothing else on /blue and deletes nothing outside its own scratch.
@@ -103,9 +104,9 @@ copy_back() {  # copy_back <path relative to the run>... : results only, into $O
     cp -r "$S/run/$p" "$OUTD/$(dirname "$p")/"
   done
 }
-log "prep + 4DAnyone views"
+log "prep + 4DAnyone views"  # on every GPU the job holds (inference.py's gpu_ids: all visible); RC kills idle ones
 $PY -m lucid.prep_clip input.mp4 --out prepped.mp4 --start-s 0 > prep.json
-( cd "$L/repos/4DAnyone" && export OMP_NUM_THREADS=$CPUS MKL_NUM_THREADS=$CPUS && CUDA_VISIBLE_DEVICES=0 $PY inference.py --video_path "$S/run/prepped.mp4" \
+( cd "$L/repos/4DAnyone" && export OMP_NUM_THREADS=$CPUS MKL_NUM_THREADS=$CPUS && $PY inference.py --video_path "$S/run/prepped.mp4" \
     --output_dir "$S/run/views" --views_per_layer "$VPL" --layer_pitches "$PITCHES" \
     $( ((TURBO)) || echo --enable_turbo=False ) ${SEED:+$SEED_FLAG $SEED} )
 SAMPLES=(views/videos/{00,02,04,06,08,10,12,14}.mp4)  # the first ring every 45 degrees, its back included (~12 MB)

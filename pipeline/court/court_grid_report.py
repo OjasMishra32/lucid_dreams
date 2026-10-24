@@ -2,6 +2,9 @@
 
     python3 court_grid_report.py [--rank] <run dir>...      (e.g. $L/runs/court-*  or  $L/runs/court-main-s2/seed*)
 
+A seed re-run under a tag (seed1-mgpu, or any seed<N>-<tag>) stands in for seed N: of the folders for one seed, the
+one with results is used, the newest when several have them, so no seed is counted twice.
+
 held-out real = PSNR on the real views a variant did NOT train on (its metrics recon carries them at weight 0); views =
 PSNR/SSIM on every 8th generated view, left out (the metrics recon); real A = PSNR against A's 4K frame on its
 non-ignored pixels; face = the same on the face crop; iou = A's silhouette match when solved; focal = the focal it ended
@@ -14,6 +17,28 @@ import json
 import re
 import sys
 from pathlib import Path
+
+
+def seed_of(run: Path) -> int | None:
+    m = re.fullmatch(r"seed(\d+)(?:-[a-z0-9-]+)?", run.name)
+    return int(m.group(1)) if m else None
+
+
+def _results(run: Path) -> tuple[int, float]:
+    files = [f for f in run.rglob("*") if f.is_file()]
+    done = any(run.glob("recon-*/recon-*.json")) * 2 + any(run.glob("views/videos/*.mp4"))
+    return done, max((f.stat().st_mtime for f in files), default=0.0)
+
+
+def pick_runs(runs: list[Path]) -> list[Path]:
+    """One folder per (run, seed): the one with results (recons over views over nothing), then the newest."""
+    best: dict = {}
+    for r in runs:
+        key = (str(r.parent), seed_of(r)) if seed_of(r) is not None else (str(r), None)
+        if key not in best or _results(r) > _results(best[key]):
+            best[key] = r
+    keep = set(map(str, best.values()))
+    return [r for r in runs if str(r) in keep]
 
 
 def report(path: Path) -> tuple[dict, dict]:
@@ -55,7 +80,7 @@ def rows(run: Path):
 def main(argv=None):
     args = list(argv if argv is not None else sys.argv[1:])
     rank = "--rank" in args
-    runs = [Path(p) for p in args if p != "--rank"]
+    runs = pick_runs([Path(p) for p in args if p != "--rank"])
     table = [r for run in runs for r in rows(run)]
     if rank:
         neg = lambda v: -v if v is not None else float("inf")  # noqa: E731
