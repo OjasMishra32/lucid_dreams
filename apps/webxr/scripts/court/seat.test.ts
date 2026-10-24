@@ -107,7 +107,7 @@ test("Walk closer (or standing up), Next view and Back to my seat: each one fade
   seat.closer();
   settle(seat, group);
   const chair = { position: [0, 0, 1.8] as Vec3, yaw: 0 };
-  const w35 = M.walkingWorld(court, M.playArea(chair.position, chair.yaw), chair);
+  const w35 = M.walkingWorld(court, M.playArea(chair.position, chair.yaw), chair)!;
   close(seat.world.position[0], w35.position[0]);
   close(seat.world.position[2], w35.position[2]);
   sameYaw(seat.world.yaw, w35.yaw);
@@ -121,7 +121,7 @@ test("Walk closer (or standing up), Next view and Back to my seat: each one fade
   seat.closer();
   settle(seat, group);
   const bounds = seat.bounds!;
-  const first = M.walkingWorld(court, bounds, chair);
+  const first = M.walkingWorld(court, bounds, chair)!;
   sameYaw(seat.world.yaw, first.yaw, "re-anchored on the new bounds");
   assert.equal(seat.hasNextView(), true);
   seat.nextView();
@@ -193,6 +193,22 @@ test("3.5: a judge who never stood and presses Back is seated at once (still for
   assert.ok(n >= 35 && n <= 38, `${n} frames`);
 });
 
+test("useBounds refuses bounds with no area (empty, coincident, flat): the play area stays and Walk closer still works", () => {
+  const { seat, group } = setup();
+  const h = head([0, 1.15, 1.8], 0);
+  seat.place(h, h.yaw);
+  settle(seat, group);
+  for (const poly of [[], [[0, 0], [0, 0], [0, 0]], [[0, 0], [1, 0], [2, 0]]] as [number, number][][]) {
+    seat.useBounds(poly);
+    const r = seat.report();
+    assert.equal(r.bounds, "play-area", JSON.stringify(poly));
+    assert.notEqual(r.why, "no usable bounds");
+  }
+  seat.closer();
+  settle(seat, group);
+  assert.equal(seat.report().walking, true);
+});
+
 // ---------------- the persistent anchor ----------------
 
 class FakeAnchor {
@@ -213,6 +229,8 @@ class FakeSite {
   handles = new Set<string>();
   log: string[] = [];
   n = 0;
+  /** The site refuses to delete (a stale or foreign handle). */
+  stuck = false;
 }
 function fakeXr(site: FakeSite) {
   const session = {
@@ -221,6 +239,7 @@ function fakeXr(site: FakeSite) {
     },
     deletePersistentAnchor(uuid: string) {
       site.log.push(`delete ${uuid}`);
+      if (site.stuck) return Promise.reject(new Error("refused"));
       site.handles.delete(uuid);
       return Promise.resolve();
     },
@@ -259,4 +278,29 @@ test("the persistent anchor: old handles are deleted before the new one is asked
   lock2.update();
   await tick();
   assert.ok(site.log.at(-1)!.startsWith("restore h"), site.log.at(-1));
+});
+
+test("the persistent anchor: a handle the site won't delete stops new requests (never fills the 8-handle quota), and a later delete frees it", async () => {
+  const site = new FakeSite();
+  site.handles.add("stale-1");
+  site.stuck = true;
+  const store = new Map<string, string>();
+  const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) };
+  const lock = new PersistentLock(fakeXr(site), new THREE.Group(), storage);
+  for (let i = 0; i < 4; i++) {
+    lock.lock();
+    await tick();
+    await tick();
+  }
+  assert.equal(site.log.filter((l) => l.startsWith("request")).length, 0, site.log.join(", "));
+  assert.deepEqual([...site.handles], ["stale-1"]);
+  assert.equal(store.get("court-side.anchor"), undefined, "the old pose never comes back on a re-entry");
+  // the site lets go: the next Seat here deletes it and asks for one
+  site.stuck = false;
+  lock.lock();
+  await tick();
+  await tick();
+  assert.equal(site.handles.size, 1);
+  assert.ok(!site.handles.has("stale-1"));
+  assert.deepEqual(site.log.filter((l) => l.startsWith("request")), ["request (held 0)"]);
 });

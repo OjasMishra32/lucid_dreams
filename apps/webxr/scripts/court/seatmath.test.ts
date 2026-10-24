@@ -8,7 +8,7 @@ import {
   Arrival, BODY_INSET, CHAIR_INSET, EDGE_FADE, PLAY_AREA, PROXIMITY, ProximityFade, RING_INSET, SIDE_MIN, SeatedWatch,
   bodiesInside, boundsDistance, capsuleDistance, clearance, edgeFade, forwardOf, freezeCamera, nextViewWorld, pairAxis,
   placeWorld, placements, playArea, ringFits, ringPoints, roomFrame, seatPoint, toCourt, toRoom, walkingLayout, walkingProblems,
-  walkingWorld, yawOf, type LayoutCase,
+  usableBounds, walkingWorld, yawOf, type ChairPose, type LayoutCase,
 } from "../../src/court/seatmath.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
 import type { Polygon, WorldPose } from "../../src/court/types.ts";
@@ -254,6 +254,71 @@ test("P29: \"views\" where a second placement passes (the chair mid-side of a 4.
   assert.equal(over.case, "overflow");
   assert.deepEqual(over.offered, []);
   assert.match(over.why, /past them, clipped in See my room/);
+});
+
+/** The least boundsDistance over a dense grid of every body's footprint (room space) at `world`: the truth bodiesInside must never beat. */
+const footprintTruth = (c: Court, world: WorldPose, bounds: Polygon, n = 24) =>
+  c.freeze.players.map(({ bounds: b }) => {
+    let least = Infinity;
+    for (let i = 0; i <= n; i++)
+      for (let j = 0; j <= n; j++) {
+        const p: Vec3 = [b.min[0] + ((b.max[0] - b.min[0]) * i) / n, 0, b.min[2] + ((b.max[2] - b.min[2]) * j) / n];
+        least = Math.min(least, boundsDistance(bounds, toRoom(world, p)));
+      }
+    return least;
+  });
+
+/** Two 1.2 m footprints 1.8 m apart (synthetic), as in the concave-room cases. */
+const squares = (() => {
+  const c = structuredClone(court) as Court;
+  c.freeze.players.forEach((p, i) => (p.bounds = { min: [i * 1.8 - 0.6, 0, -0.6], max: [i * 1.8 + 0.6, 2, 0.6] }));
+  return c;
+})();
+const notched = (x: number, end: number): Polygon => [[-3, -3], [3, -3], [3, 3], [x + 0.1, 3], [x + 0.1, end], [x - 0.1, end], [x - 0.1, 3], [-3, 3]];
+
+test("P29 in a concave room: a body crossing a notch in the bounds never passes (the whole footprint, not its corners)", () => {
+  const chair: ChairPose = { position: [-2, 0, -2], yaw: 0 };
+  // the notch pokes 2 m into the room between the corners of one footprint
+  const b = notched(-1.15, 0.85);
+  for (const p of placements(squares, b, chair)) {
+    const truth = footprintTruth(squares, p.world, b);
+    // inside: never more than the truth; past the boundary: 0 or less (how far past is for the report)
+    p.inside.forEach((d, i) => assert.ok(truth[i] < 0 ? d <= 0 : d <= truth[i] + 1e-9, `body ${i}: ${d} m inside, but a point of it is ${truth[i]} m`));
+  }
+  // every notch across the room: what is offered really stands 0.3 m inside
+  for (let x = -1.5; x < 1.5; x += 0.15)
+    for (let end = -1.5; end < 1.5; end += 0.15) {
+      const bounds = notched(x, end);
+      for (const p of walkingLayout(squares, bounds, chair).offered)
+        footprintTruth(squares, p.world, bounds).forEach((d, i) => assert.ok(d >= BODY_INSET - 1e-6, `notch at ${x.toFixed(2)}, ${end.toFixed(2)}: body ${i} offered at ${d.toFixed(3)} m inside`));
+    }
+});
+
+test("P29: the chair must stand 0.3 m inside the bounds for any view to be offered", () => {
+  for (const at of [[0, 0, 2.3], [0, 0, 5]] as Vec3[]) {
+    const l = walkingLayout(court, rect(4.8, 4.8), { position: at, yaw: 0 });
+    assert.equal(l.case, "overflow", `chair at ${at}: ${l.case}`);
+    assert.deepEqual(l.offered, []);
+    assert.match(l.why, /the chair is -?[0-9.]+ m inside the bounds/);
+  }
+  for (const p of walkingLayout(court, rect(4.8, 4.8), { position: [0, 0, 1.8], yaw: 0 }).offered) assert.ok(p.chairInside >= BODY_INSET);
+});
+
+test("P29: empty, coincident or flat bounds give \"overflow\" (no usable bounds), never a throw", () => {
+  const chair: ChairPose = { position: [0, 0, 0], yaw: 0 };
+  for (const b of [[], [[0, 0], [0, 0], [0, 0]], [[0, 0], [1, 0], [2, 0]], [[0, 0], [1, 0]]] as Polygon[]) {
+    const l = walkingLayout(court, b, chair);
+    assert.equal(l.case, "overflow");
+    assert.equal(l.why, "no usable bounds");
+    assert.equal(l.first, null);
+    assert.deepEqual(l.offered, []);
+    assert.equal(walkingWorld(court, b, chair), null);
+    assert.equal(ringFits(court, b), false);
+    assert.equal(nextViewWorld(court, b, chair, { position: [0, 0, 0], yaw: 0 }), null);
+    assert.deepEqual(walkingProblems(court, b, chair), ["no usable bounds"]);
+    assert.equal(usableBounds(b), false);
+  }
+  assert.equal(usableBounds(rect(3.5, 3.5)), true);
 });
 
 test("the ring turns on from the bounds and the bodies alone: every point 1 m clear of both bodies and 0.7 m inside", () => {

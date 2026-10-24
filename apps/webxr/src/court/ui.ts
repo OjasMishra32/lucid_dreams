@@ -41,8 +41,10 @@ const ROOM_OUT = "   See my room";
 const ROOM_BACK = "   Back to the arena";
 /** Seat here's hold (P32). */
 export const HOLD_MS = 2000;
-/** A fingertip lost for this long ends a hold (tracking blinks shorter than this don't). */
+/** A fingertip lost to tracking for this long ends a hold (blinks shorter than this don't); one seen coming out ends it at once. */
 const HOLD_GRACE_MS = 150;
+/** A holding tip stays in until it is this far back in front of the face, metres (jitter at the surface never lets go). */
+const HOLD_OUT = 0.004;
 
 /**
  * A button that acts only after a fingertip has pushed into it and stayed there HOLD_MS (Seat here, P32). A blue bar
@@ -61,6 +63,8 @@ export class HoldButton extends XrButton {
   private lastIn = 0;
   private fired = false;
   private readonly from = [false, false];
+  /** Per hand: this tip is the one holding (it pushed in and hasn't been seen coming out). */
+  private readonly holding = [false, false];
   private readonly tip = new THREE.Vector3();
 
   constructor(id: string, label: string, onHeld: () => void, holdMs = HOLD_MS) {
@@ -79,9 +83,10 @@ export class HoldButton extends XrButton {
   override touch(fingertips: (THREE.Vector3 | null)[], now: number): void {
     if (!this.mesh.visible) return;
     let pressing = false;
+    let out = false;
     for (let h = 0; h < fingertips.length; h++) {
       const tip = fingertips[h];
-      if (!tip) continue;
+      if (!tip) continue; // lost to tracking: the hold rides out HOLD_GRACE_MS
       this.mesh.worldToLocal(this.tip.copy(tip));
       const { x, y, z } = this.tip;
       const over = Math.abs(x) < 0.047 && Math.abs(y) < 0.016;
@@ -89,11 +94,18 @@ export class HoldButton extends XrButton {
       // as XrButton: only a tip that came from in front counts, and one well behind the menu never does
       if (near && z > 0.015 && z < 0.12) this.from[h] = true;
       else if (!near || z < -0.08) this.from[h] = false;
-      if (over && z < -0.002 && this.from[h]) pressing = true;
+      // in: pushed 2 mm into the face from in front; a holding tip stays in until it is back HOLD_OUT in front or off the face
+      const stays = this.holding[h] && Math.abs(x) < 0.055 && Math.abs(y) < 0.024 && z < HOLD_OUT;
+      if (stays || (over && z < -0.002 && this.from[h])) {
+        this.holding[h] = pressing = true;
+      } else if (this.holding[h]) {
+        this.holding[h] = false;
+        out = true;
+      }
     }
-    // a hold the menu stopped seeing (it closed, or the tip was lost) for longer than the grace is over, even if the
-    // tip is back in: a new hold starts from now
-    if (this.holdStart !== null && now - this.lastIn > HOLD_GRACE_MS) {
+    // a tip seen coming out ends the hold at once; one the menu stopped seeing (it closed, or the tip was lost) for longer
+    // than the grace ends it too, even if the tip is back in: a new hold starts from now
+    if (this.holdStart !== null && ((out && !pressing) || now - this.lastIn > HOLD_GRACE_MS)) {
       this.holdStart = null;
       if (this.fired) this.setOn(false);
       this.fired = false;

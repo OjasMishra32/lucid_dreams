@@ -184,13 +184,70 @@ export function clearance(court: Court, point: Vec3): number {
   return best;
 }
 
-/** How far inside the bounds the bodies stand with the world at `world`, per body (the least of its footprint's corners), court.freeze.players order. */
+/** Bounds smaller than this hold nobody, square metres (an empty, coincident or flat polygon: no room to lay out). */
+const MIN_BOUNDS_AREA = 0.5;
+
+/** True when the bounds are a floor at all: three or more corners enclosing at least MIN_BOUNDS_AREA. */
+export function usableBounds(bounds: Polygon): boolean {
+  if (bounds.length < 3) return false;
+  let twice = 0;
+  for (let i = 0, j = bounds.length - 1; i < bounds.length; j = i++) twice += bounds[j][0] * bounds[i][1] - bounds[i][0] * bounds[j][1];
+  return Math.abs(twice) / 2 >= MIN_BOUNDS_AREA;
+}
+
+/** 2D cross product of (b - a) and (c - a). */
+const cross = (ax: number, az: number, bx: number, bz: number, cx: number, cz: number) => (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+
+/** Distance from point p to segment ab, on the floor. */
+function segmentDistance(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const ex = bx - ax;
+  const ez = bz - az;
+  const t = Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / (ex * ex + ez * ez || 1)));
+  return Math.hypot(px - (ax + t * ex), pz - (az + t * ez));
+}
+
+/**
+ * How far a floor box (court space, placed by `world`) stands inside the bounds: when the whole box is inside (its
+ * corners in, no boundary edge crossing it, no boundary corner in it) the least distance from the box to any boundary
+ * edge; otherwise 0 or less, by the deepest of a grid of its points past the boundary. Concave rooms included: a notch
+ * that pokes between a box's corners counts.
+ */
+function footprintInside(bounds: Polygon, world: WorldPose, min: Vec3, max: Vec3): number {
+  const q = [toRoom(world, [min[0], 0, min[2]]), toRoom(world, [max[0], 0, min[2]]), toRoom(world, [max[0], 0, max[2]]), toRoom(world, [min[0], 0, max[2]])];
+  const turn = Math.sign(cross(q[0][0], q[0][2], q[1][0], q[1][2], q[2][0], q[2][2])) || 1;
+  let crossed = q.some((c) => boundsDistance(bounds, c) <= 0);
+  let least = Infinity;
+  for (let i = 0, j = bounds.length - 1; i < bounds.length && !crossed; j = i++) {
+    const [ax, az] = bounds[j];
+    const [bx, bz] = bounds[i];
+    // a boundary corner inside the box
+    if (q.every((c, k) => turn * cross(c[0], c[2], q[(k + 1) % 4][0], q[(k + 1) % 4][2], bx, bz) > 0)) crossed = true;
+    for (let k = 0; k < 4 && !crossed; k++) {
+      const [cx, , cz] = q[k];
+      const [dx, , dz] = q[(k + 1) % 4];
+      // a boundary edge crossing a box edge
+      const s1 = cross(ax, az, bx, bz, cx, cz);
+      const s2 = cross(ax, az, bx, bz, dx, dz);
+      const s3 = cross(cx, cz, dx, dz, ax, az);
+      const s4 = cross(cx, cz, dx, dz, bx, bz);
+      if (s1 * s2 < 0 && s3 * s4 < 0) crossed = true;
+      least = Math.min(least, segmentDistance(ax, az, cx, cz, dx, dz), segmentDistance(bx, bz, cx, cz, dx, dz), segmentDistance(cx, cz, ax, az, bx, bz));
+    }
+  }
+  if (!crossed) return least;
+  let deepest = 0;
+  const n = 12;
+  for (let i = 0; i <= n; i++)
+    for (let j = 0; j <= n; j++) {
+      const p = toRoom(world, [min[0] + ((max[0] - min[0]) * i) / n, 0, min[2] + ((max[2] - min[2]) * j) / n]);
+      deepest = Math.min(deepest, boundsDistance(bounds, p));
+    }
+  return deepest;
+}
+
+/** How far inside the bounds the bodies stand with the world at `world`, per body (its whole footprint), court.freeze.players order. */
 export function bodiesInside(court: Court, world: WorldPose, bounds: Polygon): number[] {
-  return court.freeze.players.map(({ bounds: b }) => {
-    let least = Infinity;
-    for (const x of [b.min[0], b.max[0]]) for (const z of [b.min[2], b.max[2]]) least = Math.min(least, boundsDistance(bounds, toRoom(world, [x, 0, z])));
-    return least;
-  });
+  return court.freeze.players.map(({ bounds: b }) => footprintInside(bounds, world, b.min, b.max));
 }
 
 // ---------------- the walking anchoring (3.4, P29) ----------------
@@ -244,7 +301,7 @@ export interface RoomFrame {
   half: [number, number];
 }
 
-/** The bounds' smallest-area enclosing rectangle (exact for a rectangular room): its centre is the room's centre, its diagonals the room's. */
+/** The bounds' smallest-area enclosing rectangle (exact for a rectangular room): its centre is the room's centre, its diagonals the room's. Throws on bounds with no area (check usableBounds). */
 export function roomFrame(bounds: Polygon): RoomFrame {
   let best: RoomFrame | null = null;
   let area = Infinity;
@@ -287,6 +344,8 @@ export interface Placement {
   clearance: number;
   /** Per body, metres inside the bounds (>= BODY_INSET passes; negative: past the boundary). */
   inside: number[];
+  /** Metres from the chair (room space) in to the bounds (>= BODY_INSET passes; negative: outside them). */
+  chairInside: number;
   /** The chair is on the camera's side of the pair's axis, at least SIDE_MIN from its line (Gobert's side, never the invented front). */
   cameraSide: boolean;
   /** How far the chair is from the axis's diagonal, metres: the walking anchoring takes the diagonal away from the chair. */
@@ -294,12 +353,14 @@ export interface Placement {
   passes: boolean;
 }
 
-/** The four placements with the pair's centre at the room's centre and its axis on a room diagonal (either diagonal, either way round). */
+/** The four placements with the pair's centre at the room's centre and its axis on a room diagonal (either diagonal, either way round); none for unusable bounds. */
 export function placements(court: Court, bounds: Polygon, chair: ChairPose): Placement[] {
+  if (!usableBounds(bounds)) return [];
   const axis = pairAxis(court);
   const room = roomFrame(bounds);
   const cam = court.camera.centre;
   const camSide = axis.dir[0] * (cam[2] - axis.centre[2]) - axis.dir[2] * (cam[0] - axis.centre[0]);
+  const chairInside = boundsDistance(bounds, chair.position);
   const out: Placement[] = [];
   for (const s of [1, -1]) {
     const d: Vec3 = [room.u[0] * room.half[0] + s * room.v[0] * room.half[1], 0, room.u[2] * room.half[0] + s * room.v[2] * room.half[1]];
@@ -316,8 +377,8 @@ export function placements(court: Court, bounds: Polygon, chair: ChairPose): Pla
       const cameraSide = Math.sign(side) === Math.sign(camSide) && Math.abs(side) >= SIDE_MIN;
       const clear = clearance(court, c);
       const inside = bodiesInside(court, world, bounds);
-      const passes = cameraSide && clear >= court.seat.clear - 1e-9 && Math.min(...inside) >= BODY_INSET - 1e-9;
-      out.push({ world, chair: [c[0], 0, c[2]], clearance: clear, inside, cameraSide, offDiagonal, passes });
+      const passes = cameraSide && clear >= court.seat.clear - 1e-9 && Math.min(...inside) >= BODY_INSET - 1e-9 && chairInside >= BODY_INSET - 1e-9;
+      out.push({ world, chair: [c[0], 0, c[2]], clearance: clear, inside, chairInside, cameraSide, offDiagonal, passes });
     }
   }
   return out;
@@ -327,7 +388,8 @@ export function placements(court: Court, bounds: Polygon, chair: ChairPose): Pla
  * The walking anchoring's placement: one that passes P29 if any does; among those, the chair on the camera's side and
  * the axis on the diagonal away from the chair.
  */
-function primary(list: Placement[]): Placement {
+function primary(list: Placement[]): Placement | null {
+  if (!list.length) return null;
   const ranked = [...list].sort(
     (a, b) => Number(b.passes) - Number(a.passes) || Number(b.cameraSide) - Number(a.cameraSide) || b.offDiagonal - a.offDiagonal,
   );
@@ -346,16 +408,17 @@ export interface WalkingLayout {
   case: LayoutCase;
   /** Why this case, in one line. */
   why: string;
-  /** The walking anchoring: the first placement (Walk closer and standing up jump here). */
-  first: Placement;
+  /** The walking anchoring: the first placement (Walk closer and standing up jump here); null for unusable bounds. */
+  first: Placement | null;
   /** The placements offered as views, first one first: every one passes P29 (empty for "overflow"). */
   offered: Placement[];
 }
 
 /** The walking layout for this floor and chair (3.4, P29). */
 export function walkingLayout(court: Court, bounds: Polygon, chair: ChairPose): WalkingLayout {
+  if (!usableBounds(bounds)) return { case: "overflow", why: "no usable bounds", first: null, offered: [] };
   const list = placements(court, bounds, chair);
-  const first = primary(list);
+  const first = primary(list)!;
   const offered = [first, ...list.filter((p) => p !== first)].filter((p) => p.passes);
   if (ringFits(court, bounds))
     return { case: "ring", why: `the bounds hold a ring ${ringRadius(court).toFixed(2)} m round the pair, ${court.seat.clear} m clear of both bodies and ${RING_INSET} m inside`, first, offered };
@@ -368,14 +431,16 @@ export function walkingLayout(court: Court, bounds: Polygon, chair: ChairPose): 
  * The walking anchoring (3.4): the world pose that puts the pair's centre at the bounds' centre with its long axis on
  * one diagonal, turned so the chair (room space) is on the camera's side. Walk closer and standing up jump here.
  */
-export function walkingWorld(court: Court, bounds: Polygon, chair: ChairPose): WorldPose {
-  return primary(placements(court, bounds, chair)).world;
+export function walkingWorld(court: Court, bounds: Polygon, chair: ChairPose): WorldPose | null {
+  return primary(placements(court, bounds, chair))?.world ?? null;
 }
 
 /** The P29 checks on the walking anchoring, one line per failure; empty when it holds. On a smaller floor the overflow is reported, not a failure (See my room clips it). */
 export function walkingProblems(court: Court, bounds: Polygon, chair: ChairPose): string[] {
   const p = primary(placements(court, bounds, chair));
+  if (!p) return ["no usable bounds"];
   const out: string[] = [];
+  if (p.chairInside < BODY_INSET - 1e-9) out.push(`the chair is ${p.chairInside.toFixed(2)} m inside the bounds (want >= ${BODY_INSET})`);
   if (!p.cameraSide) out.push("the chair isn't on the camera's side of the pair in any diagonal placement");
   if (p.clearance < court.seat.clear - 1e-9) out.push(`the chair is ${p.clearance.toFixed(2)} m from the nearer body (want >= ${court.seat.clear})`);
   p.inside.forEach((d, i) => {
@@ -416,6 +481,7 @@ function ringRadius(court: Court): number {
 
 /** True when the bounds hold the walk ring around the pair at the walking anchoring (decided from the bounds and the bodies' bounds alone); then the ring replaces the chair spot and Next view hides. */
 export function ringFits(court: Court, bounds: Polygon): boolean {
+  if (!usableBounds(bounds)) return false;
   const r = ringRadius(court);
   if (!Number.isFinite(r)) return false;
   const c = roomFrame(bounds).centre;
@@ -428,6 +494,7 @@ export function ringFits(court: Court, bounds: Polygon): boolean {
 
 /** The ring's walk targets (court space): each >= RING_INSET inside the bounds and `court.seat.clear` from both bodies; empty when they don't all fit. */
 export function ringPoints(court: Court, bounds: Polygon, world: WorldPose, count = 17): Vec3[] {
+  if (!usableBounds(bounds)) return [];
   const r = ringRadius(court);
   if (!Number.isFinite(r)) return [];
   const axis = pairAxis(court);
@@ -444,11 +511,15 @@ export function ringPoints(court: Court, bounds: Polygon, world: WorldPose, coun
 
 /** Distance from a point to a capsule's surface, metres (negative inside). */
 export function capsuleDistance(p: Vec3, cap: Capsule): number {
-  const ab = [cap.b[0] - cap.a[0], cap.b[1] - cap.a[1], cap.b[2] - cap.a[2]];
-  const ap = [p[0] - cap.a[0], p[1] - cap.a[1], p[2] - cap.a[2]];
-  const len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
-  const t = len2 > 0 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / len2)) : 0;
-  return Math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1], ap[2] - t * ab[2]) - cap.r;
+  const ax = cap.b[0] - cap.a[0];
+  const ay = cap.b[1] - cap.a[1];
+  const az = cap.b[2] - cap.a[2];
+  const px = p[0] - cap.a[0];
+  const py = p[1] - cap.a[1];
+  const pz = p[2] - cap.a[2];
+  const len2 = ax * ax + ay * ay + az * az;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, (px * ax + py * ay + pz * az) / len2)) : 0;
+  return Math.hypot(px - t * ax, py - t * ay, pz - t * az) - cap.r;
 }
 
 /**
@@ -470,8 +541,9 @@ export class ProximityFade {
 
   update(eye: Vec3, dt: number): number[] {
     for (let i = 0; i < this.capsules.length; i++) {
+      const caps = this.capsules[i];
       let near = false;
-      for (const c of this.capsules[i]) if (capsuleDistance(eye, c) <= PROXIMITY.distance) near = true;
+      for (let k = 0; k < caps.length && !near; k++) near = capsuleDistance(eye, caps[k]) <= PROXIMITY.distance;
       this.progress[i] = Math.min(1, Math.max(0, this.progress[i] + ((near ? 1 : -1) * dt) / PROXIMITY.seconds));
       this.opacity[i] = 1 - (1 - PROXIMITY.opacity) * smooth(this.progress[i]);
     }

@@ -8,7 +8,7 @@ import * as THREE from "three";
 import type { Court, ShowFrame, Vec3 } from "./format";
 import {
   Arrival, SeatedWatch, boundsDistance, freezeCamera, nextViewWorld, placeWorld, placements, playArea, ringFits, ringPoints,
-  seatPoint, toCourt, toRoom, walkingLayout, walkingProblems, walkingWorld, yawOf, type ChairPose, type LayoutCase, type SeatSpot,
+  seatPoint, toCourt, toRoom, usableBounds, walkingLayout, walkingProblems, walkingWorld, yawOf, type ChairPose, type LayoutCase, type SeatSpot,
 } from "./seatmath";
 import type { Head, Polygon, WorldPose } from "./types";
 
@@ -48,7 +48,8 @@ function pageStorage(): HandleStore | null {
  * The court's anchor: a WebXR anchor at the world group's pose, read back every frame (WorldLock's job), made
  * persistent so a re-entry after the session ends (a system pinch) comes back to the same place. A site keeps at most
  * 8 persistent anchors, so every lock() deletes the old handles first (this page's, and any the session lists) and
- * only then asks for the new one. Drop-in for WorldLock: `new PersistentLock(renderer, world)`.
+ * only then asks for the new one; while one of them won't go, no new one is asked for (the seat is anchored for this
+ * session only), so a refusing site never fills its quota. Drop-in for WorldLock: `new PersistentLock(renderer, world)`.
  */
 export class PersistentLock implements AnchorLock {
   readonly xr: XrSource;
@@ -59,6 +60,8 @@ export class PersistentLock implements AnchorLock {
   private session: XRSession | null = null;
   /** This page's persistent handle (also in the store). */
   private handle: string | null = null;
+  /** Handles a delete was refused for: tried again at every lock(). */
+  private readonly stuck = new Set<string>();
 
   constructor(renderer: { xr: XrSource }, obj: THREE.Object3D, store: HandleStore | null = pageStorage()) {
     this.xr = renderer.xr;
@@ -79,10 +82,14 @@ export class PersistentLock implements AnchorLock {
     const session = this.xr.getSession();
     if (!frame?.createAnchor || !space || !session) return;
     const id = this.asked;
-    // the old handles go first: ours, and any this site still holds
-    const old = new Set<string>([...(this.handle ? [this.handle] : []), ...(session.persistentAnchors ?? [])]);
+    // the old handles go first: ours, any refused before, and any this site still holds; the old pose never comes back
+    const old = [...new Set<string>([...(this.handle ? [this.handle] : []), ...this.stuck, ...(session.persistentAnchors ?? [])])];
     this.remember(null);
-    const deleted = Promise.allSettled([...old].map((uuid) => session.deletePersistentAnchor?.(uuid)));
+    const del = (uuid: string) => (session.deletePersistentAnchor ? session.deletePersistentAnchor(uuid) : Promise.reject(new Error("no delete")));
+    const deleted = Promise.allSettled(old.map(del)).then((results) => {
+      results.forEach((r, i) => (r.status === "rejected" ? this.stuck.add(old[i]) : this.stuck.delete(old[i])));
+      return this.stuck.size === 0; // true: the site holds none of ours
+    });
     const p = this.obj.position;
     const q = this.obj.quaternion;
     frame
@@ -90,11 +97,11 @@ export class PersistentLock implements AnchorLock {
       ?.then(async (a) => {
         if (id !== this.asked) return a.delete();
         this.anchor = a;
-        await deleted;
-        if (id !== this.asked || !a.requestPersistentHandle) return;
+        // a handle that won't go stays counted against the site's 8: asking for another would only fill the quota
+        if (!(await deleted) || id !== this.asked || !a.requestPersistentHandle) return;
         const uuid = await a.requestPersistentHandle();
         if (id === this.asked) this.remember(uuid);
-        else await session.deletePersistentAnchor?.(uuid);
+        else await del(uuid).catch(() => this.stuck.add(uuid)); // superseded meanwhile: it goes too, or waits with the others
       })
       .catch(() => {}); // no anchors (or no persistence) here: it stays put in the reference space
   }
@@ -328,7 +335,7 @@ export class Seat {
   closer(): void {
     if (!this.chair || !this.bounds) return;
     const w = walkingWorld(this.court, this.bounds, this.chair);
-    if (this.walking && this.target && samePose(this.target, w)) return; // already there: no blink
+    if (!w || (this.walking && this.target && samePose(this.target, w))) return; // already there: no blink
     this.walking = true;
     this.go(w);
   }
@@ -348,6 +355,7 @@ export class Seat {
   layout(): Layout {
     if (!this.chair || !this.bounds) return { kind: "chair", points: [], case: null, why: "before Seat here" };
     const l = walkingLayout(this.court, this.bounds, this.chair);
+    if (!l.first) return { kind: "chair", points: [], case: l.case, why: l.why };
     const w = l.first.world;
     if (l.case === "ring") return { kind: "ring", points: ringPoints(this.court, this.bounds, w), case: l.case, why: l.why };
     return { kind: "chair", points: [toCourt(w, this.chair.position)], case: l.case, why: l.why };
@@ -401,9 +409,9 @@ export class Seat {
     if (this.trace && this.trace.length < 4000) this.trace.push([this.veil, this.world.position[0], this.world.position[2], this.world.yaw]);
   }
 
-  /** The bounds in room space: `bounded-floor` (when granted, polygon of >= 3 points) or the play area. */
+  /** The bounds in room space: `bounded-floor` (when granted and it has area: seatmath usableBounds) or the play area. */
   useBounds(floorBounds: Polygon | null): void {
-    this.floorBounds = floorBounds && floorBounds.length >= 3 ? floorBounds : null;
+    this.floorBounds = floorBounds && usableBounds(floorBounds) ? floorBounds : null; // no area: the play area set at Seat here
     this.bounds = this.floorBounds ?? this.area;
   }
 
@@ -489,6 +497,6 @@ export class Seat {
     const m = pose.transform.matrix;
     const poly: Polygon = (b.space.boundsGeometry ?? []).map((p) => [m[0] * p.x + m[8] * p.z + m[12], m[2] * p.x + m[10] * p.z + m[14]]);
     const same = this.floorBounds && this.floorBounds.length === poly.length && poly.every((p, i) => Math.hypot(p[0] - this.floorBounds![i][0], p[1] - this.floorBounds![i][1]) < 0.01);
-    if (!same && poly.length >= 3) this.useBounds(poly);
+    if (!same && usableBounds(poly)) this.useBounds(poly);
   }
 }
