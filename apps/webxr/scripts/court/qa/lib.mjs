@@ -29,9 +29,14 @@ export function parseTap(text) {
   return out;
 }
 
-/** The rows a line names in parenthesised groups only: "(P33)", "(P4, P44)". A bare "P33" in free text ("P33 not measured") names nothing. */
+/**
+ * The rows a line names: parenthesised groups anywhere ("(P33)", "(P4, P44)"), and a "P8:" prefix only at the very start
+ * of the text (the check name's start). A bare "P33" in free text ("P33 not measured") names nothing.
+ */
 export function tagsInParens(text) {
   const out = [];
+  const lead = String(text).match(/^(P\d{1,2}(?:\s*[,/&]\s*P\d{1,2})*):\s/);
+  if (lead) out.push(...tagsOf(lead[1]));
   for (const g of String(text).matchAll(/\((P\d{1,2}(?:\s*[,/&]\s*P\d{1,2})*)\)/g)) out.push(...tagsOf(g[1]));
   return out;
 }
@@ -43,8 +48,8 @@ export function parseE2e(text) {
     const m = line.match(/^(PASS|FAIL) (\S+): (.+?): (.*)$/);
     // a check's name can hold colons ("arrival: opaque again (P33)"), so name and detail can't be split reliably:
     // the tags come from the parenthesised groups of the whole line (never a bare P33 in a detail); the placeholder
-    // marker is the harness's exact ": not written yet"
-    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsInParens(line.slice(m[1].length + m[2].length + 2)), pending: m[1] === "FAIL" && /: not written yet\b/.test(line) });
+    // marker is the harness's exact ": not written yet" (the check name's own start may be a "P8:" prefix)
+    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsInParens(line.slice(m[1].length + m[2].length + 3)), pending: m[1] === "FAIL" && /: not written yet\b/.test(line) });
   }
   return out;
 }
@@ -88,6 +93,38 @@ export function assignE2eRun(names, { stdout = "", stderr = "", code }) {
     out[name] = { exists: true, ran: true, lines: [...mine, ...extra] };
   }
   return out;
+}
+
+/** The page-load timeout e2e.mjs reports when the dev server is too loaded to answer in 60 s. */
+const LOAD_TIMEOUT = /page\.waitForFunction: Timeout 60000ms exceeded/;
+
+/**
+ * A scenario that failed ONLY because the page did not load in time (an infra flake under machine load): its single
+ * failing check is the "runs" line with that exact timeout, plus at most the "console clean" line that the broken load
+ * itself produces (a vite 504 or a failed module fetch). Anything else failing, or no timeout, is a real failure.
+ */
+export function isLoadFlake(lines) {
+  const failing = lines.filter((l) => !l.ok && !l.pending);
+  const timeouts = failing.filter((l) => l.what === "runs" && LOAD_TIMEOUT.test(l.detail));
+  return timeouts.length === 1 && failing.every((l) => l === timeouts[0] || /^console clean/.test(l.what));
+}
+
+/**
+ * Run scenarios with `runOnce(names)` (-> assignE2eRun's map); a scenario that failed only with the page-load timeout is
+ * run once more. A clean rerun keeps the rerun's lines and is marked `flake` (judged by its real status, with
+ * "infra flake (rerun clean)" noted); a rerun that times out again, or fails otherwise, is a real FAIL.
+ */
+export async function runWithFlakeRetry(names, runOnce) {
+  const first = await runOnce(names);
+  const flaked = names.filter((n) => first[n]?.ran && isLoadFlake(first[n].lines));
+  if (!flaked.length) return first;
+  const again = await runOnce(flaked);
+  for (const n of flaked) {
+    const r = again[n];
+    const clean = r?.ran && !r.lines.some((l) => !l.ok && !l.pending);
+    first[n] = r ? { ...r, flake: clean } : first[n];
+  }
+  return first;
 }
 
 /** The scenario files in scripts/court/scenarios: { name: { owner, needs } }, read by importing each one. */
@@ -169,8 +206,9 @@ export function judgeFallback(rows, runs, coverage = {}) {
     return { id, ...judgeRowLines(ran.flatMap((n) => runs[n].lines), id) };
   });
   const status = combine(per.map((p) => p.status));
+  const flake = status !== FAIL && Object.values(runs).some((r) => r.flake) ? " [infra flake (rerun clean)]" : "";
   const measured = per.map((p) => (p.status === PASS ? `${p.id} ok` : p.status === FAIL ? `${p.id} FAIL: ${p.measured}` : `${p.id} not yet: ${p.measured}`)).join("; ");
-  return { status, measured: short(measured, 200) };
+  return { status, measured: short(measured, 200) + flake };
 }
 
 function stubs(check, ctx) {
@@ -198,7 +236,8 @@ export function resolveCheck(check, row, ctx) {
     const label = `${check.kind === "e2e" ? "scenario" : "qa scenario"} ${check.scenario}`;
     if (check.kind === "e2e" && !sc?.exists) return { status: NOT_YET, measured: `no e2e scenario "${check.scenario}" yet` };
     if (!sc?.ran) return { status: NOT_YET, measured: sc?.notYet ?? `${label} not run` };
-    return judgeLines(sc.lines ?? [], row.id, label);
+    const r = judgeLines(sc.lines ?? [], row.id, label);
+    return sc.flake && r.status !== FAIL ? { ...r, measured: `${r.measured} [infra flake (rerun clean)]` } : r;
   }
   if (check.kind === "pending") return { status: NOT_YET, measured: short(check.reason ?? "no check implemented yet", 90) };
   if (check.kind === "tool") {

@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { children } from "./harness.mjs";
 import { QA_SCENARIOS, runFallback, STANDIN } from "./scenarios.mjs";
 import {
-  assignE2eRun, checkoutRoots, discoverScenarios, exitCode, overlapsReal, parseBundleArg, parseTap, realpathLoose, latestPath, renderTable, resolveRow, scanBuilt, suiteStatus, summarize, validateChecklist, writeFresh,
+  assignE2eRun, runWithFlakeRetry, checkoutRoots, discoverScenarios, exitCode, overlapsReal, parseBundleArg, parseTap, realpathLoose, latestPath, renderTable, resolveRow, scanBuilt, suiteStatus, summarize, validateChecklist, writeFresh,
 } from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -136,6 +136,15 @@ const e2eRunOut = (suffix) => join(OUT, suffix);
 /** Run scenarios through e2e.mjs (one child), optionally with a URL flag; { name: { exists, ran, notYet?, lines } }. */
 async function runE2e(names, query = "", suffix = "e2e") {
   if (!names.length) return {};
+  let attempt = 0;
+  // a scenario that failed only with the page-load timeout (machine load) is run once more
+  return runWithFlakeRetry(names, async (some) => {
+    const tag = attempt++ ? `${suffix}-retry` : suffix;
+    return runE2eOnce(some, query, tag);
+  });
+}
+
+async function runE2eOnce(names, query, suffix) {
   const argv = [join(COURT, "e2e.mjs"), "--only", names.join(","), "--out", e2eRunOut(suffix), ...(BUNDLE ? ["--bundle", BUNDLE] : []), ...(query ? ["--query", query] : [])];
   const r = await run(process.execPath, argv, { timeoutS: 240 * names.length + 90 });
   writeFresh(join(OUT, `${suffix}.log`), `${r.stdout}\n${r.stderr}`);
@@ -164,7 +173,7 @@ for (const [name, sc] of Object.entries(ctx.e2e.scenarios)) {
   scenarios.push({
     id: name,
     status: !sc.exists || !sc.ran ? "NOT-YET" : bad.length ? "FAIL" : "PASS",
-    measured: !sc.exists ? "no scenario file in scripts/court/scenarios/ yet" : !sc.ran ? sc.notYet : bad.length ? `${bad.length} of ${sc.lines.length} checks failed: ${bad[0].what}: ${bad[0].detail.slice(0, 50)}` : `${sc.lines.length} checks ok`,
+    measured: !sc.exists ? "no scenario file in scripts/court/scenarios/ yet" : !sc.ran ? sc.notYet : bad.length ? `${bad.length} of ${sc.lines.length} checks failed: ${bad[0].what}: ${bad[0].detail.slice(0, 50)}` : `${sc.lines.length} checks ok${sc.flake ? " [infra flake (rerun clean)]" : ""}`,
     threshold: `e2e.mjs --only ${name}`,
   });
 }

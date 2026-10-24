@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  isLoadFlake, runWithFlakeRetry,
   judderCv, judderVerdict,
   combine, exitCode, insideDir, parseE2e, parseTap, renderTable, resolveRow, scanBuilt, summarize, tagsOf, validateChecklist,
 } from "./lib.mjs";
@@ -584,4 +585,59 @@ test("[r4-tags] only parenthesised (Pnn) groups tag a line: a bare P33 in a deta
   assert.deepEqual(parseE2e("PASS x: see P33 (as P8 says): ok")[0].tags, []);
   assert.deepEqual(parseE2e("PASS x: (see P33): ok")[0].tags, []);
   assert.deepEqual(parseE2e("PASS room: arrival: opaque again (P33): 255")[0].tags, ["P33"]);
+});
+
+test("[r5-tags] a Pnn: prefix at the very start of the check name tags the line; mid-line P33 still does not", () => {
+  assert.deepEqual(parseE2e("PASS handoff: P8: same pixels per eye at the seat: 0.04 deg")[0].tags, ["P8"]);
+  assert.deepEqual(parseE2e("FAIL room: P35: the edge opens the room: not written yet (stream E)")[0].tags, ["P35"]);
+  assert.equal(parseE2e("FAIL room: P35: the edge opens the room: not written yet (stream E)")[0].pending, true);
+  assert.deepEqual(parseE2e("PASS room: watching: P35: edge: ok")[0].tags, [], "a phase prefix is not the start of the name");
+  assert.deepEqual(parseE2e("PASS smoke: view logged: 1280x720, P33 not measured")[0].tags, []);
+  assert.deepEqual(parseE2e("PASS smoke: opaque (P33): 255, P33 not measured")[0].tags, ["P33"]);
+  assert.deepEqual(parseE2e("PASS cadence: P4, P5: ok")[0].tags, ["P4", "P5"]);
+});
+
+const timeoutLines = (extra = []) => [
+  { scenario: "smoke", ok: false, what: "runs", detail: "page.waitForFunction: Timeout 60000ms exceeded.", tags: [], pending: false },
+  { scenario: "smoke", ok: false, what: "console clean (P25)", detail: "2 errors: HTTP 504 ...", tags: ["P25"], pending: false },
+  ...extra,
+];
+const cleanLines = [
+  { scenario: "smoke", ok: true, what: "opaque (P33)", detail: "alpha min 255 over 326 of 326 frames read back", tags: ["P33"], pending: false },
+  { scenario: "smoke", ok: true, what: "console clean (P25)", detail: "0 errors, 0 warnings", tags: ["P25"], pending: false },
+];
+
+test("[r5-flake] isLoadFlake: only the page-load timeout (plus the console errors it causes) is a flake", () => {
+  assert.equal(isLoadFlake(timeoutLines()), true);
+  assert.equal(isLoadFlake(timeoutLines().slice(0, 1)), true);
+  assert.equal(isLoadFlake([...timeoutLines(), { scenario: "smoke", ok: false, what: "opaque (P33)", detail: "alpha min 12", tags: ["P33"], pending: false }]), false);
+  assert.equal(isLoadFlake([{ scenario: "smoke", ok: false, what: "runs", detail: "the page could not load the bundle: Failed to fetch", tags: [], pending: false }]), false);
+  assert.equal(isLoadFlake(cleanLines), false);
+});
+
+test("[r5-flake] a load timeout is rerun once: clean is the row's real status plus the flake note, a second timeout is FAIL", async () => {
+  const ran = (lines) => ({ exists: true, ran: true, lines });
+  const calls = [];
+  const clean = await runWithFlakeRetry(["smoke"], async (names) => {
+    calls.push(names);
+    return { smoke: ran(calls.length === 1 ? timeoutLines() : cleanLines) };
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1], ["smoke"], "only the flaked scenario is rerun");
+  assert.equal(clean.smoke.flake, true);
+  const row = { id: "P25", threshold: "t", checks: [{ kind: "e2e", scenario: "smoke" }] };
+  const r = resolveRow(row, ctx({ e2e: { scenarios: { smoke: clean.smoke } } }));
+  assert.equal(r.status, "PASS");
+  assert.match(r.measured, /infra flake \(rerun clean\)/);
+  const again = await runWithFlakeRetry(["smoke"], async () => ({ smoke: ran(timeoutLines()) }));
+  assert.equal(again.smoke.flake, false);
+  assert.equal(resolveRow(row, ctx({ e2e: { scenarios: { smoke: again.smoke } } })).status, "FAIL");
+  // a real failure is never rerun
+  let n = 0;
+  await runWithFlakeRetry(["smoke"], async () => (n++, { smoke: ran([{ scenario: "smoke", ok: false, what: "opaque (P33)", detail: "alpha min 12", tags: ["P33"], pending: false }]) }));
+  assert.equal(n, 1);
+  // a fallback judged on a flaked-clean run says so
+  const v = judgeFallback(["P25"], { smoke: clean.smoke }, { P25: ["smoke"] });
+  assert.equal(v.status, "PASS");
+  assert.match(v.measured, /infra flake \(rerun clean\)/);
 });
