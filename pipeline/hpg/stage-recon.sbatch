@@ -23,7 +23,16 @@ PY
 )
 # 121 frames in 12 chunks of 11 leaves the last chunk empty: that's success, not a failure that blocks the export
 if [ "$START" -ge "$END" ]; then echo "[recon] chunk $SLURM_ARRAY_TASK_ID has no frames"; exit 0; fi
+# the real view's own masks, ignored pixels and known focal (job.json "sourceMasks", "sourceIgnore": folders in the
+# run, 000123.png per clip frame; "sourceFocal": pixels of prepped.mp4), e.g. one player of several (Court Side)
+SRCOPTS=$(python - <<'PY'
+import json; j = json.load(open("job.json"))
+opts = [f"--source-masks {j['sourceMasks']}" if j.get("sourceMasks") else "", f"--source-ignore {j['sourceIgnore']}" if j.get("sourceIgnore") else "",
+        f"--source-focal {float(j['sourceFocal'])}" if j.get("sourceFocal") else ""]
+print(" ".join(o for o in opts if o))
+PY
+)
 python -m lucid.status mark "$RUN" reconstruct running
 python -m lucid.recon --result "$RUN/views" --start "$START" --end "$END" --out "$RUN/recon" \
   --iters-first "$ITF" --iters-warm "$ITW" --cap "$CAP" --sh-degree "$SH" --aniso "$ANISO" --peek 0,4,8,12,20 \
-  $([ "$SRC" = 1 ] && [ -f "$RUN/prepped.mp4" ] && echo --source-video "$RUN/prepped.mp4")
+  $([ "$SRC" = 1 ] && [ -f "$RUN/prepped.mp4" ] && echo --source-video "$RUN/prepped.mp4" $SRCOPTS)

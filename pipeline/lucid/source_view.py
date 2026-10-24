@@ -40,14 +40,16 @@ def bbox(mask: np.ndarray, thresh: float = 0.5) -> tuple[float, float, float, fl
 
 
 class SourceView:
-    def __init__(self, video: Path, frame_ids: list[int], device: str, max_height: int = 2560, model_dir: str | None = None):
+    def __init__(self, video: Path, frame_ids: list[int], device: str, max_height: int = 2560, model_dir: str | None = None,
+                 masks_dir: Path | None = None, ignore_dir: Path | None = None, focal: float | None = None):
+        """masks_dir: the person's own masks, one image per clip frame named by its index (000123.png, white = them),
+        used instead of the foreground model (e.g. one player's SAM 2.1 mask when others share the frame). ignore_dir:
+        the same naming, white = pixels that never count in any loss (another player, a referee). focal: the camera's
+        known focal length in full-resolution pixels (a long broadcast lens); held fixed instead of solved."""
         import av
 
-        from fdanyone.assets import resolve_foreground_model
-        from fdanyone.download import ensure_foreground_model
-        from fdanyone.foreground import predict_foreground_masks
-
         self.device = device
+        self.focal = focal
         self.max_height = max_height
         lo, hi = frame_ids[0], frame_ids[-1] + 1
         rgb = []
@@ -59,16 +61,27 @@ class SourceView:
                     rgb.append(frame.to_ndarray(format="rgb24"))
         if len(rgb) != hi - lo:
             raise ValueError(f"{video} has {lo + len(rgb)} frames, need {hi}")
-        if model_dir is None:
-            import fdanyone
-
-            model_dir = str(Path(fdanyone.__file__).resolve().parents[1] / "models")
-        ensure_foreground_model(model_dir)
-        masks = predict_foreground_masks(tuple(rgb), resolve_foreground_model(model_dir), device)
         self.frame_ids = list(range(lo, hi))
         self.rgb = np.stack(rgb)  # [N,H,W,3] uint8, full resolution
-        self.masks = np.asarray(masks).astype(np.float32) / (255.0 if np.asarray(masks).max() > 1 else 1.0)
         self.H, self.W = self.rgb.shape[1:3]
+        self.masks_given = masks_dir is not None
+        if masks_dir is not None:
+            self.masks = load_masks(masks_dir, self.frame_ids, self.H, self.W)
+            print(f"[source] masks from {masks_dir} ({len(self.frame_ids)} frames)", flush=True)
+        else:
+            from fdanyone.assets import resolve_foreground_model
+            from fdanyone.download import ensure_foreground_model
+            from fdanyone.foreground import predict_foreground_masks
+
+            if model_dir is None:
+                import fdanyone
+
+                model_dir = str(Path(fdanyone.__file__).resolve().parents[1] / "models")
+            ensure_foreground_model(model_dir)
+            masks = predict_foreground_masks(tuple(rgb), resolve_foreground_model(model_dir), device)
+            self.masks = np.asarray(masks).astype(np.float32) / (255.0 if np.asarray(masks).max() > 1 else 1.0)
+        # 1 where a pixel counts, 0 where it's ignored (another person); None when everything counts
+        self.valid = None if ignore_dir is None else 1 - load_masks(ignore_dir, self.frame_ids, self.H, self.W)
         self.ready = False
         self.viewmat = self.K = None
         self.size = (0, 0)
@@ -101,9 +114,14 @@ class SourceView:
         if box_s is None:
             print("[source] no person in the clip's first frame; skipped")
             return False
-        best = None
+        v = torch.ones_like(m)
+        if self.valid is not None:
+            v = F.interpolate(torch.as_tensor(self.valid[0], device=dev)[None, None], size=(hs, ws), mode="area")[0, 0]
+            v = (v > 0.5).float()
         white = torch.ones(1, 3, device=dev)
         gt = img * m[..., None] + (1 - m[..., None])
+        centre = frozen["means"][torch.sigmoid(frozen["opacities"]).squeeze(-1) > 0.5].mean(0) if (
+            torch.sigmoid(frozen["opacities"]) > 0.5).sum() > 100 else frozen["means"].mean(0)
         tried = []
         with torch.no_grad():
             for cid in front_ids:
@@ -119,10 +137,12 @@ class SourceView:
                 K[1, 1] *= scale
                 K[0, 2] = 0.5 * (box_s[0] + box_s[2]) - (0.5 * (box_r[0] + box_r[2]) - Kr[0, 2]) * scale
                 K[1, 2] = 0.5 * (box_s[1] + box_s[3]) - (0.5 * (box_r[1] + box_r[3]) - Kr[1, 2]) * scale
+                if self.focal is not None:
+                    vm, K = hold_focal(vm, K, self.focal * s, centre)
                 rgb, a, _ = self._render(trainer, frozen, vm, K, ws, hs, bg=white)
                 a = a[0, ..., 0]
-                inside = (a > 0.5) | (m > 0.5)
-                iou = float(((a > 0.5) & (m > 0.5)).sum() / inside.sum().clamp_min(1))
+                inside = ((a > 0.5) | (m > 0.5)) & (v > 0.5)
+                iou = float(((a > 0.5) & (m > 0.5) & (v > 0.5)).sum() / inside.sum().clamp_min(1))
                 colour = float((rgb[0] - gt).abs().mean(-1)[inside].mean())
                 tried.append((iou - colour, iou, colour, cid, vm.clone(), K, rgb[0].clone()))
         if not tried:
@@ -143,7 +163,7 @@ class SourceView:
         for it in range(steps):
             vm = se3_exp(xi) @ vm0
             rgb, a, _ = self._render(trainer, frozen, vm, K, ws, hs, bg=white)
-            loss = (a[0, ..., 0] - m).abs().mean() + 0.5 * (rgb[0] - gt).abs().mean()
+            loss = ((a[0, ..., 0] - m).abs() * v).mean() + 0.5 * ((rgb[0] - gt).abs() * v[..., None]).mean()
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -154,7 +174,7 @@ class SourceView:
             vm = se3_exp(xi) @ vm0
             rgb, a, _ = self._render(trainer, frozen, vm, K, ws, hs, bg=white)
             a = a[0, ..., 0]
-            iou = float(((a > 0.5) & (m > 0.5)).sum() / ((a > 0.5) | (m > 0.5)).sum().clamp_min(1))
+            iou = float(((a > 0.5) & (m > 0.5) & (v > 0.5)).sum() / (((a > 0.5) | (m > 0.5)) & (v > 0.5)).sum().clamp_min(1))
             if debug is not None:
                 from PIL import Image
 
@@ -163,7 +183,9 @@ class SourceView:
                 over[..., 1] = torch.maximum(over[..., 1], (a > 0.5).float() * 0.6)
                 strip = torch.cat([gt, rgb[0], over], 1)
                 Image.fromarray((strip.clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)).save(debug / "solved.jpg", quality=88)
-        self.report = {"fromCamera": int(cid), "iouStart": round(iou0, 4), "iou": round(iou, 4)}
+        self.report = {"fromCamera": int(cid), "iouStart": round(iou0, 4), "iou": round(iou, 4),
+                       "focal": round(float(K[0, 0]) / s, 1), "focalHeld": self.focal is not None,
+                       "masks": "given" if self.masks_given else "model", "ignoring": self.valid is not None}
         print(f"[source] camera solved from ring camera {cid}: silhouette IoU {iou0:.3f} -> {iou:.3f}", flush=True)
         if iou < min_iou:
             print(f"[source] IoU under {min_iou}: training without the real frame", flush=True)
@@ -198,12 +220,18 @@ class SourceView:
         i = frame - self.frame_ids[0]
         x0, y0, x1, y1 = self.crop
         w, h = self.size
+        return self._crop(i, x0, y0, x1, y1, w, h)
+
+    def _crop(self, i: int, x0: int, y0: int, x1: int, y1: int, w: int, h: int) -> torch.Tensor:
+        """[1,h,w,4] rgb + mask, or [1,h,w,5] with a last channel 1 where the pixel counts (ignored pixels 0)."""
         rgb = torch.as_tensor(self.rgb[i, y0:y1, x0:x1], device=self.device).float().permute(2, 0, 1) / 255.0
-        m = torch.as_tensor(self.masks[i, y0:y1, x0:x1], device=self.device)[None]
-        rgba = torch.cat([rgb, m], 0)[None]
+        chans = [rgb, torch.as_tensor(self.masks[i, y0:y1, x0:x1], device=self.device)[None]]
+        if self.valid is not None:
+            chans.append(torch.as_tensor(self.valid[i, y0:y1, x0:x1], device=self.device)[None])
+        out = torch.cat(chans, 0)[None]
         if (w, h) != (x1 - x0, y1 - y0):
-            rgba = F.interpolate(rgba, size=(h, w), mode="area")
-        return rgba[0].permute(1, 2, 0)[None].contiguous()
+            out = F.interpolate(out, size=(h, w), mode="area")
+        return out[0].permute(1, 2, 0)[None].contiguous()
 
     def render(self, trainer, params, degree: int, bg: torch.Tensor):
         w, h = self.size
@@ -252,16 +280,42 @@ class SourceView:
         x0, y0, x1, y1, r_ = box
         i = frame - self.frame_ids[0]
         w, h = int(round((x1 - x0) * r_)), int(round((y1 - y0) * r_))
-        rgb = torch.as_tensor(self.rgb[i, y0:y1, x0:x1], device=self.device).float().permute(2, 0, 1) / 255.0
-        m = torch.as_tensor(self.masks[i, y0:y1, x0:x1], device=self.device)[None]
-        rgba = torch.cat([rgb, m], 0)[None]
-        if (w, h) != (x1 - x0, y1 - y0):
-            rgba = F.interpolate(rgba, size=(h, w), mode="area")
+        target = self._crop(i, x0, y0, x1, y1, w, h)
         K = self.K_full.clone()
         K[0, 2] -= x0
         K[1, 2] -= y0
         K[:2] *= r_
-        return rgba[0].permute(1, 2, 0)[None].contiguous(), K, (w, h)
+        return target, K, (w, h)
+
+
+def load_masks(folder: Path, frame_ids: list[int], H: int, W: int) -> np.ndarray:
+    """[N,H,W] float 0-1 from one image per clip frame, named by its index (000123.png); resized to the frame if a
+    mask was made at another size."""
+    from PIL import Image
+
+    out = np.zeros((len(frame_ids), H, W), np.float32)
+    for k, i in enumerate(frame_ids):
+        path = Path(folder) / f"{i:06d}.png"
+        if not path.exists():
+            raise FileNotFoundError(f"{path}: every frame needs a mask")
+        im = Image.open(path).convert("L")
+        if im.size != (W, H):
+            im = im.resize((W, H), Image.BILINEAR)
+        out[k] = np.asarray(im, np.float32) / 255.0
+    return out
+
+
+def hold_focal(viewmat: torch.Tensor, K: torch.Tensor, focal: float, centre: torch.Tensor):
+    """The same framing with a known focal length: the focal goes to `focal` and the camera moves along its own axis so
+    the person (at world point `centre`) keeps their size and place in the image (x = f X / Z, so f and Z scale
+    together). Returns (viewmat, K)."""
+    k = focal / float(K[0, 0])
+    z = float((viewmat[:3, :3] @ centre + viewmat[:3, 3])[2])  # the person's depth in front of the camera
+    back = torch.eye(4, dtype=viewmat.dtype, device=viewmat.device)
+    back[2, 3] = (k - 1) * z  # camera-space depths all grow by this: the camera steps back (or in) along its axis
+    K = K.clone()
+    K[0, 0] = K[1, 1] = focal
+    return back @ viewmat, K
 
 
 def psnr_masked(pred: torch.Tensor, gt: torch.Tensor) -> float:
@@ -287,6 +341,9 @@ def main(argv=None):
     p.add_argument("--frame", type=int, default=0)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--device", default="cuda:0")
+    p.add_argument("--masks", type=Path, default=None)
+    p.add_argument("--ignore", type=Path, default=None)
+    p.add_argument("--focal", type=float, default=None)
     a = p.parse_args(argv)
     rig = Rig.from_json(a.result / "cameras.json")
     t = lambda x: torch.as_tensor(np.asarray(x), dtype=torch.float32, device=a.device)  # noqa: E731
@@ -295,7 +352,7 @@ def main(argv=None):
               "sh0": t(g.sh0), "shN": t(g.shN)}
     trainer = SimpleNamespace(rasterize=rasterization, viewmats=t(rig.world_to_camera), Ks=t(rig.K),
                               width=rig.width, height=rig.height)
-    sv = SourceView(a.video, [a.frame], a.device)
+    sv = SourceView(a.video, [a.frame], a.device, masks_dir=a.masks, ignore_dir=a.ignore, focal=a.focal)
     ok = sv.solve(trainer, params, list(range(rig.views)), debug=a.out)
     print("[source] solved" if ok else "[source] not solved", sv.report)
 

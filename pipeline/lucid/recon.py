@@ -50,6 +50,13 @@ def parse_args(argv=None):
     p.add_argument("--source-every", type=int, default=2, help="render the real view every Nth step")
     p.add_argument("--source-iters", type=int, default=2000, help="extra steps on the first frame once it's solved")
     p.add_argument("--source-max-height", type=int, default=2560)
+    p.add_argument("--source-masks", type=Path, default=None,
+                   help="the person's own masks for the real frames (000123.png per clip frame, white = them) instead of "
+                        "the foreground model: one player's mask when others share the frame")
+    p.add_argument("--source-ignore", type=Path, default=None,
+                   help="same naming, white = pixels left out of every real-view loss (another player)")
+    p.add_argument("--source-focal", type=float, default=None,
+                   help="the clip camera's known focal length in full-resolution pixels, held instead of solved")
     p.add_argument("--face-weight", type=float, default=0.0,
                    help="extra weight on a native-resolution crop of the real frame around the face (0 = off; try 2.0 once a clip's camera solves)")
     p.add_argument("--spz-sh", type=int, default=0, help="SH degree kept in the .spz copies")
@@ -59,6 +66,19 @@ def parse_args(argv=None):
 
 
 # ---------------------------------------------------------------------------------------------------------------
+
+
+def real_view_loss(pred: torch.Tensor, alpha: torch.Tensor, target: torch.Tensor, bg: torch.Tensor) -> torch.Tensor:
+    """L1 + SSIM + silhouette against a real frame's crop (lucid.source_view): target is [1,h,w,4] rgb + mask, or
+    [1,h,w,5] with a last channel 0 where pixels are ignored (another person). Ignored pixels take the truth's own
+    value in the render, so they never pull on the Gaussians."""
+    m = target[..., 3:4]
+    gt = target[..., :3] * m + bg[:, None, None, :] * (1 - m)
+    if target.shape[-1] > 4:
+        v = target[..., 4:5]
+        pred = pred * v + gt * (1 - v)
+        alpha = alpha * v + m * (1 - v)
+    return 0.8 * (pred - gt).abs().mean() + 0.2 * (1 - ssim(pred, gt)) + 0.1 * (alpha - m).abs().mean()
 
 
 def knn_scale(points: torch.Tensor, k: int = 3, chunk: int = 1024) -> torch.Tensor:
@@ -193,19 +213,13 @@ class Trainer:
             loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * torch.exp(params["scales"]).mean()
             if src is not None and step % a.source_every == 0:  # the real frame, at up to 4x the views' detail
                 sbg = torch.rand(1, 3, device=self.device)
-                sm = src[..., 3:4]
-                sgt = src[..., :3] * sm + sbg[:, None, None, :] * (1 - sm)
                 spred, salpha, _ = self.source.render(self, params, degree, sbg)
-                loss = loss + a.source_weight * (0.8 * (spred - sgt).abs().mean() + 0.2 * (1 - ssim(spred, sgt))
-                                                 + 0.1 * (salpha - sm).abs().mean())
+                loss = loss + a.source_weight * real_view_loss(spred, salpha, src, sbg)
             if face is not None:  # the face at the clip's own 4K detail, every step: a small render
                 ft, fK, (fw, fh) = face
                 fbg = torch.rand(1, 3, device=self.device)
-                fm = ft[..., 3:4]
-                fgt = ft[..., :3] * fm + fbg[:, None, None, :] * (1 - fm)
                 fpred, falpha, _ = self.source._render(self, params, self.source.viewmat, fK, fw, fh, bg=fbg, degree=degree)
-                loss = loss + a.face_weight * (0.8 * (fpred - fgt).abs().mean() + 0.2 * (1 - ssim(fpred, fgt))
-                                               + 0.1 * (falpha - fm).abs().mean())
+                loss = loss + a.face_weight * real_view_loss(fpred, falpha, ft, fbg)
             if a.aniso > 0:
                 s = params["scales"]  # log scales, so max - min is the log of the axis ratio
                 loss = loss + a.aniso * (s.max(-1).values - s.min(-1).values - math.log(a.aniso_ratio)).clamp_min(0).mean()
@@ -287,7 +301,8 @@ def main(argv=None):
     if args.source_video and args.result:
         from .source_view import SourceView
 
-        source = SourceView(args.source_video, frames.frame_ids, args.device, args.source_max_height)
+        source = SourceView(args.source_video, frames.frame_ids, args.device, args.source_max_height,
+                            masks_dir=args.source_masks, ignore_dir=args.source_ignore, focal=args.source_focal)
         # every ring camera is a candidate: the clip's camera needn't be square to the subject (a 3/4 stance is common)
         front_ids = list(range(rig.views))
     out_frames = args.out / "frames"
@@ -323,7 +338,12 @@ def main(argv=None):
                 white = torch.ones(1, 3, device=args.device)
                 pred, _, _ = source.render(trainer, params, int(round(math.sqrt(params["shN"].shape[1] + 1))) - 1, white)
                 gt = src[..., :3] * src[..., 3:4] + (1 - src[..., 3:4])
-                metrics["sourcePsnr"] = float(psnr(pred, gt))  # against the real 4K frame, not a generated view
+                if src.shape[-1] > 4:  # over the pixels that count (another person's are left out)
+                    v = src[..., 4:5]
+                    mse = float(((pred - gt) ** 2 * v).sum() / (3 * v.sum()).clamp_min(1))
+                    metrics["sourcePsnr"] = 10 * math.log10(1 / max(mse, 1e-10))
+                else:
+                    metrics["sourcePsnr"] = float(psnr(pred, gt))  # against the real 4K frame, not a generated view
                 if not warm:
                     from PIL import Image
 

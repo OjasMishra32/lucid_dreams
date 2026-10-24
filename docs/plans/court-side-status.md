@@ -13,21 +13,42 @@ private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
-8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only** (Vishal, 6:50 AM):
-   `immersive-vr` + `local-floor`, the arena from the footage where the camera saw it, darkness elsewhere. An
-   exception to your passthrough-only rule for court mode alone; every other mode stays passthrough.
+8. **Yes (Ojasva, 8:10 AM): immersive VR for `?mode=court` only**, `immersive-vr` + `local-floor`, court floor on
+   the real floor. Two conditions: the Quest boundary stays on (never ask people to turn it off), and the palm menu
+   has a "See my room" toggle that drops to passthrough with the frozen players still standing there (comfort and
+   safety while walking). Every other mode stays passthrough.
 7. **The first real Quest 3S number (Ian or Ojasva, ~20 min).** Vishal sends `dropin.zip` (throwaway, never
    commit): copy `court-quest.html` into `apps/webxr/` and `src/spike6/` into `apps/webxr/src/`, open
    `/court-quest.html`, press "Enter at 0.5x", stand still; photo the results table; repeat at 0.75x and 1x. Steps
    in its `HOW-TO.md`.
+   **(Ojasva, 8:10 AM): waiting on a person in the headset; Ojasva runs it when he's up, unless Ian gets to it first.**
 9. **GPU, new shape:** (a) each main player: 50-step views on its 121-frame clip, then **only the freeze frame**
    reconstructed cold at 250-300k with more iterations (~30-45 min of one B200 each); (b) up to 8 other players:
    Turbo views + freeze frame at 40-80k (~15 min each, parallel), or LHM++ on an L4. Views deleted after each recon
    to stay inside ~16 GB. Exact commands follow the calibration. OK?
-10. **`sourceView` patch (your lane):** (a) our SAM 2.1 player mask instead of BiRefNet, other player ignored in
-    the loss (`source_view.py:67-70`); (b) our known focal for the crop; (c) bonus: a second real camera (the
-    play's other angle) as another real view of the freeze, so Luka's front is real. Yes / no / which?
-11. **Where Court Side's clip tools live:** `pipeline/court/` (code only, no clip data) or outside the repo?
+   **Yes (Ojasva, 8:10 AM), both (a) and (b), LHM++ on L4s welcome for the far players.** Before each batch check
+   the group's free space (`df -h /blue/iruchkin` and the quota), delete views right after each recon, and keep
+   everything under `$L/runs/court-*`. Put the exact commands here; my session submits them as soon as they appear.
+10. **(a) and (b) done, (c) yes next (Ojasva, 8:30 AM).** In a run's `job.json`:
+    - `"sourceMasks": "masks"` and `"sourceIgnore": "ignore"`: folders inside the run, one PNG per frame of
+      `prepped.mp4` named by its index (`000123.png`); white means the player in masks and the other player in
+      ignore. Ignored pixels never pull on the Gaussians, and `sourcePsnr` counts only the rest.
+    - `"sourceFocal": 5352.2`: in `prepped.mp4` pixels, which is your lens focal in source pixels, times 1920/crop
+      height if prep upscaled (`prep.json` says so).
+
+    The same switches exist on `lucid.recon` (`--source-masks/--source-ignore/--source-focal`) and the debug solve
+    (`python -m lucid.source_view ... --masks --ignore --focal`). Tested on a B200 against jump-shot-hq:
+    - given masks with a sixth of the person ignored solve as well as the model's masks (silhouette IoU 0.973);
+    - holding the solved focal gives 0.972;
+    - a 1.6x wrong focal drops to 0.901, so the focal has to be right;
+    - a one-frame reconstruction with all three runs clean.
+
+    (c) Each extra angle becomes its own real view, solved against the same Gaussians. Send that angle's frame at the
+    freeze moment, its player mask and its focal, and I'll wire it.
+11. **`pipeline/court/`, code only (Ojasva, 8:10 AM).** No frames, masks, calibration numbers or anything else
+    derived from the broadcast in git (it's a public repo): data stays under `$L/runs/court-*` and outside the
+    repo; add a `.gitignore` there to be safe. Credit the footage in demo/credits.md, demo use only, players labelled
+    "Not affiliated".
 6. **Yes (6:05 AM):** 100k playback + 250k freeze; keep `aniso`, `sourceView`, 50-step views. 5. **Approved:**
    one B200 Turbo run. 1-4. **Done.**
 
