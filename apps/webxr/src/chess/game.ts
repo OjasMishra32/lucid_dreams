@@ -68,19 +68,42 @@ export async function renderChess(root: HTMLElement) {
   const hints = new THREE.Group();
   boardGroup.add(hints);
 
-  // someone across the table: any avatar bundle, standing on the floor on the far side, facing you
+  // someone across the table: any avatar bundle, standing on the floor on the far side, facing you. A legend's
+  // strength brings their avatar (when it's been made); otherwise ?opponent=<id>, or nobody.
   const opponentId = new URLSearchParams(location.search).get("opponent");
   let opponent: SkinnedAvatar | null = null;
   let opponentName = "";
   let opponentSince = 0;
+  let opponentToken = 0;
+  let spark: SparkRenderer | null = null;
   const opponentGroup = new THREE.Group();
   scene.add(opponentGroup);
-  if (opponentId) {
-    scene.add(new SparkRenderer({ renderer }));
-    loadDream(opponentId)
+  let opponentShownId: string | null = null;
+  const clearOpponent = () => {
+    if (!opponent) return;
+    opponentGroup.remove(opponent.mesh);
+    opponent.mesh.dispose();
+    opponent = null;
+    opponentName = "";
+    opponentShownId = null;
+  };
+  // the current opponent stays until the new one has loaded, so switching never flickers
+  const setOpponent = (id: string | null, fallback: string | null = null) => {
+    const token = ++opponentToken;
+    if (id && id === opponentShownId) return;
+    if (!id) {
+      clearOpponent();
+      return updateStatus();
+    }
+    if (!spark) scene.add((spark = new SparkRenderer({ renderer })));
+    loadDream(id)
       .then(async (d) => {
         if (!SkinnedAvatar.canSkin(d)) throw new Error(`${d.id} has no rig`);
-        opponent = await SkinnedAvatar.load(d);
+        const a = await SkinnedAvatar.load(d);
+        if (token !== opponentToken) return a.mesh.dispose(); // a newer choice won
+        clearOpponent();
+        opponent = a;
+        opponentShownId = id;
         opponentName = d.name;
         opponent.mesh.opacity = 0;
         opponentSince = performance.now();
@@ -93,8 +116,13 @@ export async function renderChess(root: HTMLElement) {
         controls.update();
         updateStatus();
       })
-      .catch((e) => console.warn("No opponent avatar:", e));
-  }
+      .catch((e) => {
+        if (token !== opponentToken) return;
+        console.info(`No avatar for ${id} yet:`, (e as Error).message);
+        if (fallback) setOpponent(fallback);
+        else clearOpponent();
+      });
+  };
   const farSide = new THREE.Vector3();
   const placeOpponent = () => {
     table.updateMatrixWorld();
@@ -160,7 +188,7 @@ export async function renderChess(root: HTMLElement) {
   const updateStatus = () => {
     if (chess.isCheckmate()) return setStatus(chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.");
     if (chess.isDraw()) return setStatus("Draw");
-    const who = opponentName ? `${opponentName} (${strength.label})` : strength.legend ?? strength.label;
+    const who = strength.legend ? `${strength.legend} (engine, ${strength.elo})` : opponentName ? `${opponentName} (${strength.label})` : strength.label;
     if (thinking) return setStatus(`${who} is thinking…`);
     setStatus(chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`);
   };
@@ -419,6 +447,7 @@ export async function renderChess(root: HTMLElement) {
     xrButtons.find((b) => b.id === "strength")?.setLabel(strength.label);
     root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
     void engine.setStrength(strength);
+    setOpponent(strength.avatar ?? opponentId, strength.avatar ? opponentId : null);
     updateStatus();
   };
   root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => selectStrength(b.dataset.id!)));

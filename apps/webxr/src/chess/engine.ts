@@ -5,6 +5,7 @@ export interface Strength {
   label: string;
   elo: number | null; // null = full strength
   legend?: string; // whose peak rating this is
+  avatar?: string; // their avatar dream id, seated across the board when it exists
 }
 
 export const STRENGTHS: Strength[] = [
@@ -12,9 +13,10 @@ export const STRENGTHS: Strength[] = [
   { id: "expert", label: "Expert", elo: 2000 },
   { id: "master", label: "Master", elo: 2400 },
   { id: "gm", label: "Grandmaster", elo: 2700 },
-  // legends: the engine set to the player's peak FIDE rating. Not the person, and never presented as them.
-  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer" },
-  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen" },
+  // legends: the engine set to the player's peak FIDE rating, with their likeness across the board when we have it
+  // (freely licensed photos, no voice, always labelled as the engine). Not the person, and never presented as them.
+  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer", avatar: "bobby-fischer" },
+  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen", avatar: "magnus-carlsen" },
   { id: "max", label: "Engine", elo: null },
 ];
 

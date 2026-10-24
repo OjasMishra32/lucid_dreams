@@ -51,3 +51,13 @@ full strength, including Fischer's and Carlsen's peak ratings (labelled as the e
 | `src/xr/hands.ts` | Fingertip buttons and depth-only hand occluders, shared by the viewer and chess |
 | `src/chess/` | Board, lathe-turned pieces, Stockfish 19 in a worker (GPL-3.0, separate file in `public/engine`) |
 | `scripts/make_test_avatar.py` | A rigged test avatar from your local SMPL-X model (never committed) |
+
+## Credits for the chess legends
+
+Their avatars are made from freely licensed photos, never committed to this repo, carry no voice, and are always
+labelled as the engine at that player's peak rating, not the player.
+
+- Magnus Carlsen: "Magnus Carlsen (2012)" by Wikimedia Commons user Autopilot, CC BY-SA 3.0,
+  https://commons.wikimedia.org/wiki/File:Magnus_Carlsen_(2012).jpg
+- Bobby Fischer: W. Punt for Anefo, Nationaal Archief (Dutch National Archives), 1972, CC0,
+  https://commons.wikimedia.org/wiki/File:Bobby_Fischer_in_Amsterdam_voor_besprekingen_met_FIDE-voorzitter_Max_Euwe_over_d,_Bestanddeelnr_925-3509.jpg

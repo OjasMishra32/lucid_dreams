@@ -4,7 +4,8 @@
 Every minute: any new video in ~/Downloads/lucid-clips/ (once it has finished copying) is submitted to HiPerGator;
 finished runs are fetched into <repo>/dreams/<id>/, where the viewer's library picks them up. With --seed-samples it
 also runs 4DAnyone's sample clips of real people. Waits until SMPL-X is installed on HiPerGator before submitting.
-A photo in ~/Downloads/lucid-photos/ (a consenting person, head to toe; iPhone HEIC is fine) becomes an avatar, named
+A photo in ~/Downloads/lucid-photos/ (a consenting person, or a freely licensed photo of a public figure for the
+chess demo under AGENTS.md's consent rule; head to toe; iPhone HEIC is fine) becomes an avatar, named
 after the file (vishal.jpg -> "Vishal", id vishal), once the avatar assets are installed.
 A queue item's "then" jobs, e.g. [{"job": "avatars/hpg/digs-finetune.sbatch", "env": {}}], are submitted with
 RUN_ID=<its id> once its run is done and the avatar assets are installed.
