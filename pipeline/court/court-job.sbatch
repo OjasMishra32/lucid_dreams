@@ -33,6 +33,8 @@
 # FACEFIX_MODELS: its env's python and models ($D/envs/facefix/bin/python, $D/models/facefix, D = COURT_DATA_L or L:
 # court-facefix-env.sbatch). With VIEWS_FROM the copied views are fixed (in scratch; the saved ones are only read).
 # Checked before the views; if the swap fails the job stops (the same job without FACEFIX is the plain run).
+# FACEFIX_WAIT=<minutes>: the env may still be building (submitted beside this job): then it is checked after the
+# views, once its built marker appears (waiting up to that long; the GPUs idle meanwhile, so keep it under an hour).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack (env.sh, repos, envs): only read
 D=${COURT_DATA_L:-$L}; C=$D/code/pipeline/court  # these court scripts, the uploads and the results: COURT_DATA_L moves them
@@ -97,17 +99,27 @@ NX=0; [ -s "$DATA/real/extras.json" ] && NX=$(grep -c '"name"' "$DATA/real/extra
 REALS=$(for r in $REALS; do if [[ $r =~ ^[0-9]$ ]] && (( r <= NX )); then echo "$r"; else echo "REALS $r: only $NX other real view(s)" >&2; fi; done | xargs)
 log "K=$K FOCAL=$FOCAL $( ((TURBO)) && echo Turbo || echo 24-step) views${SEED:+, seed $SEED}; variants: $VARIANTS;" \
   "real views: A + {${REALS// /,}} of $NX; caps: $CAPS; results -> $OUTD"
+ff_check() {  # the env and models are there, every crop has a face, and the models load and run (CPU, seconds)
+  test -x "$FF_PY" || { log "FACEFIX: no $FF_PY (court-facefix-env.sh)"; return 1; }
+  local m
+  for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
+    test -s "$FF_MODELS/$m" || { log "FACEFIX: no $FF_MODELS/$m"; return 1; }
+  done
+  OMP_NUM_THREADS=$CPUS "$FF_PY" "$C/court_facefix.py" refs --cpu --ref "$FACEFIX" --models "$FF_MODELS" \
+    || { log "FACEFIX: the face crops or models in $FACEFIX / $FF_MODELS don't work"; return 1; }
+}
+FF_LATER=0
 if [ -n "${FACEFIX:-}" ]; then  # checked now, not after the views
   FF_PY=${FACEFIX_PY:-$D/envs/facefix/bin/python}; FF_MODELS=${FACEFIX_MODELS:-$D/models/facefix}
-  test -x "$FF_PY" || { log "FACEFIX: no $FF_PY (court-facefix-env.sh)"; exit 1; }
-  for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
-    test -s "$FF_MODELS/$m" || { log "FACEFIX: no $FF_MODELS/$m"; exit 1; }
-  done
+  FF_BUILT=$(dirname "$(dirname "$FF_PY")")/.court-facefix-ok  # court-facefix-env.sbatch's last step
   compgen -G "$FACEFIX/*.jpg" > /dev/null || compgen -G "$FACEFIX/*.png" > /dev/null \
     || { log "FACEFIX: no .jpg/.png face crops in $FACEFIX"; exit 1; }
-  # every crop has a face and the models load and run (CPU, seconds), before an hour of views
-  OMP_NUM_THREADS=$CPUS "$FF_PY" "$C/court_facefix.py" refs --cpu --ref "$FACEFIX" --models "$FF_MODELS" \
-    || { log "FACEFIX: the face crops or models in $FACEFIX / $FF_MODELS don't work"; exit 1; }
+  if [[ ${FACEFIX_WAIT:-0} =~ ^[1-9][0-9]*$ ]] && ! test -e "$FF_BUILT"; then
+    FF_LATER=1  # the env is still being built beside this job: wait for it after the views, not now
+    log "FACEFIX: the env isn't built yet; after the views this waits up to $FACEFIX_WAIT min for $FF_BUILT"
+  else
+    ff_check || exit 1
+  fi
   log "FACEFIX: the face in $FACEFIX goes onto the views before anything trains on them"
 fi
 UP=0; [[ " $VARIANTS " == *" up:"* ]] && UP=1
@@ -150,6 +162,12 @@ log "views done; gate-2 samples in $OUTD/views"
 
 # --- FACEFIX (opt-in): the player's real face on every view, one share of the views per GPU ---------------------------
 if [ -n "${FACEFIX:-}" ]; then
+  if (( FF_LATER )); then
+    end=$(( SECONDS + FACEFIX_WAIT * 60 ))
+    until test -e "$FF_BUILT" || (( SECONDS >= end )); do sleep "${FACEFIX_POLL_S:-30}"; done
+    test -e "$FF_BUILT" || { log "FACEFIX: no env after $FACEFIX_WAIT min ($FF_BUILT): stopping"; exit 1; }
+    ff_check || exit 1
+  fi
   log "FACEFIX on $NG GPU(s)"
   ALL=($(ls views/videos/*.mp4 | sort)); pids=()
   mkdir -p views-facefix/videos
