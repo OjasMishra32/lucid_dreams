@@ -16,6 +16,12 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
    blotches.
 4. --mute F (for avatars colourised from black and white photos): the torso's clothes keep their brightness but only F
    of their guessed colour, so a tie the photos showed only in grey doesn't come out loud.
+5. --deflate F: LHM++ wraps an average body in a clothing layer 2-6 cm thick, so people come out puffy (bell-shaped
+   hips, a belly from the side). Each Gaussian (not head, not hands) keeps its first centimetre off the SMPL-X body
+   and only F of the rest, measured in the rest pose, where arms and torso are apart.
+6. --flatten F: clothes and skin are thin surfaces, but LHM++ fills them with round blobs, so from the side every
+   edge is smoke. Each Gaussian (not hands, not hair) keeps only F of its thickness across the local surface (the
+   normal of its 16 nearest neighbours): from the front nothing changes, from the side the silhouette is crisp.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.spatial import cKDTree
+from scipy.spatial.transform import Rotation
 
 from lucid_avatars.gaussian_ply import SH_C0, read_ply, write_ply
 from lucid_avatars.head_swap import _smplx_rest, nearest_vertex_skin
@@ -48,6 +55,9 @@ def main(argv=None) -> None:
     p.add_argument("--hand-ratio", type=float, default=3.0)
     p.add_argument("--speck", type=float, default=0.22, help="colour distance from the neighbours' median that counts")
     p.add_argument("--mute", type=float, default=1.0, help="share of guessed colour the torso's clothes keep (1 = all)")
+    p.add_argument("--deflate", type=float, default=1.0, help="share of clothing thickness beyond 1 cm each Gaussian keeps (1 = all)")
+    p.add_argument("--deflate-legs", type=float, default=None, help="the same for the legs (default: --deflate); a jacket hem skinned to the hips sits there")
+    p.add_argument("--flatten", type=float, default=1.0, help="share of thickness across the surface each Gaussian keeps (1 = all)")
     a = p.parse_args(argv)
 
     root = a.bundle
@@ -110,6 +120,17 @@ def main(argv=None) -> None:
     else:
         logo = arms & False
 
+    # 2b'. the back of a jacket is one cloth too: light smears below the collar on the back (the rest pose faces +Z)
+    # take the jacket's colour; the shirt collar itself, at the neck, stays
+    TORSO_J = [J["spine1"], J["spine2"], J["spine3"], J["left_collar"], J["right_collar"]]
+    back = np.isin(dom, TORSO_J) & (g.xyz[:, 2] < joints[J["spine3"], 2] - 0.02) & (g.xyz[:, 1] < joints[J["neck"], 1] - 0.05) & ~hands
+    smear = back & False
+    if back.sum() > 64:
+        lum = out @ np.array([0.299, 0.587, 0.114])
+        dark = back & (lum < np.percentile(lum[back], 50))
+        smear = back & (lum > np.percentile(lum[back], 50) + 0.15)
+        out[smear] = np.median(out[dark], axis=0)
+
     # 2c. trousers: a light blob on a thigh or the side of the hips takes the cloth colour (the shirt runs down the middle)
     LEGS = [J["left_hip"], J["right_hip"], J["left_knee"], J["right_knee"]]
     legs = (np.isin(dom, LEGS) | ((dom == J["pelvis"]) & (np.abs(g.xyz[:, 0]) > 0.07))) & ~hands
@@ -131,10 +152,47 @@ def main(argv=None) -> None:
     grey = (out[torso] @ np.array([0.299, 0.587, 0.114]))[:, None]
     out[torso] = grey + a.mute * (out[torso] - grey)
 
-    write_ply(ply, replace(g, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale))
+    # 5. slimmer: the clothing layer pulled toward the body beyond its first centimetre, each Gaussian toward its own
+    # part (a jacket hem toward the hips, never onto the thigh in front of it)
+    xyz = g.xyz.copy()
+    slim = ~hands & ~head
+    if a.deflate < 1 and slim.any():
+        TORSO = [J[k] for k in ("pelvis", "spine1", "spine2", "spine3", "neck", "left_collar", "right_collar")]
+        ARMS = [J[k] for k in ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow")]
+        LEGS = [J[k] for k in ("left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle", "left_foot", "right_foot")]
+        vpart = np.argmax(np.asarray(lbs), 1)
+        legs_f = a.deflate if a.deflate_legs is None else a.deflate_legs
+        for part, f in ((TORSO, a.deflate), (ARMS, a.deflate), (LEGS, legs_f)):
+            mine = slim & np.isin(dom, part)
+            vs = verts[np.isin(vpart, part)]
+            if f >= 1 or not mine.any() or len(vs) < 16:
+                continue
+            off, near_v = cKDTree(vs).query(xyz[mine])
+            keep = np.where(off > 0.01, 0.01 + f * (off - 0.01), off)
+            xyz[mine] = vs[near_v] + (xyz[mine] - vs[near_v]) * (keep / np.maximum(off, 1e-9))[:, None]
+
+    # 6. thin surfaces: each Gaussian squashed along its local surface normal (a sticker on the cloth, not a blob)
+    rotation = g.rotation.copy()
+    flat = ~hands & ~hair
+    if a.flatten < 1 and flat.any():
+        _, near = cKDTree(xyz).query(xyz[flat], k=17)
+        nb = xyz[near] - xyz[near].mean(1, keepdims=True)
+        normal = np.linalg.eigh(np.einsum("nki,nkj->nij", nb, nb))[1][:, :, 0]  # least spread: across the surface
+        quat = rotation[flat] / np.linalg.norm(rotation[flat], axis=1, keepdims=True)
+        R = Rotation.from_quat(quat[:, [1, 2, 3, 0]]).as_matrix()
+        cov = R @ (np.exp(2 * scale[flat])[:, :, None] * np.transpose(R, (0, 2, 1)))
+        squash = np.eye(3) - (1 - a.flatten) * normal[:, :, None] * normal[:, None, :]
+        var, axes = np.linalg.eigh(squash @ cov @ squash)
+        axes[np.linalg.det(axes) < 0, :, 0] *= -1  # a proper rotation
+        rotation[flat] = Rotation.from_matrix(axes).as_quat()[:, [3, 0, 1, 2]]
+        scale[flat] = 0.5 * np.log(np.maximum(var, 0.0008**2))
+
+    write_ply(ply, replace(g, xyz=xyz, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale, rotation=rotation))
     write_skin_bin(skin, idx, q)
     report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()),
-              "trouserBlobs": int(blob.sum()), "hair": int(hair.sum()), "mute": a.mute, "of": len(g)}
+              "trouserBlobs": int(blob.sum()), "backSmears": int(smear.sum()), "hair": int(hair.sum()), "mute": a.mute,
+              "deflated": int(slim.sum()) if a.deflate < 1 else 0, "deflate": a.deflate,
+              "flattened": int(flat.sum()) if a.flatten < 1 else 0, "flatten": a.flatten, "of": len(g)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
 
