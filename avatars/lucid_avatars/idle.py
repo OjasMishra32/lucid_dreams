@@ -34,7 +34,7 @@ ANKLE_ABOVE_FLOOR = 0.08 # SMPL-X ankle joints are about 8 cm above the soles
 ELBOW_ON_TABLE = 0.045   # elbow joint above the table top when the forearm rests on it
 WRIST_ON_TABLE = 0.03
 HANDS_APART = 0.12       # each wrist this far from the middle
-HANDS_FROM_BOARD = 0.04  # wrists rest this far short of the board's frame
+HANDS_FROM_BOARD = 0.03  # fingertips rest this far short of the board's frame
 KNEES_APART = 0.12       # radians each thigh turns out
 MIN_SEAT_Y = 0.36        # how far the seat may come down for short arms
 MAX_LEAN = 0.5           # radians: leaning in over the board, not hunched on it
@@ -176,7 +176,8 @@ def seated_rest_pose(rest, seat_y: float = SEAT_Y, table_y: float = TABLE_Y, boa
     rest = np.asarray(rest, dtype=np.float64)
     facing = yaw_quat(math.pi)  # SMPL-X rest faces +Z; the person faces -Z
     hips = (rest[J["left_hip"]] + rest[J["right_hip"]]) / 2
-    forward = board_z - BOARD_HALF - HANDS_FROM_BOARD
+    hand = max(np.linalg.norm(rest[J[f"{s}_middle3"]] - rest[J[f"{s}_wrist"]]) for s in ("left", "right")) + 0.02
+    forward = board_z - BOARD_HALF - HANDS_FROM_BOARD - hand  # fingertips, not wrists, stop short of the board
     wrists = {side: body_point(facing, x, table_y + WRIST_ON_TABLE, forward)
               for side, x in (("left", HANDS_APART), ("right", -HANDS_APART))}
     elbow_y = table_y + ELBOW_ON_TABLE
@@ -208,7 +209,7 @@ def seated_rest_pose(rest, seat_y: float = SEAT_Y, table_y: float = TABLE_Y, boa
     # The highest seat (from seat_y down) and then the least lean that let both elbows down onto the table. Leaning
     # too far folds the arms up again, so scan up from upright, then refine.
     grid = np.linspace(0.0, MAX_LEAN, 11)
-    for seat in np.arange(seat_y, MIN_SEAT_Y - 1e-9, -0.01):
+    for seat in np.arange(seat_y, min(seat_y, MIN_SEAT_Y) - 1e-9, -0.01):  # always tries seat_y itself
         leaned = sit(float(seat))
         first = next((i for i, a in enumerate(grid) if elbows_reach(leaned, a)), None)
         if first is not None:

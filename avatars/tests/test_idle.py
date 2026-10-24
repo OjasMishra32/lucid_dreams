@@ -4,6 +4,7 @@ from smplx_rest import smplx_like_rest
 
 from lucid_avatars.idle import (
     ANKLE_ABOVE_FLOOR,
+    BOARD_HALF,
     BOARD_Z,
     ELBOW_ON_TABLE,
     HIP_ABOVE_SEAT,
@@ -119,7 +120,8 @@ def test_seated_idle_rests_forearms_on_the_table(seated):
         np.testing.assert_allclose(wrist[:, 1], TABLE_Y + WRIST_ON_TABLE, atol=1e-3)
         assert np.ptp(wrist, axis=0).max() < 1e-3          # hands stay put while the chest breathes
         assert np.all(wrist[:, 2] < elbow[:, 2] - 0.05)    # forearms point at the board
-        assert np.all(wrist[:, 2] > -BOARD_Z + 0.2)        # but the hands stay off the board (0.4 m + frame)
+        for finger in ("index3", "middle3", "ring3", "pinky3", "thumb3"):  # fingertips short of the board's frame
+            assert np.all(pos[:, J[f"{side}_{finger}"], 2] > -(BOARD_Z - BOARD_HALF))
     assert np.all(pos[:, J["left_wrist"], 0] < pos[:, J["right_wrist"], 0])  # left hand on the viewer's right
 
 
@@ -154,3 +156,8 @@ def test_seated_keeps_the_chair_height_when_the_arms_reach():
     s = seated_rest_pose(rest, SEAT_Y, TABLE_Y)
     assert s.seat_y == pytest.approx(SEAT_Y)
     assert 0 <= s.lean <= MAX_LEAN
+
+
+def test_seated_takes_a_seat_lower_than_the_minimum():
+    s = seated_rest_pose(smplx_like_rest(), seat_y=0.30, table_y=TABLE_Y)
+    assert s.seat_y == pytest.approx(0.30) and np.isfinite(s.pose).all()

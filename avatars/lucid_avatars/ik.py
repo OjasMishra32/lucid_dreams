@@ -13,7 +13,7 @@ import math
 
 import numpy as np
 
-from .rotations import matrix_to_quat, quat_to_aa, quat_to_matrix
+from .rotations import aa_to_quat, matrix_to_quat, quat_to_aa, quat_to_matrix
 from .skinning import skin_matrices
 from .smplx_layout import J
 
@@ -36,9 +36,13 @@ def _unit(v) -> np.ndarray:
 
 
 def frame(d, n) -> np.ndarray:
-    """Rotation whose columns are d, n made orthogonal to d, and their cross product."""
+    """Rotation whose columns are d, n made orthogonal to d, and their cross product. If n is along d (a hand pointing
+    straight down with the palm asked to face down), the hand's back faces forward and its palm toward the body."""
     e1 = _unit(d)
-    e2 = _unit(np.asarray(n, dtype=np.float64) - np.dot(n, e1) * e1)
+    e2 = np.asarray(n, dtype=np.float64) - np.dot(n, e1) * e1
+    if np.linalg.norm(e2) < 1e-6:
+        e2 = np.cross(e1, [1.0, 0, 0]) if abs(e1[0]) < 0.9 else np.cross(e1, [0, 0, 1.0])
+    e2 = _unit(e2)
     return np.stack([e1, e2, np.cross(e1, e2)], axis=1)
 
 
@@ -135,15 +139,16 @@ def lean(pose, angle: float) -> np.ndarray:
 
 
 def look_at(rest, root_q, root_t, pose, target, neck_share: float = 0.4) -> np.ndarray:
-    """pose with neck and head turned (no roll) so the face points at target; the neck takes neck_share of it."""
+    """pose with neck and head turned (yaw, then nod; no roll) so the face points at target; the neck takes
+    neck_share of the turn and the head the rest."""
     pose = np.array(pose, dtype=np.float64)
     pose[J["neck"]] = pose[J["head"]] = 0
     for _ in range(4):  # turning the neck moves the head a little, so re-aim from where it ends up
         pos, R = world_joints(rest, root_q, root_t, pose)
         d = _unit(R[J["spine3"]].T @ (np.asarray(target, dtype=np.float64) - pos[J["head"]]))
-        axis = np.cross(_REST_FORWARD, d)
-        s = np.linalg.norm(axis)
-        total = axis / s * math.atan2(s, d @ _REST_FORWARD) if s > 1e-12 else np.zeros(3)
-        pose[J["neck"]] = neck_share * total
-        pose[J["head"]] = (1 - neck_share) * total
+        yaw, nod = math.atan2(d[0], d[2]), math.atan2(-d[1], math.hypot(d[0], d[2]))
+        turns = [quat_to_matrix(aa_to_quat([0, k * yaw, 0])) @ quat_to_matrix(aa_to_quat([k * nod, 0, 0]))
+                 for k in (neck_share, 1.0)]
+        pose[J["neck"]] = to_aa(turns[0])
+        pose[J["head"]] = to_aa(turns[0].T @ turns[1])
     return pose
