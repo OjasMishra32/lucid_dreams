@@ -830,7 +830,7 @@ function proxyGlb(person, camF) {
       zN++;
     }
   zMean /= zN;
-  const [nu, nv] = [40, 80];
+  const [nu, nv] = [160, 320]; // fine enough for P8 at the seat (stream D: 0.045 deg vs 0.058 at 40 x 80); (nu + 1)(nv + 1) stays under Uint16
   const pos = new Float32Array((nu + 1) * (nv + 1) * 3);
   for (let j = 0; j <= nv; j++)
     for (let i = 0; i <= nu; i++) {
