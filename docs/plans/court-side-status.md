@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 8:30 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
+Updated Sat 8:37 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60) at 6:15. Kept
@@ -13,6 +13,13 @@ private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
+15. **Court Side's tests outside `src/` (your lane):** `apps/webxr/scripts/court/` (run with
+    `node --experimental-transform-types --test`), because `tsc` includes `src/` and the repo has no test runner or
+    Node types; putting them in `src/court/` would break `npm run build`. Nothing else outside `src/court/` changes
+    except the one route line in `src/main.ts`. OK?
+14. **GPU, one addition to 9:** each main player's freeze frame trained at three caps up front (300k, 250k, 200k)
+    from the same views, so the headset can drop a rung on the night without a re-train: 4 B200 reconstructions
+    per player instead of 1 (freeze frame only, minutes each). OK?
 12. **The demo floor (Ojasva or Ian, for the venue):** Court Side needs about **4.5 x 5.5 m** of clear floor with
     the Quest boundary set to it (a chair centred on a short side, the walk ring around the pair). In 3.5 x 3.5 m it
     still works, with three fade-jump viewing spots instead of a full ring. Which floor can we get at Newell / Reitz?
@@ -68,10 +75,11 @@ private, outside the repo.
 
 ## Now
 
-- Break-it reviews of the plan in: experience (19 findings), runtime (18), pipeline and Grok/Antigravity running.
-  Real findings are being folded in; then one independent review; then the build on branch `court-side` (~9:15).
-- Three hand-off directions prototyped in parallel ("Same Pixels", "House Lights", "Depth Grows"); pick by ~9:00.
-- Calibration of the main angle, SAM 2.1 masks of both players (Vishal's PC), and the freeze-frame choice running.
+- Every break-it finding is folded into the plan (experience, runtime, pipeline, Antigravity: 13 repeats, 5 new,
+  none rejected; Grok timed out and re-runs on the new revision). Next: one independent review, then the build.
+- The freeze is the frame of Gobert's closeout as Luka gathers (the last sharp frame with both players head to toe);
+  the release itself is tested in parallel from the second low angle. Camera calibration, SAM 2.1 masks (PC) and
+  the three hand-off prototypes are finishing.
 
 ## Verdict so far
 
@@ -95,7 +103,6 @@ Biggest risks: the video-to-3D hand-off matching to the pixel (calibration), Luk
 
 ## Blocked on
 
-- Vishal's PC (Tailscale on the Mac is logged out; only Vishal can log in): masks moved to the Mac meanwhile.
 - The Quest number (ask 7) for the final splat budget; Ojasva's yes on 8 before the build ships to main.
 
 ## Decisions
