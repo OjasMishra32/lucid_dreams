@@ -57,6 +57,7 @@ def main(argv=None) -> None:
     p.add_argument("--mute", type=float, default=1.0, help="share of guessed colour the torso's clothes keep (1 = all)")
     p.add_argument("--deflate", type=float, default=1.0, help="share of clothing thickness beyond 1 cm each Gaussian keeps (1 = all)")
     p.add_argument("--deflate-legs", type=float, default=None, help="the same for the legs (default: --deflate); a jacket hem skinned to the hips sits there")
+    p.add_argument("--body-only", action="store_true", help="leave the head as it is (a sharp head from a head model: UIKA, LAM)")
     p.add_argument("--flatten", type=float, default=1.0, help="share of thickness across the surface each Gaussian keeps (1 = all)")
     a = p.parse_args(argv)
 
@@ -145,6 +146,8 @@ def main(argv=None) -> None:
     # 3. hair: halfway to the neighbours
     eyes_y = (joints[J["left_eye"], 1] + joints[J["right_eye"], 1]) / 2
     hair = head & (g.xyz[:, 1] > eyes_y + 0.01)
+    if a.body_only:
+        hair &= False
     out[hair] = 0.5 * out[hair] + 0.5 * med[hair]
 
     # 4. guessed colour on the torso's clothes, muted (skin is on the head, neck and hands, which keep theirs)
@@ -173,7 +176,7 @@ def main(argv=None) -> None:
 
     # 6. thin surfaces: each Gaussian squashed along its local surface normal (a sticker on the cloth, not a blob)
     rotation = g.rotation.copy()
-    flat = ~hands & ~hair
+    flat = ~hands & ~(head if a.body_only else hair)
     if a.flatten < 1 and flat.any():
         _, near = cKDTree(xyz).query(xyz[flat], k=17)
         nb = xyz[near] - xyz[near].mean(1, keepdims=True)
