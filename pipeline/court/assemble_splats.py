@@ -23,6 +23,7 @@ cv2.setNumThreads(2)  # a shared Mac
 from assemble_geom import Cam, Similarity, contact_points, matrix_to_quat  # noqa: E402
 
 C0 = 0.28209479177387814
+C1 = 0.4886025119029199
 BLUE = np.array([0.0, 0.44, 0.89])  # the export's tint for what no camera saw (lucid/export.py `tinted`)
 SPZ_MAGIC = 0x5053474E
 SPZ_COLOR_SCALE = 0.15
@@ -462,15 +463,27 @@ def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, bu
     return 1 - np.exp(logT).reshape(H, W)
 
 
-def render(s: Splats, cam: Cam, max_r: int = 64, budget: int = 4_000_000, contrib: bool = False):
-    """A plain CPU splat render through `cam` (its own size): each Gaussian's EWA footprint, base colour (SH degree
-    0), composited front to back by depth as 3DGS does (alpha capped at 0.99, under 1/255 skipped). Returns (rgb over
-    black, alpha), H x W, and with `contrib` each Gaussian's share of the image too (the sum over its pixels of alpha
-    x footprint x the transmittance in front of it). For measuring, not for looks: no view-dependent colour."""
+def view_rgb(s: Splats, eye) -> np.ndarray:
+    """Each Gaussian's colour seen from `eye` as 3DGS evaluates it: base colour plus the degree-1 band (channel-major
+    f_rest, weighing (-y, z, -x) of the unit direction eye -> Gaussian), clipped to 0-1; base colour alone for SH0."""
+    rgb = 0.5 + C0 * s.dc.astype(np.float64)
+    if s.rest.shape[1] >= 9:
+        r = s.rest.astype(np.float64).reshape(len(s), 3, -1)
+        d = s.pos.astype(np.float64) - np.asarray(eye, float)
+        d /= np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-12)
+        rgb += C1 * (-d[:, 1:2] * r[:, :, 0] + d[:, 2:3] * r[:, :, 1] - d[:, 0:1] * r[:, :, 2])
+    return np.clip(rgb, 0, 1)
+
+
+def render(s: Splats, cam: Cam, max_r: int = 64, budget: int = 4_000_000, contrib: bool = False, view: bool = True):
+    """A plain CPU splat render through `cam` (its own size): each Gaussian's EWA footprint and its colour seen from
+    the camera (view_rgb: SH degrees 0 and 1), composited front to back by depth as 3DGS does (alpha capped at 0.99,
+    under 1/255 skipped). Returns (rgb over black, alpha), H x W, and with `contrib` each Gaussian's share of the
+    image too (the sum over its pixels of alpha x footprint x the transmittance in front of it). For measuring."""
     e = ewa(s, cam)
     rank = np.empty(len(e["z"]), np.int64)
     rank[np.argsort(e["z"], kind="stable")] = np.arange(len(e["z"]))
-    rgb = s.rgb[e["i"]].astype(np.float64)
+    rgb = (view_rgb(s, cam.C) if view else s.rgb.astype(np.float64))[e["i"]]  # view=False: base colours alone
     W, H = cam.w, cam.h
     box = (0.0, 0.0, float(W), float(H))  # texel i is pixel i
     gs, ps, als = [], [], []
