@@ -26,7 +26,8 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
    a bilateral colour filter over each cloth Gaussian's 16 nearest cloth neighbours (2 cm in space, 0.08 in colour):
    one fabric with soft shading, while strong edges (lapels, the collar, shirt and tie) stay. --even-cloth F evens
    the large-scale brightness of each part's main fabric (the jacket, the trousers) by F; --legs-lum L darkens the
-   trousers to luminance L (dark trousers where LHM++ guessed light, mottled jeans).
+   trousers to luminance L (dark trousers where LHM++ guessed light, mottled jeans), and --legs-solid A makes them at
+   least A opaque (LHM++ leaves hips half see-through where hands sat in pockets).
 """
 
 from __future__ import annotations
@@ -108,6 +109,7 @@ def main(argv=None) -> None:
     p.add_argument("--cloth-sigma-c", type=float, default=0.08, help="its reach in colour (0-1 RGB)")
     p.add_argument("--even-cloth", type=float, default=0.0, help="share of the jacket's and trousers' large-scale brightness patches evened out")
     p.add_argument("--legs-lum", type=float, default=None, help="the trousers' luminance (dark trousers for light, mottled jeans)")
+    p.add_argument("--legs-solid", type=float, default=None, help="with --legs-lum: the trousers' least opacity (no see-through hips)")
     a = p.parse_args(argv)
 
     root = a.bundle
@@ -206,6 +208,11 @@ def main(argv=None) -> None:
         tone = tone * (a.legs_lum / max(float(tone @ LUM), 1e-3))
         shade = np.clip(1 + 0.3 * (lum[toned] / max(float(np.median(lum[toned])), 1e-3) - 1), 0.6, 1.4)
         out[toned] = np.clip(tone[None] * shade[:, None], 0, 1)
+    opacity = g.opacity.copy()
+    solid = toned & (1 / (1 + np.exp(-opacity)) > 0.02) if a.legs_solid else toned & False
+    if solid.any():  # LHM++ leaves the hips half see-through where hands sat in pockets
+        floor = math.log(a.legs_solid / (1 - a.legs_solid))
+        opacity[solid] = np.maximum(opacity[solid], floor)
 
     # 2e. one fabric: the jacket's and trousers' large-scale light and dark patches evened, then the edge-preserving
     # filter over every cloth Gaussian (not the head, not the hands)
@@ -264,14 +271,15 @@ def main(argv=None) -> None:
         rotation[flat] = Rotation.from_matrix(axes).as_quat()[:, [3, 0, 1, 2]]
         scale[flat] = 0.5 * np.log(np.maximum(var, 0.0008**2))
 
-    write_ply(ply, replace(g, xyz=xyz, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale, rotation=rotation))
+    write_ply(ply, replace(g, xyz=xyz, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale, rotation=rotation,
+                           opacity=opacity))
     write_skin_bin(skin, idx, q)
     report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()),
               "trouserBlobs": int(blob.sum()), "backSmears": int(smear.sum()), "hair": int(hair.sum()), "mute": a.mute,
               "deflated": int(slim.sum()) if a.deflate < 1 else 0, "deflate": a.deflate,
               "flattened": int(flat.sum()) if a.flatten < 1 else 0, "flatten": a.flatten,
               "smoothCloth": a.smooth_cloth, "clothSmoothed": int(cloth.sum()) if a.smooth_cloth > 0 else 0,
-              "evenCloth": a.even_cloth, "evened": evened, "legsLum": a.legs_lum, "legsToned": int(toned.sum()),
+              "evenCloth": a.even_cloth, "evened": evened, "legsLum": a.legs_lum, "legsToned": int(toned.sum()), "legsSolid": int(solid.sum()),
               "of": len(g)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
