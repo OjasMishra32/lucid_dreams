@@ -36,7 +36,7 @@
 .nav.nav-light.nav-over-dark .nav-link { color: rgba(255, 255, 255, 0.78); }
 
 /* ---------------------------------------------------------------- the opening */
-.story { position: relative; height: 640vh; margin-top: calc(-1 * var(--nav-h)); }
+.story { position: relative; height: 420vh; margin-top: calc(-1 * var(--nav-h)); }
 .story-stage {
   --dark: 0;
   position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden;
@@ -78,35 +78,8 @@
   .story-beat, .story-hero { transition: opacity 0.2s; }
 }
 
-/* ---------------------------------------------------------------- the opening line */
-.intro { background: var(--paper); color: var(--ink); padding: 180px var(--gutter) 160px; text-align: center; }
-.intro p { font-size: 40px; line-height: 1.1; letter-spacing: 0; font-weight: 600; margin: 0 auto; max-width: 840px; }
-.intro p + p { margin-top: 1em; }
-.words span { color: color-mix(in srgb, var(--ink) calc(clamp(0, calc((var(--p, 1) * 2.6 - 0.45 - var(--i)) * 9), 1) * 100%), #d2d2d7); }
-
 /* ---------------------------------------------------------------- the scenes */
 .scenes { background: var(--paper); }
-.group { color: var(--ink); }
-.banner { position: relative; height: min(92vh, 920px); min-height: 560px; background: #000; overflow: hidden; }
-.banner-media { position: absolute; inset: 0; transform: scale(calc(1.14 - 0.14 * clamp(0, calc(var(--p, 0.5) * 2.2), 1))); transform-origin: 50% 100%; }
-.banner-media video, .banner-media img { position: absolute; left: 50%; bottom: 0; height: 80%; width: auto; max-width: none; transform: translateX(-50%); }
-/* the render's own frame melts into the page's black: black gradients over it (a CSS mask on a <video> leaves Safari
-   drawing nothing at all) */
-.banner-media::after {
-  content: ""; position: absolute; left: 50%; bottom: 0; height: 80%; aspect-ratio: 9 / 16; transform: translateX(-50%); pointer-events: none;
-  background: linear-gradient(to right, #000, transparent 14%, transparent 86%, #000), linear-gradient(to bottom, #000, transparent 12%);
-}
-.group-play .banner-media::after { aspect-ratio: 6 / 5; }
-.banner-copy {
-  position: absolute; left: 0; right: 0; top: 72px; text-align: center; color: #f5f5f7; padding: 0 22px;
-  opacity: clamp(0, calc(var(--p, 0.5) * 5 - 0.5), 1); transform: translateY(calc((1 - clamp(0, calc(var(--p, 0.5) * 3), 1)) * 48px));
-}
-.banner-copy h2 { font-size: 64px; line-height: 1.06; letter-spacing: -0.009em; margin: 0; }
-.group-head { text-align: center; padding: 140px 22px 0; }
-.group-head h2 { font-size: 56px; line-height: 1.07; letter-spacing: -0.005em; margin: 0; }
-.group-body { padding: 72px 0 140px; }
-.group-intro { font-size: 21px; line-height: 1.38; font-weight: 600; color: var(--ink-2); margin: 0 var(--gutter) 56px; max-width: 640px; }
-
 .gallery { position: relative; }
 .g-row {
   display: flex; gap: 20px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: var(--gutter);
@@ -136,10 +109,9 @@
 .single-copy h3 { font-size: 40px; line-height: 1.1; margin: 0; }
 .single-said { font-size: 21px; font-weight: 600; color: var(--ink); margin: 14px 0 0; }
 .single-copy p { font-size: 17px; line-height: 1.47; color: var(--ink-2); max-width: 420px; }
-.group-relive .group-body, .group-talk .group-body { padding-top: 56px; }
 
 /* ---------------------------------------------------------------- how it works: one video becomes 48 */
-.pipe-story { position: relative; height: 340vh; background: var(--paper-2); color: var(--ink); }
+.pipe-story { position: relative; height: 240vh; background: var(--paper-2); color: var(--ink); }
 .pipe-sticky { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }
 .pipe-sticky .section-head { position: absolute; left: 0; right: 0; top: calc(var(--nav-h) + 8vh); padding: 0 22px; }
 .pipe-stage {
@@ -175,7 +147,6 @@
 .how-foot { text-align: center; margin: 64px 0 0; }
 
 /* ---------------------------------------------------------------- measured */
-.truth-section { background: #000; color: #f5f5f7; padding: 140px var(--gutter) 130px; }
 .truth { position: relative; width: min(400px, 86vw); aspect-ratio: 920 / 1536; margin: 56px auto 0; border-radius: 28px; overflow: hidden; cursor: ew-resize; user-select: none; touch-action: pan-y; }
 .truth img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .truth-render { clip-path: inset(0 0 0 calc(var(--x) * 100%)); }
@@ -194,65 +165,36 @@
 .measured td { color: #d2d2d7; }
 .fine { font-size: 12px; line-height: 1.5; color: #86868b; margin: 22px 0 0; max-width: 760px; }
 
-/* ---------------------------------------------------------------- built on */
-.built { background: var(--paper); color: var(--ink); padding: 140px var(--gutter) 130px; }
-.built-grid { list-style: none; margin: 72px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 56px 40px; }
-.built-grid h3 { font-size: 24px; line-height: 1.17; margin: 0; }
-.built-when { font-size: 14px; color: #86868b; margin: 6px 0 12px; }
-.built-grid p:last-child { font-size: 17px; line-height: 1.47; color: var(--ink-2); margin: 0; }
-
-/* ---------------------------------------------------------------- the close */
-.closer-x { background: var(--paper-2); color: var(--ink); text-align: center; padding: 160px 22px 170px; }
-.closer-x h2 { font-size: 64px; line-height: 1.06; letter-spacing: -0.009em; margin: 0 auto; max-width: 780px; }
-.closer-glow {
-  background: linear-gradient(100deg, var(--ink) 0%, var(--ink) 38%, #0071e3 50%, #6e3fd8 56%, var(--ink) 68%, var(--ink) 100%);
-  background-size: 320% 100%; background-position: calc(100% - var(--p, 1) * 130%) 0;
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-}
-.closer-buttons { display: flex; justify-content: center; gap: 14px; margin-top: 36px; flex-wrap: wrap; }
-
 /* ---------------------------------------------------------------- smaller screens */
 @media (max-width: 1068px) {
-  .section-head, .story-beat h2, .group-head h2 { font-size: 48px; }
-  .banner-copy h2, .closer-x h2 { font-size: 56px; }
-  .intro p { font-size: 32px; }
-  .built-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .section-head, .story-beat h2 { font-size: 48px; }
 }
 @media (max-width: 734px) {
-  .section-head, .story-beat h2, .group-head h2, .banner-copy h2 { font-size: 32px; line-height: 1.125; }
-  .closer-x h2 { font-size: 40px; }
+  .section-head, .story-beat h2 { font-size: 32px; line-height: 1.125; }
   .eyebrow-x { font-size: 17px; }
-  .story-sub, .section-sub, .group-intro { font-size: 17px; }
+  .story-sub, .section-sub, .scenes-intro { font-size: 17px; }
   .story-hero { flex-direction: column; align-items: flex-start; bottom: 54px; }
   .story-wordmark { font-size: 40px; }
   .story-tagline { font-size: 19px; }
-  .intro { padding: 110px 22px 100px; }
-  .intro p { font-size: 24px; line-height: 1.17; }
-  .banner { height: 78vh; min-height: 460px; }
-  .banner-copy { top: 48px; }
-  .group-body { padding: 48px 0 96px; }
-  .group-intro { margin-bottom: 36px; }
   .g-card { width: 78vw; }
   .g-world { width: 86vw; }
   .single { grid-template-columns: 1fr; gap: 28px; }
   .single-copy h3 { font-size: 28px; }
-  .how, .truth-section, .built { padding: 96px 22px 90px; }
+  .how { padding: 96px 22px 90px; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 40px; }
   .stats b { font-size: 40px; }
   .measured { font-size: 14px; }
   .measured thead th:nth-child(5), .measured tbody td:nth-child(5) { display: none; }
-  .built-grid { grid-template-columns: 1fr; gap: 40px; margin-top: 48px; }
-  .closer-x { padding: 110px 22px 120px; }
 }
 
 /* ---------------------------------------------------------------- things rising in as they arrive */
 .motion .reveal:not(.in) { opacity: 0; transform: translateY(36px); }
 .reveal { transition: opacity 0.9s cubic-bezier(0.25, 0.1, 0.25, 1), transform 1.1s cubic-bezier(0.25, 0.1, 0.25, 1); }
-.stats li:nth-child(2), .built-grid li:nth-child(3n + 2) { transition-delay: 0.08s; }
-.stats li:nth-child(3), .built-grid li:nth-child(3n) { transition-delay: 0.16s; }
+.stats li:nth-child(2) { transition-delay: 0.08s; }
+.stats li:nth-child(3) { transition-delay: 0.16s; }
 .stats li:nth-child(4) { transition-delay: 0.24s; }
 @media (max-width: 734px) {
-  .pipe-story { height: 300vh; }
+  .pipe-story { height: 220vh; }
   .pipe-stage { --W: 94vw; top: 50%; }
   .pipe-input { height: 46vh; transform: translate(calc(-50% - var(--q) * 30vw), -50%) scale(calc(1 - 0.6 * var(--q))); }
   .pipe-cap { font-size: 17px; bottom: 7vh; }
@@ -260,28 +202,8 @@
   .stats b { font-size: 40px; }
 }
 
-/* ---------------------------------------------------------------- the cast: everyone in one line, live in 3D */
-.cast { position: relative; height: calc((var(--n, 7) * 55 + 130) * 1vh); background: #000; color: #f5f5f7; }
-.cast-stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }
-.cast-host { position: absolute; inset: 0; }
-.cast-host .cast-gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.cast-head { position: absolute; left: 0; right: 0; top: calc(var(--nav-h) + 8vh); text-align: center; padding: 0 22px; opacity: 0; transform: translateY(16px); transition: opacity 0.6s ease, transform 0.8s ease; }
-.cast-head.on { opacity: 1; transform: none; }
-.cast-head h2 { font-size: 56px; line-height: 1.07; letter-spacing: -0.005em; margin: 0; }
-.cast-sub { font-size: 21px; line-height: 1.38; color: #86868b; font-weight: 600; margin: 14px auto 0; max-width: 560px; }
-.cast-card {
-  position: absolute; left: var(--gutter); bottom: 9vh; max-width: 440px;
-  opacity: 0; transform: translateY(20px); transition: opacity 0.5s ease, transform 0.7s ease; pointer-events: none;
-}
-.cast-card.on { opacity: 1; transform: none; }
-.cast-count { font-size: 14px; color: #86868b; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
-.cast-card h3 { font-size: 48px; line-height: 1.08; letter-spacing: -0.003em; margin: 0; }
-.cast-said { font-size: 21px; font-weight: 600; margin: 12px 0 0; }
-.cast-what { font-size: 17px; line-height: 1.47; color: #a1a1a6; margin: 10px 0 0; }
-.cast-fallback { position: absolute; left: 0; right: 0; top: 50%; text-align: center; color: #86868b; }
-
 /* ---------------------------------------------------------------- real gameplay, one film at a time */
-.play-section { background: var(--paper-2); color: var(--ink); padding: 140px var(--gutter) 120px; text-align: center; }
+.play-section { background: var(--paper-2); color: var(--ink); padding: 120px var(--gutter) 100px; text-align: center; }
 .play-section .eyebrow-x { text-align: center; }
 .reel { max-width: 1120px; margin: 56px auto 0; }
 .reel-film { position: relative; aspect-ratio: 16 / 9; border-radius: 28px; overflow: hidden; background: #000; }
@@ -301,12 +223,6 @@
 .reel-track span { position: absolute; inset: 0; background: var(--ink); transform-origin: left; transform: scaleX(0); }
 
 @media (max-width: 734px) {
-  .cast-head h2 { font-size: 32px; line-height: 1.125; }
-  .cast-sub { font-size: 17px; }
-  .cast-card { left: 22px; right: 22px; bottom: 6vh; }
-  .cast-card h3 { font-size: 30px; }
-  .cast-said { font-size: 17px; }
-  .cast-what { font-size: 15px; }
   .play-section { padding: 96px 16px 80px; }
   .reel-film { border-radius: 18px; }
   .reel-caption { padding: 50px 18px 16px; }
@@ -331,3 +247,13 @@
 .make-x { background: #000; color: #f5f5f7; padding: 140px 22px 120px; border-top: 1px solid rgba(255, 255, 255, 0.1); text-align: center; }
 .make-x .section-sub { color: #a1a1a6; }
 .make-x-form { max-width: var(--page, 1080px); margin: 64px auto 0; text-align: left; }
+
+/* ---------------------------------------------------------------- the scenes: one gallery, a tab per kind */
+.scenes-x { color: var(--ink); padding: 120px 0 110px; text-align: center; }
+.tabs { display: inline-flex; gap: 4px; margin: 32px auto 0; padding: 4px; border-radius: 980px; background: rgba(0, 0, 0, 0.05); }
+.tabs button { font: inherit; font-size: 15px; padding: 8px 18px; border-radius: 980px; border: 0; background: none; color: var(--ink-2); cursor: pointer; transition: background 0.2s, color 0.2s; }
+.tabs button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08); }
+.scenes-intro { font-size: 19px; line-height: 1.4; color: var(--ink-2); margin: 22px var(--gutter) 44px; }
+.scenes-x .gallery, .scenes-x .single { text-align: left; }
+.credits-x { font-size: 13px; line-height: 1.5; color: #86868b; max-width: 720px; margin: 72px auto 0; }
+.credits-x a { color: #2997ff; }

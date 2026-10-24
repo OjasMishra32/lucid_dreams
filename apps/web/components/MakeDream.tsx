@@ -290,7 +290,7 @@ export default function MakeDream() {
               <path d="M22 28V16M17 21l5-5 5 5" />
             </svg>
             <h2>Drop a video, or photos of one person</h2>
-            <p>or click to choose. A few photos, close-ups of the face among them, make the most lifelike face.</p>
+            <p>or click to choose. For photos, add a couple of face close-ups.</p>
           </div>
           <input ref={input} type="file" accept="video/*,image/*" multiple hidden onChange={(e) => choose(e.target.files)} />
         </div>

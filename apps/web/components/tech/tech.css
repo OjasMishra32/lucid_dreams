@@ -31,7 +31,7 @@
 .tech .katex { color: var(--t-ink); }
 
 /* the opening */
-.t-hero { padding: 150px 0 120px; text-align: center; position: relative; }
+.t-hero { padding: 120px 0 90px; text-align: center; position: relative; }
 .t-hero::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(60% 50% at 50% 38%, rgba(41, 151, 255, 0.16), rgba(41, 151, 255, 0) 70%);
@@ -57,7 +57,7 @@
 /* a chapter: text beside its visual, or above it (t-wide) */
 .t-chapter {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 72px; align-items: center;
-  padding: 140px var(--t-gutter); border-top: 1px solid var(--t-line);
+  padding: 110px var(--t-gutter); border-top: 1px solid var(--t-line);
 }
 .t-chapter h2, .t-fill h2 { font-size: clamp(36px, 4.6vw, 56px); line-height: 1.07; letter-spacing: -0.02em; margin: 0 0 22px; }
 .t-chapter.t-wide { grid-template-columns: minmax(0, 1fr); gap: 48px; }
@@ -96,8 +96,8 @@
 .atlas-chips span { font-size: 13px; padding: 6px 12px; border-radius: 980px; color: var(--t-ink-3); background: rgba(255, 255, 255, 0.06); transition: all 0.35s; }
 .atlas-chips span.on { color: #000; background: var(--t-ink); }
 .atlas-wait { position: absolute; inset: 0; display: grid; place-content: center; font-size: 15px !important; }
-.atlas-steps { padding: 20vh 0; }
-.atlas-step { min-height: 90vh; display: flex; flex-direction: column; justify-content: center; opacity: 0.28; transition: opacity 0.5s; }
+.atlas-steps { padding: 14vh 0; }
+.atlas-step { min-height: 64vh; display: flex; flex-direction: column; justify-content: center; opacity: 0.28; transition: opacity 0.5s; }
 .atlas-step.on { opacity: 1; }
 .atlas-step h3 { font-size: clamp(32px, 3.8vw, 48px); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 18px; }
 
@@ -134,7 +134,7 @@
 
 /* the headset */
 .t-headset { border-top: 1px solid var(--t-line); }
-.hs-track { position: relative; height: 320vh; }
+.hs-track { position: relative; height: 230vh; }
 .hs-stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }
 .hs-stage::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
@@ -148,7 +148,7 @@
 .hs-cap p { font-size: 17px; }
 
 /* every Gaussian costs pixels */
-.t-fill { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 72px; align-items: start; padding: 140px var(--t-gutter); border-top: 1px solid var(--t-line); }
+.t-fill { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 72px; align-items: start; padding: 110px var(--t-gutter); border-top: 1px solid var(--t-line); }
 .fill { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 32px 72px; align-items: start; }
 .fill-out { display: grid; gap: 22px; }
 .fill-controls { display: grid; gap: 18px; }
@@ -193,3 +193,7 @@
 .t-fine { margin: 14px 0 0; line-height: 1.5 !important; }
 /* sections the nav scrolls to land under the bar */
 .tech [id], .home [id] { scroll-margin-top: calc(var(--nav-h, 48px) + 8px); }
+
+/* training: the text and table on one side, the real-vs-render slider on the other */
+.t-fit { align-items: start; }
+.t-fit .eq .katex { font-size: 1.05em; }

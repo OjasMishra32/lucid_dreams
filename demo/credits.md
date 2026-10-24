@@ -58,6 +58,7 @@ no implied endorsement, not redistributed as-is.
 | Studio | [Poly Haven: Monochrome Studio 02](https://polyhaven.com/a/monochrome_studio_02) | Grzegorz Wronkowski | CC0 1.0 |
 | Mountains | [Poly Haven: Golden Gate Hills](https://polyhaven.com/a/golden_gate_hills) | Dimitrios Savva, Jarod Guest | CC0 1.0 |
 | Chess set (WebXR) | [Poly Haven: Chess Set](https://polyhaven.com/a/chess_set) | Riley Queen | CC0 1.0 |
+| Meta Quest 3S model (website) | [Sketchfab: Quest 3S with controllers](https://sketchfab.com/3d-models/quest-3s-with-controllers-448519e4ef0b40619592000db3729aaa), trimmed to the headset (`apps/web/public/media/quest-3s.glb`) | OG_MATTER | CC BY 4.0 |
 | Basketball and hoop | Built in code at regulation size (`apps/webxr/src/props.ts`, `apps/quest/Assets/LucidDreams/Scripts/Props/`) | Lucid Dreams | MIT |
 
 Per-file details: [`apps/webxr/public/places/CREDITS.md`](../apps/webxr/public/places/CREDITS.md),

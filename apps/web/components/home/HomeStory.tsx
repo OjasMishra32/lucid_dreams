@@ -100,34 +100,34 @@ export default function HomeStory(p: HomeStoryProps) {
           </div>
           <div className="story-buttons">
             <a href="#scenes" className="pill pill-quiet">See the scenes</a>
-            <a href="#make" className="pill">Make a dream</a>
+            <a href="#make" className="pill">Make your own</a>
           </div>
         </div>
-        <p className="story-caption">Live 3D, rendered in your browser. Drag to turn her.</p>
+        <p className="story-caption">Live 3D in your browser. Drag to turn her.</p>
 
         <div className="story-beat beat-1">
           <p className="eyebrow-x">Live 3D</p>
-          <h2>A real person, rebuilt in 3D from one clip.</h2>
+          <h2>Rebuilt in 3D from one clip.</h2>
         </div>
         <div className="story-beat beat-2">
-          <p className="eyebrow-x">What she&rsquo;s made of</p>
+          <p className="eyebrow-x">Gaussians</p>
           <h2>{count ? `${count.toLocaleString("en-US")} Gaussians in this frame.` : "Hundreds of thousands of Gaussians."}</h2>
-          <p className="story-sub">Tiny translucent blobs of colour, each one placed by a GPU to match every view of her.</p>
+          <p className="story-sub">Small colored blobs, each fit on a GPU to match every view of her.</p>
         </div>
         <div className="story-beat beat-3">
           <p className="eyebrow-x">4DAnyone</p>
-          <h2>{p.views ?? 48} cameras, imagined.</h2>
-          <p className="story-sub">From one phone video, 4DAnyone films her from a dome of cameras that exist only in software. Every frame, every angle.</p>
+          <h2>{p.views ?? 48} generated cameras.</h2>
+          <p className="story-sub">4DAnyone turns one phone video into {p.views ?? 48} synced views.</p>
         </div>
         <div className="story-beat beat-4">
           <p className="eyebrow-x">Reality check</p>
-          <h2>See exactly what was imagined.</h2>
-          <p className="story-sub">{seen != null ? `The camera saw ${seen}% of her. ` : ""}Everything else turns blue, whenever you ask.</p>
+          <h2>Blue is what the AI filled in.</h2>
+          <p className="story-sub">{seen != null ? `The real camera saw ${seen}% of her.` : "Toggle it any time."}</p>
         </div>
         <div className="story-beat beat-5">
           <p className="eyebrow-x">Life size</p>
-          <h2>{height ? `${height.toFixed(2)} metres tall.` : "Real size."} On your floor.</h2>
-          <p className="story-sub">In Meta Quest 3S passthrough, with nothing but your hands.</p>
+          <h2>{height ? `${height.toFixed(2)} m tall,` : "Real size,"} on your floor.</h2>
+          <p className="story-sub">In a Quest 3S, hands only.</p>
         </div>
       </div>
     </section>

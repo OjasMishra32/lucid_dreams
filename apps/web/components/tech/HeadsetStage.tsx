@@ -3,27 +3,26 @@
 import { useEffect, useRef, useState } from "react";
 import HeadsetCanvas from "./Headset";
 
-// The headset chapter: the Quest 3S rendered live (lib/three/headset.ts) pinned while three captions pass, from the
-// device itself to passthrough to the two renders every frame needs.
+// The headset chapter: the real Quest 3S model rendered live (lib/three/headset.ts), pinned while three captions pass.
 
 const CAPS = [
   {
     from: 0,
     to: 0.32,
-    title: "Meta Quest 3S.",
-    text: "A standalone headset: a Snapdragon XR2 Gen 2, 8 GB of memory, and a 1832 × 1920 display for each eye behind Fresnel lenses, 96° across.",
+    title: "Meta Quest 3S",
+    text: "Snapdragon XR2 Gen 2, 8 GB RAM, 1832 × 1920 per eye, 96° field of view.",
   },
   {
     from: 0.32,
     to: 0.62,
-    title: "Your room, through its cameras.",
-    text: "The browser opens an immersive-ar WebXR session in a local-floor reference space: y = 0 is your real floor, every person stands life size on it, pinned by a spatial anchor, and your tracked hands (25 joints each) serve, shake hands and move pieces.",
+    title: "Passthrough",
+    text: "WebXR immersive-ar in a local-floor space, so y = 0 is your floor. People are pinned with spatial anchors. Hand tracking gives 25 joints per hand.",
   },
   {
     from: 0.62,
     to: 1.01,
-    title: "Two eyes, two renders.",
-    text: "Every frame is drawn twice, once from each eye, 63 mm apart, inside 13.9 ms at 72 Hz. Miss it and the compositor reprojects the last frame, and the person in front of you judders.",
+    title: "Two renders per frame",
+    text: "One per eye, 63 mm apart, inside 13.9 ms at 72 Hz. Miss it and the frame judders.",
   },
 ];
 

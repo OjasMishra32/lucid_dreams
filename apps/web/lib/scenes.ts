@@ -24,17 +24,17 @@ export interface SceneDef {
 }
 
 export const SCENES: SceneDef[] = [
-  { key: "dance", group: "learn", ids: ["dance-01"], title: "Studio dance", said: "Teach me this routine step by step.", what: "Each step slowed down, glowing targets for your hands, then your turn. Your own ghost dances beside her.", open: "dream=dance-01", credit: "Antoni Shkraba, Pexels" },
-  { key: "taichi", group: "learn", ids: ["taichi-01"], title: "Tai chi", said: "Teach me this sequence slowly.", what: "Follow along at half speed, scored against the clip's own 22 joints.", open: "dream=taichi-01", credit: "K / @kelly, Pexels" },
-  { key: "golf", group: "learn", ids: ["golf-01"], title: "Golf swing", said: "Slow down this swing and teach it to me.", what: "A 7-iron in your hands and his tempo against yours: backswing to downswing, three to one.", open: "dream=golf-01", credit: "Be The Observer, Pexels" },
-  { key: "guitar", group: "learn", ids: ["guitar-01"], title: "Guitar", said: "Teach me this strum pattern.", what: "A guitar at your waist, chords along the neck, a strum lane timed from his own audio.", open: "dream=guitar-01", credit: "Khanh Hoang Minh 2, Pexels" },
-  { key: "jumpshot", group: "learn", ids: ["lebron-shot"], title: "LeBron's jump shot", said: "Teach me this jump shot.", what: "The real ball in his hands, a regulation hoop where he aims. Pass to him and he shoots.", open: "dream=lebron-shot", label: "His likeness, from his footage. Not affiliated." },
-  { key: "chess-carlsen", group: "play", ids: ["magnus-carlsen-uika-360"], title: "Chess with Magnus", said: "Play chess with me.", what: "Across a walnut table on your floor. He shakes your hand, thinks, reaches, presses the clock.", open: "mode=chess&strength=carlsen", image: "/media/world-chess-magnus.jpg", label: "Stockfish at Carlsen's peak rating. Not affiliated." },
-  { key: "chess-fischer", group: "play", ids: ["bobby-fischer-uika"], title: "Chess with Bobby Fischer", said: "Play chess with me.", what: "1972's peak, at your table. He opens with his real repertoire and never says a word.", open: "mode=chess&strength=fischer", image: "/media/world-chess-bobby.jpg", label: "Stockfish at Fischer's peak rating. Not affiliated." },
-  { key: "tennis", group: "play", ids: ["roger-federer-uika"], title: "Tennis with Federer", said: "Play a set with me.", what: "He meets you at the net, shakes your hand, then serves flat, slice and kick on full-size grass.", open: "mode=tennis", image: "/media/world-tennis.jpg", label: "His likeness. AI opponent, not affiliated." },
-  { key: "replay", group: "relive", ids: ["jump-shot-hq"], title: "A jump shot, frozen", said: "Let me walk around it.", what: "The moment itself, life size on your floor. Freeze it at the top and walk all the way round.", open: "dream=jump-shot-hq", credit: "Pexels" },
-  { key: "grandma", group: "talk", ids: ["ian-grandma"], title: "Sitting with Grandma", said: "I just want to sit with her.", what: "Ian's grandmother, rebuilt from a family video, sitting with you. Speak to her and she answers in Vietnamese, in her own voice.", open: "dream=ian-grandma", label: "Shown with her family's permission. Every reply is labelled AI voice." },
-  { key: "vishal", group: "talk", ids: ["vishal-lhm", "vishal-head", "vishal"], title: "Talk with Vishal", said: "Stay and talk with me.", what: "He stands in your room and looks at you. Ask him anything; he answers in his own cloned voice.", open: "dream=vishal-lhm", label: "With his consent. Every reply is labelled AI voice." },
+  { key: "dance", group: "learn", ids: ["dance-01"], title: "Studio dance", said: "Teach me this routine.", what: "Targets for your hands and a score as you follow.", open: "dream=dance-01", credit: "Antoni Shkraba, Pexels" },
+  { key: "taichi", group: "learn", ids: ["taichi-01"], title: "Tai chi", said: "Teach me this slowly.", what: "Follow at half speed, scored on 22 joints.", open: "dream=taichi-01", credit: "K / @kelly, Pexels" },
+  { key: "golf", group: "learn", ids: ["golf-01"], title: "Golf swing", said: "Slow down this swing.", what: "Hold a 7-iron and match his 3:1 tempo.", open: "dream=golf-01", credit: "Be The Observer, Pexels" },
+  { key: "guitar", group: "learn", ids: ["guitar-01"], title: "Guitar", said: "Teach me this strum.", what: "A guitar at your waist and a strum lane timed to his audio.", open: "dream=guitar-01", credit: "Khanh Hoang Minh 2, Pexels" },
+  { key: "jumpshot", group: "learn", ids: ["lebron-shot"], title: "LeBron's jump shot", said: "Teach me this jump shot.", what: "Real ball, regulation hoop. Pass to him and he shoots.", open: "dream=lebron-shot", label: "His likeness, from his footage. Not affiliated." },
+  { key: "chess-carlsen", group: "play", ids: ["magnus-carlsen-uika-360"], title: "Chess with Magnus", said: "Play chess with me.", what: "Real-size table on your floor. He shakes your hand and moves his own pieces.", open: "mode=chess&strength=carlsen", image: "/media/world-chess-magnus.jpg", label: "Stockfish at Carlsen's peak rating. Not affiliated." },
+  { key: "chess-fischer", group: "play", ids: ["bobby-fischer-uika"], title: "Chess with Bobby Fischer", said: "Play chess with me.", what: "His real openings, at his 1972 strength.", open: "mode=chess&strength=fischer", image: "/media/world-chess-bobby.jpg", label: "Stockfish at Fischer's peak rating. Not affiliated." },
+  { key: "tennis", group: "play", ids: ["roger-federer-uika"], title: "Tennis with Federer", said: "Play a set with me.", what: "Full-size grass court. Flat, slice and kick serves.", open: "mode=tennis", image: "/media/world-tennis.jpg", label: "His likeness. AI opponent, not affiliated." },
+  { key: "replay", group: "relive", ids: ["jump-shot-hq"], title: "Jump shot", said: "Let me walk around it.", what: "Freeze it mid-air and walk around it.", open: "dream=jump-shot-hq", credit: "Pexels" },
+  { key: "grandma", group: "talk", ids: ["ian-grandma"], title: "Grandma", said: "I just want to sit with her.", what: "Ian's grandmother, from a family video. She answers in Vietnamese, in her own voice.", open: "dream=ian-grandma", label: "Shown with her family's permission. Replies are labeled AI." },
+  { key: "vishal", group: "talk", ids: ["vishal-lhm", "vishal-head", "vishal"], title: "Vishal", said: "Hang out with me.", what: "Ask him anything. He answers in his own cloned voice.", open: "dream=vishal-lhm", label: "With his consent. Replies are labeled AI." },
 ];
 
 export interface SceneCard {
@@ -140,23 +140,6 @@ export function rigCameras(): unknown[] {
   } catch {
     return [];
   }
-}
-
-/** The cast for the live 3D line: every public replay in the library, one frame each from the middle of their move. */
-export function castCards(): { id: string; frame: string; name: string; said: string; what: string }[] {
-  const ready = new Map(listReady().map((d) => [d.id, d]));
-  const order = ["dance-01", "taichi-01", "golf-01", "lebron-shot", "guitar-01", "jump-shot-hq", "ian-grandma"];
-  const out: { id: string; frame: string; name: string; said: string; what: string }[] = [];
-  for (const id of order) {
-    const d = ready.get(id);
-    const f = d?.frames;
-    if (!d || !f?.spz || d.kind !== "replay") continue;
-    const at = `${f.dir}/${f.spz.replace("%06d", String(Math.floor(d.frameCount * 0.45)).padStart(6, "0"))}`;
-    if (!existsSync(join(DREAMS_DIR, d.id, at))) continue;
-    const s = SCENES.find((x) => x.ids.includes(id));
-    out.push({ id, frame: mediaUrl(d, at)!, name: s?.title ?? d.name, said: s?.said ?? "", what: s?.what ?? "" });
-  }
-  return out;
 }
 
 /** Real gameplay recorded from the app (public/media/play-*.mp4), the ones that exist. */

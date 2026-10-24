@@ -4,16 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { ViewerLink } from "@/components/ViewInRoom";
 import type { SceneCard, SceneGroup } from "@/lib/scenes";
 
-// Every scene, once each, the way apple.com shows a product's features: a full-bleed banner with a centred headline
-// for each group, a short paragraph, then a gallery of rounded cards (a bold lead-in caption under each) that scrolls
-// sideways, with paddles. A card's 360 orbit plays only while it's on screen.
+// Every scene, once each: one gallery of rounded cards that scrolls sideways (with paddles), switched between the
+// kinds of scene by tabs. A card's 360 orbit plays only while it's on screen.
 
 export interface GroupCopy {
   key: SceneGroup;
-  eyebrow: string;
-  headline: string;
-  intro: string;
-  banner: { video?: string | null; image?: string | null } | null;
+  eyebrow: string; // the tab
+  intro: string; // one line under the tabs
 }
 
 function useInView<T extends HTMLElement>(onChange: (inView: boolean) => void) {
@@ -116,34 +113,23 @@ function Single({ s }: { s: SceneCard }) {
 }
 
 export default function SceneGallery({ groups, cards }: { groups: GroupCopy[]; cards: SceneCard[] }) {
+  const present = groups.filter((g) => cards.some((c) => c.group === g.key));
+  const [tab, setTab] = useState<SceneGroup | null>(present[0]?.key ?? null);
+  const g = present.find((x) => x.key === tab) ?? present[0];
+  if (!g) return null;
+  const list = cards.filter((c) => c.group === g.key);
   return (
-    <>
-      {groups.map((g) => {
-        const list = cards.filter((c) => c.group === g.key);
-        if (!list.length) return null;
-        return (
-          <section key={g.key} className={`group group-${g.key}`} aria-labelledby={`g-${g.key}`}>
-            {g.banner ? (
-              <div className="banner" data-scrub="pass">
-                <Media className="banner-media" video={g.banner.video} image={g.banner.image} />
-                <div className="banner-copy">
-                  <p className="eyebrow-x">{g.eyebrow}</p>
-                  <h2 id={`g-${g.key}`}>{g.headline}</h2>
-                </div>
-              </div>
-            ) : (
-              <header className="group-head reveal">
-                <p className="eyebrow-x">{g.eyebrow}</p>
-                <h2 id={`g-${g.key}`}>{g.headline}</h2>
-              </header>
-            )}
-            <div className="group-body">
-              <p className="group-intro reveal">{g.intro}</p>
-              <div className="reveal">{list.length > 1 ? <Gallery cards={list} /> : <Single s={list[0]} />}</div>
-            </div>
-          </section>
-        );
-      })}
-    </>
+    <section className="scenes-x" aria-labelledby="scenes-title">
+      <h2 id="scenes-title" className="section-head">Scenes</h2>
+      <div className="tabs" role="tablist" aria-label="Kinds of scene">
+        {present.map((x) => (
+          <button key={x.key} role="tab" aria-selected={x.key === g.key} className={x.key === g.key ? "on" : ""} onClick={() => setTab(x.key)}>
+            {x.eyebrow}
+          </button>
+        ))}
+      </div>
+      <p className="scenes-intro">{g.intro}</p>
+      {list.length > 1 ? <Gallery key={g.key} cards={list} /> : <Single key={g.key} s={list[0]} />}
+    </section>
   );
 }

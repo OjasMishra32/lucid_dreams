@@ -1,10 +1,8 @@
 import HomeStory from "@/components/home/HomeStory";
 import HomeMotion from "@/components/home/HomeMotion";
-import HomeCast from "@/components/home/HomeCast";
 import PlayReel from "@/components/home/PlayReel";
 import SceneGallery, { type GroupCopy } from "@/components/home/SceneGallery";
-import { ViewerLink } from "@/components/ViewInRoom";
-import { castCards, heroFrames, measured, playClips, rigCameras, scenes } from "@/lib/scenes";
+import { heroFrames, measured, playClips, rigCameras, scenes } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
 import TechnologySection from "@/components/tech/TechnologySection";
 import MakeDream from "@/components/MakeDream";
@@ -12,14 +10,11 @@ import "./home.css";
 
 export const dynamic = "force-dynamic";
 
-// What the people are built on, and when it became public (the theme: fresh off the frontier).
-const BUILT_ON = [
-  { name: "4DAnyone", when: "August 2026 · Ant Research", what: "Turns one casual video into consistent 360-degree video from 48 cameras. The heart of every replay." },
-  { name: "LHM++", when: "March 2026", what: "Builds an animatable full-body person from many photos. The chess and tennis legends." },
-  { name: "UIKA", when: "CVPR 2026", what: "Rebuilds a head from a photo collection, so a face holds up at arm's length." },
-  { name: "GVHMR", when: "2024", what: "Reads real human motion from footage: the joints you follow, every tennis stroke." },
-  { name: "Gemini", when: "Google", what: "Turns your one sentence into a plan: a lesson, a game, company." },
-  { name: "Spark and WebXR", when: "Quest 3S browser", what: "Draws hundreds of thousands of Gaussians a frame, life size, in passthrough." },
+const GROUPS: GroupCopy[] = [
+  { key: "learn", eyebrow: "Learn", intro: "They play the move at full size. Turn on Lesson to go step by step." },
+  { key: "play", eyebrow: "Play", intro: "Chess and tennis at real size. Legends are labeled likenesses and never speak." },
+  { key: "relive", eyebrow: "Moments", intro: "The moment itself. Pause it and walk around." },
+  { key: "talk", eyebrow: "Talk", intro: "They answer in their own cloned voice, with their permission. Every reply is labeled AI." },
 ];
 
 export default function Home() {
@@ -27,41 +22,8 @@ export default function Home() {
   const cards = scenes();
   const rows = measured();
   const cams = rigCameras() as RigCamera[];
-  const cast = castCards();
   const clips = playClips();
   const lead = rows.find((r) => r.id === "dance-01") ?? rows[0];
-  const card = (key: string) => cards.find((c) => c.key === key);
-
-  const groups: GroupCopy[] = [
-    {
-      key: "learn",
-      eyebrow: "Lessons",
-      headline: "A teacher who waits for you.",
-      intro: "They play the whole move, life size, as often as you like. Ask for the lesson and each step slows down and waits while you try it, scored against the clip's own joints.",
-      banner: { video: card("dance")?.video ?? null },
-    },
-    {
-      key: "play",
-      eyebrow: "Games",
-      headline: "Your move.",
-      intro: "Real games at real size: chess at the peak ratings of two legends, and a set of tennis on full-size grass. Every legend is a likeness, labelled as one, and stays silent.",
-      banner: { image: card("chess-carlsen")?.image ?? null },
-    },
-    {
-      key: "relive",
-      eyebrow: "Moments",
-      headline: "Stop time. Walk around it.",
-      intro: "A replay is the moment itself, life size on your floor. Freeze it at the top of the jump and walk all the way round it.",
-      banner: null,
-    },
-    {
-      key: "talk",
-      eyebrow: "Company",
-      headline: "Someone real, answering you.",
-      intro: "Someone you love, or a friend, in the room with you. Speak to them and they answer in their own voice, cloned with their permission. Every reply is labelled as AI.",
-      banner: card("vishal")?.video ? { video: card("vishal")!.video } : null,
-    },
-  ];
 
   return (
     <div className="home">
@@ -74,30 +36,21 @@ export default function Home() {
         poster="/media/hero-dance.jpg"
       />
 
-      <section className="intro" data-scrub="pass">
-        <Words text="Drop in a video of anyone and say what you want to do with them. Minutes later they are standing in your room, life size and in 3D." from={0} of={2} />
-        <Words text="Learn their move. Play them at their game. Or simply spend time with them." from={1} of={2} />
-      </section>
-
-      <HomeCast cast={cast} />
-
       {clips.length > 0 && (
         <section className="play-section" aria-labelledby="play-title">
-          <p className="eyebrow-x reveal">In the headset</p>
-          <h2 id="play-title" className="section-head reveal">See it played.</h2>
-          <p className="section-sub reveal">Recorded straight from the app, on the same court and board you play on in the headset.</p>
+          <h2 id="play-title" className="section-head reveal">Recorded in the headset.</h2>
           <div className="reveal"><PlayReel clips={clips} /></div>
         </section>
       )}
 
       <div id="scenes" className="scenes">
-        <SceneGallery groups={groups} cards={cards} />
+        <SceneGallery groups={GROUPS} cards={cards} />
       </div>
 
       {/* one video becomes 48: pinned while you scroll, the clip steps aside and the wall of views assembles */}
       <section id="how" className="pipe-story" data-scrub="track" aria-labelledby="how-title">
         <div className="pipe-sticky">
-          <h2 id="how-title" className="section-head">How a video becomes a person.</h2>
+          <h2 id="how-title" className="section-head">How it works</h2>
           <div className="pipe-stage">
             <div className="pipe-wall">
               <video src="/media/wall-dance.mp4" poster="/media/wall-dance.jpg" muted loop playsInline autoPlay preload="none" aria-hidden="true" />
@@ -111,62 +64,32 @@ export default function Home() {
               <video src="/media/input-dance.mp4" poster="/media/input-dance.jpg" muted loop playsInline autoPlay preload="none" aria-hidden="true" />
             </div>
           </div>
-          <p className="pipe-cap cap-1"><b>One video.</b> Five seconds of one person, from a single camera. A phone is enough.</p>
-          <p className="pipe-cap cap-2"><b>Forty-eight imagined views.</b> 4DAnyone imagines a dome of cameras around her, every frame in step.</p>
+          <p className="pipe-cap cap-1"><b>One video.</b> Five seconds, one person, one camera. A phone works.</p>
+          <p className="pipe-cap cap-2"><b>48 views.</b> 4DAnyone generates the other angles, synced frame by frame.</p>
         </div>
       </section>
 
       <section className="how">
         <ul className="stats">
           <li className="reveal"><b data-count="1">1</b><span>video in</span></li>
-          <li className="reveal"><b data-count={hero?.views ?? 48}>{hero?.views ?? 48}</b><span>views imagined</span></li>
-          <li className="reveal"><b data-count={lead?.gaussians ?? 289466}>{(lead?.gaussians ?? 289466).toLocaleString("en-US")}</b><span>Gaussians a frame</span></li>
-          <li className="reveal"><b data-count={lead?.frames ?? 121}>{lead?.frames ?? 121}</b><span>frames, about a minute each on a B200</span></li>
+          <li className="reveal"><b data-count={hero?.views ?? 48}>{hero?.views ?? 48}</b><span>generated views</span></li>
+          <li className="reveal"><b data-count={lead?.gaussians ?? 289466}>{(lead?.gaussians ?? 289466).toLocaleString("en-US")}</b><span>Gaussians per frame</span></li>
+          <li className="reveal"><b data-count={lead?.frames ?? 121}>{lead?.frames ?? 121}</b><span>frames, ~1 min each on a B200</span></li>
         </ul>
       </section>
 
       <TechnologySection />
 
-      <section id="research" className="built">
-        <h2 className="section-head reveal">Built on this year&rsquo;s research.</h2>
-        <ul className="built-grid">
-          {BUILT_ON.map((b) => (
-            <li key={b.name} className="reveal">
-              <h3>{b.name}</h3>
-              <p className="built-when">{b.when}</p>
-              <p>{b.what}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-
       <section id="make" className="make-x" aria-labelledby="make-title">
-        <p className="eyebrow-x">Make one</p>
-        <h2 id="make-title" className="section-head">Five seconds of anyone.</h2>
-        <p className="section-sub">A video or a photo, and one sentence of what you want to do with them. Minutes later they&rsquo;re in your room.</p>
+        <h2 id="make-title" className="section-head">Make your own</h2>
+        <p className="section-sub">Upload a video or photos and say what you want to do with them.</p>
         <div className="make-x-form"><MakeDream /></div>
-      </section>
-
-      <section className="closer-x" data-scrub="pass">
-        <h2 className="closer-glow">Who will you bring into the room?</h2>
-        <div className="closer-buttons">
-          <a href="#make" className="pill">Make a dream</a>
-          <ViewerLink query="mode=tennis" className="pill pill-quiet">Play Federer</ViewerLink>
-        </div>
+        <p className="credits-x">
+          Built with 4DAnyone (Aug 2026), LHM++, UIKA, GVHMR, Gemini, gsplat and Spark. Quest 3S model by OG_MATTER on
+          Sketchfab (CC BY 4.0). Source on <a href="https://github.com/OjasMishra32/lucid_dreams">GitHub</a>.
+        </p>
       </section>
       <HomeMotion />
     </div>
-  );
-}
-
-/** A paragraph whose words light up as you scroll past it (the section's --p), one after another. */
-function Words({ text, from, of }: { text: string; from: number; of: number }) {
-  const words = text.split(" ");
-  return (
-    <p className="words">
-      {words.map((w, i) => (
-        <span key={i} style={{ ["--i" as string]: ((from + i / words.length) / of).toFixed(4) }}>{w} </span>
-      ))}
-    </p>
   );
 }

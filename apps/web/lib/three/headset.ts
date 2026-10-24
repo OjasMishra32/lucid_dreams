@@ -1,9 +1,9 @@
-// The headset: a standalone mixed-reality visor in the Quest 3S form factor, built here from code (no model files, no
-// downloaded textures) and lit like a studio product shot. Scroll turns it from a front three-quarter to the side to
-// the inside, then the two eye frusta draw out of the lenses into the room. Client only.
+// The headset: a real Meta Quest 3S model ("Quest 3S with controllers" by OG_MATTER on Sketchfab, CC BY 4.0; trimmed
+// to the headset in public/media/quest-3s.glb), lit like a studio product shot. Scroll turns it from a front
+// three-quarter to the side to the inside, then the two eye frusta draw out of the lenses into the room. Client only.
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -12,21 +12,9 @@ type V3 = THREE.Vector3;
 const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 
 // Metres. The front faces +Z; the wearer's eyes are behind it, at -Z.
-const W = 0.191;
-const H = 0.102;
-const D = 0.044; // the white shell; the facial interface behind it brings the front unit to about 65 mm
-const HX = W / 2;
-const HY = H / 2;
-const HZ = D / 2;
-const RC = 0.023; // corner radius seen from the front
-const RB = 0.014; // roundover of the front and back edges
-const BEND = 1.0; // the shell curves back toward the sides: z -= BEND x^2
-const BULGE = 1.1; // and the front is gently domed top to bottom
-const TAPER = 0.05; // and narrows toward the face
-const FACE = 1.5; // the foam follows the face: deeper at the temples
+const W = 0.191; // the 3S visor across: the model is scaled to it
+const FRONT_Z = 0.022; // where its front face sits
 const IPD = 0.063; // 3S lenses sit at 58, 63 or 68 mm
-const LENS_Y = 0.004;
-const LENS_R = 0.0195;
 const ACCENT = 0x2997ff;
 // each eye sees 96 x 90 degrees, canted outward like a real headset (wider on the outer side, below the eye)
 const FOV = { out: 52, in: 44, up: 43, down: 47 };
@@ -38,439 +26,6 @@ const smooth = (a: number, b: number, x: number) => {
   return t * t * t * (t * (t * 6 - 15) + 10);
 };
 const rad = THREE.MathUtils.degToRad;
-
-const _m = new THREE.Matrix3();
-// The shell's bend and taper, applied to anything built in the flat box's coordinates (normals by the inverse transpose
-// of its Jacobian), so the facial interface, the windows and the seam all sit exactly on the curved body.
-function warp(p: V3, n?: V3): V3 {
-  const k = TAPER / (2 * HZ);
-  const s = 1 - k * (HZ - p.z);
-  const f = clamp((p.z + HZ) / (2 * HZ), 0, 1); // the dome fades out toward the back
-  const df = p.z > -HZ && p.z < HZ ? 1 / (2 * HZ) : 0;
-  if (n) {
-    _m.set(s, 0, k * p.x, 0, 1, 0, -2 * BEND * p.x, -2 * BULGE * p.y * f, 1 - BULGE * p.y * p.y * df).invert().transpose();
-    n.applyMatrix3(_m).normalize();
-  }
-  return p.set(p.x * s, p.y, p.z - BEND * p.x * p.x - BULGE * p.y * p.y * f);
-}
-
-function roundRect(ax: number, ay: number, r: number): THREE.Shape {
-  const s = new THREE.Shape();
-  s.moveTo(-ax + r, -ay);
-  s.lineTo(ax - r, -ay);
-  s.absarc(ax - r, -ay + r, r, -Math.PI / 2, 0, false);
-  s.lineTo(ax, ay - r);
-  s.absarc(ax - r, ay - r, r, 0, Math.PI / 2, false);
-  s.lineTo(-ax + r, ay);
-  s.absarc(-ax + r, ay - r, r, Math.PI / 2, Math.PI, false);
-  s.lineTo(-ax, -ay + r);
-  s.absarc(-ax + r, -ay + r, r, Math.PI, Math.PI * 1.5, false);
-  return s;
-}
-
-function capsule(a: number, b: number): THREE.Shape {
-  const s = new THREE.Shape();
-  if (b <= a) {
-    s.absarc(0, 0, a, 0, Math.PI * 2, false);
-    return s;
-  }
-  s.absarc(0, b - a, a, 0, Math.PI, false);
-  s.absarc(0, -(b - a), a, Math.PI, Math.PI * 2, false);
-  s.closePath();
-  return s;
-}
-
-// Extrusions come with flat normals and their own UVs; weld them so bevels shade as one soft surface.
-function welded(g: THREE.BufferGeometry): THREE.BufferGeometry {
-  g.deleteAttribute("uv");
-  g.deleteAttribute("normal");
-  const m = mergeVertices(g, 1e-7);
-  g.dispose();
-  m.computeVertexNormals();
-  return m;
-}
-
-// The white shell: a dense box pushed out onto a rounded slab (corner radius RC from the front, roundover RB at the
-// edges), then bent. Analytic normals, so the big soft highlights stay clean.
-function shellGeometry(): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(W, H, D, 112, 60, 28);
-  const pos = g.getAttribute("position") as THREE.BufferAttribute;
-  const nor = g.getAttribute("normal") as THREE.BufferAttribute;
-  const ix = HX - RB;
-  const iy = HY - RB;
-  const iz = HZ - RB;
-  const rho = RC - RB;
-  const kx = ix - rho;
-  const ky = iy - rho;
-  const q = v3();
-  const c = v3();
-  const n = v3();
-  for (let i = 0; i < pos.count; i++) {
-    q.fromBufferAttribute(pos, i);
-    let cx = clamp(q.x, -kx, kx);
-    let cy = clamp(q.y, -ky, ky);
-    const dx = q.x - cx;
-    const dy = q.y - cy;
-    const d = Math.hypot(dx, dy);
-    if (d > rho) {
-      cx += (dx / d) * rho;
-      cy += (dy / d) * rho;
-    } else {
-      cx = q.x;
-      cy = q.y;
-    }
-    c.set(cx, cy, clamp(q.z, -iz, iz));
-    n.subVectors(q, c).normalize();
-    q.copy(c).addScaledVector(n, RB);
-    warp(q, n);
-    pos.setXYZ(i, q.x, q.y, q.z);
-    nor.setXYZ(i, n.x, n.y, n.z);
-  }
-  // the face side (inside the facial interface) is dark
-  for (const gr of g.groups) gr.materialIndex = gr.materialIndex === 5 ? 1 : 0;
-  return g;
-}
-
-// The seam where the front cover meets the body: a hairline tube just under the surface, on the front roundover.
-function seamGeometry(): THREE.BufferGeometry {
-  const phi = rad(24);
-  const inner = roundRect(HX - RB, HY - RB, RC - RB).getSpacedPoints(520);
-  if (inner[0].distanceTo(inner[inner.length - 1]) < 1e-6) inner.pop();
-  const pts: V3[] = [];
-  const m = inner.length;
-  for (let i = 0; i < m; i++) {
-    const a = inner[(i + m - 1) % m];
-    const b = inner[(i + 1) % m];
-    const tx = b.x - a.x;
-    const ty = b.y - a.y;
-    const tl = Math.hypot(tx, ty) || 1;
-    const nx = ty / tl;
-    const ny = -tx / tl;
-    const n = v3(nx * Math.cos(phi), ny * Math.cos(phi), Math.sin(phi));
-    const p = v3(inner[i].x + n.x * RB, inner[i].y + n.y * RB, HZ - RB + n.z * RB);
-    warp(p, n);
-    pts.push(p.addScaledVector(n, -0.00016));
-  }
-  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, "centripetal"), 1040, 0.00042, 6, true);
-}
-
-// Facial interface outlines (in the flat box's coordinates): the visor's outline inset with a nose cut-out, and the
-// opening around the lenses with its nose bridge.
-function outerPath(inset: number): THREE.Path {
-  const ax = HX - inset;
-  const ay = HY - inset;
-  const r = RC - inset;
-  const nw = 0.019;
-  const nh = 0.02 - inset * 0.5;
-  const ne = nw + 0.008;
-  const s = new THREE.Path();
-  s.moveTo(ne, -ay);
-  s.lineTo(ax - r, -ay);
-  s.absarc(ax - r, -ay + r, r, -Math.PI / 2, 0, false);
-  s.lineTo(ax, ay - r);
-  s.absarc(ax - r, ay - r, r, 0, Math.PI / 2, false);
-  s.lineTo(-ax + r, ay);
-  s.absarc(-ax + r, ay - r, r, Math.PI / 2, Math.PI, false);
-  s.lineTo(-ax, -ay + r);
-  s.absarc(-ax + r, -ay + r, r, Math.PI, Math.PI * 1.5, false);
-  s.lineTo(-ne, -ay);
-  s.bezierCurveTo(-nw, -ay, -nw * 0.72, -ay + nh, 0, -ay + nh);
-  s.bezierCurveTo(nw * 0.72, -ay + nh, nw, -ay, ne, -ay);
-  return s;
-}
-
-function holePath(grow: number): THREE.Path {
-  const hw = 0.0725 + grow;
-  const top = LENS_Y + 0.0315 + grow;
-  const bot = LENS_Y - 0.0305 - grow;
-  const hr = 0.024 + grow;
-  const nb = -0.012 + grow;
-  const h = new THREE.Path();
-  h.moveTo(-0.024, bot);
-  h.bezierCurveTo(-0.012, bot, -0.011, nb, 0, nb);
-  h.bezierCurveTo(0.011, nb, 0.012, bot, 0.024, bot);
-  h.lineTo(hw - hr, bot);
-  h.absarc(hw - hr, bot + hr, hr, -Math.PI / 2, 0, false);
-  h.lineTo(hw, top - hr);
-  h.absarc(hw - hr, top - hr, hr, 0, Math.PI / 2, false);
-  h.lineTo(-hw + hr, top);
-  h.absarc(-hw + hr, top - hr, hr, Math.PI / 2, Math.PI, false);
-  h.lineTo(-hw, bot + hr);
-  h.absarc(-hw + hr, bot + hr, hr, Math.PI, Math.PI * 1.5, false);
-  h.lineTo(-0.024, bot);
-  return h;
-}
-
-// A closed outline as a function of the angle seen from (cx, cy): both outlines are star-shaped from there.
-function byAngle(path: THREE.Path, cx: number, cy: number): (a: number) => THREE.Vector2 {
-  const pts = path.getSpacedPoints(2400).map((p) => ({ a: Math.atan2(p.y - cy, p.x - cx), p }));
-  pts.sort((u, v) => u.a - v.a);
-  const n = pts.length;
-  return (a: number) => {
-    let lo = 0;
-    let hi = n;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (pts[mid].a < a) lo = mid + 1;
-      else hi = mid;
-    }
-    const b = pts[lo % n];
-    const p = pts[(lo + n - 1) % n];
-    let span = b.a - p.a;
-    if (span <= 0) span += Math.PI * 2;
-    let t = a - p.a;
-    if (t < 0) t += Math.PI * 2;
-    return p.p.clone().lerp(b.p, clamp(t / span, 0, 1));
-  };
-}
-
-// One ring of the facial interface: a soft section (superellipse, exponent `e`) swept round between the outer outline
-// and the opening, from `front` back `depth`, optionally bent to the face. Clean quads, so it shades as one surface.
-function ring(inset: number, grow: number, front: number, depth: number, e: number, face: number, tile: number) {
-  const cy = LENS_Y - 0.004;
-  const outer = byAngle(outerPath(inset), 0, cy);
-  const inner = byAngle(holePath(grow), 0, cy);
-  const M = 480;
-  const C = 40;
-  const pos = new Float32Array(M * C * 3);
-  const uv = new Float32Array(M * C * 2);
-  const q = v3();
-  let run = 0;
-  let prev: THREE.Vector2 | null = null;
-  for (let i = 0; i < M; i++) {
-    const a = -Math.PI + (i / M) * Math.PI * 2;
-    const o = outer(a);
-    const n = inner(a);
-    if (prev) run += prev.distanceTo(o);
-    prev = o;
-    const mx = (o.x + n.x) / 2;
-    const my = (o.y + n.y) / 2;
-    const hx = (o.x - n.x) / 2;
-    const hy = (o.y - n.y) / 2;
-    for (let j = 0; j < C; j++) {
-      const th = (j / C) * Math.PI * 2;
-      const c = Math.cos(th);
-      const s = Math.sin(th);
-      const xr = Math.sign(c) * Math.abs(c) ** (2 / e);
-      const zr = Math.sign(s) * Math.abs(s) ** (2 / e);
-      q.set(mx + hx * xr, my + hy * xr, front - depth / 2 + (depth / 2) * zr);
-      q.z -= face * q.x * q.x * clamp((front - q.z) / depth, 0, 1);
-      warp(q);
-      const k = i * C + j;
-      pos[k * 3] = q.x;
-      pos[k * 3 + 1] = q.y;
-      pos[k * 3 + 2] = q.z;
-      uv[k * 2] = run / tile;
-      uv[k * 2 + 1] = (j / C) * (0.06 / tile);
-    }
-  }
-  const idx: number[] = [];
-  for (let i = 0; i < M; i++) {
-    for (let j = 0; j < C; j++) {
-      const a = i * C + j;
-      const b = ((i + 1) % M) * C + j;
-      const c = ((i + 1) % M) * C + ((j + 1) % C);
-      const d = i * C + ((j + 1) % C);
-      idx.push(a, b, d, b, c, d);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
-}
-
-// A strap band swept along a curve: a soft rounded-rectangle section, rounded ends.
-function band(points: V3[], o: { h0: number; h1: number; t0: number; t1: number; cap0: number; cap1: number; segs: number; tile: number }) {
-  const curve = new THREE.CatmullRomCurve3(points, false, "centripetal");
-  const len = curve.getLength();
-  const C = 40;
-  const E = 5;
-  const rings = o.segs + 1;
-  const pos = new Float32Array(rings * C * 3);
-  const uv = new Float32Array(rings * C * 2);
-  const up = v3(0, 1, 0);
-  const P = v3();
-  const T = v3();
-  const U = v3();
-  const N = v3();
-  const perim = (o.h0 + o.h1 + o.t0 + o.t1) * 1.0;
-  const end = (d: number, cap: number) => (cap > 0 && d < cap ? Math.sqrt(Math.max(0, 1 - (1 - d / cap) ** 2)) : 1);
-  for (let i = 0; i < rings; i++) {
-    const f = i / o.segs;
-    const d = f * len;
-    curve.getPointAt(f, P);
-    curve.getTangentAt(f, T);
-    U.copy(up).addScaledVector(T, -up.dot(T)).normalize();
-    N.crossVectors(T, U).normalize();
-    const hh = ((o.h0 + (o.h1 - o.h0) * f) / 2) * Math.max(0.04, Math.min(end(d, o.cap0), end(len - d, o.cap1)));
-    const tt0 = (o.t0 + (o.t1 - o.t0) * f) / 2;
-    const tt = tt0 * Math.max(0.04, Math.min(end(d, o.cap0 ? tt0 * 1.4 : 0), end(len - d, o.cap1 ? tt0 * 1.4 : 0)));
-    for (let j = 0; j < C; j++) {
-      const th = -Math.PI / 2 + (j / C) * Math.PI * 2;
-      const c = Math.cos(th);
-      const s = Math.sin(th);
-      const x = Math.sign(c) * Math.abs(c) ** (2 / E) * tt;
-      const y = Math.sign(s) * Math.abs(s) ** (2 / E) * hh;
-      const k = i * C + j;
-      pos[k * 3] = P.x + N.x * x + U.x * y;
-      pos[k * 3 + 1] = P.y + N.y * x + U.y * y;
-      pos[k * 3 + 2] = P.z + N.z * x + U.z * y;
-      uv[k * 2] = d / o.tile;
-      uv[k * 2 + 1] = ((j / C) * perim) / o.tile;
-    }
-  }
-  const idx: number[] = [];
-  for (let i = 0; i < o.segs; i++) {
-    for (let j = 0; j < C; j++) {
-      const a = i * C + j;
-      const b = (i + 1) * C + j;
-      const c = (i + 1) * C + ((j + 1) % C);
-      const d = i * C + ((j + 1) % C);
-      idx.push(a, b, d, b, c, d);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
-}
-
-// ---- procedural textures (generated here, nothing fetched) ----
-
-function dataTex(data: Uint8Array, n: number, color = false): THREE.DataTexture {
-  const t = new THREE.DataTexture(data, n, n, THREE.RGBAFormat);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.generateMipmaps = true;
-  t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  t.anisotropy = 8;
-  if (color) t.colorSpace = THREE.SRGBColorSpace;
-  t.needsUpdate = true;
-  return t;
-}
-
-function normalsFrom(h: Float32Array, n: number, strength: number): Uint8Array {
-  const out = new Uint8Array(n * n * 4);
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const l = h[y * n + ((x + n - 1) % n)];
-      const r = h[y * n + ((x + 1) % n)];
-      const d = h[((y + n - 1) % n) * n + x];
-      const u = h[((y + 1) % n) * n + x];
-      const nx = (l - r) * strength;
-      const ny = (d - u) * strength;
-      const len = Math.hypot(nx, ny, 1);
-      const k = (y * n + x) * 4;
-      out[k] = ((nx / len) * 0.5 + 0.5) * 255;
-      out[k + 1] = ((ny / len) * 0.5 + 0.5) * 255;
-      out[k + 2] = ((1 / len) * 0.5 + 0.5) * 255;
-      out[k + 3] = 255;
-    }
-  }
-  return out;
-}
-
-function rng(seed: number) {
-  let s = seed;
-  return () => (s = (s * 16807) % 2147483647) / 2147483647;
-}
-
-// tileable value noise
-function noise(n: number, cells: number, seed: number): Float32Array {
-  const r = rng(seed);
-  const g = new Float32Array(cells * cells).map(() => r());
-  const out = new Float32Array(n * n);
-  const f = (t: number) => t * t * (3 - 2 * t);
-  for (let y = 0; y < n; y++) {
-    const fy = (y / n) * cells;
-    const iy = Math.floor(fy);
-    const ty = f(fy - iy);
-    for (let x = 0; x < n; x++) {
-      const fx = (x / n) * cells;
-      const ix = Math.floor(fx);
-      const tx = f(fx - ix);
-      const a = g[iy * cells + ix];
-      const b = g[iy * cells + ((ix + 1) % cells)];
-      const c = g[((iy + 1) % cells) * cells + ix];
-      const d = g[((iy + 1) % cells) * cells + ((ix + 1) % cells)];
-      out[y * n + x] = a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
-    }
-  }
-  return out;
-}
-
-// A Fresnel lens: concentric grooves, each a long facet then a short steep draft. Encoded as a normal map.
-function fresnelTexture(): THREE.DataTexture {
-  const n = 512;
-  const rings = 44;
-  const data = new Uint8Array(n * n * 4);
-  for (let j = 0; j < n; j++) {
-    for (let i = 0; i < n; i++) {
-      let sx = 0;
-      let sy = 0;
-      for (let a = 0; a < 3; a++) {
-        for (let b = 0; b < 3; b++) {
-          const x = ((i + (a + 0.5) / 3) / n) * 2 - 1;
-          const y = ((j + (b + 0.5) / 3) / n) * 2 - 1;
-          const r = Math.hypot(x, y);
-          if (r < 0.07 || r > 1) continue;
-          const ph = (r * rings) % 1;
-          const slope = ph < 0.84 ? 0.5 * r : -2.4 * r;
-          sx += (slope * x) / r;
-          sy += (slope * y) / r;
-        }
-      }
-      sx /= 9;
-      sy /= 9;
-      const len = Math.hypot(sx, sy, 1);
-      const k = (j * n + i) * 4;
-      data[k] = ((-sx / len) * 0.5 + 0.5) * 255;
-      data[k + 1] = ((-sy / len) * 0.5 + 0.5) * 255;
-      data[k + 2] = ((1 / len) * 0.5 + 0.5) * 255;
-      data[k + 3] = 255;
-    }
-  }
-  const t = dataTex(data, n);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  return t;
-}
-
-// Strap fabric: fine ribs running along the band over a heathered knit (soft noise at two scales), so it reads as
-// textile up close and never as stripes from across the room.
-function fabricTextures(): { normal: THREE.DataTexture; color: THREE.DataTexture } {
-  const n = 256;
-  const ribs = 20;
-  const a = noise(n, 128, 11);
-  const b = noise(n, 32, 13);
-  const h = new Float32Array(n * n);
-  const col = new Uint8Array(n * n * 4);
-  for (let y = 0; y < n; y++) {
-    const rib = Math.sin((y / n) * ribs * Math.PI) ** 2;
-    for (let x = 0; x < n; x++) {
-      const k = y * n + x;
-      h[k] = rib * 0.55 + a[k] * 0.45;
-      const g = clamp((0.9 + (a[k] - 0.5) * 0.1 + (b[k] - 0.5) * 0.04 + rib * 0.04) * 236, 0, 255);
-      col[k * 4] = g;
-      col[k * 4 + 1] = g;
-      col[k * 4 + 2] = clamp(g * 1.012, 0, 255);
-      col[k * 4 + 3] = 255;
-    }
-  }
-  return { normal: dataTex(normalsFrom(h, n, 1.6), n), color: dataTex(col, n, true) };
-}
-
-function foamTexture(): THREE.DataTexture {
-  const n = 256;
-  const a = noise(n, 64, 3);
-  const b = noise(n, 128, 5);
-  const h = a.map((x, i) => x * 0.6 + b[i] * 0.4);
-  return dataTex(normalsFrom(h, n, 2.4), n);
-}
 
 function canvasTex(draw: (g: CanvasRenderingContext2D, n: number) => void, n = 256): THREE.CanvasTexture {
   const c = document.createElement("canvas");
@@ -540,200 +95,58 @@ export async function mountHeadset(host: HTMLElement, hooks: { progress: () => n
 
   const textures: THREE.Texture[] = [];
   const keep = <T extends THREE.Texture>(t: T) => (textures.push(t), t);
-  const fresnel = keep(fresnelTexture());
-  const weave = fabricTextures();
-  keep(weave.normal);
-  keep(weave.color);
-  const foamN = keep(foamTexture());
-
-  const plastic = new THREE.MeshPhysicalMaterial({
-    color: 0xf1f1ef,
-    roughness: 0.4,
-    metalness: 0,
-    clearcoat: 0.45,
-    clearcoatRoughness: 0.26,
-    sheen: 0.25,
-    sheenRoughness: 0.5,
-    sheenColor: new THREE.Color(0xffffff),
-  });
-  const inside = new THREE.MeshPhysicalMaterial({ color: 0x0d0e10, roughness: 0.78, metalness: 0 });
-  const seamMat = new THREE.MeshStandardMaterial({ color: 0x3a3b3e, roughness: 0.85, metalness: 0 });
-  const glass = new THREE.MeshPhysicalMaterial({
-    color: 0x040506,
-    roughness: 0.16,
-    metalness: 0,
-    clearcoat: 1,
-    clearcoatRoughness: 0.03,
-    ior: 1.5,
-  });
-  const camRing = new THREE.MeshPhysicalMaterial({ color: 0x26282e, roughness: 0.32, metalness: 0.75 });
-  const camLens = new THREE.MeshPhysicalMaterial({
-    color: 0x030306,
-    roughness: 0.08,
-    metalness: 0,
-    clearcoat: 1,
-    clearcoatRoughness: 0.02,
-    iridescence: 0.9,
-    iridescenceIOR: 1.4,
-    iridescenceThicknessRange: [200, 480],
-  });
-  const frameMat = new THREE.MeshPhysicalMaterial({ color: 0x242528, roughness: 0.58, metalness: 0, clearcoat: 0.15, clearcoatRoughness: 0.5 });
-  const foamMat = new THREE.MeshPhysicalMaterial({
-    color: 0x2e2f33,
-    roughness: 0.94,
-    metalness: 0,
-    sheen: 0.8,
-    sheenRoughness: 0.6,
-    sheenColor: new THREE.Color(0x6e7076),
-    normalMap: foamN,
-    normalScale: new THREE.Vector2(0.55, 0.55),
-  });
-  const housingMat = new THREE.MeshPhysicalMaterial({ color: 0x17181b, roughness: 0.4, metalness: 0, clearcoat: 0.4, clearcoatRoughness: 0.25 });
-  const lensMat = new THREE.MeshPhysicalMaterial({
-    color: 0x0a0c10,
-    roughness: 0.1,
-    metalness: 0,
-    normalMap: fresnel,
-    normalScale: new THREE.Vector2(0.22, 0.22),
-    clearcoat: 1,
-    clearcoatRoughness: 0.03,
-    clearcoatNormalMap: fresnel,
-    clearcoatNormalScale: new THREE.Vector2(0.1, 0.1),
-    iridescence: 0.3,
-    iridescenceIOR: 1.35,
-    iridescenceThicknessRange: [180, 420],
-  });
-  const fabric = new THREE.MeshPhysicalMaterial({
-    color: 0xd4d5d7,
-    map: weave.color,
-    roughness: 0.96,
-    metalness: 0,
-    sheen: 1,
-    sheenRoughness: 0.75,
-    sheenColor: new THREE.Color(0xffffff),
-    normalMap: weave.normal,
-    normalScale: new THREE.Vector2(0.5, 0.5),
-  });
 
   const rig = new THREE.Group(); // idle float
   scene.add(rig);
   const model = new THREE.Group();
   rig.add(model);
-  const add = (g: THREE.BufferGeometry, m: THREE.Material | THREE.Material[], shadows = true) => {
-    const mesh = new THREE.Mesh(g, m);
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    model.add(mesh);
-    return mesh;
-  };
 
-  // body, seam, facial interface
-  add(shellGeometry(), [plastic, inside]);
-  add(seamGeometry(), seamMat, false);
-  add(ring(0.003, 0, -HZ + 0.006, 0.0165, 7, 0, 0.02), frameMat);
-  add(ring(0.0052, 0.0024, -HZ - 0.0075, 0.0155, 3.2, FACE, 0.02), foamMat);
-
-  // the sensor windows: on each side three dark glass pills in a triangle, each with a camera behind it
-  const Z = v3(0, 0, 1);
-  const place = (mesh: THREE.Object3D, x: number, y: number, lift: number) => {
-    const n = v3(0, 0, 1);
-    const p = warp(v3(x, y, HZ), n);
-    mesh.position.copy(p).addScaledVector(n, lift);
-    mesh.quaternion.setFromUnitVectors(Z, n);
+  // the real headset: scaled so its front cover is 191 mm across, that cover centred on the axis, its face at FRONT_Z
+  let gltf: Awaited<ReturnType<GLTFLoader["loadAsync"]>>;
+  try {
+    gltf = await new GLTFLoader().loadAsync("/media/quest-3s.glb");
+  } catch {
+    hooks.failed();
+    renderer.dispose();
+    renderer.domElement.remove();
+    return () => {};
+  }
+  const quest = gltf.scene;
+  quest.updateMatrixWorld(true);
+  const byName = (re: RegExp) => {
+    let hit: THREE.Object3D | null = null;
+    quest.traverse((o) => {
+      if (!hit && o instanceof THREE.Mesh && re.test(o.name)) hit = o;
+    });
+    return hit as THREE.Object3D | null;
   };
-  const windows: [number, number, number, number, number][] = [
-    // x, y, half width, half height, camera radius
-    [0.067, 0.0178, 0.0058, 0.0096, 0.0027],
-    [0.067, -0.0178, 0.0058, 0.0096, 0.0021],
-    [0.0465, 0, 0.0052, 0.0052, 0.0016],
-  ];
-  for (const side of [1, -1]) {
-    for (const [x, y, a, b, cr] of windows) {
-      const g = welded(
-        new THREE.ExtrudeGeometry(capsule(a, b), {
-          depth: 0.0006,
-          bevelEnabled: true,
-          bevelThickness: 0.00025,
-          bevelSize: 0.0004,
-          bevelOffset: -0.0004,
-          bevelSegments: 4,
-          curveSegments: 40,
-        }),
-      );
-      place(add(g, glass, false), side * x, y, -0.0006);
-      const bezel = new THREE.Mesh(new THREE.TorusGeometry(cr, cr * 0.22, 10, 48), camRing);
-      place(bezel, side * x, y, 0.00012);
-      model.add(bezel);
-      const lens = new THREE.Mesh(new THREE.CircleGeometry(cr * 0.82, 40), camLens);
-      place(lens, side * x, y, 0.00034);
-      model.add(lens);
+  const cover = byName(/^Object_34/) ?? quest;
+  const coverBox = new THREE.Box3().setFromObject(cover);
+  const k = W / Math.max(1e-6, coverBox.max.x - coverBox.min.x);
+  const c = coverBox.getCenter(v3());
+  quest.scale.setScalar(k);
+  quest.position.set(-c.x * k, -c.y * k, FRONT_Z - coverBox.max.z * k);
+  model.add(quest);
+  model.updateMatrixWorld(true);
+  quest.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+    // the strap's three parts: framed with the headset, left out when the camera frames the visor alone
+    if (/^Object_(14|28|30)/.test(o.name)) o.userData.strap = true;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (m instanceof THREE.MeshStandardMaterial) m.envMapIntensity = 1.1;
     }
-  }
+  });
 
-  // power button on the side
-  {
-    const g = welded(
-      new THREE.ExtrudeGeometry(capsule(0.0017, 0.0064), {
-        depth: 0.0004,
-        bevelEnabled: true,
-        bevelThickness: 0.0004,
-        bevelSize: 0.0006,
-        bevelOffset: -0.0006,
-        bevelSegments: 4,
-        curveSegments: 32,
-      }),
-    );
-    const btn = add(g, plastic);
-    const n = v3(1, 0, 0);
-    const p = warp(v3(HX, -0.002, 0.0038), n);
-    btn.position.copy(p).addScaledVector(n, -0.00025);
-    btn.quaternion.setFromUnitVectors(Z, n);
-  }
-
-  // lenses: a dark barrel each, a coated Fresnel element inside, at the 63 mm position
+  // the eyes: 63 mm apart, centred on the lens panel, 2 cm behind it (eye relief)
   const eyes: V3[] = [];
   {
-    const prof = [
-      [LENS_R - 0.0006, 0.0046],
-      [LENS_R + 0.0004, 0.0054],
-      [LENS_R + 0.0016, 0.0053],
-      [LENS_R + 0.0027, 0.0041],
-      [LENS_R + 0.0035, 0.0016],
-      [LENS_R + 0.0041, -0.0012],
-    ].map(([r, h]) => new THREE.Vector2(r, h));
-    for (const side of [1, -1]) {
-      const x = (side * IPD) / 2;
-      const base = warp(v3(x / (1 - TAPER), LENS_Y, -HZ)).z;
-      const housing = new THREE.LatheGeometry(prof, 120);
-      housing.rotateX(-Math.PI / 2);
-      housing.translate(x, LENS_Y, base);
-      add(housing, housingMat);
-      const lg = new THREE.RingGeometry(0.00001, LENS_R - 0.0002, 120, 24);
-      const lp = lg.getAttribute("position") as THREE.BufferAttribute;
-      for (let i = 0; i < lp.count; i++) {
-        const r = Math.hypot(lp.getX(i), lp.getY(i)) / LENS_R;
-        lp.setZ(i, 0.0024 * (1 - r * r));
-      }
-      lg.computeVertexNormals();
-      lg.rotateY(Math.PI);
-      lg.translate(x, LENS_Y, base - 0.0045);
-      add(lg, lensMat, false);
-      eyes.push(v3(x, LENS_Y, base - 0.0045 - 0.0024 - 0.02));
-    }
-  }
-
-  // strap: rigid white arms from the visor's sides, then a soft fabric loop round the back of the head
-  {
-    const arm = (s: number) => {
-      const a0 = warp(v3(s * (HX - 0.0045), 0.0015, -0.0035));
-      return [a0, v3(s * 0.0962, 0.0004, -0.024), v3(s * 0.0972, -0.0022, -0.052), v3(s * 0.0958, -0.0056, -0.083), v3(s * 0.0926, -0.0092, -0.114)];
-    };
-    for (const s of [1, -1]) {
-      add(band(arm(s), { h0: 0.0195, h1: 0.0142, t0: 0.0068, t1: 0.005, cap0: 0, cap1: 0.0075, segs: 90, tile: 0.03 }), plastic).userData.strap = true;
-    }
-    const right = [v3(0.1004, -0.0058, -0.08), v3(0.0988, -0.0105, -0.12), v3(0.0925, -0.016, -0.158), v3(0.0772, -0.0222, -0.194), v3(0.0472, -0.0272, -0.222)];
-    const loop = [...right, v3(0, -0.029, -0.235), ...right.slice().reverse().map((p) => v3(-p.x, p.y, p.z))];
-    add(band(loop, { h0: 0.026, h1: 0.026, t0: 0.0034, t1: 0.0034, cap0: 0.006, cap1: 0.006, segs: 260, tile: 0.036 }), fabric).userData.strap = true;
+    const panel = byName(/^Object_32/);
+    const b = panel ? new THREE.Box3().setFromObject(panel) : new THREE.Box3(v3(-0.06, -0.025, -0.04), v3(0.06, 0.03, -0.035));
+    const y = (b.min.y + b.max.y) / 2;
+    const z = b.min.z - 0.02;
+    for (const side of [1, -1]) eyes.push(v3((side * IPD) / 2, y, z));
   }
 
   // ---- the eye frusta ----
@@ -871,7 +284,7 @@ export async function mountHeadset(host: HTMLElement, hooks: { progress: () => n
   const headPts: V3[] = [];
   const visorPts: V3[] = [];
   model.traverse((o) => {
-    if (!(o instanceof THREE.Mesh) || o.parent !== model) return;
+    if (!(o instanceof THREE.Mesh) || frusta.getObjectById(o.id)) return;
     const p = o.geometry.getAttribute("position") as THREE.BufferAttribute;
     const step = Math.max(1, Math.floor(p.count / 160));
     for (let i = 0; i < p.count; i += step) {
