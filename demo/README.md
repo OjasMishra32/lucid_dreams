@@ -48,7 +48,7 @@ Keep raw clips, family photos, consent screenshots, contact details and large ou
 ## Caption pipeline
 
 Atina owns [captions.py](../pipeline/lucid/captions.py) and its [tests](../pipeline/tests/test_captions.py).
-The implementation uses the existing optional `"captions": "captions.vtt"` field; no bundle schema or player changes are needed for ordinary speech captions. Restoration is separate and has not been started.
+The implementation uses the existing optional `"captions": "captions.vtt"` field; no bundle schema or player changes are needed for ordinary speech captions. Restoration is a separate standalone tool, documented below.
 
 ### Run locally
 
@@ -129,3 +129,107 @@ and viewer acceptance checklist remains open. No private audio, transcript or mo
 | Private voice memo (temporary bundle) | Atina's own recording | Wording and segmentation accepted | Automated timing checks passed; viewer review pending |
 | 2 | Pending | Pending | Pending |
 | 3 | Pending | Pending | Pending |
+
+## Standalone video restoration — implementation ready for review
+
+Atina owns [restore.py](../pipeline/lucid/restore.py) and [test_restore.py](../pipeline/tests/test_restore.py).
+This tool is run manually before submission to Ojasva. It does not call or change clip prep, upload jobs, reconstruction,
+export, any player or the dream bundle contract. Automatic restoration remains disabled.
+
+### Setup and use
+
+ffmpeg/ffprobe are installed on Atina's Mac. The official
+[Real-ESRGAN macOS release](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0) was downloaded and tested outside
+the repository. Its universal binary runs natively on Apple Silicon, using the Apple GPU through Vulkan/MoltenVK.
+Use the portable executable and its `models/` folder together; explicitly select `realesrgan-x4plus`, not the package's
+default anime model. Dependencies are never installed or downloaded by the Python script.
+
+From the repository root:
+
+```sh
+PYTHONPATH=pipeline python3 -m lucid.restore /private/clips/input.mp4 /private/clips/restored.mp4 --esrgan /private/tools/realesrgan-ncnn-vulkan --models /private/tools/models --report /private/clips/restored.json
+```
+
+Alternatively set `REALESRGAN_BIN` and `REALESRGAN_MODELS`. All paths above are placeholders. `--tile 128` bounds GPU
+memory use (`0` selects automatic tiling); `--timeout 600` limits each external command. Progress goes to stderr and a
+verification report goes to stdout, plus an optional JSON file. Models, media, reports and frame caches belong outside
+this public checkout. No face restoration, colorization, voice processing or frame interpolation is performed.
+
+### Preservation and failure behavior
+
+- ffprobe validates decoded frame timestamps, exact rational frame rate, video dimensions, sample aspect ratio and
+  audio offsets before extracting frames. The initial version accepts one 8-bit SDR video stream at constant frame rate.
+  Variable/discontinuous frame timing, partial final frames, HDR/high-bit-depth video, rotation, unsupported color matrices,
+  audio beginning before the first video frame, and unknown/invalid required metadata are rejected explicitly.
+- `bwdif=mode=send_frame:parity=auto:deint=interlaced` keeps one frame per input frame and leaves progressive frames
+  alone. `hqdn3d=2:1:3:3` lightly denoises before PNG extraction. If source interlacing flags are wrong, use an informed
+  `--field-order tff` or `bff` override; neither frame doubling nor automatic parity guessing is introduced.
+- Real-ESRGAN processes numbered PNGs at exactly 4x. The complete output sequence and every PNG's dimensions are
+  checked before assembly. Source framing and sample aspect ratio are retained, including non-square pixels.
+- Output video uses H.264 CRF 14, the exact input frame rate (including `30000/1001`) and original frame count.
+  A common timeline normalization places the first video frame at zero while retaining audio/video offsets. There
+  is no crop, speed change, trim or `-shortest` truncation. Clip prep may later resample to 25 fps independently.
+- Original audio streams are mapped explicitly and stream-copied. Audio codec/rate/channels/layout, packet hashes
+  and packet times relative to the video are validated after muxing. Silent footage remains silent. A codec the
+  requested MP4/MOV/MKV container cannot carry causes an error; audio is never silently converted to AAC.
+- Timestamp comparisons allow container time-base rounding, not accumulated drift. Output is decoded and checked
+  before publication. Source size, identity and modification time must remain unchanged throughout the run.
+- Existing outputs, reports, the original itself and its existing aliases are never overwritten. Exclusive file
+  publication also protects against another file appearing during processing. On ordinary errors staging is cleaned;
+  if report publication fails, the tool removes only its own newly published video. Hard termination can leave staging
+  files; publication of video plus report is not a two-file crash-atomic transaction.
+- Errors include missing executables/models, bad media, low disk space, incomplete frames, GPU failure, timeout and
+  changed audio/timing. Exit codes are 0 for success, 1 for handled failures and 2 for invalid command-line syntax.
+
+### Verified synthetic run and objective comparison
+
+A three-second test pattern with synthetic audio was downsampled from a clean 640x480 reference to 160x120, given
+light temporal uniform noise (level 6), and encoded at H.264 CRF 18. Restoration returned 640x480 in **9.222 seconds**
+on Atina's Mac. Both versions have **30 frames, 10 fps, 3.000 seconds, 4:3 display aspect and 48 kHz mono AAC**.
+All audio packet hashes and relative timestamps match. The comparison video and still remain outside the repository:
+left = original enlarged with Lanczos; right = restored. Both display at 640x480 and encode at CRF 14 for a fair comparison.
+
+| Metric at 640x480 | Lanczos baseline | Restored |
+| --- | --- | --- |
+| PSNR against clean reference | 27.799683 dB | 27.161587 dB |
+| SSIM against clean reference | 0.882276 | 0.908371 |
+| Mean normalized Laplacian variance, 10 sampled frames | 0.000208758 | 0.001751401 |
+| LPIPS | Not measured | Not measured |
+
+The result is mixed: sharper structure and higher SSIM, lower PSNR, and visible invented texture in the fine pattern.
+Sharpness can reward noise or oversharpening. This verifies the engineering path, **not** restored identity or improved
+3D reconstruction. Keep restoration manual and opt-in until real-footage evaluation supports it.
+
+### Tests and the real-footage acceptance gate
+
+The complete pipeline suite passed **80 tests, none skipped**: 52 existing caption tests and 28 restoration tests,
+including real ffmpeg integration, real Whisper silence inference and real Real-ESRGAN x4plus inference. Restoration
+tests include fractional frame rates, non-square pixels, interlaced/progressive footage, silent clips, audio delays,
+nonzero video start, identical decoded audio samples, real VFR rejection, validation and safe failure/publication.
+
+```sh
+LUCID_RESTORE_REAL_TOOLS=1 REALESRGAN_BIN=/private/tools/realesrgan-ncnn-vulkan REALESRGAN_MODELS=/private/tools/models LUCID_CAPTIONS_REAL_TOOLS=1 WHISPER_MODEL=/private/models/ggml-large-v3-turbo.bin PYTHONPATH=pipeline python3 -m unittest discover -s pipeline/tests -v
+```
+
+Without opt-in flags, GPU-specific tests skip explicitly; ffmpeg integration uses a labeled resize stand-in for the
+upscaler. It validates media preservation, not learned restoration. The separate real-model test validates actual inference.
+
+Next, use the credited Keaton/Baker cuts Ojasva can supply and a consenting teammate clip. Keep a clean high-resolution
+teammate reference, degrade a copy to 480p, and compare restoration against interpolation at the same resolution,
+timestamps and color space. Measure PSNR/SSIM and, when installed, LPIPS; inspect faces, hands, ringing, flicker and
+identity changes through the whole motion. A real archival original is not clean high-resolution ground truth.
+
+For downstream evaluation, Ojasva alone submits both variants using the same source window, fixed framing, random
+seed, views, cameras/settings where controllable, training budget and held-out split. Prefer preparing the same crop
+before branching so the person detector cannot change the framing between runs. Compare matching dreams in the viewer
+and headset at 1.5 m. Read PSNR/SSIM and `heldOut` from `recon-*.json`; those measure reconstruction against its target
+views and are not automatically evidence of fidelity to real footage. Existing reports do not measure sharpness or LPIPS;
+evaluate matched renders separately and label unavailable measurements honestly. Do not change pipeline metrics code.
+
+Acceptance still needs real person/archival footage, a side-by-side dream review and Ojasva's reconstruction results.
+Use the original if restoration changes identity or introduces artifacts. Automatic `prep_clip.py` integration requires
+a separate decision and permission after that evidence exists.
+
+Credits: [Real-ESRGAN ncnn Vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) (MIT),
+[Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (BSD-3-Clause) and [FFmpeg](https://ffmpeg.org/legal.html)
+(license depends on build options; Atina's Homebrew build enables GPL components). No project licenses or contracts changed.

@@ -189,4 +189,20 @@ Only photos with consent recorded in `demo/consent.md` go in that folder.
   WebVTT escaping stays in the generator. Native Unity caption support stays with Ian.
 - Atina approved publishing the caption implementation after 52 passing tests and a real speech memo review,
   including natural sentence/phrase segmentation. The full three-bundle and viewer acceptance checklist remains
-  open; see `demo/README.md` for the runbook. Restoration has not been started.
+  open; see `demo/README.md` for the runbook. Restoration is tracked separately below.
+
+## Standalone restoration implementation decisions
+
+- Atina approved `pipeline/lucid/restore.py` and its tests as a manual preprocessing tool, with ffmpeg bwdif
+  in send-frame mode, light hqdn3d denoising and the real `realesrgan-x4plus` 4x model. No shared pipeline or
+  player files are modified; `prep_clip.py` and automatic integration remain out of scope.
+- Preserve source rational frame rate, frame count, timing, display aspect and audio packet content/offsets.
+  Reject unsupported input rather than silently retime, crop, rotate, tone-map, convert audio or overwrite files.
+- The official macOS native binary runs on Atina's Apple GPU. The three-second synthetic run completed in
+  9.222 s; 80 total tests passed including both real GPU tools and real ffmpeg timing/audio cases.
+- Quality results are mixed: SSIM and edge sharpness rose, PSNR fell, and the fine test pattern shows invented
+  texture. These are engineering results, not proof of better people or reconstruction. Keep restoration manual
+  until matched real-footage/3D A/B tests with Ojasva justify its use. No HiPerGator jobs are submitted by Atina.
+- All models and generated media/comparisons stay outside the repo. Implementation is awaiting Atina's review;
+  no commit or push is authorized yet. Runbook, metrics, limitations and the remaining acceptance gate are in
+  `demo/README.md`.
