@@ -15,7 +15,8 @@ recon's soles stand on the court floor. The other camera goes through the same m
 That ratio is the one thing calibration can't fix, and a grazing source camera sees it poorly (1% of it moves the
 body ~1% of the camera's distance along its rays), so the first other view that trains fits it alone, in 1-D, around
 the soles' value, and the others take the same (one recon world, one scale). A held-out view (weight 0) never fits it:
-it takes a trained view's, else the soles'.
+it takes a trained view's, else the soles'. A trained view that still can't line up (IoU under MIN_IOU) is left out
+rather than pulling the body apart.
 """
 
 from __future__ import annotations
@@ -27,8 +28,9 @@ from pathlib import Path
 import numpy as np
 
 LOW_PCT = 0.5  # the soles: this percentile of the solid Gaussians' height, so a stray one under the floor can't set it
-SCALE_FIT = (0.95, 1.05)  # the 1-D scale fit's range, as factors on the soles' scale
-MIN_IOU = 0.3  # under this at the fixed pose, something is broken (a wrong file, another person): train without it
+SCALE_FIT = (0.85, 1.10)  # the 1-D scale fit's range, as factors on the soles' scale (before any real-frame training
+# a 24-step body's soles sat ~7% off)
+MIN_IOU = 0.7  # a trained view under this at its fixed pose would pull the body apart (a ghost): train without it
 
 
 def pixel_grid_rotation(Ks, Kc, w: int, h: int, n: int = 9) -> np.ndarray:
@@ -132,7 +134,9 @@ def fixed_solve(sv, trainer, params, debug=None):
         fitted = trainer.court_extra_scale = {}
     chunk = sv.frame_ids[0] - getattr(sv, "offset", 0)
     iou0 = iou(1.0)
-    rng = pose.get("scaleFit", list(SCALE_FIT))
+    rng = pose.get("scaleFit", list(SCALE_FIT))  # an older file's narrower range or lower floor never narrows these
+    rng = rng and [min(rng[0], SCALE_FIT[0]), max(rng[1], SCALE_FIT[1])]
+    floor = max(pose.get("minIou", MIN_IOU), MIN_IOU)
     trained = getattr(sv, "weight", 1.0) > 0
     if chunk in fitted:
         f, how = fitted[chunk][0], f"as {fitted[chunk][1]}"
@@ -151,8 +155,8 @@ def fixed_solve(sv, trainer, params, debug=None):
                  "masks": "given" if sv.masks_given else "model", "ignoring": sv.valid is not None}
     print(f"[source] extra {name}: fixed pose, iou {best:.3f} (court scale {s0 * f:.4f}, {how}: x{f:.4f} on the "
           f"soles' {s0:.4f}, iou there {iou0:.3f})", flush=True)
-    if trained and best < pose.get("minIou", MIN_IOU):
-        print(f"[source] extra {name}: IoU under {pose.get('minIou', MIN_IOU)} at the fixed pose: trained without it",
+    if trained and best < floor:
+        print(f"[source] extra {name}: IoU under {floor} at the fixed pose: trained without it",
               flush=True)
         return False
 
