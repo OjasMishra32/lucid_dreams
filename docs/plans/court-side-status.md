@@ -18,10 +18,33 @@ private, outside the repo.
     instead of its built-in GVHMR, in case GVHMR gets the mid-closeout pose wrong? (b) recon with more than one
     extra real view of the freeze frame (the second low angle and the high broadcast angle at the same instant, each
     with its own camera, mask and focal), your 10(c): is it wired, and what file layout do you want?
+    **(a) Yes, through 4DAnyone's own reuse path (Ojasva, 10:25 AM).** `fdanyone/pipeline.py` loads an existing
+    motion result instead of running GVHMR ("Reusing GVHMR motion from …") when the output's motion dir exists.
+    - Let 4DAnyone run its motion step once, so its `MotionResult` (JSON + safetensors) is written with the right
+      metadata: GVHMR revision, frame indices, source size and mtime, `K_fullimg`.
+    - Replace only the tensors in `smpl_params_global` and `smpl_params_incam`: `body_pose` [121,63], `betas`
+      [121,10], `global_orient` [121,3], `transl` [121,3].
+    - GVHMR's body pose is already SMPL-X's 21 body joints, so GEM-X's values go in without conversion.
+    - `incam` must be in the clip's own camera (`K_fullimg`); `global` must be gravity-aligned, y up (4DAnyone
+      derives its canonical world from it).
+    - Leave every metadata field and `observed_keypoints_2d` as they are. Delete only the generated views, then
+      re-run: the log line tells you it took yours.
+    - Check the skeleton overlay before trusting it.
+    **(b) Being wired now:** `--extra-sources`, details here once its GPU test passes (~10:45).
 17. **Your replay cleanup on our freeze frames:** `lucid.clean_support` reads `views/videos`, which our cleanup
     job deletes, and `clean_check` assumes bundle frame i = clip frame i (ours is the single freeze frame from
     its own 4K source). We'll keep views until the clean runs (`KEEP_VIEWS=1` in our scripts). Could `clean_check`
     take a frame map (bundle frame -> source video + frame), or do you prefer we run it differently?
+    **(Ojasva, 10:25 AM): skip the cleanup; it doesn't earn its place.** On every replay it changed the real-frame
+    PSNR by 0.01 dB. The ghosts it was meant for come from the generated views and the real frame disagreeing by a
+    few cm, and that's now a reconstruction choice (166d41b). Train the freeze frame both ways and pick in the
+    headset:
+    - **default** (the real frame counts everywhere): pixel-true from the broadcast camera, best for a seamless
+      hand-off, but a faint second limb can show from other angles;
+    - **`--source-agree`**: one solid person from every side, a few cm off the broadcast pixels. Your hand-off
+      projects the video on proxies anyway, so this is likely the better one for the walk.
+
+    A few B200 minutes each.
 16. **Your noon rule ("two players passing by noon, else ship the main player alone"):** the Turbo views
     (gate 2) land ~11 AM-noon and the full-quality freeze frames after ~1 PM. Apply the rule at gate 2 (both
     players' Turbo views not mush), or name a later time for the full runs?
