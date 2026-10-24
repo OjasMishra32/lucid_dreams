@@ -1,8 +1,9 @@
 // What the judge reads and presses (3.6): the caption, the honesty label and the source credit (P22), low in front of
 // you and following you lazily through the watch, and over the 3D (open, walking, returning) a smaller card above the
-// pair, turned to you, fading as you come within a metre of it, so it never sits inside or in front of a player; the
-// Reality check's panel (blue = never seen, the seen % per player, the
-// interpolated share of the show: P7, P23); and the palm menu (left palm up, right index; xr/menu.ts HandMenu, 2
+// pair, turned to you, fading as you come within a metre of it, so it never sits inside or in front of a player, and
+// while a person stands between your eye and any of it (it has no depth test and the splats write no depth, so it
+// would be drawn over them: a stereo conflict); the Reality check's panel (blue = never seen, the seen % per player,
+// the interpolated share of the show: P7, P23); and the palm menu (left palm up, right index; xr/menu.ts HandMenu, 2
 // columns, first row on top):
 //   [Change seat]                      every phase after Seat here: back to the setup page after a 2 s hold (HoldButton),
 //                                      for the presenter between judges
@@ -52,6 +53,12 @@ export const HOLD_MS = 2000;
  * swap between the two placements fades out and in.
  */
 const OVER_PAIR = { minY: 2.4, clear: 0.25, deg: 12, scale: [0.5, 1.6] as const, near: [1.0, 0.6] as const };
+/**
+ * The people the card must not be drawn through, as capsules `grow` metres fatter (each player's torso and head; each
+ * extra upright from `extra.foot` over their foot to `extra.head` under their height, radius `extra.r`); it fades out
+ * over `fade` s while one stands between the eye and any of its `grid` points, and back in once none does.
+ */
+const BLOCK = { grow: 0.05, extra: { r: 0.2, foot: 0.3, head: 0.15 }, fade: 0.2, grid: [5, 3] as const };
 /** The caption's plane, metres (the canvas's 1024 x 384). */
 const CAPTION_W = 0.6;
 const CAPTION_H = 0.225;
@@ -157,6 +164,24 @@ function overPair(bundle: CourtBundle): THREE.Vector3 {
   }
   const y = Math.max(OVER_PAIR.minY, top + OVER_PAIR.clear);
   return players.length ? new THREE.Vector3((x0 + x1) / 2, y, (z0 + z1) / 2) : new THREE.Vector3(0, y, 0);
+}
+
+/** A person the card must not be drawn through: a capsule, court space. */
+interface Blocker {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  r: number;
+}
+
+/** The people the card over the pair must not be drawn through (BLOCK). */
+function blockers(bundle: CourtBundle): Blocker[] {
+  const { players, others = [] } = bundle.court.freeze;
+  const out = players.flatMap((p) => p.capsules.map((c) => ({ a: new THREE.Vector3(...c.a), b: new THREE.Vector3(...c.b), r: c.r + BLOCK.grow })));
+  for (const o of others) {
+    const [x, y, z] = o.foot;
+    out.push({ a: new THREE.Vector3(x, y + BLOCK.extra.foot, z), b: new THREE.Vector3(x, y + o.height - BLOCK.extra.head, z), r: BLOCK.extra.r + BLOCK.grow });
+  }
+  return out;
 }
 
 /** A small window glyph for See my room (a frame with four panes), as a child plane at the button's left. */
@@ -319,6 +344,13 @@ export class Ui {
   /** Over the pair, court space: the middle of the card's lower edge. */
   private readonly overPair = new THREE.Vector3();
   private readonly lift = new THREE.Vector3();
+  /** Court space: the people between the eye and the card, and the card's fade for them (1 = nobody, 0 = hidden). */
+  private readonly blockers: Blocker[];
+  private clearView = 1;
+  private readonly eyeC = new THREE.Vector3();
+  private readonly ptC = new THREE.Vector3();
+  private readonly hitC = new THREE.Vector3();
+  private readonly ray = new THREE.Ray();
   private readonly headV = new THREE.Vector3();
   private readonly target = new THREE.Vector3();
 
@@ -344,6 +376,7 @@ export class Ui {
     this.b.room.mesh.add(windowIcon());
     this.world = scene.getObjectByName("court-world") ?? null;
     this.overPair.copy(overPair(bundle));
+    this.blockers = blockers(bundle);
     scene.add(this.caption.mesh);
     this.drawCaption();
     this.relayout();
@@ -404,11 +437,14 @@ export class Ui {
       // the lower edge stays put; the card grows upward (the court group turns about y only, so up is up)
       m.position.add(this.lift.set(0, (CAPTION_H * scale) / 2, 0));
       const [full, gone] = OVER_PAIR.near;
-      cap.near = Math.min(1, Math.max(0, (m.position.distanceTo(this.headV) - gone) / (full - gone)));
+      const near = Math.min(1, Math.max(0, (m.position.distanceTo(this.headV) - gone) / (full - gone)));
       m.lookAt(this.headV);
+      this.clearView = Math.min(1, Math.max(0, this.clearView + (this.blocked(m) ? -1 : 1) * (dt / BLOCK.fade)));
+      cap.near = near * this.clearView;
       return;
     }
     m.scale.setScalar(1);
+    this.clearView = 1;
     cap.near = 1;
     const fx = -Math.sin(head.yaw);
     const fz = -Math.cos(head.yaw);
@@ -425,6 +461,27 @@ export class Ui {
         m.position.lerp(this.target, Math.min(1, dt * 2.5));
     }
     m.lookAt(this.headV);
+  }
+
+  /** Whether a person (BLOCK) stands between the eye and any of the card's grid points. */
+  private blocked(m: THREE.Mesh): boolean {
+    if (!this.world) return false;
+    m.updateMatrixWorld();
+    this.eyeC.copy(this.headV);
+    this.world.worldToLocal(this.eyeC);
+    const [nu, nv] = BLOCK.grid;
+    for (let i = 0; i < nu; i++)
+      for (let j = 0; j < nv; j++) {
+        this.ptC.set((i / (nu - 1) - 0.5) * CAPTION_W, (j / (nv - 1) - 0.5) * CAPTION_H, 0);
+        m.localToWorld(this.ptC);
+        this.world.worldToLocal(this.ptC);
+        const reach = this.eyeC.distanceTo(this.ptC);
+        this.ray.origin.copy(this.eyeC);
+        this.ray.direction.subVectors(this.ptC, this.eyeC).normalize();
+        // the nearest point of the sight line to a capsule's axis is inside it, and nearer than the card
+        for (const { a, b, r } of this.blockers) if (this.ray.distanceSqToSegment(a, b, this.hitC) < r * r && this.eyeC.distanceTo(this.hitC) < reach) return true;
+      }
+    return false;
   }
 
   private drawCaption(): void {

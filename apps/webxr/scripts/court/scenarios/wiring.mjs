@@ -3,13 +3,19 @@
 // (bounded-floor, persistent anchors), the drawn hands are lit (VrHands.light: dark in the arrival's hold, lit in the
 // watch) and drawn over the footage (the video layer draws at renderOrder 50-90 without the depth test, so the hands
 // must come after it), and seat.update is handed the frame's real dt (at a 90 Hz frame rate, 1/90 s, not one 72 Hz
-// display frame). Owner: the integrator.
+// display frame). C5's picture check holds one show frame (the probe's step made ~0 s, so the footage, the light and
+// the clock stand still) and compares the picture with the hand and without it on that same frame: real footage moves
+// over 10 grey levels a frame in places, so frame-to-frame change is no baseline. Owner: the integrator.
+//   Negative control: COURT_E2E_CONTROL=c5-under draws the hands under the footage (renderOrder 40, before the video
+// layers' 50-90): the hand check must FAIL then.
 import { rig } from "../rig.mjs";
 
 export const owner = "integrator";
 export const needs = ["seat", "vrhands"];
 
 const HZ = 72;
+/** The held frame's rate: each probed frame steps the show by 1 / HOLD_HZ s (a microsecond: no show frame moves). */
+const HOLD_HZ = 1e6;
 /** The 16 x 9 thumbnail's middle cells, where a hand 0.3 m straight ahead lands. */
 const MIDDLE = [3, 4, 5].flatMap((row) => [6, 7, 8, 9].map((col) => row * 16 + col));
 /** The largest change of any middle cell between two frames, grey levels (a hand covers some cells, not all). */
@@ -36,19 +42,37 @@ export default async function wiring(ctx) {
   const lit = await w();
   ctx.check("C5: the drawn hands are lit in the watch (VrHands.light)", lit.hands > 0.05, `hands light ${lit.hands.toFixed(3)}`);
   if (!ctx.timing) {
-    // a hand straight ahead of the eyes, then out of view: the middle of the picture must change far more than the
-    // footage changes by itself between two display frames
+    // a hand straight ahead of the eyes, then out of view, on one held show frame: the middle of the picture must
+    // change with the hand, and stand still without it
     const r = rig(ctx);
     const eye = (await ctx.snapshot()).head.room;
+    if (process.env.COURT_E2E_CONTROL === "c5-under") {
+      ctx.report.control = "c5-under: the drawn hands at renderOrder 40, under the footage (the hand check must FAIL)";
+      await ctx.page.evaluate(() => {
+        let root = window.__courtLook?.freeze?.group;
+        while (root?.parent) root = root.parent;
+        root?.traverse((o) => {
+          if (o.name === "court-hands") o.renderOrder = 40;
+        });
+      });
+    }
+    await ctx.page.evaluate((hz) => window.__court.setRate(hz), HOLD_HZ);
+    await ctx.frames(4); // the step and the frame on screen settle
     const quiet = await ctx.frames(2);
     await r.moveJointTo("right", "middle-finger-metacarpal", [eye[0], eye[1] - 0.05, eye[2] - 0.3]);
     const shown = await ctx.nextFrame();
     await ctx.device((d) => d.hands.right.position.set(d.hands.right.position.x + 3, d.hands.right.position.y, d.hands.right.position.z));
     await ctx.frames(2);
     const gone = await ctx.nextFrame();
+    await ctx.page.evaluate(() => window.__court.setRate(null));
+    const held = [quiet[1], shown, gone].every((f) => f.frame === quiet[0].frame && f.onScreen === quiet[0].onScreen);
     const hand = change(shown, gone);
     const base = change(quiet[0], quiet[1]);
-    ctx.check("C5: a drawn hand shows over the picture", hand > 4 * base + 4, `a middle cell changes ${hand.toFixed(1)} grey levels with the hand, at most ${base.toFixed(1)} frame to frame without`);
+    ctx.check(
+      "C5: a drawn hand shows over the picture",
+      held && hand > 4 * base + 4,
+      `on one held show frame (${held ? `frame ${quiet[0].frame}, ${quiet[0].onScreen} on screen` : `NOT held: frames ${[quiet[0], quiet[1], shown, gone].map((f) => `${f.frame}/${f.onScreen}`).join(", ")}`}): a middle cell changes ${hand.toFixed(1)} grey levels with the hand against without it, at most ${base.toFixed(1)} with nothing changed`,
+    );
   }
   ctx.check("C7: seat.update gets the frame's dt at the show's rate", Math.abs(lit.seatDt - 1 / HZ) < 1e-9, `dt ${lit.seatDt}`);
 
