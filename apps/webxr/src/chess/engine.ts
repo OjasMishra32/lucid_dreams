@@ -4,6 +4,7 @@ export interface Strength {
   id: string;
   label: string;
   elo: number | null; // null = full strength
+  legend?: string; // whose peak rating this is
 }
 
 export const STRENGTHS: Strength[] = [
@@ -11,6 +12,9 @@ export const STRENGTHS: Strength[] = [
   { id: "expert", label: "Expert", elo: 2000 },
   { id: "master", label: "Master", elo: 2400 },
   { id: "gm", label: "Grandmaster", elo: 2700 },
+  // legends: the engine set to the player's peak FIDE rating. Not the person, and never presented as them.
+  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer" },
+  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen" },
   { id: "max", label: "Engine", elo: null },
 ];
 

@@ -127,3 +127,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
   .time { display: none; }
   .segmented button { padding: 6px 7px; }
 }
+
+/* ---------- chess ---------- */
+.chess-controls { width: auto; max-width: calc(100% - 32px); flex-wrap: wrap; justify-content: center; }
+.legend-note { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(max(28px, env(safe-area-inset-bottom)) + 78px); margin: 0; font-size: 12px; color: var(--muted); z-index: 9; }
