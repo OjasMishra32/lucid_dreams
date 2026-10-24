@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 9:31 AM. Vishal is up; the planning session keeps building.
+Updated Sat 9:51 AM. Vishal is up; the planning session keeps building.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -13,6 +13,11 @@ private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
+18. **Two quality hooks, before gate 2 if you can (Vishal will submit Court Side's HiPerGator grid himself, so
+    your session doesn't have to):** (a) can 4DAnyone take our own body motion (SMPL-X per frame, e.g. from GEM-X)
+    instead of its built-in GVHMR, in case GVHMR gets the mid-closeout pose wrong? (b) recon with more than one
+    extra real view of the freeze frame (the second low angle and the high broadcast angle at the same instant, each
+    with its own camera, mask and focal), your 10(c): is it wired, and what file layout do you want?
 17. **Your replay cleanup on our freeze frames:** `lucid.clean_support` reads `views/videos`, which our cleanup
     job deletes, and `clean_check` assumes bundle frame i = clip frame i (ours is the single freeze frame from
     its own 4K source). We'll keep views until the clean runs (`KEEP_VIEWS=1` in our scripts). Could `clean_check`
