@@ -108,16 +108,100 @@ export function lumaAt(ctx, name, view, points, r = 3) {
   return n ? sum / n : NaN;
 }
 
-/** Blue over red across a saved frame (the Reality check's tint). */
-export function blueRatio(ctx, name) {
+/**
+ * Floor points the bundle marks as filmed and as rendered (imagined), for the Reality check (P23): a 0.5 m grid over the
+ * court read against floor-seen.png (filmed: white within 0.6 m all round; imagined: black within 0.6 m all round, so
+ * no point sits on the mask's soft edge), plus the apron round the court (outside floor-seen's extent, always rendered).
+ * Points off the frame, or under a person, the ball or the hoop in `view`, are left out.
+ */
+export async function realityPoints(ctx, view) {
+  const c = ctx.court.court;
+  const [hl, hw] = [c.length / 2, c.width / 2];
+  const grid = [];
+  for (let x = -hl - 1.7; x <= hl + 1.7; x += 0.5)
+    for (let z = -hw - 1.7; z <= hw + 1.7; z += 0.5) {
+      const inside = Math.abs(x) <= hl - 0.3 && Math.abs(z) <= hw - 0.3;
+      const apron = Math.abs(x) >= hl + 0.3 || Math.abs(z) >= hw + 0.3;
+      if (inside || apron) grid.push([x, z, inside]);
+    }
+  // the mask, read in the page from the bundle's own file
+  const marks = await ctx.page.evaluate(
+    async ([pts, path, len, wid]) => {
+      const img = new Image();
+      img.src = window.__courtLook.world.bundle.file(path);
+      await img.decode();
+      const cv = document.createElement("canvas");
+      cv.width = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      const g = cv.getContext("2d", { willReadFrequently: true });
+      g.drawImage(img, 0, 0);
+      const data = g.getImageData(0, 0, cv.width, cv.height).data;
+      // the floor shader's uv: u along +x, v = 1 - (z + w/2) / w on a flipY texture, so image row 0 is z = -w/2
+      const at = (x, z) => {
+        const u = Math.min(1, Math.max(0, (x + len / 2) / len));
+        const v = Math.min(1, Math.max(0, (z + wid / 2) / wid));
+        const X = Math.min(cv.width - 1, Math.floor(u * cv.width));
+        const Y = Math.min(cv.height - 1, Math.floor(v * cv.height));
+        return data[(Y * cv.width + X) * 4] / 255;
+      };
+      return pts.map(([x, z, inside]) => {
+        if (!inside) return "imagined";
+        let lo = 1;
+        let hi = 0;
+        for (const dx of [-0.6, 0, 0.6])
+          for (const dz of [-0.6, 0, 0.6]) {
+            const m = at(x + dx, z + dz);
+            lo = Math.min(lo, m);
+            hi = Math.max(hi, m);
+          }
+        return lo >= 0.99 ? "seen" : hi <= 0.01 ? "imagined" : null;
+      });
+    },
+    [grid, c.floorSeen, c.length, c.width],
+  );
+  // what stands on the floor, as screen boxes
+  const fz = ctx.court.freeze;
+  const boxes = [];
+  const box = (min, max) => {
+    const px = [];
+    for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) px.push(project(view, [x, y, z]));
+    if (px.some((q) => !q)) return;
+    boxes.push([Math.min(...px.map((q) => q[0])) - 8, Math.min(...px.map((q) => q[1])) - 8, Math.max(...px.map((q) => q[0])) + 8, Math.max(...px.map((q) => q[1])) + 8]);
+  };
+  for (const p of fz.players) box(p.bounds.min, p.bounds.max);
+  for (const o of fz.others) box([o.foot[0] - 0.7, 0, o.foot[2] - 0.7], [o.foot[0] + 0.7, o.height + 0.1, o.foot[2] + 0.7]);
+  const b = fz.ball;
+  box(b.centre.map((v) => v - b.radius), b.centre.map((v) => v + b.radius));
+  const rim = c.rim;
+  box([rim[0] - 2.2, 0, rim[2] - 1.2], [rim[0] + 2.2, rim[1] + 1.3, rim[2] + 1.2]); // ring, board, pole and base
+  const out = { seen: [], imagined: [] };
+  grid.forEach(([x, z], i) => {
+    if (!marks[i]) return;
+    const q = project(view, [x, 0, z]);
+    const [vx, vy, vw, vh] = view.viewport;
+    if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) return;
+    if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) return;
+    out[marks[i]].push([x, 0, z]);
+  });
+  return out;
+}
+
+/** Blue over red, summed over r-pixel windows round each court point of a saved frame. */
+export function blueRedAt(ctx, name, view, points, r = 2) {
   const img = readPng(join(ctx.out, `${name}.png`));
-  let r = 0;
-  let b = 0;
-  for (let i = 0; i < img.data.length; i += img.channels) {
-    r += img.data[i];
-    b += img.data[i + 2];
+  let red = 0;
+  let blue = 0;
+  for (const p of points) {
+    const px = project(view, p);
+    if (!px) continue;
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        const o = ((Math.round(px[1]) + dy) * img.width + Math.round(px[0]) + dx) * img.channels;
+        red += img.data[o];
+        blue += img.data[o + 2];
+      }
   }
-  return b / Math.max(1, r);
+  return blue / Math.max(1, red);
 }
 
 export const alphaOk = (frames) => frames.every((f) => f.alphaMin === 255);
