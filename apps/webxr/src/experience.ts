@@ -19,6 +19,7 @@ export interface Experience {
   title?: string;
   summary?: string;
   place?: "facing" | "beside" | "ahead"; // facing you; at your side facing your way; in front facing your way
+  environment?: string; // a place id from places.ts ("concert-hall", "court", ...) to start in, or "room" for your own room
   steps?: Step[];
   play?: { game: "chess"; strength?: string };
 }
@@ -183,7 +184,12 @@ export function fallbackExperience(dream: Dream, duration: number): Experience |
       intent,
       mode: "teach",
       title: intent.charAt(0).toUpperCase() + intent.slice(1),
-      place: /\b(dance|move|shoot|swing|throw|kick|form|step)\b/.test(said) ? "ahead" : "facing",
+      // an instrument is learned sitting next to the teacher; a movement by following them; anything else face to face
+      place: /\b(piano|keyboard|guitar|violin|cello|drums|ukulele|instrument|play this song|play this piece)\b/.test(said)
+        ? "beside"
+        : /\b(dance|move|shoot|swing|throw|kick|form|step)\b/.test(said)
+          ? "ahead"
+          : "facing",
       steps: Array.from({ length: parts }, (_, i) => ({
         start: i * len,
         end: (i + 1) * len,

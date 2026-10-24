@@ -5,6 +5,7 @@ import { SkinnedAvatar } from "./avatar";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
+import { nextPlace, type Place, Places, startingPlace } from "./places";
 import { loadProps } from "./props";
 import { fingertips, handOccluder, XrButton } from "./xr/hands";
 
@@ -22,6 +23,7 @@ const SPEEDS = [1, 0.5, 0.25];
 export async function renderViewer(root: HTMLElement, id: string) {
   root.innerHTML = `
     <div class="stage" id="stage"></div>
+    <div id="place-scrim" style="position: fixed; inset: 0 0 auto 0; height: 120px; z-index: 9; pointer-events: none; opacity: 0; transition: opacity 0.6s ease; background: linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0))"></div>
     <div class="topbar"><a class="back" href="./">${BACK}Dreams</a><div class="title"><div id="title"></div><div class="subtitle" id="subtitle"></div></div><div></div></div>
     <div class="loader" id="loader"><div class="loader-inner">
       <svg class="ring" viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="19"/><circle class="bar" id="ring" cx="22" cy="22" r="19"/></svg>
@@ -37,6 +39,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" aria-label="Scrub" />
       <span class="time" id="time">0.0 / 0.0 s</span>
       <div class="segmented" id="speeds"><button data-speed="0.25">0.25×</button><button data-speed="0.5">0.5×</button><button data-speed="1" class="on">1×</button></div>
+      <button class="pill" id="place" title="Change the place around them (P)" aria-label="Place: Your room"><span style="color: var(--muted)">Place</span>&nbsp; <span id="place-name">Your room</span></button>
       <button class="pill" id="reality" hidden aria-pressed="false">Reality check</button>
       <button class="pill on" id="cc" hidden aria-pressed="true">Captions</button>
       <a class="pill" id="play-chess" hidden>Play chess</a>
@@ -79,6 +82,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
   controls.maxDistance = 8;
   controls.maxPolarAngle = Math.PI * 0.55;
   controls.update();
+
+  // Places: a full 360-degree environment instead of your room (or, on a screen, the dark stage). Nothing until chosen.
+  const places = new Places(renderer);
+  scene.add(places.group);
 
   // The person: a group placed on the floor. Front faces -Z in the bundle, so turn it to face the viewer.
   const person = new THREE.Group();
@@ -183,6 +190,34 @@ export async function renderViewer(root: HTMLElement, id: string) {
     a.textContent = `Play chess with ${dream.name}`;
     a.hidden = false;
   }
+
+  // ---------------- places: a concert hall, a court, a ring around them instead of your room ----------------
+  const placeBtn = $("#place");
+  let xrPlace: XrButton | null = null;
+  const placedForward = new THREE.Vector3(0, 0, -1); // the way you faced when they were last placed in your room
+  places.onChange = (p: Place | null) => {
+    const name = p?.name ?? "Your room";
+    $("#place-name").textContent = name;
+    placeBtn.classList.toggle("on", !!p);
+    placeBtn.setAttribute("aria-label", `Place: ${name}`);
+    $("#place-scrim").style.opacity = p ? "1" : "0"; // keeps the title readable over a bright place
+    xrPlace?.setLabel(name);
+    xrPlace?.setOn(!!p);
+  };
+  // seen from where you are, with its interesting side (the stage, the corner) ahead of you and behind the person
+  const anchorPlace = () => {
+    if (renderer.xr.isPresenting) places.anchor(renderer.xr.getCamera().getWorldPosition(new THREE.Vector3()), placedForward);
+    else places.anchor(camera.position, controls.target.clone().sub(camera.position));
+  };
+  const setPlace = (p: Place | null) => {
+    if (!places.visible) anchorPlace();
+    void places.set(p);
+  };
+  const cyclePlace = () => setPlace(nextPlace(places.current));
+  placeBtn.addEventListener("click", cyclePlace);
+  // ?place= (a demo link), else experience.json's "environment", else what the intent suggests, else your room
+  setPlace(startingPlace(new URLSearchParams(location.search).get("place") ?? experience?.environment, experience?.intent ?? dream.intent));
+
   let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
   const show = (i: number, force = false) => {
     if (active[i]) active[i]!.opacity = reveal;
@@ -263,6 +298,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       e.preventDefault();
       setPlaying(!playing);
     }
+    if (e.code === "KeyP" && !e.metaKey && !e.ctrlKey && !e.altKey) cyclePlace();
   });
   syncAudio();
 
@@ -366,6 +402,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
     b.mesh.position.x = (i - (xrButtons.length - 1) / 2) * 0.1;
     tilt.add(b.mesh);
   });
+  // the place on a row of its own just beyond the others: Your room -> each place -> back
+  xrPlace = new XrButton("place", places.current?.name ?? "Your room", cyclePlace);
+  xrPlace.setOn(!!places.current);
+  xrPlace.mesh.position.y = 0.045;
+  tilt.add(xrPlace.mesh);
+  xrButtons.push(xrPlace);
 
   const caption = spatialCaption(dream.name, "Pinch to pause  ·  Hold the pinch to bring them here");
   caption.visible = false;
@@ -404,6 +446,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       person.position.set(0, 0, 0);
       person.rotation.y = Math.PI;
       caption.visible = false;
+      places.anchor(camera.position, controls.target.clone().sub(camera.position));
     },
     onReady: (supported) => {
       $("#room").hidden = !supported;
@@ -443,6 +486,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
     // the control bar: within reach, a little below your eyes, between you and them
     bar.position.set(head.x + forward.x * 0.42, Math.max(0.7, head.y - 0.42), head.z + forward.z * 0.42);
     bar.rotation.y = Math.atan2(-forward.x, -forward.z);
+    // the place re-centres on you too: its stage ahead of you, behind them (for any `place`: facing, beside or ahead)
+    placedForward.copy(forward);
+    places.anchor(head, forward);
   };
 
   // ---------------- loop ----------------
@@ -496,11 +542,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
       shownAvatar.mesh.opacity = reveal;
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
     props?.update(t, dt, reveal);
+    places.update(dt);
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer };
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */

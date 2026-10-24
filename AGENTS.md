@@ -207,6 +207,10 @@ Quest: Ian). Unknown fields are ignored, so it can grow.
   `chess`, `strength` one of club, expert, master, gm, fischer, carlsen, max).
 - `place`: `facing` (1.8 m in front, facing you; default), `beside` (at your side, facing your way: copy them),
   `ahead` (1.5 m ahead, facing away: follow them like a teacher at the front of a class).
+- `environment` (optional): the place around the person instead of your room, a full 360-degree surround with its
+  floor on yours: `concert-hall`, `court`, `gym`, `ring`, `studio`, `mountains`, or `room` (your own room in
+  passthrough). Absent: the intent picks one (piano / music -> `concert-hall`, basketball / shot -> `court`,
+  boxing / fight -> `ring`, workout -> `gym`), else `room`. CC0 panoramas in `apps/webxr/public/places/`.
 - `steps[].start/end`: seconds in the bundle's own clip time (0 = the bundle's first frame, after `startS`).
 - Tips are read in the device's voice, never the person's.
 
