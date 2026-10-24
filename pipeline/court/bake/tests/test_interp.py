@@ -122,7 +122,10 @@ def test_rife_cache_round_trip(tmp_path, clip):
     ib = interp.Inbetweens(lambda s: clip.gt(s), rife_dir=tmp_path / "rife")
     img, how = ib.get(a, b, 0.5)
     assert how == "rife" and np.array_equal(img, marker)
+    img, how = ib.get(a, b, 0.5004)  # within the lookup tolerance (the timeline may nudge w slightly)
+    assert how == "rife" and np.array_equal(img, marker)
     img, how = ib.get(a, b, 0.123456789)
     assert how == "dis" and img.shape == marker.shape
+    assert ib.get(a, b, 0.51)[1] == "dis"
     ib2 = interp.Inbetweens(lambda s: clip.gt(s), rife_dir=None)
     assert ib2.get(a, b, 0.5)[1] == "dis"
