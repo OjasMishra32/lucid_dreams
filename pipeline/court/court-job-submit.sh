@@ -6,7 +6,8 @@
 # default 2: results only come back).
 # SEEDS=N: N jobs per id, 4DAnyone seeds 1..N, results in $L/runs/<id>/seed<k>/; or TAG=<name>
 # (e.g. winner) for one more job per id into $L/runs/<id>/<name>/. Env passed to the jobs: VARIANTS, REALS, CAPS,
-# METRICS, ITERS, FACE, SEED, SEED_FLAG; NGPU (GPUs per job, default 4), MEM and TIME (sbatch overrides); DRY=1.
+# METRICS, ITERS, FACE, SEED, SEED_FLAG, VIEWS_FROM (with TAG: an earlier set of views instead of new ones); NGPU (GPUs
+# per job, default 4), MEM and TIME (sbatch overrides); JOB (the job script's name in that folder: court-job.sbatch); DRY=1.
 # Another allocation: ACCOUNT, QOS, PARTITION override the job script's own #SBATCH lines; L (its /blue base, holding
 # code/, data/ and runs/ and what env.sh points at) and ENV_SH (the environment script the jobs source) reach the jobs
 # too; QUOTA_GROUP picks whose /blue space is checked. COURT_DATA_L: uploads, results and these scripts live there
@@ -27,6 +28,13 @@ else
   TAGS=("${TAG:-}"); SEEDV=("${SEED:-}")
 fi
 [[ -z ${CPUS:-} || $CPUS =~ ^[1-9][0-9]*$ ]] || fail "CPUS=$CPUS"
+[[ ${JOB:-court-job.sbatch} =~ ^court-job[a-z0-9-]*\.sbatch$ ]] && test -r "$C/${JOB:-court-job.sbatch}" || fail "JOB=${JOB:-} (a court-job*.sbatch in $C)"
+if [ -n "${VIEWS_FROM:-}" ]; then  # one run's own earlier views, for one tagged job
+  [ -n "${TAG:-}" ] && (( $# == 1 )) || fail "VIEWS_FROM goes with TAG and one run id"
+  [[ $VIEWS_FROM == "$D/runs/$1/"* ]] || fail "VIEWS_FROM must be under $D/runs/$1/ (that run's own views)"
+  test -s "$VIEWS_FROM/cameras.json" && ls "$VIEWS_FROM"/videos/[0-9][0-9].mp4 > /dev/null 2>&1 ||
+    fail "VIEWS_FROM $VIEWS_FROM has no videos/NN.mp4 + cameras.json"
+fi
 for v in ACCOUNT QOS PARTITION; do
   [[ -z ${!v:-} || ${!v} =~ ^[A-Za-z0-9_.,-]+$ ]] || fail "$v='${!v}'"
 done
@@ -75,7 +83,7 @@ for id in "$@"; do
     cd "$out/logs"
     J=$(sbatch --parsable --gres=gpu:${NGPU:-4} ${MEM:+--mem=$MEM} ${TIME:+--time=$TIME} \
       ${CPUS:+--cpus-per-task=$CPUS} ${ACCOUNT:+--account=$ACCOUNT} ${QOS:+--qos=$QOS} ${PARTITION:+--partition=$PARTITION} \
-      --export=ALL,ID=$id,TAG=$t,SEED=${SEEDV[i]} "$C/court-job.sbatch")
+      --export=ALL,ID=$id,TAG=$t,SEED=${SEEDV[i]} "$C/${JOB:-court-job.sbatch}")
     echo "job=$J $(date '+%F %T')" > "$out/logs/submitted"
     echo "SUBMITTED $id${t:+ $t} job=$J (log: $out/logs/court-job-$J.log)"
   done
