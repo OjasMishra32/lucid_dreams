@@ -1,16 +1,22 @@
-// What the judge reads and presses (3.6): the caption, the honesty label and the source credit (always, P22), the
-// palm menu (left palm up, right index; xr/menu.ts HandMenu, 2 columns, first row on top; xr/hands.ts XrButton):
-// top row Step into the court / Back to my seat (one slot) and Reality check; bottom row Replay and See my room
-// (never moves or hides; flips to "Back to the arena"); Walk closer and Next view on their own row while they apply;
-// the setup page's Seat here, a HoldButton (2 s, P32). No gesture acts by itself and there is no other control path
-// (P21). Tested through the e2e (IWER hands), not node. Stream C (`core`) builds it; the action dispatch is written.
-import type * as THREE from "three";
-import { XrButton } from "../xr/hands";
+// What the judge reads and presses (3.6): the caption, the honesty label and the source credit (P22), low in front of
+// you and following you lazily as you walk; the Reality check's panel (blue = never seen, the seen % per player, the
+// interpolated share of the show: P7, P23); and the palm menu (left palm up, right index; xr/menu.ts HandMenu, 2
+// columns, first row on top):
+//   [Walk closer] | [Next view]        while the world is open and you're not in the room: Walk closer before the walking
+//                                      anchoring, Next view after it, only where a second placement fits
+//   [Step into the court | Back to my seat, Reality check]
+//   [Replay, See my room]              nearest the palm; this row never moves (See my room flips to "Back to the arena", stays lit)
+// and the setup page, [Seat here] over [See my room], where Seat here acts only after a 2 s hold (P32: HoldButton).
+// No gesture acts by itself and there is no other control path (P21): no keys. Stream C (`core`); tested through the
+// e2e (`window.__courtUi`, probe pages only), not node.
+import * as THREE from "three";
+import { XrButton, liveJoints } from "../xr/hands";
+import { HandMenu, handIndex } from "../xr/menu";
 import type { CourtBundle } from "./format";
 import type { Head, Phase } from "./types";
 
 /** True once stream C has built this module. */
-export const BUILT = false;
+export const BUILT = true;
 
 /** Every button, by what it does. */
 export type UiAction = "step" | "back" | "reality" | "replay" | "room" | "closer" | "nextView" | "seatHere";
@@ -27,40 +33,252 @@ export interface UiFlags {
   nextView: boolean;
 }
 
+/** xr/menu.ts's row and column pitch (the menu lays out its own rows; ours keep the bottom row still). */
+const ROW = 0.036;
+const COL = 0.1;
+/** See my room's two labels, padded on the left to clear its window glyph (no AR or VR words). */
+const ROOM_OUT = "   See my room";
+const ROOM_BACK = "   Back to the arena";
+/** Seat here's hold (P32). */
+export const HOLD_MS = 2000;
+/** A fingertip lost for this long ends a hold (tracking blinks shorter than this don't). */
+const HOLD_GRACE_MS = 150;
+
 /**
- * A button that acts only after a fingertip has held it for `holdMs` (Seat here: 2 s; a 1 s press changes nothing,
- * P32), with its progress shown on the face. A subclass, so xr/hands.ts stays as it is. Stub: never fires.
+ * A button that acts only after a fingertip has pushed into it and stayed there HOLD_MS (Seat here, P32). A blue bar
+ * fills along its bottom while held; a shorter press, a tap or a hand passing through changes nothing. It fires once
+ * per hold: the tip must come out before it can fire again.
  */
 export class HoldButton extends XrButton {
+  /** Every hold, for the e2e: when it started and when it fired (null: let go first), in `now` ms. */
+  readonly holds: { start: number; fired: number | null }[] = [];
   /** 0-1: how far through the hold the current press is. */
   progress = 0;
   readonly holdMs: number;
   private readonly onHeld: () => void;
+  private readonly bar: THREE.Mesh;
+  private holdStart: number | null = null;
+  private lastIn = 0;
+  private fired = false;
+  private readonly from = [false, false];
+  private readonly tip = new THREE.Vector3();
 
-  constructor(id: string, label: string, onHeld: () => void, holdMs = 2000) {
+  constructor(id: string, label: string, onHeld: () => void, holdMs = HOLD_MS) {
     super(id, label, () => {}); // a plain push does nothing: only the hold acts
     this.onHeld = onHeld;
     this.holdMs = holdMs;
+    const geo = new THREE.PlaneGeometry(0.076, 0.0026);
+    geo.translate(0.038, 0, 0);
+    this.bar = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x0a84ff, transparent: true, depthWrite: false }));
+    this.bar.position.set(-0.038, -0.0105, 0.0004);
+    this.bar.scale.x = 0.0001;
+    this.mesh.add(this.bar);
   }
 
-  /** Both index fingertips in world space; fires onHeld once a tip has stayed pressed in for holdMs. Stub: no-op. */
-  override touch(fingertips: (THREE.Vector3 | null)[], now: number): void {}
+  /** Both index fingertips in world space (null when not tracked), once a frame from the menu. */
+  override touch(fingertips: (THREE.Vector3 | null)[], now: number): void {
+    if (!this.mesh.visible) return;
+    let pressing = false;
+    for (let h = 0; h < fingertips.length; h++) {
+      const tip = fingertips[h];
+      if (!tip) continue;
+      this.mesh.worldToLocal(this.tip.copy(tip));
+      const { x, y, z } = this.tip;
+      const over = Math.abs(x) < 0.047 && Math.abs(y) < 0.016;
+      const near = Math.abs(x) < 0.08 && Math.abs(y) < 0.05;
+      // as XrButton: only a tip that came from in front counts, and one well behind the menu never does
+      if (near && z > 0.015 && z < 0.12) this.from[h] = true;
+      else if (!near || z < -0.08) this.from[h] = false;
+      if (over && z < -0.002 && this.from[h]) pressing = true;
+    }
+    // a hold the menu stopped seeing (it closed, or the tip was lost) for longer than the grace is over, even if the
+    // tip is back in: a new hold starts from now
+    if (this.holdStart !== null && now - this.lastIn > HOLD_GRACE_MS) {
+      this.holdStart = null;
+      if (this.fired) this.setOn(false);
+      this.fired = false;
+    }
+    if (pressing) {
+      this.lastIn = now;
+      if (this.holdStart === null) {
+        this.holdStart = now;
+        this.holds.push({ start: now, fired: null });
+      }
+      if (!this.fired && now - this.holdStart >= this.holdMs) {
+        this.fired = true;
+        this.holds[this.holds.length - 1].fired = now;
+        this.setOn(true);
+        this.onHeld();
+      }
+    }
+    this.progress = this.holdStart === null ? 0 : Math.min(1, (now - this.holdStart) / this.holdMs);
+    this.bar.scale.x = Math.max(0.0001, this.progress);
+  }
+}
+
+/** A small window glyph for See my room (a frame with four panes), as a child plane at the button's left. */
+function windowIcon(): THREE.Mesh {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.strokeStyle = "#f5f5f7";
+  g.lineWidth = 5;
+  g.strokeRect(10, 12, 44, 40);
+  g.beginPath();
+  g.moveTo(32, 12);
+  g.lineTo(32, 52);
+  g.moveTo(10, 32);
+  g.lineTo(54, 32);
+  g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const icon = new THREE.Mesh(new THREE.PlaneGeometry(0.0095, 0.0095), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  icon.position.set(-0.0365, 0, 0.0004); // in the pill's rounded left end; the label is padded clear of it
+  return icon;
+}
+
+/** The caption, label and credit panel (and the Reality check's lines above them) drawn on one canvas. */
+class CaptionPanel {
+  readonly mesh: THREE.Mesh;
+  readonly lines: string[] = [];
+  private readonly canvas = document.createElement("canvas");
+  private readonly tex: THREE.CanvasTexture;
+  private readonly material: THREE.MeshBasicMaterial;
+
+  constructor() {
+    this.canvas.width = 1024;
+    this.canvas.height = 384;
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
+    this.material = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.225), this.material);
+    this.mesh.name = "court-caption";
+    this.mesh.renderOrder = 100; // over the arena, under the fade-jump veil
+    this.mesh.visible = false;
+  }
+
+  set opacity(v: number) {
+    this.material.opacity = v;
+    this.mesh.visible = v > 0.001;
+  }
+
+  get opacity(): number {
+    return this.material.opacity;
+  }
+
+  /** The caption, label and credit always; `reality` lines above them while the Reality check is on. */
+  draw(caption: string, label: string, credit: string, reality: string[] | null): void {
+    const g = this.canvas.getContext("2d")!;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    g.clearRect(0, 0, W, H);
+    const font = (weight: number, px: number) => `${weight} ${px}px -apple-system, "SF Pro Text", Inter, Roboto, sans-serif`;
+    const fit = (text: string, weight: number, px: number, max: number) => {
+      let size = px;
+      do g.font = font(weight, size);
+      while (g.measureText(text).width > max && (size -= 2) > 14);
+    };
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    this.lines.length = 0;
+    // the Reality panel: a blue-edged pill above the caption
+    if (reality?.length) {
+      const h = 40 + reality.length * 34;
+      g.fillStyle = "rgba(10,20,40,0.78)";
+      g.beginPath();
+      g.roundRect(96, 8, W - 192, h, 26);
+      g.fill();
+      g.strokeStyle = "rgba(64,156,255,0.9)";
+      g.lineWidth = 3;
+      g.stroke();
+      reality.forEach((line, i) => {
+        g.fillStyle = i === 0 ? "#8cc4ff" : "#e8f1ff";
+        fit(line, i === 0 ? 600 : 500, 28, W - 260);
+        g.fillText(line, W / 2, 8 + 20 + 17 + i * 34);
+        this.lines.push(line);
+      });
+    }
+    const top = 196;
+    g.fillStyle = "rgba(20,20,22,0.72)";
+    g.beginPath();
+    g.roundRect(40, top, W - 80, 180, 36);
+    g.fill();
+    g.fillStyle = "#f5f5f7";
+    fit(caption, 600, 40, W - 140);
+    g.fillText(caption, W / 2, top + 48);
+    g.fillStyle = "#d2d2d7";
+    fit(label, 500, 29, W - 140);
+    g.fillText(label, W / 2, top + 104);
+    g.fillStyle = "#a1a1a6";
+    fit(credit, 400, 24, W - 140);
+    g.fillText(credit, W / 2, top + 148);
+    this.lines.push(caption, label, credit);
+    this.tex.needsUpdate = true;
+  }
+}
+
+/** What the e2e reads (probe pages only). */
+export interface UiProbe {
+  menuOpen(): boolean;
+  /** The buttons on the menu now, top row first: id, label, lit, and the world points just in front of and inside the face. */
+  buttons(): { id: string; label: string; on: boolean; front: number[]; inside: number[] }[];
+  /** Seat here's holds (start and fired, in the frame loop's `now` ms). */
+  holds(): { start: number; fired: number | null }[];
+  /** The text on the caption panel now (Reality lines first, then caption, label, credit), and whether it shows. */
+  text(): { lines: string[]; visible: boolean };
+  /** A tracked hand joint's world position and orientation (the e2e moves IWER's hands by them); null when not tracked. */
+  joint(side: "left" | "right", name: string): { p: number[]; q: number[] } | null;
+}
+
+declare global {
+  interface Window {
+    __courtUi?: UiProbe;
+  }
 }
 
 export class Ui {
   /** See my room's handler (the plan's name; the same as on("room", fn)). */
   onToggleRoom: (() => void) | null = null;
+  /** The palm menu (xr/menu.ts). */
+  readonly menu: HandMenu;
   private readonly handlers = new Map<UiAction, () => void>();
   private readonly scene: THREE.Scene;
   private readonly hands: THREE.Object3D[];
   private readonly sideOf: (i: number) => XRHandedness | null;
   private readonly bundle: CourtBundle;
+  private readonly b: Record<UiAction, XrButton>;
+  private readonly seatHere: HoldButton;
+  private readonly caption = new CaptionPanel();
+  private phase: Phase = "arrival";
+  private flags: UiFlags = { inRoom: false, reality: false, setup: true, nextView: false };
+  private placed = false;
+  private readonly headV = new THREE.Vector3();
+  private readonly target = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, hands: THREE.Object3D[], sideOf: (i: number) => XRHandedness | null, bundle: CourtBundle) {
     this.scene = scene;
     this.hands = hands;
     this.sideOf = sideOf;
     this.bundle = bundle;
+    this.menu = new HandMenu(hands, sideOf, scene, 2);
+    const button = (action: UiAction, label: string) => new XrButton(action, label, () => this.press(action));
+    this.seatHere = new HoldButton("seatHere", "Hold to seat here", () => this.press("seatHere"));
+    this.b = {
+      step: button("step", "Step into the court"),
+      back: button("back", "Back to my seat"),
+      reality: button("reality", "Reality check"),
+      replay: button("replay", "Replay"),
+      room: button("room", ROOM_OUT),
+      closer: button("closer", "Walk closer"),
+      nextView: button("nextView", "Next view"),
+      seatHere: this.seatHere,
+    };
+    this.b.room.mesh.add(windowIcon());
+    scene.add(this.caption.mesh);
+    this.drawCaption();
+    this.relayout();
+    if (typeof window !== "undefined" && window.__court) window.__courtUi = this.probe();
   }
 
   /** Register what a button does (court.ts wires every action). */
@@ -70,13 +288,113 @@ export class Ui {
 
   /** Act as if a button were pressed (the e2e's shortcut; the real presses come from the palm menu). */
   press(action: UiAction): void {
+    if (action === "reality") {
+      // court.ts flips Reality on every press (no phase gate): the panel and the lit button follow it right away
+      this.flags.reality = !this.flags.reality;
+      this.b.reality.setOn(this.flags.reality);
+      this.drawCaption();
+    }
     if (action === "room" && this.onToggleRoom) this.onToggleRoom();
     else this.handlers.get(action)?.();
   }
 
-  /** Which buttons show, and their labels, for this phase. Stub: no-op. */
-  setPhase(phase: Phase, flags: UiFlags): void {}
+  /** Which buttons show, and their labels, for this phase. */
+  setPhase(phase: Phase, flags: UiFlags): void {
+    const realityChanged = flags.reality !== this.flags.reality;
+    this.phase = phase;
+    this.flags = { ...flags };
+    this.b.room.setLabel(flags.inRoom ? ROOM_BACK : ROOM_OUT);
+    this.b.room.setOn(flags.inRoom);
+    this.b.reality.setOn(flags.reality);
+    if (realityChanged) this.drawCaption();
+    this.relayout();
+  }
 
-  /** Once a frame while presenting: the menu follows the palm; buttons take fingertip presses. Stub: no-op. */
-  update(head: Head, now: number, dt: number): void {}
+  /** Once a frame while presenting: the menu follows the palm and takes fingertip presses; the caption follows lazily. */
+  update(head: Head, now: number, dt: number): void {
+    this.headV.set(head.room[0], head.room[1], head.room[2]);
+    this.menu.update(this.headV, now, dt);
+    // the caption: shown from the watch on (the arrival is black), low in front, catching up only when you turn away
+    const want = this.flags.setup || this.phase === "arrival" ? 0 : 1;
+    const cap = this.caption;
+    cap.opacity = Math.min(1, Math.max(0, cap.opacity + Math.sign(want - cap.opacity) * dt * 2));
+    const fx = -Math.sin(head.yaw);
+    const fz = -Math.cos(head.yaw);
+    this.target.set(head.room[0] + fx * 1.05, head.room[1] - 0.42, head.room[2] + fz * 1.05);
+    const m = cap.mesh;
+    if (!this.placed) {
+      m.position.copy(this.target);
+      this.placed = true;
+    } else {
+      const dx = m.position.x - head.room[0];
+      const dz = m.position.z - head.room[2];
+      const off = Math.abs(Math.atan2(dx * fz - dz * fx, dx * fx + dz * fz));
+      const dist = Math.hypot(dx, dz);
+      if (off > (30 * Math.PI) / 180 || Math.abs(dist - 1.05) > 0.45 || Math.abs(m.position.y - this.target.y) > 0.3)
+        m.position.lerp(this.target, Math.min(1, dt * 2.5));
+    }
+    m.lookAt(this.headV);
+  }
+
+  private drawCaption(): void {
+    const c = this.bundle.court;
+    const reality = this.flags.reality
+      ? [
+          "Blue: what the camera never saw",
+          c.freeze.players.map((p) => `${p.name} ${Math.round(p.seenFraction * 100)}% seen`).join(" · "),
+          `In-between frames interpolated: ${Math.round(c.metrics.interpShare * 100)}% of the show`,
+        ]
+      : null;
+    this.caption.draw(c.caption, c.label, c.credit, reality);
+  }
+
+  /** The menu's rows for this phase (top row first); the bottom row is always [Replay, See my room]. */
+  private rows(): XrButton[][] {
+    const b = this.b;
+    if (this.flags.setup) return [[b.seatHere], [b.room]];
+    const rows: XrButton[][] = [];
+    const open = this.phase === "open" || this.phase === "walking";
+    if (this.phase === "open" && !this.flags.inRoom) rows.push([b.closer]);
+    if (this.phase === "walking" && !this.flags.inRoom && this.flags.nextView) rows.push([b.nextView]);
+    if (this.phase === "watching") rows.push([b.step, b.reality]);
+    else if (open) rows.push([b.back, b.reality]);
+    else rows.push([b.reality]);
+    rows.push([b.replay, b.room]);
+    return rows;
+  }
+
+  /** Put exactly this phase's buttons on the menu, each row centred, the last row at the palm. */
+  private relayout(): void {
+    const rows = this.rows();
+    const flat = rows.flat();
+    for (const btn of [...this.menu.buttons]) if (!flat.includes(btn)) this.menu.remove(btn);
+    for (const btn of flat) if (!this.menu.buttons.includes(btn)) this.menu.add(btn);
+    rows.forEach((row, r) =>
+      row.forEach((btn, k) => btn.mesh.position.set((k - (row.length - 1) / 2) * COL, (rows.length - 1 - r) * ROW, 0)),
+    );
+  }
+
+  private probe(): UiProbe {
+    return {
+      menuOpen: () => this.menu.open && this.menu.group.visible,
+      buttons: () =>
+        this.rows().flat().map((btn) => {
+          btn.mesh.updateWorldMatrix(true, false);
+          return {
+            id: btn.id,
+            label: (btn as unknown as { label: string }).label.trim(),
+            on: (btn as unknown as { on: boolean }).on,
+            front: btn.mesh.localToWorld(new THREE.Vector3(0, 0, 0.06)).toArray(),
+            inside: btn.mesh.localToWorld(new THREE.Vector3(0, 0, -0.006)).toArray(),
+          };
+        }),
+      holds: () => this.seatHere.holds.map((h) => ({ ...h })),
+      text: () => ({ lines: [...this.caption.lines], visible: this.caption.mesh.visible }),
+      joint: (side, name) => {
+        const j = liveJoints(this.hands[handIndex(this.sideOf, side)])[name];
+        if (!j?.visible) return null;
+        return { p: j.getWorldPosition(new THREE.Vector3()).toArray(), q: j.getWorldQuaternion(new THREE.Quaternion()).toArray() };
+      },
+    };
+  }
 }
