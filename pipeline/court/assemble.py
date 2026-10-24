@@ -1269,6 +1269,7 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         return errs, pending, info
     v = court["video"]
     frames = json.loads((bundle / v["frames"]).read_text())
+    camF_v = frame_camera(court["camera"], frames, v)
     check_stream(bundle, "main", v, len(frames), v["segments"], errs, info)
     fb = v.get("fallbacks") or {}
     if isinstance(fb.get("small"), dict):  # the same show frame for frame
@@ -1309,10 +1310,15 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         if not len(pos) or idx.max() >= len(pos):
             errs.append(f"{p['proxy']}: an empty or broken mesh")
             continue
-        tri = pos[idx.reshape(-1, 3)]
-        # a grid cell's two sides are each triangle's two shorter edges (the third is its diagonal): the longer side
-        cell = float(np.median(np.sort(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)[:, 1]))
-        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm")
+        tri = pos[idx.reshape(-1, 3)].astype(float)
+        # the sampling as camera F (and the seat on its ray) sees it: each edge across F's ray through the triangle;
+        # a grid cell's two sides are the two shorter of those (the third is its diagonal), and the longer side counts
+        ray = tri.mean(1) - camF_v.C
+        ray /= np.linalg.norm(ray, axis=1, keepdims=True)
+        edge = tri - np.roll(tri, 1, axis=1)
+        across = edge - np.einsum("tek,tk->te", edge, ray)[..., None] * ray[:, None, :]
+        cell = float(np.median(np.sort(np.linalg.norm(across, axis=2), axis=1)[:, 1]))
+        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm across F's rays")
         if cell > PROXY_CELL_M * 1.1:
             errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")
     bib = court["freeze"].get("ballInBody")

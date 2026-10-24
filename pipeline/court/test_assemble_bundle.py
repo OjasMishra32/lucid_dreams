@@ -538,6 +538,17 @@ class Bundle(unittest.TestCase):
         (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "thin"))
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
+        # what counts is the sampling as F sees it: a 4 mm grid on a surface steeply sloped away from F passes, though
+        # its legs are ~2 cm long in 3D
+        camF = A.frame_camera(court["camera"], json.loads((bad / court["video"]["frames"]).read_text()), court["video"])
+        fwd, right = camF.axis, camF.R[:, 0]
+        down = np.cross(fwd, right)
+        gu, gv = np.meshgrid(np.arange(41) * 0.004, np.arange(41) * 0.004)
+        base = camF.C + 20.0 * fwd
+        pos = (base + gu[..., None] * right + gv[..., None] * down + 5.0 * gv[..., None] * fwd).reshape(-1, 3)
+        (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "sloped"))
+        errs, _, info = A.validate(bad, A.WEBXR)
+        self.assertFalse(any("proxy.glb" in e and "P8" in e for e in errs), errs)
 
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"
