@@ -92,3 +92,20 @@ Put a consented, head-to-toe photo of a teammate at `$L/data/avatars/inputs/samp
 4. Family-photo person: one old photo -> avatar + idle loop, with an honest "imagined" share.
 5. Blink: optional `expr` in `motion.json`.
 6. A short results page in `avatars/README.md`: images and numbers Atina can drop into the slides.
+
+## Update (Fri ~8:40 PM): done and next
+
+Done, nice: fine-tune on 4DAnyone views (`digs_finetune.py`, `prep_views.py`), skinning + skeleton in bundles,
+blinking idle, floor-aware retargeting.
+
+Next, in order:
+1. **First real numbers.** As soon as the jump-shot replay finishes on HiPerGator (`runs/jump-shot/views/` will hold
+   cameras, 48 views and GVHMR motion), Ojasva runs your fine-tune on it. Write the exact sbatch for that
+   (`avatars/hpg/digs-finetune.sbatch`: inputs = a photo or a frame of that clip + the run dir) so it's one command.
+2. **"You, perfected" job:** `avatars/hpg/perfected.sbatch`: avatar bundle A + replay run B -> a new avatar bundle
+   wearing B's motion (retargeted to A's height). This is the demo's jaw-drop: make it one command.
+3. **Hands and face pass:** a short extra optimisation on face and hand crops at 2x resolution, so close-ups hold up.
+4. **Results page** in `avatars/README.md`: before/after renders and the PSNR / SSIM / LPIPS table (Atina's slides
+   pull from it).
+5. **Family-photo person:** one old photo -> avatar + blinking idle, with the honest imagined share.
+
