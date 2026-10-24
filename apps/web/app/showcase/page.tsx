@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import ShowcaseMoment, { type MomentDream } from "@/components/ShowcaseMoment";
 import { listDreams, listReady } from "@/lib/bridge/dreams";
 import { intentOf } from "@/lib/bridge/experience";
-import { dreamFile } from "@/lib/dream";
+import { dreamFile, isPrivate } from "@/lib/dream";
 import { MOMENTS, SHOWCASE_IDS } from "@/lib/showcase";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default function Showcase() {
   const all = listDreams();
   const ready = new Map(listReady(all).map((d) => [d.id, d])); // never a private dream: those are a family's
-  const privateIds = new Set(all.filter((d) => d.private).map((d) => d.id));
+  const privateIds = new Set(all.filter(isPrivate).map((d) => d.id));
   return (
     <>
       <header className="hero showcase-head">

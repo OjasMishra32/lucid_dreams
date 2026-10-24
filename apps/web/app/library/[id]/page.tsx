@@ -11,7 +11,7 @@ import { heldIds, readDream } from "@/lib/bridge/dreams";
 import { ensureExperience } from "@/lib/bridge/experience";
 import { onThisMac, publicOrigin, viewerOrigin } from "@/lib/bridge/http";
 import { ensureRealism } from "@/lib/bridge/realism";
-import { dreamFile, formatCount, heightM, type Dream } from "@/lib/dream";
+import { dreamFile, formatCount, heightM, isPrivate, type Dream } from "@/lib/dream";
 import { formatDate, seenPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ type Props = { params: Promise<{ id: string }> };
 async function visible(id: string): Promise<Dream | null> {
   const d = readDream(id);
   if (!d || heldIds().has(d.id)) return null;
-  if (d.private && !onThisMac(await headers())) return null;
+  if (isPrivate(d) && !onThisMac(await headers())) return null;
   return d;
 }
 
@@ -30,7 +30,7 @@ async function visible(id: string): Promise<Dream | null> {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const d = await visible((await params).id);
   if (!d) return { title: "Not found" };
-  if (d.private) return { title: d.name, robots: { index: false, follow: false } }; // nothing that unfurls in a share
+  if (isPrivate(d)) return { title: d.name, robots: { index: false, follow: false } }; // nothing that unfurls in a share
   const origin = publicOrigin(await headers());
   const description = `${d.name}, rebuilt in 3D from one video. Life size, in your room.`;
   const images = d.thumb ? [{ url: dreamFile(d.id, d.thumb), alt: d.name }] : [];
@@ -48,9 +48,10 @@ export default async function DreamPage({ params }: Props) {
   if (!d) notFound();
 
   const experience = ensureExperience(d.id);
-  const realism = d.private ? null : ensureRealism(d.id); // never on a family's private dream
+  const hidden = isPrivate(d); // a family's dream: no share link, no Quest address, no realism check, numbers folded away
+  const realism = hidden ? null : ensureRealism(d.id);
   const h = await headers();
-  const shareUrl = d.private ? null : `${publicOrigin(h)}/library/${encodeURIComponent(d.id)}`;
+  const shareUrl = hidden ? null : `${publicOrigin(h)}/library/${encodeURIComponent(d.id)}`;
   const questUrl = `${viewerOrigin(h)}/?dream=${encodeURIComponent(d.id)}`;
   const seen = seenPercent(d);
   const facts = basics(d);
@@ -126,12 +127,12 @@ export default async function DreamPage({ params }: Props) {
           {d.createdAt && <p className="detail-date">Made {formatDate(d.createdAt)}</p>}
           <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl} initial={experience} />
           <PlacesRow id={d.id} planned={experience.state === "ready" ? experience.experience.environment : null} />
-          <QuestUrl url={questUrl} />
+          {!hidden && <QuestUrl url={questUrl} />}
           {realism && <RealismPanel id={d.id} initial={realism} />}
 
-          {d.private ? (
+          {hidden ? (
             <details className="quiet-details">
-              <summary>The numbers</summary>
+              <summary>Show details</summary>
               {numbers}
             </details>
           ) : (

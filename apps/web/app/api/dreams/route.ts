@@ -1,4 +1,5 @@
 import { listDreams, listReady } from "@/lib/bridge/dreams";
+import { isPrivate } from "@/lib/dream";
 import { tend } from "@/lib/bridge";
 import { json, preflight } from "@/lib/bridge/http";
 
@@ -9,7 +10,7 @@ import { json, preflight } from "@/lib/bridge/http";
 export async function GET() {
   const dreams = listDreams();
   tend(dreams); // sees half-arrived ones too, to finish them
-  return json(listReady(dreams, { withPrivate: true }));
+  return json(listReady(dreams, { withPrivate: true }).map((d) => (isPrivate(d) ? { ...d, private: true } : d)));
 }
 
 export const OPTIONS = preflight;

@@ -135,6 +135,15 @@ export const STAGE_LABELS: Record<Stage, string> = {
   export: "Get them ready",
 };
 
+/**
+ * A family's dream, shown only on the bridge Mac and never shared: dream.json's `"private": true`, or any of Ian's
+ * grandma's runs (ian-grandma, ian-grandma-avatar, ian-grandma-avatar-head, ian-grandma-<date>-<time>) before theirs
+ * carries the field.
+ */
+export function isPrivate(d: { id: string; private?: boolean }): boolean {
+  return d.private === true || /^ian-grandma(-|$)/.test(d.id);
+}
+
 export function dreamFile(id: string, file: string): string {
   return `/dreams/${encodeURIComponent(id)}/${file}`;
 }

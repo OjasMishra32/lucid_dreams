@@ -1,7 +1,7 @@
 import "server-only";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { Dream } from "../dream";
+import { isPrivate, type Dream } from "../dream";
 import { fetching } from "./fetches";
 
 /** The repo root: the nearest folder above apps/web that holds AGENTS.md. */
@@ -90,7 +90,7 @@ export function heldIds(): Set<string> {
  */
 export function listReady(dreams: Dream[] = listDreams(), opts: { withPrivate?: boolean } = {}): Dream[] {
   const held = heldIds();
-  return dreams.filter((d) => !held.has(d.id) && (opts.withPrivate || d.private !== true) && !fetching(d.id) && bundleComplete(d));
+  return dreams.filter((d) => !held.has(d.id) && (opts.withPrivate || !isPrivate(d)) && !fetching(d.id) && bundleComplete(d));
 }
 
 /** The dream a page should lead with: newest real person with a 360 preview (test bundles last). */

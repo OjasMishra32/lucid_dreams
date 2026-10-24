@@ -42,8 +42,8 @@ export const HERO_DREAM = "jump-shot";
 /** At most this many frames of a replay play in the hero (every other frame of 121): ~285k Gaussians each. */
 export const MAX_FRAMES = 61;
 
-/** Never on the public site: public figures, whose footage and photos are for the live demo only. */
-export const NOT_ON_SITE = /^(lebron|bobby-fischer|magnus-carlsen|juice-wrld)/;
+/** Never on the public site: public figures (their footage and photos are for the live demo only) and Ian's grandma. */
+export const NOT_ON_SITE = /^(lebron|bobby-fischer|magnus-carlsen|juice-wrld|ian-grandma)/;
 
 /** Credits for the real people the reel can show (demo/credits.md). */
 export const CREDITS: Record<string, string> = {

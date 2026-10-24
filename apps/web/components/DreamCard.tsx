@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { dreamFile, type Dream } from "@/lib/dream";
+import { dreamFile, isPrivate, type Dream } from "@/lib/dream";
 import { dreamMeta } from "@/lib/format";
 
 /** A 9:16 card: the thumbnail, and the 360 preview fading in on hover. */
@@ -19,8 +19,8 @@ export default function DreamCard({ dream }: { dream: Dream }) {
       onMouseLeave={() => video.current?.pause()}
     >
       <div className="thumb">
-        {(dream.kind === "avatar" || dream.private) && (
-          <span className="badge">{[dream.kind === "avatar" && "Avatar", dream.private && "Private"].filter(Boolean).join(" · ")}</span>
+        {(dream.kind === "avatar" || isPrivate(dream)) && (
+          <span className="badge">{[dream.kind === "avatar" && "Avatar", isPrivate(dream) && "Private"].filter(Boolean).join(" · ")}</span>
         )}
         {thumb && <img src={thumb} alt="" loading="lazy" />}
         {preview && (
