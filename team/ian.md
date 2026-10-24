@@ -31,7 +31,8 @@ Best Social Impact entry. It has to be the most real and most careful thing we s
      Only on the Macs: the head swap refuses anyone in the `.held` beside the bundles on HiPerGator.
    - Video: `python3 pipeline/runner/lucid_runner.py submit <clip> --name "Grandma" --id ian-grandma --intent "I just want to sit with her"`
    - Photos: copy them to HiPerGator from the Mac (`H=hpg:/blue/iruchkin/vishalnaveen/lucid/data/avatars`,
-     `S="ssh -o ControlPath=~/.ssh/cm-hpg"`): `$S hpg mkdir -p ${H#hpg:}/inputs ${H#hpg:}/faces/ian-grandma`, then
+     `S="ssh -o ControlPath=$HOME/.ssh/cm-hpg"`): `ssh -o ControlPath=~/.ssh/cm-hpg hpg mkdir -p /blue/iruchkin/vishalnaveen/lucid/data/avatars/{inputs,faces/ian-grandma}`
+     (zsh won't split `$S` into a command, so spell it out here), then
      `rsync -e "$S" <body photo> $H/inputs/ian-grandma.jpg` and `rsync -e "$S" <close-ups>/*.jpg $H/faces/ian-grandma/`.
      Then on HiPerGator,
      `L=/blue/iruchkin/vishalnaveen/lucid; cd $L/repos/lucid_dreams/avatars/hpg` and:
