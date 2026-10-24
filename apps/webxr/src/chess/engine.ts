@@ -5,7 +5,7 @@ export interface Strength {
   label: string;
   elo: number | null; // null = full strength
   legend?: string; // whose peak rating this is
-  avatar?: string; // their avatar dream id, seated across the board when it exists
+  avatar?: string[]; // their avatar dream ids, best first: the first that exists sits across the board
 }
 
 export const STRENGTHS: Strength[] = [
@@ -14,9 +14,10 @@ export const STRENGTHS: Strength[] = [
   { id: "master", label: "Master", elo: 2400 },
   { id: "gm", label: "Grandmaster", elo: 2700 },
   // legends: the engine set to the player's peak FIDE rating, with their likeness across the board when we have it
-  // (freely licensed photos, no voice, always labelled as the engine). Not the person, and never presented as them.
-  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer", avatar: "bobby-fischer" },
-  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen", avatar: "magnus-carlsen" },
+  // (the face-swapped bundle first, then the photo avatar). They never speak, and they're always labelled as the
+  // engine: not the person, and never presented as them.
+  { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer", avatar: ["bobby-fischer-head", "bobby-fischer"] },
+  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen", avatar: ["magnus-carlsen-head", "magnus-carlsen"] },
   { id: "max", label: "Engine", elo: null },
 ];
 
@@ -64,9 +65,10 @@ export class Engine {
 
   /**
    * Best move for a FEN, in UCI notation (e.g. "e2e4", "e7e8q"). Thinks a little longer at higher strengths. onInfo
-   * hears each depth's evaluation as the search deepens: centipawns for the side to move (a mate is +-10000).
+   * hears each depth's evaluation as the search deepens: centipawns for the side to move (a mate is +-10000), and
+   * the move it currently thinks best (UCI), when the line carries one.
    */
-  async bestMove(fen: string, s: Strength, onInfo?: (depth: number, cp: number) => void): Promise<string> {
+  async bestMove(fen: string, s: Strength, onInfo?: (depth: number, cp: number, pv?: string) => void): Promise<string> {
     await this.ready;
     this.send(`position fen ${fen}`);
     const ms = s.elo === null ? 1500 : s.elo >= 2600 ? 1200 : s.elo >= 2200 ? 900 : 600;
@@ -74,7 +76,7 @@ export class Engine {
       const m = /^info .*?\bdepth (\d+)\b.*?\bscore (cp|mate) (-?\d+)/.exec(line);
       if (!m || / (lower|upper)bound/.test(line)) return;
       const n = Number(m[3]);
-      onInfo?.(Number(m[1]), m[2] === "cp" ? n : Math.sign(n || -1) * 10000);
+      onInfo?.(Number(m[1]), m[2] === "cp" ? n : Math.sign(n || -1) * 10000, / pv ([a-h][1-8][a-h][1-8][qrbn]?)/.exec(line)?.[1]);
     };
     if (onInfo) this.listeners.push(info);
     try {

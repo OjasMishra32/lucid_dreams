@@ -9,15 +9,17 @@ import { fingertips, handOccluder, XrButton } from "../xr/hands";
 import { Engine, STRENGTHS, type Strength } from "./engine";
 import { board, localToSquare, pieceGeometries, pieceHeight, pieceMaterials, type PieceType, SQUARE, squareToLocal } from "./pieces";
 import { ChessClock } from "./clock";
+import { hashSeed } from "./person";
 import { FloatingNote, LegendCard } from "./room";
 import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
 import { TableSounds } from "./sound";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
 // you at the strength you choose, with a real clock (10 + 0) at your right. On a laptop it's the same game with a
-// mouse. ?opponent=<avatar dream id> seats a rigged avatar across the table (seated.ts): they think with a fist under
-// the chin, move their own pieces, press their clock, set captured pieces aside, and shake your hand at the end.
-// They never speak: a legend is always labelled as Stockfish at that player's rating.
+// mouse. Someone sits across the table (seated.ts): a legend's strength brings their avatar, otherwise ?opponent=<avatar
+// dream id>, otherwise nobody. They think, move their own pieces with either hand, press their clock, set captured
+// pieces aside, and shake your hand at the end. They never speak: a legend is always labelled as Stockfish at that
+// player's rating.
 
 const PINCH_ON = 0.018; // meters between thumb and index tips
 const PINCH_OFF = 0.03;
@@ -97,8 +99,9 @@ export async function renderChess(root: HTMLElement) {
   const legendNote = new FloatingNote();
   scene.add(legendNote.mesh);
 
-  // someone across the table: any avatar bundle, seated on a chair on the far side, facing you. A legend's strength
-  // brings their avatar (when it's been made); otherwise ?opponent=<id>, or nobody.
+  // someone across the table: an avatar bundle, seated on a chair on the far side, facing you. A legend's strength
+  // brings their avatar (the first of its ids that exists); otherwise ?opponent=<id>; otherwise nobody (the board
+  // alone). Nothing is picked from the library on its own.
   const opponentId = new URLSearchParams(location.search).get("opponent");
   let opponent: SkinnedAvatar | null = null;
   let seated: SeatedOpponent | null = null;
@@ -127,9 +130,10 @@ export async function renderChess(root: HTMLElement) {
     opponentName = "";
     opponentShownId = null;
   };
-  // the current opponent stays until the new one has loaded, so switching never flickers
-  const setOpponent = (id: string | null, fallback: string | null = null) => {
+  // the current opponent stays until the new one has loaded, so switching never flickers; ids are tried in order
+  const setOpponent = (ids: string[]) => {
     const token = ++opponentToken;
+    const [id, ...rest] = ids;
     if (id && id === opponentShownId) return;
     if (!id) {
       clearOpponent();
@@ -149,6 +153,7 @@ export async function renderChess(root: HTMLElement) {
         opponentSince = performance.now();
         opponentGroup.add(opponent.mesh);
         seated = new SeatedOpponent(a, table, boardGroup);
+        seated.reseed(hashSeed(id, gameNumber));
         seated.setOpacity(0);
         opponentGroup.add(seated.chair);
         // on a laptop: from a seated player's eyes, the board in front and them behind it, facing you (in the
@@ -163,8 +168,7 @@ export async function renderChess(root: HTMLElement) {
       .catch((e) => {
         if (token !== opponentToken) return;
         console.info(`No avatar for ${id} yet:`, (e as Error).message);
-        if (fallback) setOpponent(fallback);
-        else clearOpponent();
+        setOpponent(rest);
       });
   };
   const farSide = new THREE.Vector3();
@@ -191,6 +195,7 @@ export async function renderChess(root: HTMLElement) {
   const meshes = new Map<string, THREE.Object3D>(); // square -> piece
   const tweens: { obj: THREE.Object3D; from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number; onDone?: () => void }[] = [];
   let gameId = 0; // bumped by a new game or an undo: an engine answer for an older position is dropped
+  let gameNumber = 0; // bumped by a new game only: the opponent's habits are seeded by it
   let lastEval: number | null = null; // the opponent's view of the position after its last move, centipawns
   const other = (c: "w" | "b") => (c === "w" ? "b" : "w");
   const isOver = () => chess.isGameOver() || !!clock.flagged;
@@ -284,18 +289,40 @@ export async function renderChess(root: HTMLElement) {
     // as the search deepens, the opponent learns what your last move did: a big drop for them is a nod for you
     let deepest = { depth: 0, cp: 0 };
     let judged = false;
+    const bests: string[] = []; // the move the search thought best, each time it changed its mind
     const judge = (cp: number) => {
       judged = true;
       if (lastEval !== null && lastEval - cp > 150) seated?.nod();
     };
-    const uci = await engine.bestMove(chess.fen(), strength, (depth, cp) => {
+    const uci = await engine.bestMove(chess.fen(), strength, (depth, cp, pv) => {
       if (depth >= deepest.depth) deepest = { depth, cp };
       if (!judged && depth >= 10) judge(cp);
+      if (pv && depth >= 8 && pv !== bests[bests.length - 1]) {
+        bests.push(pv);
+        seated?.consider(squareToLocal(pv.slice(0, 2)), squareToLocal(pv.slice(2, 4))); // their eyes go to it
+      }
     });
     if (id !== gameId) return; // a new game meanwhile
     if (!judged && deepest.depth) judge(deepest.cp);
+    const swing = lastEval !== null && deepest.depth ? lastEval - deepest.cp : 0;
     if (deepest.depth) lastEval = deepest.cp;
-    if (seated) await sleep(1500 - (performance.now() - t0)); // someone at the table takes a moment
+    let hardness = 0.3;
+    if (seated) {
+      // someone at the table takes a moment: quick in the opening and on recaptures, longer when it's sharp
+      const prev = chess.history({ verbose: true }).at(-1);
+      const think = seated.thinkTime({
+        ply: chess.history().length,
+        legal: chess.moves().length,
+        inCheck: chess.inCheck(),
+        swing,
+        bestChanges: Math.max(0, bests.length - 1),
+        evalCp: deepest.cp,
+        recapture: !!prev?.captured && !!uci && uci.slice(2, 4) === prev.to,
+        clockS: clock.time.far,
+      });
+      hardness = think.hardness;
+      await sleep(think.ms - (performance.now() - t0));
+    }
     if (id !== gameId) return;
     thinking = false;
     if (!uci || uci === "(none)" || isOver()) return updateStatus();
@@ -305,7 +332,7 @@ export async function renderChess(root: HTMLElement) {
     } catch {
       return updateStatus();
     }
-    if (handMove(mv)) return;
+    if (handMove(mv, hardness)) return;
     sync({ from: mv.from, to: mv.to });
     afterOpponentMove(true);
   };
@@ -323,13 +350,14 @@ export async function renderChess(root: HTMLElement) {
 
   // the opponent moves their own piece: the board keeps the old position until their hand lets go. A capture
   // first goes beside the board; castling is the king, then the rook; then they press their clock.
-  const handMove = (mv: Move): boolean => {
+  const handMove = (mv: Move, hardness = 0.3): boolean => {
     const obj = meshes.get(mv.from);
     if (!seated || !obj) return false;
-    const carry = (o: THREE.Object3D, from: THREE.Vector3, to: THREE.Vector3, soft = false): Carry => ({
+    const carry = (o: THREE.Object3D, from: THREE.Vector3, to: THREE.Vector3, role: Carry["role"], soft = false): Carry => ({
       obj: o,
       from,
       to,
+      role,
       height: o.userData.height as number,
       shadow: o.children[1],
       onLand: () => sounds.clack(worldAt(to), soft),
@@ -337,13 +365,19 @@ export async function renderChess(root: HTMLElement) {
     const carries: Carry[] = [];
     const takenOn = mv.flags.includes("e") ? mv.to[0] + mv.from[1] : mv.to; // en passant takes beside, not on, the square
     const victim = mv.captured ? meshes.get(takenOn) : undefined;
-    if (victim) carries.push(carry(victim, victim.position.clone(), slot(false, takenPieces().byOpponent.length - 1), true));
-    carries.push(carry(obj, squareToLocal(mv.from), squareToLocal(mv.to)));
+    if (victim) carries.push(carry(victim, victim.position.clone(), slot(false, takenPieces().byOpponent.length - 1), "victim", true));
+    carries.push(carry(obj, squareToLocal(mv.from), squareToLocal(mv.to), "piece"));
     if (mv.flags.includes("k") || mv.flags.includes("q")) {
       const [rf, rt] = mv.flags.includes("k") ? ["h", "f"] : ["a", "d"];
       const rook = meshes.get(rf + mv.from[1]);
-      if (rook) carries.push(carry(rook, squareToLocal(rf + mv.from[1]), squareToLocal(rt + mv.from[1])));
+      if (rook) carries.push(carry(rook, squareToLocal(rf + mv.from[1]), squareToLocal(rt + mv.from[1]), "rook"));
     }
+    // their other pieces within two squares of the one that moves: on a hard move a hand may hover over one first
+    const near = (a: string, b: string) => Math.abs(a.charCodeAt(0) - b.charCodeAt(0)) <= 2 && Math.abs(Number(a[1]) - Number(b[1])) <= 2;
+    const decoys = [...meshes]
+      .filter(([sq, m]) => sq !== mv.from && m.userData.color === mv.color && near(sq, mv.from))
+      .map(([, m]) => m.position.clone())
+      .slice(0, 6);
     reaching = true;
     updateStatus();
     const over = isOver();
@@ -363,6 +397,7 @@ export async function renderChess(root: HTMLElement) {
               if (!isOver() && chess.turn() === side) clock.run("near");
             },
           },
+      { hardness, decoys },
     );
     return true;
   };
@@ -409,7 +444,7 @@ export async function renderChess(root: HTMLElement) {
       return true;
     }
     clock.run("far"); // your move ends your turn (pressing your button does too)
-    seated?.glance(0.1, 1.0); // they look up at you, then back to the board
+    seated?.saw(squareToLocal(mv.to)); // their eyes go to your move
     void engineMove();
     return true;
   };
@@ -429,11 +464,13 @@ export async function renderChess(root: HTMLElement) {
 
   const newGame = async () => {
     gameId++;
+    gameNumber++;
     thinking = false;
     lastEval = null;
     chess.reset();
     clock.reset();
     seated?.cancel();
+    if (seated && opponentShownId) seated.reseed(hashSeed(opponentShownId, gameNumber));
     engine.newGame();
     await engine.setStrength(strength);
     boardGroup.rotation.y = side === "w" ? 0 : Math.PI;
@@ -679,7 +716,7 @@ export async function renderChess(root: HTMLElement) {
     cards.forEach((c) => c.setOn(c.id === id));
     root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
     void engine.setStrength(strength);
-    setOpponent(strength.avatar ?? opponentId, strength.avatar ? opponentId : null);
+    setOpponent([...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
     updateStatus();
   };
   root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => selectStrength(b.dataset.id!)));
@@ -700,6 +737,7 @@ export async function renderChess(root: HTMLElement) {
     frameView();
   });
   const viewer = new THREE.Vector3();
+  const watchAt = new THREE.Vector3();
   let lastTime = 0;
   clock.onFlag = () => {
     updateStatus();
@@ -756,7 +794,8 @@ export async function renderChess(root: HTMLElement) {
       placeOpponent();
       if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(viewer);
       else viewer.copy(camera.position);
-      seated.update(time, { thinking, viewer });
+      const watching = mouseHold?.obj ?? handHold[0]?.obj ?? handHold[1]?.obj; // a piece in your hand draws their eyes
+      seated.update(time, { thinking, viewer, watch: watching ? watching.getWorldPosition(watchAt) : null });
       const o = Math.min(1, (performance.now() - opponentSince) / 1400); // they arrive, not pop in
       opponent.mesh.opacity = o;
       seated.setOpacity(o);
