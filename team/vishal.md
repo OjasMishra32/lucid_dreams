@@ -6,6 +6,25 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## TOP PRIORITY (Sat 1:10 AM): the face pass, so the legends look like themselves
+
+The avatars run now (six fixes, all pushed: env packages, assets on GPU, repo lock, SMPL-X UV mesh, rembg on CPU,
+the weights check counting DINOv3's own file, the rasterizer's four outputs; please review those edits in
+`avatars/`). But Ojasva's verdict on Bobby Fischer: "this looks nothing like Fischer". In a full-body photo the face
+is ~60 px, so DiGS invents most of it. Black-and-white sources are now made black-and-white automatically
+(`pipeline/lucid/monochrome.py`), and a second Fischer is building from the iconic 1966 AP portrait (frontal,
+sharp, public domain: `runs/bobby-fischer-1966`). That helps; the real fix is yours:
+
+1. **`avatars/digs_face.py` + `hpg/digs-face.sbatch`:** refine an avatar's head against a close-up portrait. Fit
+   NLF SMPL-X + camera on the portrait (as `digs_avatar.py` does for the body photo), render the avatar from that
+   camera at 2x resolution, and optimise the DiGS code (the UV feature map, as in `digs_finetune.py`) with a loss
+   only inside the face/hair region (the face mask from `face_mask_thu_newNeutral.npy`, or a landmark crop): L1 +
+   0.2 (1 - SSIM) + LPIPS, 300-500 steps, everything else frozen so the body stays as it is. Write a new bundle
+   `<id>-face` and a before/after `compare.png` of the face.
+2. Run it on Fischer (portrait: the 1966 one, or `Bobby Fischer 1972.jpg`, CC0, Bert Verhoeff) and Carlsen
+   (`Magnus Carlsen (2012).jpg` face crop). Ojasva will swap the chess legends to the `-face` bundles if they win.
+3. If identity still drifts, try a second portrait from another angle in the same loss (two views beat one).
+
 ## BIG CHUNK (Sat 12:20 AM): everything avatars, now that they run
 
 `ball.py`, the seated idle and the IK fixes: great, thank you. The avatar chain is finally unblocked: DINOv3 is in,
