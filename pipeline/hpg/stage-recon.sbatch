@@ -2,9 +2,9 @@
 #SBATCH --job-name=lucid-recon
 #SBATCH --account=iruchkin
 #SBATCH --qos=iruchkin
-#SBATCH --partition=hpg-b200,hpg-rtx6000,hpg-turin
+#SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=3
 #SBATCH --mem=32G
 #SBATCH --time=03:00:00
 #SBATCH --output=%x-%A_%a.log

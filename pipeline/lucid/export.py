@@ -270,6 +270,15 @@ def main(argv=None):
     first = read_ply(frame_paths[0])
     rot, t = placement(first, a.result)
     cams = front_cameras(a.result) if a.result and (a.result / "cameras.json").exists() else []
+    solved = sorted(a.recon.glob("source-camera-*.json"))
+    if solved:  # the clip's real camera, solved in reconstruction: it may face the person's back, not their front
+        c = json.loads(solved[0].read_text())
+        q = 4  # a quarter of 4K is plenty for the visibility test
+        K = np.asarray(c["K"], float)
+        K[:2] /= q
+        cams = [{"K": K.tolist(), "camera_to_world": c["camera_to_world"],
+                 "image_width": c["image_width"] // q, "image_height": c["image_height"] // q}]
+        print(f"[export] seen = what the clip's solved camera saw ({solved[0].name}, IoU {c.get('iou')})")
     seen_fractions: list[float] = []
     counts, spz_total, bounds = [], 0, None
     placed_frames: list[Gaussians] = []

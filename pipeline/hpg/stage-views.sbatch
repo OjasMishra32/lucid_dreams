@@ -2,9 +2,9 @@
 #SBATCH --job-name=lucid-views
 #SBATCH --account=iruchkin
 #SBATCH --qos=iruchkin
-#SBATCH --partition=hpg-b200,hpg-rtx6000
+#SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=48G
 #SBATCH --time=02:00:00
 #SBATCH --output=%x-%j.log

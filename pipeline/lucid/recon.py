@@ -44,6 +44,12 @@ def parse_args(argv=None):
                         "fitted to and smear everywhere else (0 = off)")
     p.add_argument("--aniso-ratio", type=float, default=6.0, help="longest / shortest axis allowed before it costs")
     p.add_argument("--peek", default="", help="comma-separated views: save ground truth | render pairs of the first frame")
+    p.add_argument("--source-video", type=Path, default=None,
+                   help="the clip 4DAnyone was given (prepped.mp4): its real frames join training as a solved camera")
+    p.add_argument("--source-weight", type=float, default=1.5)
+    p.add_argument("--source-every", type=int, default=2, help="render the real view every Nth step")
+    p.add_argument("--source-iters", type=int, default=2000, help="extra steps on the first frame once it's solved")
+    p.add_argument("--source-max-height", type=int, default=2560)
     p.add_argument("--spz-sh", type=int, default=0, help="SH degree kept in the .spz copies")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--seed", type=int, default=0)
@@ -116,6 +122,7 @@ class Trainer:
         else:
             self.test_views = views[:0]
             self.train_views = views
+        self.source = None  # lucid.source_view.SourceView, once solved
         self.perc = None
         if args.perceptual > 0:
             try:
@@ -145,7 +152,7 @@ class Trainer:
         )
         return rgb.clamp(0, 1), alpha, info
 
-    def fit(self, params, rgba: torch.Tensor, iters: int, warm: bool):
+    def fit(self, params, rgba: torch.Tensor, iters: int, warm: bool, src: torch.Tensor | None = None):
         from gsplat.strategy import MCMCStrategy
 
         a = self.args
@@ -182,6 +189,13 @@ class Trainer:
             if self.perc is not None and step % 2 == 0:
                 loss = loss + a.perceptual * self.perc(pred.permute(0, 3, 1, 2), gt.permute(0, 3, 1, 2))
             loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * torch.exp(params["scales"]).mean()
+            if src is not None and step % a.source_every == 0:  # the real frame, at up to 4x the views' detail
+                sbg = torch.rand(1, 3, device=self.device)
+                sm = src[..., 3:4]
+                sgt = src[..., :3] * sm + sbg[:, None, None, :] * (1 - sm)
+                spred, salpha, _ = self.source.render(self, params, degree, sbg)
+                loss = loss + a.source_weight * (0.8 * (spred - sgt).abs().mean() + 0.2 * (1 - ssim(spred, sgt))
+                                                 + 0.1 * (salpha - sm).abs().mean())
             if a.aniso > 0:
                 s = params["scales"]  # log scales, so max - min is the log of the axis ratio
                 loss = loss + a.aniso * (s.max(-1).values - s.min(-1).values - math.log(a.aniso_ratio)).clamp_min(0).mean()
@@ -249,6 +263,13 @@ def main(argv=None):
     print(f"[recon] {len(frames.frame_ids)} frames x {rig.views} views at {rig.width}x{rig.height}, prep {prep_s:.0f}s")
 
     trainer = Trainer(rig, args)
+    source = None
+    if args.source_video and args.result:
+        from .source_view import SourceView
+
+        source = SourceView(args.source_video, frames.frame_ids, args.device, args.source_max_height)
+        # every ring camera is a candidate: the clip's camera needn't be square to the subject (a 3/4 stance is common)
+        front_ids = list(range(rig.views))
     out_frames = args.out / "frames"
     out_frames.mkdir(parents=True, exist_ok=True)
     report = {"start": frames.frame_ids[0], "end": frames.frame_ids[-1] + 1, "prepSeconds": prep_s, "frames": []}
@@ -262,8 +283,26 @@ def main(argv=None):
             params = init_params(pts, rgb, args.sh_degree, args.device, args.cap)
         else:
             params = clone_params(params)
-        params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm)
+        src = source.target(frame) if source is not None and source.ready else None
+        params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src)
+        if source is not None and not warm and source.solve(trainer, params, front_ids):
+            trainer.source = source
+            src = source.target(frame)
+            params = trainer.fit(params, rgba, args.source_iters, True, src)
         metrics = trainer.evaluate(params, rgba)
+        if src is not None:
+            with torch.no_grad():
+                white = torch.ones(1, 3, device=args.device)
+                pred, _, _ = source.render(trainer, params, int(round(math.sqrt(params["shN"].shape[1] + 1))) - 1, white)
+                gt = src[..., :3] * src[..., 3:4] + (1 - src[..., 3:4])
+                metrics["sourcePsnr"] = float(psnr(pred, gt))  # against the real 4K frame, not a generated view
+                if not warm:
+                    from PIL import Image
+
+                    pair = (torch.cat([gt[0], pred[0]], 1).clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+                    Image.fromarray(pair).save(args.out / f"peek-source-{frame:06d}.jpg", quality=90)
+                    report["source"] = source.report
+                    (args.out / f"source-camera-{frame:06d}.json").write_text(json.dumps(source.camera))
         if args.peek and not warm:
             trainer.peek(params, rgba, [int(v) for v in args.peek.split(",")], args.out / f"peek-{frame:06d}.jpg")
         g = Gaussians.from_params(params)

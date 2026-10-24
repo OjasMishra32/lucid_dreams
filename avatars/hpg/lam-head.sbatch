@@ -4,7 +4,7 @@
 #SBATCH --qos=iruchkin
 #SBATCH --partition=hpg-turin
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
 #SBATCH --output=/blue/iruchkin/vishalnaveen/lucid/jobs/%x-%j.log
