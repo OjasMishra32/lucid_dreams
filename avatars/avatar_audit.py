@@ -8,6 +8,8 @@ For each bundle, posed by its own skin.bin (gsplat, the way the players pose it)
   close-ups hands (seated, from across the table), collar and neck seam (front, side, back), jacket hem and hips
             (front, back), knees and crotch (seated front, standing front), shoes and ankles (front, side), back of
             the head (135, 180), under the arms (seated, both sides)
+  motions  with --motions DIR, the bundle in each clip there (a tennis player's shots: the contact frame) from four
+            sides, one sheet per clip
 Each view is drawn twice: colour on grey, and its alpha with every half-transparent pixel inside the person painted
 magenta (see-through patches, holes; a soft one-pixel outline is normal). With two or more bundles the sheets put
 them side by side, view for view (before | after).
@@ -73,6 +75,15 @@ class Bundle:
             return S.skin_matrices(self.rest, m.root_q[0], m.root_t[0], m.pose[0])
         m = self.motion
         return S.skin_matrices(self.rest, m.root_q[0], m.root_t[0], m.pose[0])
+
+    def matrices_of(self, motion_file: Path) -> tuple[np.ndarray, int]:
+        """Skin matrices for one frame of another motion (a clip's contact frame, else its middle): its pose on this
+        bundle's own skeleton."""
+        d = json.loads(motion_file.read_text())
+        k = int(d.get("contactFrame") or len(d["frames"]) // 2)
+        f = d["frames"][min(k, len(d["frames"]) - 1)]
+        return S.skin_matrices(self.rest, np.asarray(f["root_q"], float), np.asarray(f["root_t"], float),
+                               np.asarray(f["pose"], float).reshape(-1, 3)), k
 
     def posed(self, M: np.ndarray) -> dict:
         """gsplat inputs for the bundle posed by skin matrices M, plus the blended 3x3 per Gaussian."""
@@ -140,6 +151,22 @@ def render(gs: dict, eye, target, size, fov_deg: float) -> tuple[np.ndarray, np.
     av[a > 0.05] = (np.clip(1 - a[a > 0.05, None], 0, 1) * 255).astype(np.uint8).repeat(3, -1)
     av[(a > 0.05) & (a < 0.85)] = (230, 0, 200)
     return rgb, av
+
+
+def motion_views(b: Bundle, files: list[Path]) -> dict:
+    """The bundle in other motions (a tennis player's shots and runs): each at its contact frame (else its middle),
+    from 0, 90, 180 and 270 degrees, framed like the standing views."""
+    out = {}
+    for f in files:
+        M, k = b.matrices_of(f)
+        gs = b.posed(M)
+        solid = gs["means_np"][(gs["opacities"] > 0.5).cpu().numpy()]
+        mid = (solid.max(0) + solid.min(0)) / 2
+        size = float(np.ptp(solid, axis=0).max())
+        for a in (0, 90, 180, 270):
+            out[f"mo_{f.stem}_{a:03d}"] = render(gs, eye_at(mid, 1.25 * size / 2 / math.tan(math.radians(14)) + 0.3, a, 8),
+                                                 mid, (480, 720), 28.0)
+    return out
 
 
 def views(b: Bundle) -> tuple[dict, dict]:
@@ -237,20 +264,27 @@ def main() -> int:
     p.add_argument("bundles", type=Path, nargs="+")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--label", help="labels, one per bundle, comma- or colon-separated (default: folder names)")
+    p.add_argument("--motions", type=Path, help="a folder of motion clips (motion.json frames, e.g. the tennis player's): "
+                   "each bundle is also drawn in each one, on its own sheet")
     a = p.parse_args()
+    motions = sorted(f for f in a.motions.glob("*.json") if f.stem != "index") if a.motions else []
     labels = a.label.replace(":", ",").split(",") if a.label else [b.name for b in a.bundles]
     a.out.mkdir(parents=True, exist_ok=True)
     rows, report = [], {}
     for label, root in zip(labels, a.bundles):
         b = Bundle(root)
         v, numbers = views(b)
+        v.update(motion_views(b, motions))
         report[label] = {"bundle": str(root), **rest_numbers(b), **numbers}
         rows.append((label, v))
         print(label, json.dumps(report[label]), flush=True)
     keys = list(rows[0][1])
     groups = {"stand": [k for k in keys if k.startswith("stand_")], "seat": [k for k in keys if k.startswith("seat_")
                                                                            and k[5:].isdigit()],
-              "close": [k for k in keys if not k[-3:].isdigit() or not k.startswith(("stand_", "seat_"))]}
+              "close": [k for k in keys if (not k[-3:].isdigit() or not k.startswith(("stand_", "seat_")))
+                        and not k.startswith("mo_")]}
+    for f in motions:
+        groups[f"motion-{f.stem}"] = [k for k in keys if k.startswith(f"mo_{f.stem}_")]
     for name, ks in groups.items():
         for which, kind in ((0, "colour"), (1, "alpha")):
             sheet(rows, ks, a.out / f"{name}-{kind}.jpg", which)

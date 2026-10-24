@@ -70,3 +70,46 @@ def test_hand_shading_parts_the_fingers_and_finds_the_nails():
     assert p[nail & middle, 0].min() > joints[C.J["left_middle3"], 0]
     assert palm.any() and (n[palm, 1] < -0.3).all()
     assert 0.4 < shade.min() and shade.max() < 1.2
+
+
+def _shirt_front(rng, n=12000, tie=True):
+    """A torso's front from 5 cm under the collar to the belt: a dark jacket outside |x| > 7 cm; between the lapels
+    a white shirt LHM++ garbled with grey blotches and, with a tie, a dark tie down the middle marbled with light."""
+    x, y = rng.uniform(-0.14, 0.14, n), rng.uniform(-0.40, 0.0, n)
+    xyz = np.c_[x, y, np.full(n, 0.12)]
+    rgb = np.tile([0.08, 0.07, 0.07], (n, 1))
+    shirt = np.abs(x) < 0.07
+    rgb[shirt] = [0.86, 0.85, 0.83]
+    grey = shirt & (rng.random(n) < 0.15)
+    rgb[grey] = [0.1, 0.1, 0.11]
+    tie_m = shirt & (np.abs(x) < 0.02) if tie else np.zeros(n, dtype=bool)
+    rgb[tie_m] = [0.19, 0.19, 0.2]
+    rgb[tie_m & (rng.random(n) < 0.3)] = [0.7, 0.7, 0.7]
+    return xyz, np.clip(rgb + rng.normal(0, 0.01, (n, 3)), 0, 1), shirt, tie_m
+
+
+def test_shirt_paint_tie_makes_one_white_shirt_and_one_dark_tie():
+    rng = np.random.default_rng(3)
+    xyz, rgb, shirt, tie_m = _shirt_front(rng)
+    out, painted, tied = C.shirt_paint(xyz, rgb, np.ones(len(xyz), dtype=bool), 0.0, -0.40, "tie", jacket_lum=0.07)
+    lum, x = out @ C.LUM, xyz[:, 0]
+    sides = (np.abs(x) > 0.03) & (np.abs(x) < 0.05)  # the shirt either side of the tie, clear of the lapels
+    assert lum[sides].min() > 0.6 and lum[sides].std() < 0.05  # one white: no grey blotches left
+    middle = (np.abs(x) < 0.012) & (xyz[:, 1] < -0.01) & (xyz[:, 1] > -0.39)  # the zone's end rows see half a neighbourhood
+    assert lum[middle].max() < 0.3  # one tie cloth: no light flecks
+    jacket = np.abs(x) > 0.09
+    assert np.allclose(out[jacket], rgb[jacket])  # the jacket is untouched
+    assert len(painted) > 0 and len(tied) > 0
+
+
+def test_shirt_paint_open_paints_a_streak_down_an_open_collar():
+    rng = np.random.default_rng(4)
+    xyz, rgb, shirt, _ = _shirt_front(rng, tie=False)
+    rgb[shirt] = [0.86, 0.85, 0.83]  # a clean shirt ...
+    streak = (xyz[:, 0] > 0.01) & (xyz[:, 0] < 0.025)
+    rgb[streak] = [0.3, 0.22, 0.18]  # ... with a muddy streak down it
+    out, painted, tied = C.shirt_paint(xyz, rgb, np.ones(len(xyz), dtype=bool), 0.0, -0.40, "open", jacket_lum=0.07)
+    lum = out @ C.LUM
+    assert lum[streak].min() > 0.6 and len(tied) == 0
+    jacket = np.abs(xyz[:, 0]) > 0.09
+    assert np.allclose(out[jacket], rgb[jacket])
