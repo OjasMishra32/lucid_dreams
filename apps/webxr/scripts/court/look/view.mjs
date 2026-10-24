@@ -167,12 +167,30 @@ export function lumaAt(ctx, name, view, points, r = 3) {
 }
 
 /**
- * Floor points the bundle marks as filmed and as rendered (imagined), for the Reality check (P23): a 0.5 m grid over the
- * court read against floor-seen.png (filmed: white within 0.6 m all round; imagined: black within 0.6 m all round, so
- * no point sits on the mask's soft edge), plus the apron round the court (outside floor-seen's extent, always rendered).
+ * How far inside show frame k's picture a court point lies, as a share of the frame (0 on its edge, below 0 outside;
+ * -1 behind its camera): the frame's own solved camera (world-from-camera q, its f, the court camera's centre).
+ */
+export function frameMargin(ctx, k, p) {
+  const cam = ctx.court.camera;
+  const fr = ctx.showFrames[k];
+  if (!fr) return -1;
+  const px = project({ q: fr.q, centre: cam.centre, viewport: [0, 0, cam.width, cam.height], cx: cam.cx + 0.5, cy: cam.cy + 0.5, fx: fr.f, fy: fr.f }, p);
+  if (!px) return -1;
+  const [u, v] = [px[0] / cam.width, px[1] / cam.height];
+  return Math.min(u, 1 - u, v, 1 - v);
+}
+
+/**
+ * Floor points filmed and imagined, for the Reality check (P23), by the one definition every layer uses: a floor
+ * point is filmed when floor-seen.png marks it or camera F's picture holds it (stream D's floor plate shows F there,
+ * from the seat). A 0.5 m grid over the court read against floor-seen.png (white within 0.6 m all round; black within
+ * 0.6 m all round, so no point sits on the mask's soft edge) plus the apron round the court (outside floor-seen's
+ * extent). Imagined: neither, more than 3% of the frame outside F's picture. With `plates` (D's floor plate draws F's
+ * picture), points well inside it (past its 10% feather) are filmed too; without, they are left out.
  * Points off the frame, or under a person, the ball or the hoop in `view`, are left out.
  */
-export async function realityPoints(ctx, view) {
+export async function realityPoints(ctx, view, { plates = false } = {}) {
+  const F = ctx.court.video.segments.eases[0]?.frames[1];
   const c = ctx.court.court;
   const [hl, hw] = [c.length / 2, c.width / 2];
   const grid = [];
@@ -220,12 +238,14 @@ export async function realityPoints(ctx, view) {
   const boxes = standingBoxes(ctx, view);
   const out = { seen: [], imagined: [] };
   grid.forEach(([x, z], i) => {
-    if (!marks[i]) return;
+    const inF = F === undefined ? -1 : frameMargin(ctx, F, [x, 0, z]);
+    const kind = inF < -0.03 ? marks[i] : marks[i] === "seen" || (plates && inF >= 0.12) ? "seen" : null;
+    if (!kind) return;
     const q = project(view, [x, 0, z]);
     const [vx, vy, vw, vh] = view.viewport;
     if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) return;
     if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) return;
-    out[marks[i]].push([x, 0, z]);
+    out[kind].push([x, 0, z]);
   });
   return out;
 }

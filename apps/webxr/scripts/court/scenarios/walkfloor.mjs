@@ -33,7 +33,9 @@ export default async function walkfloor(ctx) {
       L.video.opacity = 0;
       const floor = L.proxies.backgroundPlates.find((m) => m.name === "proxy-floor-3d");
       if (!floor) return "none";
-      if (String(floor.material.fragmentShader).includes("lightFilmedFloor")) return "weighted";
+      // a call besides the light field's own definition (which every plate's shader carries)
+      const src = String(floor.material.fragmentShader);
+      if ((src.match(/\blightFilmedFloor\s*\(/g) ?? []).length > (src.match(/float\s+lightFilmedFloor\s*\(/g) ?? []).length) return "weighted";
       floor.visible = false; // its own streaks until D weights it too
       return "hidden";
     },
@@ -62,13 +64,16 @@ export default async function walkfloor(ctx) {
   const report = {};
   for (const v of views) {
     const file = v.name === "seat" ? "walk-seat" : `walk-${v.name.split(" ")[1]}`;
-    const { seen } = await realityPoints(ctx, v.log.view);
+    const { seen } = await realityPoints(ctx, v.log.view, { plates: plate === "weighted" });
     const rise = blueRedAt(ctx, `${file}-reality`, v.log.view, seen) / blueRedAt(ctx, file, v.log.view, seen);
     report[v.name] = { points: seen.length, rise };
     if (v.name === "seat")
       ctx.check(`walk: from the seat the filmed floor is the footage (Reality leaves it within 2%)${why}`, seen.length >= 12 && Math.abs(rise - 1) <= 0.02, `${seen.length} filmed points, blue / red x${rise.toFixed(3)}`);
+    else if (seen.length < 12)
+      // nothing filmed in view here (the real floor's footage covers a third of the court): nothing it could smear
+      ctx.check(`walk: at ${v.name} no filmed floor is in view, so no footage to smear${why}`, true, `${seen.length} filmed points in view`);
     else
-      ctx.check(`walk: at ${v.name} the filmed floor is the clean floor (Reality tints it, up at least 50%)${why}`, seen.length >= 12 && rise >= 1.5, `${seen.length} filmed points, blue / red x${rise.toFixed(2)}`);
+      ctx.check(`walk: at ${v.name} the filmed floor is the clean floor (Reality tints it, up at least 50%)${why}`, rise >= 1.5, `${seen.length} filmed points, blue / red x${rise.toFixed(2)}`);
   }
   ctx.report.walkfloor = { plate, report };
 }

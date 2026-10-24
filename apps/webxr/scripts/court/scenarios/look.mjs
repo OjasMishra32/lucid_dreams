@@ -3,8 +3,9 @@
 // clock and the hand-off; P44 through court.ts's own phases is the handoff scenario's.
 //   P33: alpha 255 on every frame. P44: no light change over 1 grey level per display frame (the 16 x 9 grid; the
 //   CPU twin in lightfield.test.ts holds it per pixel on the encoded byte, dither included, up to SAFE_GREY). P28: the
-//   house goes down while the pair's own pixels move <= 1 grey level. P23: the Reality check tints the floor the
-//   bundle marks as never filmed and leaves the filmed floor alone. (P17, the capsule fade, is scenarios/proximity.mjs.)
+//   house goes down while the pair's own pixels move <= 1 grey level. P23: the Reality check tints the floor no
+//   camera filmed (neither floor-seen nor camera F's picture) and leaves the filmed floor alone. (P17, the capsule
+//   fade, is scenarios/proximity.mjs.)
 // Owner: stream E.
 import { HZ, alphaOk, backgroundPoints, blueRedAt, lumaAt, lumaEach, realityPoints, runLight, sitAtSeat, worstStep } from "../look/view.mjs";
 
@@ -91,7 +92,8 @@ export default async function look(ctx) {
   await ctx.pressFrames("reality", 3);
   await ctx.save("look-reality");
   await ctx.pressFrames("reality", 3);
-  const sets = await realityPoints(ctx, opened.view);
+  // filmed and imagined by the one definition (floor-seen, or camera F's picture where D's floor plate shows it)
+  const sets = await realityPoints(ctx, opened.view, { plates: !!onF });
   const rise = (pts) => blueRedAt(ctx, "look-reality", opened.view, pts) / blueRedAt(ctx, "look-open", opened.view, pts);
   const [imagined, seen] = [rise(sets.imagined), rise(sets.seen)];
   const ratios = (pts) => `${blueRedAt(ctx, "look-open", opened.view, pts).toFixed(3)} -> ${blueRedAt(ctx, "look-reality", opened.view, pts).toFixed(3)}`;
