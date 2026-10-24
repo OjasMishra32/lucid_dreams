@@ -4,7 +4,8 @@ import * as THREE from "three";
 // avatars/lucid_avatars/hand_poses.py): absolute local rotations of one hand's 15 finger joints, in SMPL-X order
 // (index1-3, middle1-3, pinky1-3, ring1-3, thumb1-3), right hand, [x, y, z, w]. The left hand is the right one
 // mirrored: negate y and z. A pinch puts the thumb tip on the index tip with the other three fingers curled out of the
-// way; a point keeps the index straight (it presses the clock) with the rest curled.
+// way; a point keeps the index straight (it presses the clock) with the rest curled; a fist, partly, closes a hand
+// round another.
 
 export type FingerPose = readonly (readonly [number, number, number, number])[];
 
@@ -18,6 +19,15 @@ export const PINCH: FingerPose = [
 
 export const POINT: FingerPose = [
   [0, 0, 0.02, 0.9998], [0, 0, 0.02, 0.9998], [0, 0, 0.01, 0.99995],
+  [0, 0, 0.66314, 0.7485], [0, 0, 0.76754, 0.641], [0, 0, 0.52269, 0.85252],
+  [0, 0, 0.64422, 0.76484], [0, 0, 0.76754, 0.641], [0, 0, 0.52269, 0.85252],
+  [0, 0, 0.66314, 0.7485], [0, 0, 0.76754, 0.641], [0, 0, 0.52269, 0.85252],
+  [0.14283, -0.45437, 0.06614, 0.8768], [0.03944, 0.0609, 0.06639, 0.99515], [0.0005, 0.0005, 0.0005, 1],
+];
+
+/** All four fingers curled into the palm, the thumb across them: partly, it's a hand closing round another (a handshake). */
+export const FIST: FingerPose = [
+  [0, 0, 0.64422, 0.76484], [0, 0, 0.75128, 0.65998], [0, 0, 0.52269, 0.85252],
   [0, 0, 0.66314, 0.7485], [0, 0, 0.76754, 0.641], [0, 0, 0.52269, 0.85252],
   [0, 0, 0.64422, 0.76484], [0, 0, 0.76754, 0.641], [0, 0, 0.52269, 0.85252],
   [0, 0, 0.66314, 0.7485], [0, 0, 0.76754, 0.641], [0, 0, 0.52269, 0.85252],

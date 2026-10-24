@@ -3,7 +3,8 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import type { Skeleton, SkinnedAvatar } from "../avatar";
 import { type PieceType, SQUARE, pieceRadius } from "./pieces";
 import { BodyShape } from "./body";
-import { type FingerPose, PINCH, POINT, fingerQuat } from "./fingers";
+import { FIST, PINCH, POINT, fingerQuat } from "./fingers";
+import { liveJoints, openness } from "../xr/hands";
 import { type Hesitation, type IdleKind, type Mode, type Position, type Style, Rng, SIDED, hashSeed, holdSeconds, pickHesitation, pickIdle, pickStyle, thinkTime } from "./person";
 
 // The opponent as a person at the table: seated on a chair, breathing, moving their own pieces with whichever hand is
@@ -275,7 +276,17 @@ class Rig {
   }
 }
 
-type Kind = "wait" | "reach" | "hover" | "descend" | "grip" | "carry" | "set" | "adjust" | "release" | "lift" | "press" | "return" | "tip" | "hold" | "shake";
+type Kind = "wait" | "reach" | "hover" | "descend" | "grip" | "carry" | "set" | "adjust" | "release" | "lift" | "press" | "return" | "tip" | "hold" | "shake" | "offer" | "grasp";
+
+/**
+ * Your hand as the handshake reads it, world space: where its palm is, which way the palm faces, and whether it's
+ * held out to shake (palm sideways, fingers straight and together, thumb and index apart: never a pinch or a grab).
+ */
+export interface PlayerHand {
+  palm: THREE.Vector3;
+  normal: THREE.Vector3;
+  ok: boolean;
+}
 interface Held {
   c: Carry;
   fromTL: THREE.Vector3; // table-local base positions
@@ -312,6 +323,7 @@ interface Seg {
   c1: number | "idle"; // finger curl at the end (-0.3 open, 0 relaxed, 1 fist), or the idle pose's own
   pin1?: number; // pinch pose at the end (0 the avatar's own relaxed hand, 1 thumb tip on index tip, < 0 spread)
   tuck1?: number; // the other three fingers curled in, at the end (0..1)
+  fist1?: number; // the hand closed round another, at the end (0..1)
   pt1?: number; // pointing pose at the end (the index straight, the rest curled: it presses the clock)
   o1?: number; // 0 = fingers down at a piece, 1 = the hand held out to shake
   lift?: number; // meters the path rises in the middle
@@ -339,6 +351,7 @@ interface Seg {
   pin0?: number;
   pt0?: number;
   tuck0?: number;
+  fist0?: number;
   o0?: number;
   b0?: number;
   r0?: number;
@@ -410,6 +423,7 @@ interface FingerState {
   curl: number;
   tuck?: number; // the pinch pose's weight for the other three fingers: curled out of the way while it takes a piece
   thumb?: number; // the pinch pose's weight for the thumb alone, when it isn't pin's
+  fist?: number; // the fist pose's weight: a hand closing round another
 }
 /** A hand in some finger state, in its wrist's rest frame (the wrist at the origin, turned as in the rest pose). */
 interface HandShape {
@@ -447,6 +461,7 @@ class Hand {
   pin = 0; // pinch pose weight
   pt = 0; // pointing pose weight
   tuck = 0; // middle, ring and pinky curled in
+  fist = 0; // closed round your hand
   ease = 0; // how much wider than its step asks the pinch is held (easePinch), let go of slowly: no flicker
   contact = new THREE.Vector3(); // the hand's contact point in its wrist's rest frame, this frame (shape().contact)
   o = 0;
@@ -466,6 +481,39 @@ class Hand {
 }
 
 const OFFER = new THREE.Vector3(-0.05, 0.2, 0.06); // a handshake over the board, table-local
+// the handshake at the start of a game: their hand held out across the table to yours, how long they wait, how close
+// yours has to come, how far they rise off the seat for it
+const GREET_AT = new THREE.Vector3(-0.03, 0.21, 0.07);
+const GREET_WAIT = 4;
+const MEET = 0.12;
+const GREET_RISE = 0.05;
+
+/** A soft sound as hands meet: a short, low, muffled tap (no file, synthesized). */
+let audio: AudioContext | null = null;
+function softTap() {
+  try {
+    const AC = (globalThis as unknown as { AudioContext?: typeof AudioContext }).AudioContext;
+    if (!AC) return;
+    audio ??= new AC();
+    if (audio.state !== "running") void audio.resume();
+    const t = audio.currentTime;
+    const len = Math.floor(audio.sampleRate * 0.09);
+    const buf = audio.createBuffer(1, len, audio.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.18));
+    const src = audio.createBufferSource();
+    src.buffer = buf;
+    const lp = audio.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 700;
+    const gain = audio.createGain();
+    gain.gain.setValueAtTime(0.18, t);
+    src.connect(lp).connect(gain).connect(audio.destination);
+    src.start(t);
+  } catch {
+    // (no audio: no sound)
+  }
+}
 const up = (v: THREE.Vector3, h: number) => v.clone().setY(v.y + h);
 
 export class SeatedOpponent {
@@ -516,6 +564,17 @@ export class SeatedOpponent {
   private dt = 0;
   private leanS = 0; // the reach lean the body actually has: it follows what the hands ask, with a body's inertia
   private leanV = 0;
+  // the handshake at the start of a game: waiting to offer, offered, shaking, or sitting back down after it
+  private greet = {
+    phase: "none" as "none" | "wait" | "offer" | "shake" | "back",
+    delay: 0,
+    at: NaN,
+    lift: 0, // meters they rise off the seat to reach across
+    target: new THREE.Vector3(), // table-local: where their hand goes, on yours
+    lost: 0, // seconds your hand has been out of reach while they hold it
+    deferred: null as null | { carries: Carry[]; onPlaced: () => void; tap?: Tap; opts: PlayOptions },
+  };
+  private xrHands: THREE.Object3D[] | null = null;
   private riseS = 0; // meters the hips are up off the seat (the same spring as the lean)
   private riseV = 0;
   private slideS = 0; // meters the hips have slid forward on the seat
@@ -592,8 +651,28 @@ export class SeatedOpponent {
     this.lastStyle = null;
     this.lastHes = null;
     this.phase = new Rng(hashSeed(this.seed, "phase")).range(0, 2 * Math.PI);
+    this.greetPlayer(); // a new game: it starts with a handshake
   }
 
+  /**
+   * The start of a game: once they've settled, they rise a little and hold their right hand out across the table to
+   * yours. Hold yours out to it (palm sideways, fingers together) and they take it, shake two or three times while
+   * looking at you, let go and sit back; leave them hanging and after 4 s they take it back with a small nod. A move
+   * of theirs waits for it (play() holds it till then); a move of yours ends it.
+   */
+  greetPlayer(delay = 1.6) {
+    const g = this.greet;
+    g.phase = "wait";
+    g.delay = delay;
+    g.at = NaN; // (counted from the next frame)
+    g.lift = 0;
+    g.deferred = null;
+  }
+
+  /** True while the handshake at the start of a game is on (waiting, offered, shaking, or sitting back after it). */
+  get greeting() {
+    return this.greet.phase !== "none";
+  }
   /** How far behind the board's centre this opponent's hip joints are (SEAT_DISTANCE, or more for a bulkier body). */
   get seatDistance() {
     return SEAT_DISTANCE + this.seatBack;
@@ -631,6 +710,7 @@ export class SeatedOpponent {
 
   /** You moved (board-local destination): their eyes go to it, and sometimes up to you after. */
   saw(at: THREE.Vector3) {
+    if (this.greet.phase === "wait" || this.greet.phase === "offer") this.withdraw(); // you've started: no handshake
     const r = this.gazeRng;
     // a beat, then the eyes go to the piece you moved
     this.notice.copy(this.boardToTable(at)).setY(0.02);
@@ -658,6 +738,10 @@ export class SeatedOpponent {
    * hand presses their side of the clock, they look up at you, and the hand goes back.
    */
   play(carries: Carry[], onPlaced: () => void, tap?: Tap, opts: PlayOptions = {}) {
+    if (this.greeting) {
+      this.greet.deferred = { carries, onPlaced, tap, opts }; // after the handshake
+      return;
+    }
     this.drop();
     this.onPlaced = onPlaced;
     this.pending = carries.length;
@@ -703,6 +787,9 @@ export class SeatedOpponent {
    */
   endGame(tip?: { obj: THREE.Object3D; base: THREE.Vector3; fall: THREE.Vector3; height: number; shadow?: THREE.Object3D | null; onTipped?: () => void }) {
     this.drop();
+    this.greet.phase = "none";
+    this.greet.lift = 0;
+    this.greet.deferred = null;
     this.onPlaced = null;
     this.pending = 0;
     this.moving = false;
@@ -769,8 +856,17 @@ export class SeatedOpponent {
   }
 
   /** Their hand met the player's: a few small shakes, then back to rest. */
+  /** A slight shake of the head (hm, no), on top of whatever they're doing. */
+  headShake() {
+    this.shakeAt = this.now;
+  }
+
+  /**
+   * Their hand met yours at the end of a game (they were offering it): a few small shakes, then back to rest. When
+   * they aren't offering their hand, a slight shake of the head instead (as headShake()).
+   */
   shake() {
-    if (!this.offering) return;
+    if (!this.offering) return this.headShake();
     this.hands[1].segs = [
       { kind: "shake", dur: 1.15, end: () => OFFER, w1: 1, o1: 1, c1: 0.45, look: () => "viewer" },
       { kind: "grip", dur: 0.25, end: () => OFFER, w1: 1, o1: 1, c1: 0.1, hold: false, look: () => "viewer" },
@@ -791,6 +887,9 @@ export class SeatedOpponent {
   /** Stop whatever the hands are doing (a new game, an undo, a new opponent) and bring them back without a piece. */
   cancel() {
     this.drop();
+    this.greet.phase = "none";
+    this.greet.lift = 0;
+    this.greet.deferred = null;
     this.onPlaced = null;
     this.pending = 0;
     this.moving = false;
@@ -822,7 +921,8 @@ export class SeatedOpponent {
    * Once per frame, after the opponent's group is placed. viewer: the player's head in world space. watch: a piece
    * the player is holding, world space (their eyes follow it).
    */
-  update(timeMs: number, ctx: { thinking: boolean; viewer: THREE.Vector3 | null; watch?: THREE.Vector3 | null; pressure?: number }) {
+  /** ctx.hand: your hand for the handshake (world space); leave it out and it's read from the headset's tracked hands. */
+  update(timeMs: number, ctx: { thinking: boolean; viewer: THREE.Vector3 | null; watch?: THREE.Vector3 | null; pressure?: number; hand?: PlayerHand | null }) {
     const now = timeMs / 1000;
     const first = !this.last;
     const dt = first ? 0 : clamp(now - this.last, 0, 0.1);
@@ -849,10 +949,11 @@ export class SeatedOpponent {
     this.step(dt, ctx, false);
   }
 
-  private step(dt: number, ctx: { viewer: THREE.Vector3 | null; watch?: THREE.Vector3 | null }, first: boolean) {
+  private step(dt: number, ctx: { viewer: THREE.Vector3 | null; watch?: THREE.Vector3 | null; hand?: PlayerHand | null }, first: boolean) {
     const now = this.now;
     this.dt = dt;
     this.gather();
+    this.greetStep(ctx);
     this.updateMode(now);
     this.scheduleIdle(now);
     this.evalIdle(this.idleInst, this.idleLive);
@@ -1512,6 +1613,7 @@ export class SeatedOpponent {
     h.pin = 0;
     h.pt = 0;
     h.tuck = 0;
+    h.fist = 0;
   }
 
   private begin(h: Hand, s: Seg, now: number) {
@@ -1523,6 +1625,7 @@ export class SeatedOpponent {
     s.pin0 = h.pin;
     s.pt0 = h.pt;
     s.tuck0 = h.tuck;
+    s.fist0 = h.fist;
     s.o0 = h.o;
     s.b0 = h.beta;
     s.r0 = h.roll;
@@ -1585,6 +1688,7 @@ export class SeatedOpponent {
         h.pin = s.pin0! * (1 - kk);
         h.pt = s.pt0! * (1 - kk);
         h.tuck = s.tuck0! * (1 - kk);
+        h.fist = s.fist0! * (1 - kk);
         h.o = s.o0! * (1 - kk);
         return;
       }
@@ -1648,8 +1752,14 @@ export class SeatedOpponent {
         break;
       }
       case "hold":
+      case "offer":
         p.copy(b);
         p.y += 0.004 * Math.sin(this.now * 2.1); // a held-out hand is never quite still
+        break;
+      case "grasp":
+        // holding your hand: it goes where yours goes, two or three small shakes of its own on top
+        p.copy(this.greet.target);
+        p.y += 0.016 * Math.sin(2 * Math.PI * 2.5 * u) * Math.sin(Math.PI * clamp(u * 1.15, 0, 1));
         break;
       case "shake":
         p.copy(b);
@@ -1667,6 +1777,7 @@ export class SeatedOpponent {
     h.pin = s.pin0! + ((s.pin1 ?? 0) - s.pin0!) * m;
     h.pt = s.pt0! + ((s.pt1 ?? 0) - s.pt0!) * m;
     h.tuck = s.tuck0! + ((s.tuck1 ?? 0) - s.tuck0!) * m;
+    h.fist = s.fist0! + ((s.fist1 ?? 0) - s.fist0!) * m;
     h.o = s.o0! + ((s.o1 ?? 0) - s.o0!) * m;
     if (s.beta !== undefined) h.beta = s.b0! + (s.beta - s.b0!) * m;
     if (s.roll !== undefined) h.roll = s.r0! + (s.roll - s.r0!) * m;
@@ -1725,6 +1836,121 @@ export class SeatedOpponent {
   private boardToTable(v: THREE.Vector3) {
     this.table.updateWorldMatrix(true, true);
     return this.table.worldToLocal(this.boardGroup.localToWorld(v.clone()));
+  }
+
+  // ---------------- the handshake at the start of a game ----------------
+
+  private greetStep(ctx: { hand?: PlayerHand | null }) {
+    const g = this.greet;
+    const h = this.hands[1];
+    if (g.phase === "none") return;
+    if (g.phase === "wait") {
+      if (Number.isNaN(g.at)) g.at = this.now + g.delay;
+      if (this.now < g.at || h.segs.length || this.hands[0].segs.length) return;
+      g.phase = "offer";
+      g.lift = GREET_RISE;
+      const r = new Rng(hashSeed(this.seed, "greet"));
+      const at = () => GREET_AT;
+      h.segs = [
+        { kind: "reach", dur: r.range(1.0, 1.25), end: at, w1: 1, o1: 1, c1: 0, pin1: -0.2, fist1: 0, lift: 0.04, skew: 0.15, look: () => "viewer", clear: true },
+        { kind: "offer", dur: GREET_WAIT, end: at, w1: 1, o1: 1, c1: 0, pin1: -0.2, look: () => "viewer" },
+        // left hanging: they take it back, with a small nod
+        { ...this.returnSeg(1, GREET_AT, r), onBegin: () => this.sitBack(true) },
+      ];
+      return;
+    }
+    if (g.phase === "offer") {
+      if (h.segs[0]?.kind !== "offer") return;
+      const you = ctx.hand !== undefined ? ctx.hand : this.playerHand();
+      if (!you?.ok || you.palm.distanceTo(h.world) > MEET) return;
+      // they take your hand
+      g.phase = "shake";
+      g.lost = 0;
+      this.followHand(you, true);
+      softTap();
+      h.segs = [
+        { kind: "grasp", dur: 1.35, end: () => g.target, w1: 1, o1: 1, c1: 0, pin1: 0, fist1: 0.5, look: () => "viewer" },
+        { kind: "offer", dur: 0.22, end: () => g.target, w1: 1, o1: 1, c1: 0, pin1: -0.2, fist1: 0, look: () => "viewer" }, // letting go
+        { ...this.returnSeg(1, GREET_AT), onBegin: () => this.sitBack(false) },
+      ];
+      return;
+    }
+    if (g.phase === "shake") {
+      const you = ctx.hand !== undefined ? ctx.hand : this.playerHand();
+      if (you && you.palm.distanceTo(h.world) < 0.25) {
+        g.lost = 0;
+        this.followHand(you, false);
+      } else if ((g.lost += this.dt) > 0.25 && h.segs[0]?.kind === "grasp") h.segs[0].dur = Math.min(h.segs[0].dur, this.now - h.segs[0].t0!); // you let go
+      return;
+    }
+    // sitting back: when the hand's home, the game goes on (a move of theirs waiting for this goes now)
+    if (!h.segs.length) {
+      g.phase = "none";
+      const d = g.deferred;
+      g.deferred = null;
+      if (d) this.play(d.carries, d.onPlaced, d.tap, d.opts);
+    }
+  }
+
+  /** Where their hand goes on yours: against your palm, from the side it faces theirs (smoothed, and within reach). */
+  private followHand(you: PlayerHand, snap: boolean) {
+    const g = this.greet;
+    const palm = this.table.worldToLocal(you.palm.clone());
+    const n = this.table.worldToLocal(you.palm.clone().add(you.normal)).sub(palm).normalize();
+    const mine = this.table.worldToLocal(this.hands[1].world.clone());
+    if (n.dot(mine.clone().sub(palm)) < 0) n.negate();
+    const want = palm.addScaledVector(n, 0.03);
+    want.y = clamp(want.y, 0.16, 0.34); // (never down among the pieces, wherever your hand goes)
+    want.z = clamp(want.z, -0.2, 0.2);
+    want.x = clamp(want.x, -0.25, 0.15);
+    if (snap) g.target.copy(want);
+    else g.target.lerp(want, 1 - Math.exp(-this.dt / 0.06));
+  }
+
+  /** The handshake's over (shaken, or left hanging): they sit back down; a small nod either way. */
+  private sitBack(hanging: boolean) {
+    this.greet.phase = "back";
+    this.greet.lift = 0;
+    this.nodAt = this.now + (hanging ? 0.1 : 0.35);
+  }
+
+  /** You started before the handshake: they take their hand back (if it was out) and the game goes on. */
+  private withdraw() {
+    const g = this.greet;
+    const h = this.hands[1];
+    if (g.phase === "offer") h.segs = [{ ...this.returnSeg(1, h.p), onBegin: () => this.sitBack(true) }];
+    else {
+      g.phase = "back";
+      g.lift = 0;
+    }
+  }
+
+  /**
+   * Your hand as the headset tracks it (the XR hand spaces game.ts puts in the scene), read for a handshake: the one
+   * nearest their hand. null when no hand is tracked.
+   */
+  private playerHand(): PlayerHand | null {
+    if (!this.xrHands) {
+      let root: THREE.Object3D = this.table;
+      while (root.parent) root = root.parent;
+      this.xrHands = root.children.filter((o) => (o as unknown as { joints?: unknown }).joints !== undefined);
+    }
+    const mine = this.hands[1].world;
+    let best: PlayerHand | null = null;
+    let bestD = Infinity;
+    for (const hand of this.xrHands) {
+      const j = liveJoints(hand);
+      const at = (n: string) => (j[n] && j[n].visible !== false ? j[n].getWorldPosition(new THREE.Vector3()) : null);
+      const [w, im, mm, pm, tt, it, pt] = ["wrist", "index-finger-metacarpal", "middle-finger-metacarpal", "pinky-finger-metacarpal", "thumb-tip", "index-finger-tip", "pinky-finger-tip"].map(at);
+      if (!w || !im || !mm || !pm || !tt || !it || !pt) continue;
+      const palm = mm.clone().lerp(w, 0.25);
+      const normal = im.clone().sub(w).cross(pm.clone().sub(w)).normalize();
+      // palm sideways (its normal near level), fingers straight and together, thumb and index apart
+      const ok = Math.abs(normal.y) < 0.6 && (openness(j) ?? 0) > 0.72 && it.distanceTo(pt) < 0.065 && tt.distanceTo(it) > 0.035;
+      const d = palm.distanceTo(mine);
+      if (d < bestD) [best, bestD] = [{ palm, normal, ok }, d];
+    }
+    return best;
   }
 
   // ---------------- eyes ----------------
@@ -1843,6 +2069,7 @@ export class SeatedOpponent {
     const w = i >= 3 && i < 12 ? Math.max(st.pin, st.tuck ?? 0) : i >= 12 ? (st.thumb ?? st.pin) : st.pin;
     if (Math.abs(w) > 1e-4) q.slerp(fingerQuat(PINCH, side, i, _fq), clamp(w, -0.6, 1));
     if (st.pt > 1e-4) q.slerp(fingerQuat(POINT, side, i, _fq), clamp(st.pt, 0, 1));
+    if ((st.fist ?? 0) > 1e-4) q.slerp(fingerQuat(FIST, side, i, _fq), clamp(st.fist!, 0, 1));
     if (st.curl && i < 12) q.multiply(rot(0, 0, (side === 1 ? 1 : -1) * st.curl * CURL[i]));
     return q;
   }
@@ -1852,7 +2079,7 @@ export class SeatedOpponent {
    * fingers are (forward kinematics from the wrist), sized from the avatar's own Gaussians; and its contact point.
    */
   private shape(side: 0 | 1, st: FingerState): HandShape {
-    const key = `${side}|${st.pin.toFixed(3)}|${st.pt.toFixed(3)}|${st.curl.toFixed(3)}|${(st.tuck ?? 0).toFixed(3)}|${st.thumb?.toFixed(3)}`;
+    const key = `${side}|${st.pin.toFixed(3)}|${st.pt.toFixed(3)}|${st.curl.toFixed(3)}|${(st.tuck ?? 0).toFixed(3)}|${st.thumb?.toFixed(3)}|${(st.fist ?? 0).toFixed(3)}`;
     const memo = this.shapes.get(key);
     if (memo) return memo;
     const R = this.rig.rest;
@@ -2065,7 +2292,7 @@ export class SeatedOpponent {
     at.y = h.p.y - piece.y;
     if (h.held === k) at.set(0, k.grip, 0);
     for (let n = 0; n < 20; n++) {
-      const sh = this.shape(h.side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck });
+      const sh = this.shape(h.side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck, fist: h.fist });
       let worst = -Infinity;
       for (let i = 0; i < sh.pts.length; i++) {
         v.copy(sh.pts[i]).sub(sh.contact).applyQuaternion(t).add(at);
@@ -2141,7 +2368,7 @@ export class SeatedOpponent {
     const deficit = (u: number, at: THREE.Vector3, gap: number) => {
       const m = smooth(u);
       const w = clamp(s.w0! + (s.w1 - s.w0!) * m, 0, 1);
-      const st: FingerState = { pin: lerp(h.pin, s.pin1 ?? 0, m), pt: lerp(h.pt, s.pt1 ?? 0, m), curl: lerp(h.curl, c1, m), tuck: lerp(h.tuck, s.tuck1 ?? 0, m) };
+      const st: FingerState = { pin: lerp(h.pin, s.pin1 ?? 0, m), pt: lerp(h.pt, s.pt1 ?? 0, m), curl: lerp(h.curl, c1, m), tuck: lerp(h.tuck, s.tuck1 ?? 0, m), fist: lerp(h.fist, s.fist1 ?? 0, m) };
       const beta = s.beta !== undefined ? lerp(s.b0!, s.beta, m) : h.beta;
       const roll = s.roll !== undefined ? lerp(s.r0!, s.roll, m) : h.roll;
       q.copy(idle.q).slerp(this.reachTurnT(side, at, beta, roll), smooth(w));
@@ -2299,7 +2526,7 @@ export class SeatedOpponent {
       this.easePinch(h, h.held ?? sk!);
       h.ease = Math.max(h.ease, asked - h.pin);
     } else h.ease = 0;
-    h.contact.copy(this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck }).contact);
+    h.contact.copy(this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck, fist: h.fist }).contact);
     h.wrist.copy(h.contact).applyQuaternion(h.q).negate().add(h.graspB);
     h.pole.copy(idle.pole).lerp(this.defaultPole(side, new THREE.Vector3()), m).normalize();
     // the reaching shoulder comes forward: the torso turns a little toward the target, more for the far side
@@ -2417,6 +2644,7 @@ export class SeatedOpponent {
     // instead (up to 20 cm: half standing), and if even that isn't enough, lean no further
     let rise = 0;
     let lean = asked;
+    // (and up off the seat a little while they hold their hand out across the table at the start)
     if (asked > 0.25 && this.chestInTable(local, rootT, asked, 0, slide) > 0) {
       if (this.chestInTable(local, rootT, asked, MAX_RISE, slide) > 0) {
         rise = MAX_RISE;
@@ -2439,6 +2667,7 @@ export class SeatedOpponent {
         rise = hi;
       }
     }
+    rise = Math.max(rise, this.greet.lift);
     const steps = Math.ceil(this.dt / 0.02);
     for (let i = 0; i < steps; i++) {
       const h = this.dt / steps;
@@ -2596,7 +2825,7 @@ export class SeatedOpponent {
     // closing on it to hold it, the other three curled out of the way; the index alone for the clock
     for (const h of this.hands) {
       const base = h.side === 0 ? 25 : 40;
-      const st: FingerState = { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck };
+      const st: FingerState = { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck, fist: h.fist };
       for (let i = 0; i < 15; i++) if (local[base + i]) this.fingerTurn(h.side, i, st, local[base + i]);
     }
   }
@@ -2611,7 +2840,7 @@ export class SeatedOpponent {
     const idle = this.idleOut.hands[side];
     if (contact || idle.head > 0 || idle.elbow > 0) return 0;
     const wrist = side === 0 ? L_WRIST : R_WRIST;
-    const sh = this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck });
+    const sh = this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck, fist: h.fist });
     const resting = 1 - smooth(clamp(h.w * 2, 0, 1)); // 1: the idle pose has it on the table
     const seg = h.segs[0];
     // the piece it's taking it may touch from the moment it comes down onto it (on the way there it goes over it)
@@ -2731,7 +2960,7 @@ export class SeatedOpponent {
     }
     // the hand, every ball of it (palm, fingers, thumb) as its fingers are now
     const h = this.hands[side];
-    const sh = this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck });
+    const sh = this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck, fist: h.fist });
     const gw = G[side === 0 ? L_WRIST : R_WRIST];
     const c = bare ? 0 : clear;
     for (let i = 0; i < sh.pts.length; i++) {
@@ -2783,7 +3012,7 @@ export class SeatedOpponent {
             for (const h of this.hands) {
               h.p.copy(this.idleOut.hands[h.side].p);
               h.curl = this.idleOut.hands[h.side].curl;
-              h.pin = h.pt = h.tuck = 0;
+              h.pin = h.pt = h.tuck = h.fist = 0;
               this.aimHand(h);
             }
             this.gazeB.copy(i % 40 < 20 ? board : player);

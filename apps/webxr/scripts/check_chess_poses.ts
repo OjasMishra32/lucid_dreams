@@ -7,7 +7,8 @@
 //   2. every transition between the poses it can be given;
 //   3. a reach sweep: a piece picked up on each of the 64 squares and carried, then the clock pressed (as black, and
 //      as white unless --quick);
-//   4. whole games (random legal moves for both sides, the opponent as black and as white), with captures beside the
+//   4. the handshake at the start of a game: shaken, left hanging, and a pinch held up to their hand (never a shake);
+//   5. whole games (random legal moves for both sides, the opponent as black and as white), with captures beside the
 //      board, castling, the clock, the king tipped over, and the handshake.
 // Every frame the arms are posed through the avatar's own skinning and tested two ways:
 //   capsules: fingers (3 per finger + a tip), palm, forearm (tapered) and upper arm, radii measured from the avatar's
@@ -21,7 +22,7 @@
 // And the joints: elbow flexion, forearm and wrist twist, wrist flexion and deviation, how far the shoulder joint has
 // the arm raised and twisted, the collar, the neck, and how far the head is thrown back. Fails on any penetration over
 // 5 mm or a joint past its limit. Writes a JSON report with the worst frame of each.
-//   node scripts/check_chess_poses.ts [avatar ids...] [--quick] [--games 4] [--only idle,transition,reach,game]
+//   node scripts/check_chess_poses.ts [avatar ids...] [--quick] [--games 4] [--only idle,transition,reach,handshake,game]
 //        [--json out.json] [--trace "<scenario text>"] [--pose] (rest pose numbers) [--pinch] (pinch weights)
 import { registerHooks } from "node:module";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -70,7 +71,7 @@ const QUICK = flag("--quick");
 const GAMES = Number(opt("--games", QUICK ? "2" : "4"));
 const JSON_OUT = opt("--json", "");
 const TRACE = opt("--trace", "");
-const ONLY = new Set(opt("--only", "idle,transition,reach,game").split(","));
+const ONLY = new Set(opt("--only", "idle,transition,reach,handshake,game").split(","));
 const ids = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && ["--games", "--json", "--only", "--trace"].includes(args[i - 1])));
 const AVATARS = ids.length ? ids : ["magnus-carlsen-uika-360", "bobby-fischer-uika"];
 const DREAMS = process.env.LUCID_DREAMS ?? resolve(HERE, "../../../dreams");
@@ -464,6 +465,7 @@ class Table {
     this.group.add(avatar.mesh);
     this.seated = new SeatedOpponent(avatar as never, this.table, this.board);
     this.seated.reseed(person.hashSeed("check", seed));
+    this.seated.cancel(); // (no handshake at the start: the handshake scenarios ask for one themselves)
     this.seated.setClock(() => this.buttonTop());
     this.group.add(this.seated.chair);
     this.place();
@@ -594,6 +596,7 @@ interface Result {
   frames: number;
   reachError: number;
   reachAt: string;
+  handshake: string[];
   floats: Map<string, Hit>; // a resting hand (idle) above the table: how far its lowest point floats
 }
 
@@ -608,7 +611,7 @@ function record(map: Map<string, Hit>, key: string, h: Hit) {
 
 function runAvatar(id: string): Result {
   const bundle = loadBundle(id);
-  const res: Result = { avatar: id, capsule: new Map(), gauss: new Map(), grip: new Map(), joints: new Map(), frames: 0, reachError: 0, reachAt: "", floats: new Map() };
+  const res: Result = { avatar: id, capsule: new Map(), gauss: new Map(), grip: new Map(), joints: new Map(), frames: 0, reachError: 0, reachAt: "", handshake: [], floats: new Map() };
   const avatar0 = new FakeAvatar(bundle);
   const rest = avatar0.rest;
   const radii = measureRadii(bundle, rest);
@@ -678,7 +681,7 @@ function runAvatar(id: string): Result {
   };
 
   /** One scene: steps it at 30 Hz, testing every frame (Gaussians every `gaussEvery`). */
-  const sim = (scn: Table, scenario: () => string, gaussEvery = 3) => {
+  const sim = (scn: Table, scenario: () => string, gaussEvery = 3, hand: ((t: number) => unknown) | null = null) => {
     const av = scn.avatar;
     const S = scn.seated as unknown as Record<string, any>;
     const viewer = v3(0, 1.25, 0.62);
@@ -689,7 +692,7 @@ function runAvatar(id: string): Result {
       const steps = Math.round(seconds * HZ);
       for (let s = 0; s < steps; s++) {
         scn.tMs += 1000 / HZ;
-        scn.seated.update(scn.tMs, { thinking: !!ctx.thinking, viewer, pressure: 0, watch: null });
+        scn.seated.update(scn.tMs, { thinking: !!ctx.thinking, viewer, pressure: 0, watch: null, hand: (hand ? hand(scn.tMs / 1000) : null) as never });
         frame++;
         res.frames++;
         scn.scene.updateMatrixWorld(true);
@@ -1041,7 +1044,43 @@ function runAvatar(id: string): Result {
       }
   }
 
-  // ---- 4. whole games
+  // ---- 4. the handshake at the start of a game: shaken (your hand comes to his and shakes), left hanging, and a pinch
+  // held up to his hand (which must not count)
+  for (const how of ["shaken", "left hanging", "pinch"] as const) {
+    if (!ONLY.has("handshake")) break;
+    const scn = new Table(new FakeAvatar(bundle), "w", 30);
+    const SS = scn.seated as unknown as Record<string, any>;
+    let came = -1;
+    let his = v3();
+    const yours = (t: number) => {
+      if (how === "left hanging") return null;
+      const phase = SS.greet.phase as string;
+      if (phase === "back" || phase === "none") return null; // your hand's gone again
+      if (phase !== "offer" && phase !== "shake") return null;
+      if (came < 0 && SS.hands[1].segs[0]?.kind !== "offer") return null; // (you hold yours out once his is out)
+      if (came < 0) [came, his] = [t, (SS.hands[1].world as THREE.Vector3).clone()]; // (and go to where it is)
+      const k = Math.min(1, (t - came) / 0.7);
+      // coming in from your side, palm toward his; then your own up-and-down
+      const palm = his.clone().add(v3(0.03, -0.01, 0.03 + 0.25 * (1 - k)));
+      if (how === "shaken" && t - came > 1.6) palm.y -= 0.2 * Math.min(1, (t - came - 1.6) / 0.5); // you pull your hand down toward the board
+      if (phase === "shake") palm.y += 0.025 * Math.sin(2 * Math.PI * 2 * (t - came));
+      return { palm, normal: v3(-1, 0, 0), ok: how === "shaken" };
+    };
+    let lab = `handshake ${how}`;
+    const run = sim(scn, () => lab, 3, yours);
+    SS.greetPlayer(0.4);
+    const phases = new Set<string>();
+    for (let i = 0; i < 60 && (i < 4 || SS.greeting); i++) {
+      run(0.2);
+      phases.add(SS.greet.phase);
+    }
+    run(1.5);
+    lab = `handshake ${how}: done`;
+    const shook = phases.has("shake");
+    res.handshake.push(`${how}: ${[...phases].join(" -> ")}${(how === "shaken") === shook ? "" : " (WRONG)"}`);
+  }
+
+  // ---- 5. whole games
   for (let g = 0; g < (ONLY.has("game") ? GAMES : 0); g++) {
     const player = g % 2 === 0 ? "w" : "b";
     const scn = new Table(new FakeAvatar(bundle), player, 10 + g);
@@ -1117,6 +1156,10 @@ for (const id of AVATARS) {
   const t0 = Date.now();
   const r = runAvatar(id);
   console.log(`  ${r.frames} frames in ${((Date.now() - t0) / 1000).toFixed(0)} s; worst reach error ${fmt(r.reachError)} (${r.reachAt})`);
+  for (const h of r.handshake) {
+    console.log(`  handshake ${h}`);
+    if (h.includes("WRONG")) failed++;
+  }
   const sections: [string, Map<string, Hit>, boolean][] = [
     ["capsules (fingers, palm, forearm, upper arm, thighs)", r.capsule, true],
     ["Gaussians (hand and forearm centres, 8th deepest; torso vs chair; thighs vs table)", r.gauss, true],
