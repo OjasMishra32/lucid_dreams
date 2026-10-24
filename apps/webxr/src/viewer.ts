@@ -542,6 +542,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
     mode: "ar",
     referenceSpaceType: "local-floor",
     button: false,
+    // Spark puts up its own "ENTER AR" box unless it's given an element, even with button: false; ours never joins
+    // the page (View in your room calls toggleXr)
+    element: document.createElement("button"),
     enableHands: true,
     sessionInit: { optionalFeatures: ["anchors"] },
     onEnterXr: () => {
