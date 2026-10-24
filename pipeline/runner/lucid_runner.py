@@ -92,7 +92,8 @@ def status(run_id: str) -> dict:
 def fetch(run_id: str, dest: Path, with_ply: bool) -> dict:
     target = dest / run_id
     target.mkdir(parents=True, exist_ok=True)
-    extra = [] if with_ply else ["--exclude", "*.ply"]
+    # replay frames ship as SPZ too, so their PLYs stay on HiPerGator unless asked; an avatar's PLY is the avatar
+    extra = [] if with_ply else ["--exclude", "/frames/*.ply"]
     rsync(f"{HOST}:{REMOTE}/runs/{run_id}/bundle/", f"{target}/", *extra)
     return json.loads((target / "dream.json").read_text())
 

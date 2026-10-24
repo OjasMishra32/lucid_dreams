@@ -11,7 +11,7 @@ export interface Dream {
   upAxis: "+Y";
   bounds: { min: [number, number, number]; max: [number, number, number] } | null;
   frames: { dir: string; pattern: string; spz?: string; reality?: string | null; gaussiansPerFrame?: number; spzBytesTotal?: number } | null;
-  avatar: { file: string; rig: string; motion: string; skin?: string; skeleton?: string } | null;
+  avatar: { file: string; rig: string; motion: string; skin?: string; skeleton?: string; reality?: string } | null;
   audio: string | null;
   voice?: string | null; // the speaking voice, separated from background noise and music
   captions?: string | null; // WebVTT of what the person says, in the clip's own time

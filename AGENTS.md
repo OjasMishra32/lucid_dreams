@@ -165,7 +165,8 @@ not have seen tinted blue, for the "seen vs imagined" toggle, and `metrics.seenF
 
 For an avatar, `kind` is `"avatar"`, `frames` is null and
 `"avatar": { "file": "avatar/avatar.ply", "rig": "smplx", "motion": "avatar/motion.json", "skin": "avatar/skin.bin",
-"skeleton": "avatar/skeleton.json" }`.
+"skeleton": "avatar/skeleton.json" }`, plus optional `"reality": "avatar/reality.ply"` (the same Gaussians, what the photo
+didn't see tinted blue; players skin it identically for the "seen vs imagined" toggle).
 
 Optional in any bundle: `"captions": "captions.vtt"` (WebVTT of what the person says, times in the clip's own time; Atina's
 `pipeline/lucid/captions.py` writes it, players show it beside the person).
@@ -262,3 +263,4 @@ samples/           a small sample dream bundle for development (kept tiny, or li
 - Fri 9:04 PM, Vishal: HiPerGator login is back. Avatar jobs, in order: (1) clone this repo to `$L/repos/lucid_dreams` if it isn't there, then `sbatch avatars/hpg/digs-assets.sbatch` from it (CPU; its `ASSETS_OK` unblocks autopilot's jump-shot fine-tunes); (2) `digs-sample.sbatch` with Vishal's head-to-toe photo, `ID=vishal` (the chess opponent and "you, perfected" subject; checks the whole DiGS path); (3) `digs-finetune` runs itself via autopilot; (4) `digs-perform.sbatch AVATAR=$L/data/avatars/dreams/vishal.work/code.pt RUN_ID=jump-shot ID=vishal-jumper`. Exact commands and what to check: avatars/README.md.
 - Fri 9:06 PM, Ian: Quest runtime SPZ loading: the sequence player now plays SPZ bundles (what the bridge serves) as well as PLY, auto-picking PLY when every frame is there. samples/synthetic-test plays (4 SPZ frames); decode matches the PLY up to SPZ quantization. Ojasva: SPZ is written at SH 0 (Quest loses view-dependent colour; sh_degree=1 costs 9 B/Gaussian and is already supported), and gaussiansPerFrame is frame 0, not the max (13,527 vs 16,768). Notes in team/ian.md. Not yet run on the Quest.
 - Fri 9:30 PM, Ojasva: hands-only WebXR viewer (fingertip bar: pause, speed, reality check, bring here; quick pinch = pause, held pinch = bring them in front of you; real hands occlude the person). Captions show beside the person (and as subtitles on a laptop) when a bundle has `captions`. New drop folder: a consenting person's photo in `~/Downloads/lucid-photos/` on Ojasva's Mac becomes an avatar automatically. Chess linked from the library.
+- Fri 9:40 PM, Ojasva: fixed: fetching an avatar left out its `avatar.ply` (the fetch skipped every PLY; now only replay frames). Avatar bundles now carry Vishal's `reality.ply` as `avatar.reality`, and the viewer's Reality check works on avatars (skinned identically, with the seen %). Vishal: nothing to change on your side.

@@ -203,9 +203,28 @@ export async function renderViewer(root: HTMLElement, id: string) {
   // ---------------- reality check: what the camera really saw vs what was imagined ----------------
   const realityBtn = $("#reality");
   const seenPct = dream.metrics?.seenFraction != null ? Math.round(dream.metrics.seenFraction * 100) : null;
-  if (dream.kind === "replay" && dream.frames?.reality) realityBtn.hidden = false;
+  if ((dream.kind === "replay" && dream.frames?.reality) || (avatar && dream.avatar?.reality)) realityBtn.hidden = false;
+  let avatarReality: SkinnedAvatar | null = null;
+  let avatarRealityOn = false;
   let realityLoaded: Promise<void> | null = null;
   const toggleReality = async (): Promise<boolean> => {
+    if (avatar) {
+      // an avatar's reality file has the same Gaussians in the same order, so it skins and moves identically
+      const on = !avatarRealityOn;
+      if (on && !avatarReality) {
+        realityBtn.textContent = "Loading…";
+        avatarReality = await SkinnedAvatar.load(dream, avatar.motion, dream.avatar!.reality!);
+        person.add(avatarReality.mesh);
+      }
+      avatarRealityOn = on;
+      avatar.mesh.visible = !on;
+      avatarReality!.mesh.visible = on;
+      realityBtn.textContent = "Reality check";
+      realityBtn.classList.toggle("on", on);
+      realityBtn.setAttribute("aria-pressed", String(on));
+      $("#subtitle").textContent = on && seenPct != null ? `${seenPct}% seen in the photo · blue was imagined` : "";
+      return on;
+    }
     const on = active === frames;
     if (on && !realityLoaded) {
       realityBtn.textContent = "Loading…";
@@ -370,8 +389,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (cue) spoken.set(cue.text);
     spoken.fade(!!cue && renderer.xr.isPresenting, dt);
     if (avatar) {
-      avatar.pose(t);
-      avatar.mesh.opacity = reveal;
+      const shownAvatar = avatarRealityOn && avatarReality ? avatarReality : avatar;
+      shownAvatar.pose(t);
+      shownAvatar.mesh.opacity = reveal;
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;

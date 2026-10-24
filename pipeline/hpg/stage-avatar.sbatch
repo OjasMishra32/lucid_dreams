@@ -22,5 +22,14 @@ PHOTO=$(ls input.* | head -1)
 IMAGE="$RUN/$PHOTO" ID="$ID" NAME="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]))" "$NAME")" OUT="$RUN/out" \
   bash $L/repos/lucid_dreams/avatars/hpg/digs-sample.sbatch || { python3 -m lucid.status mark "$RUN" reconstruct failed; exit 1; }
 rm -rf bundle && mv "out/$ID" bundle
+if [ -f "out/$ID.work/reality.ply" ]; then  # seen vs imagined: what the photo didn't see, tinted blue
+  cp "out/$ID.work/reality.ply" bundle/avatar/reality.ply
+  python3 - <<'PY'
+import json
+d = json.load(open("bundle/dream.json"))
+d["avatar"]["reality"] = "avatar/reality.ply"
+json.dump(d, open("bundle/dream.json", "w"), indent=2)
+PY
+fi
 python3 -m lucid.status mark "$RUN" reconstruct done
 python3 -m lucid.status mark "$RUN" export done

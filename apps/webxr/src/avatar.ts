@@ -83,7 +83,8 @@ export class SkinnedAvatar {
     return dream.kind === "avatar" && !!dream.avatar?.skin && !!dream.avatar?.skeleton && !!dream.avatar?.motion;
   }
 
-  static async load(dream: Dream, motionOverride?: Motion): Promise<SkinnedAvatar> {
+  /** file: another Gaussian file in the same order as avatar.file (e.g. avatar.reality), skinned the same way. */
+  static async load(dream: Dream, motionOverride?: Motion, file?: string): Promise<SkinnedAvatar> {
     const a = dream.avatar!;
     // revalidate: a bundle fetched again under the same id must never play a stale rig
     const get = (f: string) => fetch(dreamUrl(dream.id, f), { cache: "no-cache" }).then((r) => {
@@ -92,7 +93,7 @@ export class SkinnedAvatar {
     });
     const [mesh, skin, skeleton, motion] = await Promise.all([
       (async () => {
-        const m = new SplatMesh({ url: dreamUrl(dream.id, a.file) });
+        const m = new SplatMesh({ url: dreamUrl(dream.id, file ?? a.file) });
         await m.initialized;
         return m;
       })(),
