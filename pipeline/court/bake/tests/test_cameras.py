@@ -199,3 +199,22 @@ def test_synth_timeline_and_cameras_match_ground_truth(synth_clip, hz):
     errors = C.validate_with_format_ts(C.frames_json(tl, cams), tl)
     if errors is not None:
         assert errors == []
+
+
+def test_a_reflection_is_not_a_rotation(tmp_path):
+    p = tmp_path / "calib.json"
+    doc = make_calib(p)
+    doc["frames"][5]["R"] = (np.array(doc["frames"][5]["R"]) * -1).tolist()  # det -1
+    p.write_text(json.dumps(doc))
+    with pytest.raises(ValueError, match="rotation"):
+        C.load_calib(p)
+
+
+def test_an_off_centre_principal_point_warns(tmp_path, caplog):
+    p = tmp_path / "calib.json"
+    doc = make_calib(p)
+    doc["frames"][7]["K"][0][2] += 3.0
+    p.write_text(json.dumps(doc))
+    with caplog.at_level("WARNING"):
+        C.load_calib(p)
+    assert any("principal point" in r.message for r in caplog.records)

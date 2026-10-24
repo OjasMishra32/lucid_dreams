@@ -135,7 +135,12 @@ class WatermarkModel:
     stays, so over time std(I) = (1 - alpha) std(B) and mean(I) = (1 - alpha) mean(B) + c, with mean(B) and std(B)
     filled in from the region around the box (the crowd's statistics vary slowly across the corner). Removing it
     un-blends B = (I - c) / (1 - alpha), so what is behind the logo (a head, the crowd) stays real; where the logo is
-    nearly opaque the un-blend is too noisy and an inpaint takes over."""
+    nearly opaque the un-blend is too noisy and an inpaint takes over.
+
+    Measured: on the synthetic clip it beats the box inpaint ~3x (box MAD 5.4 vs 14.5). On the real clip's corner
+    (a defocused crowd under a logo up to ~0.8 opaque, 1080p JPEG) it leaves a bright residual of the logo's white
+    parts and colour fringes at its edges, while the box inpaint reads as clean blurred crowd. So the real bake uses
+    the inpaint (leave BakeConfig.watermark_model unset) until the fit is better."""
 
     def __init__(self, alpha: np.ndarray, c: np.ndarray, region, size):
         self.alpha, self.c = alpha.astype(np.float32), c.astype(np.float32)
@@ -271,12 +276,15 @@ class Source:
                 f_of = lambda s: cf(s) * src_width / cf.width  # noqa: E731
             else:
                 f_of = cf
+        if not _get(cfg, "frames_dir"):
+            raise ValueError("bake config: frames_dir is not set (the decoded source frames)")
+        rife_dir = kw.pop("rife_dir", None) or _get(cfg, "rife_dir") or None
+        rife_dir = Path(rife_dir).expanduser() if rife_dir else None
         src = cls(Path(_get(cfg, "frames_dir")).expanduser(), _get(cfg, "frame_pattern", "{src:06d}.jpg"), f_of,
                    cf.k1, src_width, watermark=_get(cfg, "watermark"), strobes=_get(cfg, "strobes", ()) or (),
                    repeat_mod=_get(cfg, "repeat_mod", 4), repeat_phase=_get(cfg, "repeat_phase", 3),
                    clip_first=_get(cfg, "clip_first", 0), capture_fps=_get(cfg, "capture_fps", 120.0),
-                   f_scale=_get(cfg, "undistort_f_scale", 1.0) or 1.0, rife_dir=kw.pop("rife_dir", _get(cfg, "rife_dir")),
-                   **kw)
+                   f_scale=_get(cfg, "undistort_f_scale", 1.0) or 1.0, rife_dir=rife_dir, **kw)
         wm = _get(cfg, "watermark_model")
         if wm and src.watermark:
             wm = Path(wm).expanduser()

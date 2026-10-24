@@ -44,6 +44,8 @@ class BakeConfig:
     resume_ramp_s: float = 0.8
     display_hz: tuple[int, ...] = (72, 90)
     snap_tol: float = 0.1  # a real frame within this many capture frames (x the local step, capped at 1) is shown as is
+    near_real: float = 0.02  # ... and always within this many capture frames (sub-pixel: an in-between that close
+    #                          would differ from the real frame by less than its own interpolation error)
     # cameras
     calib: str = ""  # calib_A.json-schema file; "" = none (synthetic tests pass their own)
     undistort_f_scale: float = 1.0  # output focal / solved focal of the undistorted pinhole image (source.py's choice)
@@ -54,6 +56,8 @@ class BakeConfig:
     layers: str = ""  # the layers agent's out/ (people.json, plates/, mattes/)
     out: str = ""  # the bundle's video/ folder
     tmp: str = ""  # scratch
+    rife_dir: str = ""  # fetched RIFE results (needs.json + images); "" = Mac DIS-flow fallback
+    watermark_model: str = ""  # .npz watermark model (source.py fits and saves it there when missing)
     synthetic: bool = False  # written by synth.py
     notes: dict = field(default_factory=dict, compare=False)
 
@@ -86,6 +90,10 @@ class BakeConfig:
             e.append("expected 0 < pass2_speed_90 < 1")
         if list(self.ease_seconds) != sorted(self.ease_seconds, reverse=True):
             e.append("expected ease_seconds longest first (earliest start first)")
+        if not (0 <= self.snap_tol < 0.5):
+            e.append("expected 0 <= snap_tol < 0.5 (capture frames): 0.5 or more would hold real frames")
+        if not (0 <= self.near_real < 0.5):
+            e.append("expected 0 <= near_real < 0.5 (capture frames)")
         if not (0 <= self.repeat_phase < self.repeat_mod):
             e.append("expected 0 <= repeat_phase < repeat_mod")
         return e

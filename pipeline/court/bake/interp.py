@@ -98,21 +98,24 @@ def _wkey(w: float) -> int:
     return int(round(float(w) * 1e6))
 
 
-def out_name(a: int, b: int, w: float) -> str:
-    return f"{int(a):06d}_{int(b):06d}_{_wkey(w):07d}.png"
+def out_name(a: int, b: int, w: float, ext: str = ".png") -> str:
+    return f"{int(a):06d}_{int(b):06d}_{_wkey(w):07d}{ext}"
 
 
-def write_needs(entries: Iterable, path: Path, frame_pattern: str = "{src:06d}.jpg") -> dict:
-    """needs.json for the RIFE job: every distinct (a, b, w) with the file the job must write for it."""
+def write_needs(entries: Iterable, path: Path, frame_pattern: str = "{src:06d}.jpg", ext: str = ".png",
+                checks: Iterable = ()) -> dict:
+    """needs.json for the RIFE job: every distinct (a, b, w) with the file the job must write for it, plus optional
+    held-out checks (a, m, c, w): the job interpolates a -> c at m's time and scores it against the real frame m."""
     seen, pairs = set(), []
     for a, b, w in entries:
         k = (int(a), int(b), _wkey(w))
         if k in seen or not (0 < k[2] < 1_000_000):
             continue
         seen.add(k)
-        pairs.append({"a": k[0], "b": k[1], "w": k[2] / 1e6, "out": out_name(*k[:2], w)})
-    man = {"version": 1, "frame_pattern": frame_pattern, "pairs": pairs,
-           "frames": sorted({p["a"] for p in pairs} | {p["b"] for p in pairs})}
+        pairs.append({"a": k[0], "b": k[1], "w": k[2] / 1e6, "out": out_name(*k[:2], w, ext)})
+    chk = [{"a": int(a), "m": int(m), "c": int(c), "w": float(w)} for a, m, c, w in checks]
+    frames = {p["a"] for p in pairs} | {p["b"] for p in pairs} | {x[k] for x in chk for k in ("a", "m", "c")}
+    man = {"version": 1, "frame_pattern": frame_pattern, "pairs": pairs, "checks": chk, "frames": sorted(frames)}
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=1))
@@ -122,9 +125,11 @@ def write_needs(entries: Iterable, path: Path, frame_pattern: str = "{src:06d}.j
 class Inbetweens:
     """read(src) -> raw RGB uint8 frame; rife_dir: a fetched RIFE results folder (needs.json + its outputs)."""
 
-    def __init__(self, read: Callable[[int], np.ndarray], rife_dir: Path | None = None, method: str = "dis"):
+    def __init__(self, read: Callable[[int], np.ndarray], rife_dir: Path | None = None, method: str = "dis",
+                 w_tol: float = 1e-3):
         self.read = read
         self.method = method
+        self.w_tol = w_tol  # a listed result within this time fraction of the asked w is used (timeline tweaks)
         self.rife = {}
         if rife_dir is not None:
             man = Path(rife_dir) / "needs.json"
@@ -134,8 +139,16 @@ class Inbetweens:
                     if f.exists():
                         self.rife[(int(p["a"]), int(p["b"]), _wkey(p["w"]))] = f
 
-    def get(self, a: int, b: int, w: float):
+    def _lookup(self, a: int, b: int, w: float):
         f = self.rife.get((int(a), int(b), _wkey(w)))
+        if f is not None or self.w_tol <= 0:
+            return f
+        near = [(abs(k[2] - _wkey(w)), p) for k, p in self.rife.items() if k[0] == int(a) and k[1] == int(b)]
+        near = [x for x in near if x[0] <= self.w_tol * 1e6]
+        return min(near, key=lambda x: x[0])[1] if near else None
+
+    def get(self, a: int, b: int, w: float):
+        f = self._lookup(a, b, w)
         if f is not None:
             img = cv2.imread(str(f), cv2.IMREAD_COLOR)
             if img is not None:

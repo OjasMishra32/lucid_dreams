@@ -5,7 +5,8 @@
 # Usage: court-grid.sh <runs dir> [id...]
 #   ids default to every court-* folder in <runs dir>: Turbo first, then stride 2 before stride 1, then by name.
 # Env: PLAN=1 uploads, then runs the HPG side's checks and submits nothing; DRY=1 only prints what would run;
-#      HOST (hpg); VARIANTS, CAPS, METRICS, ITERS, FACE, NGPU, MEM, TIME and MIN_GB are passed to the HPG side.
+#      HOST (hpg); VARIANTS, REALS, CAPS, METRICS, ITERS, FACE, NGPU, MEM, TIME, MIN_GB, SEEDS, SEED, SEED_FLAG and
+#      TAG, MIN_SCRATCH_GB, KEEP_MB are passed to the HPG side.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 RUNS=$(cd "${1:?usage: court-grid.sh <runs dir> [id...]}" && pwd); shift
@@ -22,7 +23,7 @@ for id in "${IDS[@]}"; do
   done
 done
 PASS=""
-for v in VARIANTS CAPS METRICS ITERS FACE NGPU MEM TIME MIN_GB; do
+for v in VARIANTS REALS CAPS METRICS ITERS FACE NGPU MEM TIME MIN_GB SEEDS SEED SEED_FLAG TAG MIN_SCRATCH_GB KEEP_MB; do
   [ -n "${!v:-}" ] && PASS="$PASS $v=$(printf %q "${!v}")"
 done
 [ "${PLAN:-0}" = 1 ] && PASS="$PASS DRY=1"

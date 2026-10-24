@@ -1,10 +1,11 @@
-"""The freeze grid's numbers side by side, one row per run and variant, from each recon's own report.
+"""The freeze grid's numbers side by side, one row per run (or seed) and variant, from each recon's own report.
 
-    python3 court_grid_report.py <run dir>...      (e.g. $L/runs/court-*)
+    python3 court_grid_report.py [--rank] <run dir>...      (e.g. $L/runs/court-*  or  $L/runs/court-main-s2/seed*)
 
-held-out = PSNR/SSIM on every 8th generated view, left out of training (the metrics recon); real = PSNR against the
-real 4K frame on its non-ignored pixels; face = the same on the face crop; iou = the real camera's silhouette match
-when it was solved; focal = the focal it ended with (focalHeld: ours, held). Missing numbers print as "-".
+held-out real = PSNR on the real views a variant did NOT train on (its metrics recon carries them at weight 0); views =
+PSNR/SSIM on every 8th generated view, left out (the metrics recon); real A = PSNR against A's 4K frame on its
+non-ignored pixels; face = the same on the face crop; iou = A's silhouette match when solved; focal = the focal it ended
+with (held: ours). --rank sorts best first: held-out real, then held-out views, then iou. Missing numbers print "-".
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import sys
 from pathlib import Path
 
 
-def first_frame(path: Path) -> tuple[dict, dict]:
+def report(path: Path) -> tuple[dict, dict]:
     files = sorted(path.glob("recon-*.json"))
     if not files:
         return {}, {}
@@ -23,29 +24,49 @@ def first_frame(path: Path) -> tuple[dict, dict]:
     return (rep.get("frames") or [{}])[0], rep.get("source") or {}
 
 
+def held_out_real(run: Path, variant: str, frame: dict) -> float | None:
+    xs = run / f"recon-metrics-{variant}.extra.json"
+    if not xs.exists():
+        return None
+    names = [Path(e["video"]).stem for e in json.loads(xs.read_text()) if not e.get("weight")]
+    vals = [frame[f"sourcePsnr.{n}"] for n in names if f"sourcePsnr.{n}" in frame]
+    return sum(vals) / len(vals) if vals else None
+
+
 def fmt(v, nd=2):
     return "-" if v is None else (f"{v:.{nd}f}" if isinstance(v, float) else str(v))
 
 
 def rows(run: Path):
+    label = f"{run.parent.name}/{run.name}" if run.name.startswith("seed") else run.name
     for d in sorted(run.glob("recon-*")):
-        m = re.fullmatch(r"recon-(?!metrics)(.+?)-(\d+k)", d.name)
-        if not m:
+        m = re.fullmatch(r"recon-(?!metrics)(.+)-(\d+k)", d.name)
+        if not m or not d.is_dir():
             continue
         variant, cap = m.groups()
-        fr, src = first_frame(d)
-        held, _ = first_frame(run / f"recon-metrics-{variant}")
-        yield [run.name, variant, cap, fmt(held.get("psnr")), fmt(held.get("ssim"), 3), fmt(fr.get("sourcePsnr")),
-               fmt(fr.get("facePsnr")), fmt(src.get("iou"), 3), fmt(src.get("focal"), 1), fmt(src.get("focalHeld")),
-               fmt(fr.get("gaussians"))]
+        fr, src = report(d)
+        held, _ = report(run / f"recon-metrics-{variant}")
+        yield {"run": label, "variant": variant, "cap": cap, "realHeld": held_out_real(run, variant, held),
+               "views": held.get("psnr"), "ssim": held.get("ssim"), "realA": fr.get("sourcePsnr"),
+               "face": fr.get("facePsnr"), "iou": src.get("iou"), "focal": src.get("focal"), "held": src.get("focalHeld"),
+               "gaussians": fr.get("gaussians")}
 
 
 def main(argv=None):
-    runs = [Path(p) for p in (argv if argv is not None else sys.argv[1:])]
-    head = ["run", "variant", "cap", "held-out dB", "held SSIM", "real dB", "face dB", "iou", "focal", "held", "gaussians"]
-    table = [head] + [r for run in runs for r in rows(run)]
-    widths = [max(len(r[i]) for r in table) for i in range(len(head))]
-    for r in table:
+    args = list(argv if argv is not None else sys.argv[1:])
+    rank = "--rank" in args
+    runs = [Path(p) for p in args if p != "--rank"]
+    table = [r for run in runs for r in rows(run)]
+    if rank:
+        neg = lambda v: -v if v is not None else float("inf")  # noqa: E731
+        table.sort(key=lambda r: (neg(r["realHeld"]), neg(r["views"]), neg(r["iou"])))
+    head = ["run", "variant", "cap", "held-out real dB", "held-out views dB", "views SSIM", "real A dB", "face dB",
+            "iou", "focal", "held", "gaussians"]
+    keys = ["run", "variant", "cap", "realHeld", "views", "ssim", "realA", "face", "iou", "focal", "held", "gaussians"]
+    nd = {"ssim": 3, "iou": 3, "focal": 1}
+    out = [head] + [[fmt(r[k], nd.get(k, 2)) for k in keys] for r in table]
+    widths = [max(len(r[i]) for r in out) for i in range(len(head))]
+    for r in out:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)))
 
 

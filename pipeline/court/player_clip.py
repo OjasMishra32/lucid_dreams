@@ -140,6 +140,13 @@ def covered_fraction(own: np.ndarray, front: list[np.ndarray]) -> float:
     return float(cover.sum()) / area
 
 
+def load_matte(masks: Path, name: str, n: int, w: int, h: int) -> np.ndarray:
+    """The soft matte <masks>/<name>-alpha/<n>.png when one was made (SAM inside, a matting model's alpha at the edge),
+    else the binary mask."""
+    soft = masks / f"{name}-alpha" / f"{n:06d}.png"
+    return load_mask(soft.parent, n, w, h) if soft.exists() else load_mask(masks / name, n, w, h)
+
+
 def load_mask(folder: Path, n: int, w: int, h: int) -> np.ndarray:
     path = Path(folder) / f"{n:06d}.png"
     m = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
@@ -350,11 +357,14 @@ def warp(rgb, maps, interp):
 
 
 def layers(rgb, n, s, maps, cfg, w, h):
-    """The frame warped into a canvas window, with the player's matte there and the warped masks of who's in front."""
+    """The frame warped into a canvas window, with the player's matte there (soft where a matte exists) and the warped
+    binary masks of the player and of who's in front (for ignore)."""
     img = warp(rgb, maps, cv2.INTER_LANCZOS4)
-    wm = lambda who: warp(load_mask(cfg["masks"] / who, n, w, h), maps, cv2.INTER_LINEAR)  # noqa: E731
-    own, carried, front = wm(s["player"]), [wm(c) for c in s.get("with", [])], [wm(o) for o in s.get("front", [])]
-    return img, own, front, player_alpha(own, carried, front, cfg.get("grow", 3))
+    m = cfg["masks"]
+    wm = lambda f: warp(f, maps, cv2.INTER_LINEAR)  # noqa: E731
+    own, front = wm(load_mask(m / s["player"], n, w, h)), [wm(load_mask(m / o, n, w, h)) for o in s.get("front", [])]
+    soft = [wm(load_matte(m, x, n, w, h)) for x in [s["player"], *s.get("with", [])]]
+    return img, own, front, player_alpha(soft[0], soft[1:], front, cfg.get("grow", 3))
 
 
 def build(cfg: dict, names: list[str], plans: dict, calib: dict, still: dict, frames_by_n: dict):
@@ -459,9 +469,34 @@ def finish_set(cfg: dict, name: str, p: dict, sst: dict, still: dict):
                "created": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
     (d / "court-run.json").write_text(json.dumps(run_rec, indent=1))
     _sheets(d, sst, k)
+    extras = build_extras(cfg, name, d)
+    run_rec["extras"] = extras
+    (d / "court-run.json").write_text(json.dumps(run_rec, indent=1))
     for rid, r in cfg.get("runs", {}).items():
         if r["set"] == name:
             write_run(cfg, d, rid, r, run_rec)
+
+
+def build_extras(cfg: dict, name: str, d: Path) -> list[dict]:
+    """The other cameras' frames of the freeze (config "extras", in order) around this set's player, each as recon's
+    --extra-sources wants it, in <set>/real/<view>/; real/extras.json lists the ones made with their weights."""
+    import extra_view
+
+    s, made = cfg["sets"][name], []
+    for e in cfg.get("extras", []):
+        try:
+            cam = extra_view.make_view(Path(os.path.expanduser(e["video"])), Path(os.path.expanduser(e["calib"])),
+                                       e["frame"], Path(os.path.expanduser(e["masks"])), s["player"], s.get("with", []),
+                                       s.get("front", []), d / "real" / e["name"], cfg.get("margin", 32),
+                                       cfg.get("grow", 3), cfg.get("near", 200))
+        except FileNotFoundError as err:
+            print(f"[{name}] extra view {e['name']} skipped: {err}")
+            continue
+        made.append({"name": e["name"], "weight": e.get("weight", 1.0), "focal": cam["focal"], "size": cam["size"],
+                     "playerPx": cam["playerPx"]})
+    if made:
+        (d / "real" / "extras.json").write_text(json.dumps(made, indent=1))
+    return made
 
 
 def job_json(rid: str, turbo: bool, focal: float) -> dict:
@@ -482,6 +517,14 @@ def write_run(cfg: dict, d: Path, rid: str, r: dict, run_rec: dict):
             os.link(f, rd / sub / f.name)
     for f in ("input.mp4", "source-4k.mkv"):
         os.link(d / f, rd / f)
+    if (d / "real").exists():
+        for f in sorted((d / "real").rglob("*")):
+            t = rd / f.relative_to(d)
+            if f.is_dir():
+                t.mkdir(parents=True, exist_ok=True)
+            elif f.suffix != ".jpg":
+                t.parent.mkdir(parents=True, exist_ok=True)
+                os.link(f, t)
     (rd / "court-run.json").write_text(json.dumps({"id": rid, **run_rec}, indent=1))
     (rd / "job.json").write_text(json.dumps(job_json(rid, r.get("turbo", False), run_rec["FOCAL"]), indent=1))
 
