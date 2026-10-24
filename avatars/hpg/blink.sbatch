@@ -34,22 +34,13 @@ IDS=$(find -L "$SMPLX_DIR" -maxdepth 4 -name 'SMPL-X__FLAME_vertex_ids.npy' | he
 [ -n "$IDS" ] || { echo "no SMPL-X__FLAME_vertex_ids.npy under $SMPLX_DIR (SMPL-X site, model-transfer download)"; exit 1; }
 [ -f "$DREAMS/$BUNDLE/dream.json" ] || { echo "no avatar bundle at $DREAMS/$BUNDLE"; exit 1; }
 
-# 0. FLAME's expressions and eyelids, once: LAM's env reads FLAME's chumpy pickle; the npz never leaves HiPerGator
-FA=$L/repos/LAM/model_zoo/human_parametric_models/flame_assets/flame
-FLAME_NPZ=$L/models/flame/flame2023_expr.npz
-if [ ! -f "$FLAME_NPZ" ] && [ -f "$FA/flame2023.pkl" ]; then
-  mkdir -p "$(dirname "$FLAME_NPZ")"
-  TMP_NPZ=$FLAME_NPZ.tmp.$$.npz  # written whole, then moved: a killed or concurrent job never leaves half a file
-  if PYTHONPATH=$AV $L/envs/lam/bin/python $AV/flame_expr_npz.py "$FA/flame2023.pkl" "$FA/FLAME_masks.pkl" "$TMP_NPZ"
-  then mv -f "$TMP_NPZ" "$FLAME_NPZ"
-  else rm -f "$TMP_NPZ"; echo "[expr] FLAME extract FAILED (see above)"
-  fi
-fi
-[ -f "$FLAME_NPZ" ] || { echo "no $FLAME_NPZ and no LAM FLAME to extract it from: no blinks"; exit 1; }
-
 # numpy only: the 4DAnyone env (any env with numpy works)
 set +u; source $L/code/pipeline/hpg/env.sh; set -u
 export PYTHONPATH=$AV:$PYTHONPATH
+
+# 0. FLAME for blinks, once (hpg/flame.sh)
+source $AV/hpg/flame.sh
+[ -f "$FLAME_NPZ" ] || { echo "no $FLAME_NPZ: NO BLINKS, nothing to do"; exit 1; }
 
 KEEP=()
 [ "${KEEP_MOTION:-0}" = 1 ] && KEEP=(--keep-motion)
