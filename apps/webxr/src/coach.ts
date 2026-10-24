@@ -31,7 +31,7 @@ export interface CoachEvents {
   end?: () => void; // the session is over (stopped, finished or failed): the mic is released
 }
 
-const TOKEN = "/api/live/token"; // same origin: vite.config.ts passes it to the bridge on :5170
+const TOKEN = `${import.meta.env.BASE_URL}api/live/token`; // same origin: vite.config.ts passes it to the bridge on :5170
 const LIVE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
 const RATE = 16000; // Hz, 16-bit little-endian mono: the Live API's native input
 const CHUNK = RATE / 10; // 100 ms of audio per message

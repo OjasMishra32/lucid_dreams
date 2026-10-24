@@ -91,7 +91,7 @@ export default async function DreamPage({ params }: Props) {
     <>
       {(scores.length > 0 || facts.length > 0) && (
         <section className="d-band" aria-labelledby="measured">
-          <h2 className="d-title" id="measured">{scores.length > 0 ? "Measured, not claimed." : "The person."}</h2>
+          <h2 className="d-title" id="measured">{scores.length > 0 ? "Measured on every frame." : "The person."}</h2>
           {scores.length > 0 && (
             <>
               <p className="d-lede">

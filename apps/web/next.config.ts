@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+// The headset app (apps/webxr, its stable build) lives at /xr/ on this same address, so one link is the website and
+// the room: this server passes /xr/ through to it (plain http on :5182; ~/LucidDreams-held/rebuild-stable.sh runs it).
+const XR = process.env.LUCID_XR ?? "http://localhost:5182";
+
 const config: NextConfig = {
   // A second server (a preview beside the live one) builds into its own folder: NEXT_DIST_DIR=.next-preview
   distDir: process.env.NEXT_DIST_DIR || ".next",
@@ -16,7 +20,15 @@ const config: NextConfig = {
   agentRules: false,
   // One website: the home page shows every scene, so the old showcase page sends you there
   async redirects() {
-    return [{ source: "/showcase", destination: "/#scenes", permanent: false }];
+    return [
+      { source: "/showcase", destination: "/#scenes", permanent: false },
+      { source: "/xr", destination: "/xr/", permanent: false },
+    ];
+  },
+  // /xr/ keeps its slash: the headset app's own links are relative to it ("./" is its library)
+  skipTrailingSlashRedirect: true,
+  async rewrites() {
+    return [{ source: "/xr/:path*", destination: `${XR}/xr/:path*` }];
   },
 };
 

@@ -101,7 +101,7 @@ export default function RealismPanel({ id, initial }: { id: string; initial: Rea
           )}
           <p className="note">
             Checked by Gemini, which compares the render with the {s.realism.source === "photo" ? "photo" : "clip"} and never
-            identifies anyone. Parts the camera never saw were imagined; they&apos;re judged for realism, not likeness.
+            identifies anyone. Parts the camera never saw were imagined; they&apos;re judged for realism alone.
           </p>
         </>
       )}

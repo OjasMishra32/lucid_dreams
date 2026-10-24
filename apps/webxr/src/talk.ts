@@ -15,7 +15,7 @@ export const TALK_LABEL: Record<TalkState, string> = { idle: "Talk", listening: 
 /** Whether this person can be talked to here (the relay and the Talk server answer), and whether their voice is in. */
 export async function talkAvailable(who: string): Promise<{ on: boolean; voice: boolean }> {
   try {
-    const r = await fetch(`/talk/${encodeURIComponent(who)}/health`, { cache: "no-store" });
+    const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(who)}/health`, { cache: "no-store" });
     if (!r.ok) return { on: false, voice: false };
     const j = (await r.json()) as { ok?: boolean; voice?: boolean };
     return { on: !!j.ok, voice: !!j.voice };
@@ -160,7 +160,7 @@ export class Talk {
     this.abort = new AbortController();
     const signal = this.abort.signal;
     try {
-      const r = await fetch(`/talk/${encodeURIComponent(this.who)}?session=${this.session}`, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob, signal });
+      const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(this.who)}?session=${this.session}`, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob, signal });
       const j = (await r.json()) as { heard?: string; reply?: string; audio?: string | null; error?: string };
       if (!r.ok || j.error) throw new Error(j.error || `Talk ${r.status}`);
       if (!j.reply) return this.say("I didn't catch that. Press Talk and try again.");

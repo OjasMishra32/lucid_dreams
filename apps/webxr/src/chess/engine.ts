@@ -22,7 +22,7 @@ export const STRENGTHS: Strength[] = [
 ];
 
 export class Engine {
-  private worker = new Worker("/engine/stockfish-19-lite-single.js");
+  private worker = new Worker(`${import.meta.env.BASE_URL}engine/stockfish-19-lite-single.js`);
   private listeners: ((line: string) => void)[] = [];
   private ready: Promise<void>;
 

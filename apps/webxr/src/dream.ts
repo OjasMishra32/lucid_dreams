@@ -28,7 +28,8 @@ export interface Dream {
   metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null; seenFraction?: number | null };
 }
 
-export const DREAMS_BASE = new URLSearchParams(location.search).get("base") ?? "/dreams";
+// under the app's own base: "/" on its own server, "/xr/" when the website serves it (vite.config.ts, LUCID_BASE)
+export const DREAMS_BASE = new URLSearchParams(location.search).get("base") ?? `${import.meta.env.BASE_URL}dreams`;
 
 export function dreamUrl(id: string, file: string): string {
   return `${DREAMS_BASE}/${encodeURIComponent(id)}/${file}`;

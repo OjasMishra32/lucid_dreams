@@ -28,7 +28,7 @@ function nextStep(s: JobStatus): { text: string; again: boolean } {
   if (s.stage === "views") {
     return { text: "4DAnyone couldn't imagine the other angles. One person, full body, a plain background and a still camera work best.", again: true };
   }
-  return { text: "Something broke on the GPUs, not in your clip. Try again in a few minutes.", again: true };
+  return { text: "Something broke on our GPUs. Your clip is fine: try again in a few minutes.", again: true };
 }
 
 export default function JobProgress({ id, name, kind, initial }: { id: string; name: string; kind: JobKind; initial: JobStatus }) {

@@ -11,7 +11,7 @@ export function report(err: unknown, where: string): void {
   if (n !== 1 && n !== 10 && n !== 100 && n % 1000 !== 0) return;
   console.error(`[${where}] x${n}`, err);
   try {
-    navigator.sendBeacon("/__log", JSON.stringify({ t: new Date().toISOString(), where, n, msg, url: location.href, ua: navigator.userAgent }));
+    navigator.sendBeacon(`${import.meta.env.BASE_URL}__log`, JSON.stringify({ t: new Date().toISOString(), where, n, msg, url: location.href, ua: navigator.userAgent }));
   } catch {
     // reporting must never be what breaks
   }

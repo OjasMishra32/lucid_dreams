@@ -33,13 +33,15 @@ export function publicOrigin(h: Headers): string {
 }
 
 /**
- * The WebXR viewer (apps/webxr, https on :5180) as another device on the Wi-Fi reaches it: the Quest types this. Same
- * host as publicOrigin, so it's this Mac's Wi-Fi address even when the page itself is open on localhost.
+ * The headset app (apps/webxr) as the Quest reaches it: /xr on this same address when the page came over https (the
+ * public link), else the Mac's own https server (:5180/xr) at its Wi-Fi address, since the room needs a secure page.
  */
 export function viewerOrigin(h: Headers): string {
   const set = process.env.NEXT_PUBLIC_VIEWER_URL;
   if (set) return set.replace(/\/$/, "");
-  return `https://${new URL(publicOrigin(h)).hostname}:5180`;
+  const origin = publicOrigin(h);
+  if (origin.startsWith("https:")) return `${origin}/xr`;
+  return `https://${new URL(origin).hostname}:5180/xr`;
 }
 
 const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[?::1\]?|::ffff:127(\.\d{1,3}){3})$/i;

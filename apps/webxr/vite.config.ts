@@ -4,6 +4,11 @@ import { appendFileSync, createReadStream, existsSync, readdirSync, readFileSync
 import { homedir } from "node:os";
 import { join, resolve, extname } from "node:path";
 
+// Where the app lives on its server: "/" on its own, "/xr/" when the website (apps/web) serves it at one address with
+// the rest of Lucid Dreams (LUCID_BASE=/xr/: the headset's stable build). The routes below answer under both.
+const BASE = process.env.LUCID_BASE ?? "/";
+const mounts = (path: string) => (BASE === "/" ? [path] : [path, BASE.replace(/\/$/, "") + path]);
+
 // Dream bundles live in <repo>/dreams (pipeline/runner/lucid_runner.py fetch puts them there). Served at /dreams/,
 // plus /dreams/index.json: every bundle's dream.json, newest first.
 const DREAMS = resolve(import.meta.dirname, "../../dreams");
@@ -86,7 +91,7 @@ async function relayTalk(req: any, res: any) {
       body: Buffer.concat(parts),
     });
     const j = (await r.json()) as { audio?: string | null };
-    if (j.audio) j.audio = j.audio.replace(/^\/api\/talk\/audio\//, "/talk/audio/");
+    if (j.audio) j.audio = j.audio.replace(/^\/api\/talk\/audio\//, `${BASE}talk/audio/`);
     return send(r.status, JSON.stringify(j));
   } catch {
     return send(502, JSON.stringify({ error: "the Talk server isn't answering" }));
@@ -94,9 +99,9 @@ async function relayTalk(req: any, res: any) {
 }
 
 function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any, next: () => void) => void) => void }) {
-  middlewares.use("/talk", (req, res) => void relayTalk(req, res));
+  for (const at of mounts("/talk")) middlewares.use(at, (req, res) => void relayTalk(req, res));
   // errors from the headset (src/xr/report.ts) land in ~/Library/Logs/lucid-xr-errors.log, one JSON line each
-  middlewares.use("/__log", (req, res) => {
+  for (const at of mounts("/__log")) middlewares.use(at, (req, res) => {
     let body = "";
     req.on("data", (c: Buffer) => (body += c.toString().slice(0, 20000)));
     req.on("end", () => {
@@ -111,7 +116,7 @@ function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any,
   });
   {
     {
-      middlewares.use("/dreams", (req, res, next) => {
+      for (const at of mounts("/dreams")) middlewares.use(at, (req, res, next) => {
         const path = decodeURIComponent((req.url ?? "/").split("?")[0]);
         if (path === "/index.json") {
           // held dreams (dreams/.held: one id per line, as the web app reads it) stay out of the list; a link to one
@@ -173,8 +178,12 @@ function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any,
 const http = Boolean(process.env.LUCID_HTTP);
 // The lesson's Ask button gets its Gemini Live token from the bridge (apps/web, plain http on :5170). A page served
 // over https can't call http, so the viewer asks its own server, which passes it on (with the headset's address).
-const bridge = { "/api/live": { target: process.env.LUCID_BRIDGE ?? "http://localhost:5170", xfwd: true } };
+const toBridge = { target: process.env.LUCID_BRIDGE ?? "http://localhost:5170", xfwd: true };
+const bridge = Object.fromEntries(
+  mounts("/api/live").map((at) => [at, at === "/api/live" ? toBridge : { ...toBridge, rewrite: (p: string) => p.slice(at.length - "/api/live".length) }]),
+);
 export default defineConfig({
+  base: BASE,
   plugins: [http ? null : basicSsl(), dreams()],
   server: { host: true, port: 5180, proxy: bridge },
   preview: { host: true, port: 5180, proxy: bridge },
