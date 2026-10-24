@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Court Side · headset test</title>
+    <style>
+      body { margin: 0; background: #101725; color: #f5f5f7; font: 18px system-ui, sans-serif; }
+      canvas { display: block; position: fixed; inset: 0; pointer-events: none; }
+      aside { position: relative; z-index: 1; max-width: 860px; padding: 24px; }
+      h1 { margin: 0 0 8px; font-size: 28px; }
+      p { line-height: 1.5; }
+      #modes { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+      button { padding: 18px 28px; border: 0; border-radius: 32px; background: #0071e3; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+      button:disabled { background: #3a3f4a; color: #9aa3b2; cursor: default; }
+      #status { color: #b4e4db; }
+      #report { white-space: pre; font: 14px ui-monospace, Menlo, monospace; background: #0b111d; padding: 12px; border-radius: 8px; overflow-x: auto; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <h1>Court Side · headset test (S6 v2)</h1>
+      <p>Video, WebCodecs 1440p72 streaming, the press that eases to a stop, the freeze as 3D splats, reveals, and (AR-opaque) a look at your room. Press one button; the phases run by themselves and end in a results table.</p>
+      <div id="modes"></div>
+      <p id="status" role="status">Loading…</p>
+      <div id="report"></div>
+    </aside>
+    <script type="module" src="/src/spike6/court-quest.ts"></script>
+  </body>
+</html>
