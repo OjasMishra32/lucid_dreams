@@ -1,21 +1,23 @@
 # Court Side: live status
 
-**Court Side replaces Ghost Coach for Vishal (Ghost Coach paused).** One play only: **Steph's three over LeBron, 2018
-Finals G4**, from the best low, fixed courtside camera that exists. **New shape (Vishal, 6:55 AM):** in full-immersion
-VR you watch the real broadcast as immersive courtside video from where that camera stood (life-size, edges falling
-off into a dark arena); "Step into the court" on the palm menu eases the video to a stop at the release and **that one
-frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk a ring ~1.5 m around
-the frozen pair; "Back to my seat" eases back into the video and the game plays on. Only the freeze has to be 3D (a
-second of 3D motion is a stretch goal). Ojasva's bar: if two players aren't passing by noon, ship Steph alone.
-Updated Sat 7:02 AM.
+**Court Side replaces Ghost Coach for Vishal (Ghost Coach paused).** **One iconic NBA play, chosen for the best
+footage** (Vishal, ~7:05 AM: Steph vs LeBron has no good enough clip; any hype play with a low, fixed courtside camera,
+60 fps, no cut; several synced fixed angles best; front-runner to check: the "every angle" video of Giannis blocking
+Ayton, 2021 Finals G4). In full-immersion VR you watch the real footage as immersive courtside video from where that
+camera stood; "Step into the court" eases it to a stop and **that one frame becomes 3D** (same pixels at the
+hand-off, then the world opens up); you stand and walk in around the frozen moment, **every player on court a solid
+3D person** (Vishal, 7:00 AM); "Back to my seat" eases back into the video. Ojasva's bar: if the two main players
+aren't passing by noon, ship the main player alone.
+Updated Sat 7:07 AM.
 
 ## Asks for Ojasva (newest first)
 
-9. **Smaller GPU ask than before (supersedes the 100k playback part of 6):** per player, 50-step views on the
-   121-frame clip as before, then reconstruction of **only the freeze frame**, cold, at the highest density the Quest
-   holds (250k planned, up to 400k if ask 7 says so) with more iterations; no 121-frame recon needed. That's about
-   30-45 min of one B200 per player instead of ~2 h, and a few MB on the headset instead of ~0.8 GB. Exact commands
-   to follow with the clip. OK?
+9. **GPU ask, new shape (supersedes the 100k playback part of 6):** (a) the two main players: 50-step views on
+   each 121-frame clip, then reconstruction of **only the freeze frame**, cold, as dense as the Quest holds (250-300k)
+   with more iterations: ~30-45 min of one B200 each. (b) **The other players on court** (up to 8): each its own
+   Turbo views run + freeze frame at 40-80k, ~15 min of a B200 each, run in parallel (~20-30 min wall on 4-8 GPUs);
+   some may instead be LHM++ bodies on an L4 (~5 min each). Disk: delete each run's views after its recon, so
+   batches stay inside the ~16 GB. Exact commands follow with the clip. OK?
 8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only** (Vishal, 6:50 AM): WebXR
    `immersive-vr` with `local-floor` (court floor exactly on the real floor, safe to walk), the arena from the
    footage where the camera saw it, darkness beyond the court lights elsewhere. An exception to your passthrough-only
@@ -34,10 +36,11 @@ Updated Sat 7:02 AM.
 
 ## Now
 
-Re-planning around the video-first shape (6:55 AM). Running: the angle research (first answer: no public copy of this
-play is above 720p30, and the low angles exist only inside broadcast replays; checking a NextVR courtside VR camera
-at 4K60 and the best alternative play), VR immersion research, a prototype rig for 3 hand-off directions, a VR
-Quest test page, and spikes for calibration, smooth slow-down + video-to-3D hand-off, shadows + floor reflections.
+Clip hunt widened to any iconic play (Phantom, Olympics/FIBA and college searches found nothing that meets the bar;
+NBA all-angles and 4K courtside searches still running; Giannis's block is being verified first). Leading so far:
+Curry's record three (Dec 14 2021, MSG), 1080p60, a side-on low courtside angle. Quest test page (ask 7) is ready.
+Prototype rig, calibration and smooth-hand-off spikes, and floor reflections are in progress; the plan has the other
+players as solid 3D (light 4DAnyone builds, LHM++ bodies or depth reliefs, picked by test on the real clip).
 
 ## Verdict so far
 
