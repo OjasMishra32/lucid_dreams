@@ -26,6 +26,25 @@ getting several photos in and picking the winner:
    replay: `PERSON.frames` in `apps/site/src/config.ts` points at a bundle. Then make the use-case reel play the
    three best real dreams with their names. No public-figure dream in the hero.
 
+## MORE (Sat 1:20 AM): a lot more, in order, after the top items (Gemini prize work first)
+
+1. **Gemini Live coach in the lesson.** A fingertip "Ask" button in the WebXR viewer (you have Ojasva's OK to edit
+   `apps/webxr`) opens a Gemini Live audio session: "how should my wrist be here?" is answered about the step on
+   screen, with the step's clip time and tip in the context.
+   - It speaks in the device's voice, never the person's.
+   - The API key stays on the bridge: a token endpoint in `apps/web` mints short-lived credentials.
+2. **"Watch me try" feedback.** In the web app, record your attempt with the laptop or phone camera. Gemini compares
+   it with the teacher's clip and returns timestamped notes ("0:02, your elbow flares out; keep it under the ball").
+   Show them on both videos side by side, and add the notes to the experience as a `feedback` step.
+3. **A live pipeline page for the judges** (`/live`): the stages of a running job (upload, views, reconstruct,
+   export) with real timings, GPUs in use and the latest truth-vs-render strip (`runs/<id>/recon/peek-*.jpg`,
+   fetched by the runner), so "how it works" is shown, not told. Calm, one accent colour, no dashboard clutter.
+4. **The intent box understands more.** Ten example sentences per mode (teach, companion, watch, play). Test that
+   Gemini picks the right mode, place, environment and props for all forty, and fix the prompt until it does. Keep
+   the forty as a test file in `apps/web`.
+5. **Accessibility and polish:** keyboard paths through Make a dream, reduced-motion everywhere on the site, alt
+   text on every preview, and Lighthouse 95+ on `apps/site` too.
+
 ## BIG CHUNK (Sat 12:20 AM): make the main goal real in the web app
 
 Round two is excellent (guide, window picker, consent, Lighthouse 98-100, the injection fix). Your two notes for

@@ -49,6 +49,27 @@ A person is about 1.8 m, so either floaters stretch the bounds or the scale is o
 opacity > 0.5 Gaussians, and look at the bundle in the viewer, before Ojasva fetches it. Table:
 `$L/data/avatars/finetune/jump-shot/dreams/jump-shot-tuned.work/results.md`.
 
+## MORE (Sat 1:20 AM): a lot more, in order, after the top items
+
+1. **Their own voice moves their lips** (the family moment; consenting people only, never a public figure).
+   - LAM_Audio2Expression (aigc3d, Apache-2.0, 2025) turns speech into FLAME expressions. Run it on a bundle's
+     `voice.m4a` and write `expr` per frame into `motion.json`.
+   - Grandma's own words from the home video then move her own mouth, with captions beside her.
+   - Measure lip sync with SyncNet confidence on a front render, before and after.
+2. **Hands that hold up at 1.5 m.** Hands are the second thing people notice after faces.
+   - Fit finger poses from the photo or clip with WiLoR (2025) or HaMeR, so the fingers aren't the SMPL-X mean.
+   - Run your 2x hands-and-face crop pass by default on every fine-tune, not opt-in.
+   - Give the chess builder a "pinch grasp" hand pose (thumb on index, three fingers curled) for lifting pieces.
+3. **Avatar from a phone video, not only a photo.** A family clip has many frames of the face: pick the sharpest
+   8-12 (variance of the Laplacian on the face crop), fit DiGS on all of them (multi-view loss across frames, one
+   identity code), and report identity cosine against one photo. This is the honest version of "someone you've lost".
+4. **Realism numbers in every avatar bundle:** `metrics.identity` (InsightFace cosine to the source),
+   `metrics.lpipsFace` (face crop) and `metrics.sharpness` (face Laplacian variance vs the source photo). The web
+   app's Realism panel reads them.
+5. **"You, perfected" end to end, filmed:** Ojasva's or your photo plus `lebron-jumper`'s motion through
+   `digs-perform`, with a 10 s side-by-side render (their clip | you doing it) for the video. If the feet slide,
+   fix the foot contact (pin the stance foot while GVHMR says it's planted).
+
 ## SECOND (was top): the face pass, so the legends look like themselves
 
 The avatars run now (six fixes, all pushed: env packages, assets on GPU, repo lock, SMPL-X UV mesh, rembg on CPU,

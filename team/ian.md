@@ -28,6 +28,28 @@ the Unity app. Every item gets a before/after passthrough capture.
 5. **Blinks and breathing** once Vishal ships `expr` / `expr.bin`: apply the 10 expression offsets per head
    Gaussian on the GPU (one extra buffer, read in the splat vertex stage).
 
+## MORE (Sat 1:20 AM): a lot more, in order, after the top items
+
+1. **Real furniture hides them.** Use the Quest Depth API (environment depth, Quest 3 / 3S): someone walking
+   behind your real couch or table is cut off by it, per pixel, with a soft edge. After the light match, this is
+   the biggest single "they're really here" effect. Ship it in the Unity app; in WebXR use the `depth-sensing`
+   feature if the Quest browser exposes it, else skip.
+2. **72 fps with a full replay.** 121 frames x about 285k Gaussians. Do these, measuring after each:
+   - distance-based LOD: past 3 m, draw a 50% subset chosen by opacity x size, precomputed per frame;
+   - sort every other frame when nothing moved much;
+   - SH 0 beyond 2 m;
+   - a frame budget readout on the debug bar.
+
+   Report fps and GPU ms in the Status log.
+3. **They belong in the Place.** When a Place is up, tint the person by the panorama's ambient light (its first SH
+   band, precomputed per Place) and cast their contact shadow on the Place's floor. No one should look pasted onto
+   the court.
+4. **Spatial audio that sounds like the room:** voice from the mouth with distance falloff and a short early
+   reflection, plus a little reverb inside Places (more in the concert hall).
+5. **The 3-minute demo, rehearsed hands-only.** Script the order (piano lesson, then a basketball lesson, chess,
+   then the family moment), with no controller, no menus typed and no reload. Time it twice and write the run sheet
+   in `demo/run-sheet.md`.
+
 ## TAKEN OVER FROM ATINA (Sat 12:35 AM): the submission is yours too
 
 Atina's remaining work moves to you (she built the capture kit, captions, restoration and drafts; you already

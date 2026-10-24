@@ -43,6 +43,7 @@ if [ ! -f $L/envs/lam/.ok ]; then
   grep -vE '^(git\+|nvdiffrast|gradio|chumpy)' requirements.txt > $TMP/lam-req.txt
   pip install -q -r $TMP/lam-req.txt
   pip install -q --no-build-isolation chumpy  # its setup.py imports pip, which an isolated build doesn't have
+  pip install -q matplotlib  # imported by LAM's renderer, missing from its requirements
   python -c "import pytorch3d" 2>/dev/null || pip install -q pytorch3d \
     -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt230/download.html \
     || pip install -q --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git"
