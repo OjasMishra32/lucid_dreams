@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -110,8 +111,9 @@ def main():
             held_file = runner.DEFAULT_DEST / ".held"
             held = set(held_file.read_text().split()) if held_file.exists() else set()
             for run_id in list(state["submitted"]):
-                # a held name also covers drop-folder runs of it, which get "-<date>-<time>" appended
-                if run_id in state["fetched"] or any(run_id == h or run_id.startswith(h + "-") for h in held):
+                # a held name also covers drop-folder runs of it, which get "-<mmdd>-<HHMMSS>" appended (and only those:
+                # holding "jump-shot" must not hold "jump-shot-hq")
+                if run_id in state["fetched"] or any(re.fullmatch(re.escape(h) + r"(-\d{4}-\d{6})?", run_id) for h in held):
                     continue
                 try:  # one broken or deleted run must never stop the others coming home
                     st = runner.status(run_id)
