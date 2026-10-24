@@ -5,3 +5,4 @@
 !*.sbatch
 !*.sh
 !*.md
+!lucid-fixed-pose.patch

@@ -1,0 +1,51 @@
+--- a/pipeline/lucid/source_view.py
++++ b/pipeline/lucid/source_view.py
+@@ -12,6 +12,7 @@
+ from __future__ import annotations
+ 
+ import math
++import sys
+ from pathlib import Path
+ 
+ import numpy as np
+@@ -39,6 +40,22 @@
+     return float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)
+ 
+ 
++def _fixed_pose(sv, trainer, params):
++    """Court Side: another real view with a pose.json beside its video takes its camera from the court calibration
++    (pipeline/court/court_extra_pose.py) instead of a solve. None, and solve as before, without the file."""
++    if not (sv.video.parent / "pose.json").exists():
++        return None
++    court = str(Path(__file__).resolve().parents[1] / "court")
++    if court not in sys.path:
++        sys.path.append(court)
++    try:
++        from court_extra_pose import fixed_solve
++    except ImportError as e:
++        print(f"[source] {sv.video.stem}: pose.json, but no court_extra_pose ({e}): solving as before", flush=True)
++        return None
++    return fixed_solve(sv, trainer, params)
++
++
+ class SourceView:
+     def __init__(self, video: Path, frame_ids: list[int], device: str, max_height: int = 2560, model_dir: str | None = None,
+                  masks_dir: Path | None = None, ignore_dir: Path | None = None, focal: float | None = None):
+@@ -51,6 +68,7 @@
+         self.device = device
+         self.focal = focal
+         self.max_height = max_height
++        self.video = Path(video)  # Court Side: a pose.json beside another real view's video gives its camera
+         lo, hi = frame_ids[0], frame_ids[-1] + 1
+         rgb = []
+         with av.open(str(video)) as container:
+@@ -102,6 +120,9 @@
+               debug: Path | None = None) -> bool:
+         """Finds the clip's camera against the first frame of the chunk. False (and no source view) if it can't.
+         Candidates are scored on silhouette and colour together: a silhouette alone can't tell front from back."""
++        held = _fixed_pose(self, trainer, params)
++        if held is not None:
++            return held
+         dev = self.device
+         frozen = {k: v.detach() for k, v in params.items()}
+         s = 960.0 / self.H
