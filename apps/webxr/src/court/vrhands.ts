@@ -21,6 +21,8 @@ const BONES = CHAINS.flatMap((c) => c.slice(1).map((name, k) => [c[k], name] as 
 const radius = (j: THREE.Object3D) => Math.max(0.006, (j as unknown as { jointRadius?: number }).jointRadius ?? 0.008);
 /** The drawn hands sit just outside the occluders' surface, so they stay visible over them while the room fades in. */
 const OVER = 1.04;
+/** The drawn hands' renderOrder: after stream D's footage layers (50-90, drawn without the depth test), so the footage never paints over them. */
+export const HANDS_ORDER = 100;
 
 /** A soft warm matcap: light from above left, darker toward the rim. */
 function matcap(): THREE.Texture {
@@ -68,6 +70,7 @@ export class VrHands {
     for (const mesh of [this.joints, this.bones]) {
       mesh.name = "court-hands";
       mesh.frustumCulled = false;
+      mesh.renderOrder = HANDS_ORDER;
       mesh.count = 0;
       scene.add(mesh);
     }
