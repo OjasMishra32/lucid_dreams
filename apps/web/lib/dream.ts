@@ -152,6 +152,54 @@ export interface JobStatus {
   message: string;
 }
 
+/**
+ * /live, for the judges: one run as it is on HiPerGator right now (GET /api/live/run). Times are seconds; `source` says
+ * what it was read from: the runner's SSH link ("hpg": timings, GPUs and strips are real) or only the job API ("job":
+ * the stage and progress, nothing else).
+ */
+export interface LiveStage {
+  stage: Stage;
+  label: string;
+  state: "pending" | "running" | "done" | "failed";
+  durationS: number | null; // done: how long it took; running: how long so far; else null
+}
+export interface LiveGpus {
+  stage: Stage;
+  label: string;
+  type: string; // "B200", "RTX PRO 6000", "L4", or the partition's own name
+  running: number; // GPUs working on this stage right now
+  waiting: number; // GPUs this stage has asked for and not got yet
+}
+export interface LivePeek {
+  kind: "real" | "imagined"; // real: the source frame; imagined: the generated views
+  name: string; // peek-000011.jpg, peek-source-000011.jpg
+  at: number; // when it was written, seconds (part of its address: a new one is a new image)
+  frame: number; // the frame it is of
+  url: string;
+}
+export interface LiveRun {
+  id: string;
+  name: string;
+  kind: JobKind;
+  status: JobStatus;
+  stages: LiveStage[];
+  elapsedS: number | null; // since it was submitted
+  frames: { done: number; total: number } | null; // reconstruction, once it has started
+  gpus: LiveGpus[];
+  peeks: LivePeek[]; // newest of each kind
+  source: "hpg" | "job";
+  at: number; // when this was read, ms since the epoch on the bridge
+}
+export interface LiveChoice {
+  id: string;
+  name: string;
+  live: boolean; // still running
+}
+export interface LiveState {
+  run: LiveRun | null; // null: nothing to show (no runs, or none that may be shown)
+  choices: LiveChoice[];
+}
+
 /** How each stage reads to people. Upscale only shows while the pipeline actually runs it. */
 export const STAGE_LABELS: Record<Stage, string> = {
   upload: "Upload",

@@ -8,9 +8,10 @@
     "start": "next start -H 0.0.0.0 -p 5170",
     "demo": "next build && BRIDGE_MODE=runner next start -H 0.0.0.0 -p 5170",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:plan && npm run test:feedback && npm run test:intents",
+    "test": "npm run test:plan && npm run test:feedback && npm run test:live && npm run test:intents",
     "test:plan": "node --conditions=react-server --import tsx --test tests/plan.test.ts",
     "test:feedback": "node --conditions=react-server --import tsx --test tests/feedback.test.ts tests/feedback-nokey.test.ts",
+    "test:live": "node --conditions=react-server --import tsx --test tests/live.test.ts tests/live-state.test.ts",
     "test:intents": "node --conditions=react-server --import tsx scripts/check-intents.ts"
   },
   "dependencies": {
