@@ -44,6 +44,8 @@ export interface VideoEnv {
   supported(config: VideoDecoderConfig): Promise<boolean>;
   bytes(url: string): Promise<Uint8Array>;
   now(): number;
+  /** `?video=element`: a <video> playing the URL, once it has data. */
+  element(url: string): Promise<HTMLVideoElement>;
 }
 
 const browserEnv = (): VideoEnv => ({
@@ -56,7 +58,23 @@ const browserEnv = (): VideoEnv => ({
     return new Uint8Array(await res.arrayBuffer());
   },
   now: () => performance.now(),
+  element: async (url) => {
+    const el = document.createElement("video");
+    el.src = url;
+    el.muted = true;
+    el.playsInline = true;
+    el.crossOrigin = "anonymous";
+    el.preload = "auto";
+    await new Promise<void>((ok, fail) => {
+      el.addEventListener("loadeddata", () => ok(), { once: true });
+      el.addEventListener("error", () => fail(new Error(`?video=element: ${url} did not load`)), { once: true });
+    });
+    return el;
+  },
 });
+
+/** A decoded VideoFrame (closed after the next upload), not the <video> element the fallback uploads from directly. */
+const isFrame = (s: VideoFrame | HTMLVideoElement): s is VideoFrame => typeof (s as VideoFrame).close === "function";
 
 /** `?show=small` and `?hz=90` are chosen when the bundle loads (format.ts chooseStream): `bundle.court.video` is already that stream. */
 export interface ShowVideoOptions {
@@ -282,6 +300,8 @@ export class ShowVideo {
   private makeTrack: ((limit: number) => Track) | null = null;
   private current: VideoFrame | null = null;
   private element: HTMLVideoElement | null = null;
+  /** dispose() ran: a load still in flight stops at its next step. */
+  private disposed = false;
 
   constructor(renderer: THREE.WebGLRenderer, bundle: CourtBundle, options: ShowVideoOptions = {}) {
     this.renderer = renderer;
@@ -317,6 +337,10 @@ export class ShowVideo {
     const blit = new THREE.Mesh(tri, this.blitMaterial);
     blit.frustumCulled = false;
     this.blitScene.add(blit);
+    if (import.meta.env?.DEV && typeof window !== "undefined") {
+      const w = window as unknown as { __courtLook?: Record<string, unknown> };
+      (w.__courtLook ??= {}).video = this;
+    }
   }
 
   /** The video layer's opacity over the 3D (proxies.ts reads it): 1 while watching and easing, 0 once the hand-off has faded it. */
@@ -349,7 +373,9 @@ export class ShowVideo {
     const v = this.bundle.court.video;
     if (this.options.element) return this.loadElement();
     const config: VideoDecoderConfig = { codec: v.codec, codedWidth: v.width, codedHeight: v.height, optimizeForLatency: true };
-    if (!(await this.env.supported(config))) {
+    const supported = await this.env.supported(config);
+    if (this.disposed) return;
+    if (!supported) {
       const msg = `this browser can't decode ${v.codec} at ${v.width}x${v.height}`;
       if (v.fallbacks.element) {
         console.warn(`Court Side: ${msg}; playing pass 1 on a <video> (?video=element)`);
@@ -358,6 +384,7 @@ export class ShowVideo {
       throw new Error(msg);
     }
     const bytes = await this.env.bytes(this.bundle.file(v.file));
+    if (this.disposed) return;
     const units = splitAnnexB(bytes);
     const frames = this.bundle.frames.length;
     if (units.length < frames) throw new Error(`${v.file}: ${units.length} access units for ${frames} show frames`);
@@ -458,6 +485,7 @@ export class ShowVideo {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.tracks?.forEach((t) => t.close());
     this.tracks = null;
     this.current?.close();
@@ -476,14 +504,22 @@ export class ShowVideo {
     for (const fn of this.listeners) fn();
   }
 
-  /** Upload the stacked frame, copy each region into its own mipmapped texture, then close the frame it replaces. */
-  private upload(frame: VideoFrame, index: number): void {
+  /**
+   * Upload the stacked frame (a decoded VideoFrame, or the fallback's <video> as it is: no WebCodecs needed), copy each
+   * region into its own mipmapped texture, then close the frame it replaces.
+   */
+  private upload(source: VideoFrame | HTMLVideoElement, index: number): void {
     const t = this.env.now();
     const r = this.renderer;
     const xrOn = r.xr.enabled;
     const prev = r.getRenderTarget();
+    const frame = isFrame(source) ? source : null;
     try {
-      this.frameTexture.setFrame(frame);
+      if (frame) this.frameTexture.setFrame(frame);
+      else {
+        (this.frameTexture as unknown as { image: unknown }).image = source;
+        this.frameTexture.needsUpdate = true;
+      }
       r.initTexture(this.frameTexture); // uploads now
       const { width: W, height: H, regions } = this.bundle.court.video;
       r.xr.enabled = false; // an offscreen pass: three would swap in the XR camera otherwise
@@ -494,7 +530,7 @@ export class ShowVideo {
         r.render(this.blitScene, this.blitCamera); // three makes the target's mipmaps after the render
       }
     } catch (e) {
-      frame.close();
+      frame?.close();
       this.stats.errors.push(`upload ${index}: ${String(e).slice(0, 120)}`);
       return;
     } finally {
@@ -532,16 +568,12 @@ export class ShowVideo {
   private async loadElement(): Promise<void> {
     const v = this.bundle.court.video;
     if (!v.fallbacks.element) throw new Error("?video=element: the bundle has no video.fallbacks.element");
-    const el = document.createElement("video");
-    el.src = this.bundle.file(v.fallbacks.element);
-    el.muted = true;
-    el.playsInline = true;
-    el.crossOrigin = "anonymous";
-    el.preload = "auto";
-    await new Promise<void>((ok, fail) => {
-      el.addEventListener("loadeddata", () => ok(), { once: true });
-      el.addEventListener("error", () => fail(new Error(`?video=element: ${v.fallbacks.element} did not load`)), { once: true });
-    });
+    const el = await this.env.element(this.bundle.file(v.fallbacks.element));
+    if (this.disposed) {
+      el.pause();
+      el.removeAttribute("src");
+      return;
+    }
     this.element = el;
   }
 
@@ -558,6 +590,6 @@ export class ShowVideo {
     }
     const index = Math.min(seg.pass1[1], seg.pass1[0] + Math.round(el.currentTime * this.bundle.court.video.displayHz));
     if (index === this.stats.onScreen) return;
-    this.upload(new VideoFrame(el, { timestamp: Math.round((index * 1e6) / this.bundle.court.video.displayHz) }), index);
+    this.upload(el, index);
   }
 }
