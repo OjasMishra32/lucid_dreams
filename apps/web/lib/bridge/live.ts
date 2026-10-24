@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { dreamFile, type JobKind, type JobState, type JobStatus, type Stage } from "../dream";
 import type { LiveGpus, LivePeek, LiveReply, LiveRun, LiveStage, LiveStageState } from "../live";
 import { DATA_DIR, DREAMS_DIR, REPO, heldIds, isRunId, listReady, readDream } from "./dreams";
+import { fetching } from "./fetches";
 import { MODE, activeJobs, jobStatus } from "./index";
 import { mockStatus, mockTimeline } from "./mock";
 import { runName, runSubmittedAt, submittedRuns } from "./runs";
@@ -61,7 +62,14 @@ if out["exists"]:
     out["bundle"] = os.path.isfile(os.path.join(run, "bundle", "dream.json"))
     frames = os.path.join(run, "recon", "frames")
     out["frames"] = len([f for f in os.listdir(frames) if f.endswith(".spz")]) if os.path.isdir(frames) else None
-    out["reports"] = [os.path.getmtime(p) for p in glob.glob(os.path.join(run, "recon", "recon-*.json"))]
+    out["reports"] = []
+    for p in glob.glob(os.path.join(run, "recon", "recon-*.json")):
+        try:
+            with open(p) as f:
+                took = json.load(f).get("seconds")
+        except Exception:
+            took = None
+        out["reports"].append({"end": os.path.getmtime(p), "seconds": took})
     out["peeks"] = [{"name": os.path.basename(p), "mtime": os.path.getmtime(p), "size": os.path.getsize(p)}
                     for p in glob.glob(os.path.join(run, "recon", "peek-*.jpg"))]
 fields = "JobID:24|,ArrayJobID:24|,ArrayTaskID:16|,UserName:32|,Name:64|,State:24|,Partition:96|,WorkDir:400|,tres-alloc:400|"
@@ -112,7 +120,7 @@ interface RemoteRead {
   show?: JobStatus | null;
   bundle?: boolean;
   frames?: number | null;
-  reports?: number[];
+  reports?: { end: number; seconds?: number | null }[]; // one per finished chunk: when it ended and how long it took
   peeks?: RemotePeek[];
   squeue?: string | null;
 }
@@ -122,7 +130,7 @@ type Heard = { data: RemoteRead; at: number; skew: number };
 type PeekMeta = RemotePeek & { width: number; height: number };
 
 type Live = {
-  reads: Map<string, { at: number; value: Promise<Heard> }>;
+  reads: Map<string, { at: number; value: Promise<Heard>; pending?: boolean }>;
   last: Map<string, Heard>;
   bringing: Set<string>;
   peekFailedAt: Map<string, number>;
@@ -138,15 +146,22 @@ async function python(code: string, args: string[], timeout: number): Promise<st
 
 function readRemote(id: string): Promise<Heard> {
   const hit = cache.reads.get(id);
-  if (hit && Date.now() - hit.at < READ_TTL_MS) return hit.value;
+  // one read per run at a time: while HiPerGator is slow to answer, every poll waits on the read already under way
+  // instead of opening another SSH session; the TTL runs from when it answered
+  if (hit && (hit.pending || Date.now() - hit.at < READ_TTL_MS)) return hit.value;
   const value = python(READ_CODE, [id], 20_000).then((out) => {
     const data = JSON.parse(out.trim().split("\n").pop() ?? "") as RemoteRead;
     const heard: Heard = { data, at: Date.now(), skew: Date.now() - data.now * 1000 };
     cache.last.set(id, heard);
     return heard;
   });
-  value.catch(() => {}); // a failed read is kept for the TTL too, so a dropped connection isn't asked every poll
-  cache.reads.set(id, { at: Date.now(), value });
+  const entry = { at: Date.now(), value, pending: true };
+  const settle = () => {
+    entry.at = Date.now();
+    entry.pending = false;
+  };
+  value.then(settle, settle); // a failed read is kept for the TTL too, so a dropped connection isn't asked every poll
+  cache.reads.set(id, entry);
   return value;
 }
 
@@ -209,7 +224,8 @@ export async function liveReply(want: string | null, follow: boolean): Promise<L
       if (other) return reply(other);
     }
     if (shown) return reply(shown);
-    if (!follow) return reply(null, MODE === "runner" || getJob(want) ? "unknown" : "offline");
+    // offline: a run this Mac knows from HiPerGator while the bridge is in demo mode; anything else is unknown
+    if (!follow) return reply(null, MODE === "mock" && known(want) && !hidden(want) ? "offline" : "unknown");
   }
   const id = (await newestBuilding()) ?? newestRun();
   const shown = id ? await liveRun(id) : null;
@@ -222,6 +238,11 @@ export async function liveRun(id: string): Promise<LiveRun | null> {
   if (job?.mode === "mock") return mockRun(job);
   if (MODE !== "runner") return null; // only the demo Mac reaches HiPerGator
   return runnerRun(id, job);
+}
+
+/** A run this Mac knows: one of the bridge's jobs, one lucid_runner submitted (.runs.json), or a fetched bundle. */
+function known(id: string): boolean {
+  return !!getJob(id) || submittedRuns().includes(id) || !!readDream(id);
 }
 
 function inLibrary(id: string): boolean {
@@ -254,10 +275,12 @@ function mockRun(job: JobRecord): LiveRun {
     check.state = "queued"; // the mock's wait for a GPU comes before its check
     check.startedAt = steps.get("queued")!.startedAt;
   }
+  // the mock only fails at the end of its schedule (no sample bundle to stand in): it stopped then, not at every poll
+  const scheduleEnd = steps.get("export")!.endedAt;
   if (status.status === "failed") {
     const last = stages[stages.length - 1];
     last.state = "failed";
-    last.endedAt = now;
+    last.endedAt = scheduleEnd;
   }
 
   // the sample bundle stands in for the result: its thumb, never a made-up fitted frame
@@ -273,7 +296,7 @@ function mockRun(job: JobRecord): LiveRun {
     state: status.status,
     message: done ? "Ready" : status.message,
     startedAt: job.createdAt,
-    endedAt: done ? steps.get("export")!.endedAt : status.status === "failed" ? now : null,
+    endedAt: done || status.status === "failed" ? scheduleEnd : null,
     stages,
     gpus: null,
     idle: false,
@@ -289,18 +312,24 @@ function mockRun(job: JobRecord): LiveRun {
 // A real run, read from HiPerGator
 
 async function runnerRun(id: string, job: JobRecord | undefined): Promise<LiveRun | null> {
+  // only runs this Mac knows are read from HiPerGator: any other id typed into the address would open an SSH session
+  // through Ojasva's shared connection on every request
+  if (!known(id)) return null;
+  // the bridge's own status of its job is a second SSH call: asked alongside the read, not after it
+  const asking: Promise<JobStatus | null> = job ? jobStatus(id).catch(() => null) : Promise.resolve(null);
   const heard = await readRemote(id).catch(() => null);
   const last = heard ?? cache.last.get(id) ?? null;
   const data = last?.data ?? null;
   const local = readDream(id);
   // HiPerGator has no such run and neither has this Mac (a listed run since cleared away there is gone too)
   if (data && !data.exists && !job && !local) return null;
-  if (!data && !job && !local && !submittedRuns().includes(id)) return null;
 
   const kind: JobKind = job?.kind ?? (data?.job?.kind === "avatar" ? "avatar" : local?.kind ?? "replay");
   const ready = inLibrary(id);
-  let status: JobStatus | null = job ? await jobStatus(id) : null;
-  if (!status && (ready || data?.bundle)) status = { id, status: "done", stage: "export", progress: 1, etaS: 0, message: "Ready" };
+  let status: JobStatus | null = await asking;
+  // made on HiPerGator: the bridge may still be bringing it home ("running" to the job API), but the GPUs are done
+  const made = ready || !!data?.bundle || fetching(id);
+  if (made && status?.status !== "failed") status = { id, status: "done", stage: "export", progress: 1, etaS: 0, message: "Ready" };
   if (!status && data?.show) status = data.show;
 
   const state: JobState = status?.status ?? (data?.exists ? "queued" : "running");
@@ -346,14 +375,21 @@ async function runnerRun(id: string, job: JobRecord | undefined): Promise<LiveRu
     const total = data?.job?.frames ?? 121;
     const chunks = Number(data?.job?.chunks ?? data?.slurm?.chunks) || 0;
     const busy = chunks ? Math.ceil(total / Math.ceil(total / chunks)) : 0; // 121 frames in 12 chunks: the 12th is empty
-    const reports = (data?.reports ?? []).map(hpgTime).filter((t): t is number => t !== null);
-    const lastReport = reports.length ? Math.max(...reports) : null;
+    const reports = (Array.isArray(data?.reports) ? data.reports : [])
+      .map((r) => ({ end: hpgTime(r?.end), took: typeof r?.seconds === "number" && r.seconds > 0 ? r.seconds * 1000 : null }))
+      .filter((r): r is { end: number; took: number | null } => r.end !== null);
+    const lastReport = reports.length ? Math.max(...reports.map((r) => r.end)) : null;
     if (rec.state === "running" && (exp.startedAt || done || (busy && reports.length >= busy))) {
       rec.state = "done";
       rec.endedAt = lastReport && (!exp.startedAt || lastReport <= exp.startedAt) ? lastReport : exp.startedAt ?? lastReport;
     }
     rec.frames = { done: rec.state === "done" || done ? total : Math.min(data?.frames ?? 0, total), total };
-    if (busy && (rec.state === "done" || done)) rec.gpus = busy;
+    // how many chunks really ran side by side (each on its own GPU), from when each began and ended: when the lab was
+    // busy they queue one after another, and the page must not claim more GPUs at once than there were
+    if (rec.state === "done" || done) {
+      const peak = atOnce(reports);
+      if (peak) rec.gpus = peak;
+    }
   }
 
   if (done) for (const s of [check, ...gpuStages]) s.state = "done";
@@ -392,7 +428,8 @@ async function runnerRun(id: string, job: JobRecord | undefined): Promise<LiveRu
       const n = working.filter((r) => stageOf(r, data.slurm) === s.stage).reduce((k, r) => k + r.gpus, 0);
       if (n) s.gpus = n;
     }
-    idle = !!data.exists && !done && !failed && ours.length === 0;
+    // idle only once its jobs were queued (slurm.json): before that it's still being sent, not off the GPUs
+    idle = !!data.exists && !!data.slurm && upload.state === "done" && !done && !failed && ours.length === 0;
   }
 
   // the latest fitted frame: copied home in the background, shown once it's here
@@ -426,7 +463,8 @@ async function runnerRun(id: string, job: JobRecord | undefined): Promise<LiveRu
         ? status?.message ?? "Reconnecting to HiPerGator"
         : said ?? status?.message ?? "Waiting for a GPU",
     startedAt: upload.startedAt ?? submittedAt ?? gpuStages.find((s) => s.startedAt)?.startedAt ?? null,
-    endedAt: done ? exp.endedAt ?? (ends.length ? Math.max(...ends) : null) : failed ? (ends.length ? Math.max(...ends) : Date.now()) : null,
+    // a failure with no time of its own (the upload) has no end to show, rather than one that grows at every poll
+    endedAt: done ? exp.endedAt ?? (ends.length ? Math.max(...ends) : null) : failed && ends.length ? Math.max(...ends) : null,
     stages,
     gpus,
     idle,
@@ -471,6 +509,17 @@ function parseSqueue(text: string): Row[] {
     rows.push({ base, name, state: s, dir, gpus, model, busy: /^(RUNNING|COMPLETING|CONFIGURING)/.test(s) });
   }
   return rows;
+}
+
+/** The most chunks that were running at the same moment, from each one's end and duration; null if any is unknown. */
+function atOnce(reports: { end: number; took: number | null }[]): number | null {
+  if (!reports.length || reports.some((r) => r.took === null)) return null;
+  const edges = reports.flatMap((r) => [{ t: r.end - r.took!, d: 1 }, { t: r.end, d: -1 }]);
+  edges.sort((a, b) => a.t - b.t || a.d - b.d); // one ending as another starts: not at once
+  let n = 0;
+  let peak = 0;
+  for (const e of edges) peak = Math.max(peak, (n += e.d));
+  return peak || null;
 }
 
 /** Every Slurm job id in slurm.json: views, reconstruct, export, avatar, and re-queued chunks. */
@@ -564,7 +613,9 @@ async function bringPeek(id: string, p: RemotePeek) {
     }
   }
   renameSync(tmp, join(dir, p.name));
-  writeFileSync(join(dir, "peek.json"), JSON.stringify({ ...p, ...size } satisfies PeekMeta));
+  // written aside and renamed: a poll reading it mid-write would find no strip and blank the picture for a moment
+  writeFileSync(join(dir, "peek.json.tmp"), JSON.stringify({ ...p, ...size } satisfies PeekMeta));
+  renameSync(join(dir, "peek.json.tmp"), join(dir, "peek.json"));
   for (const f of readdirSync(dir)) if (PEEK_NAME.test(f) && f !== p.name) rmSync(join(dir, f), { force: true });
 }
 

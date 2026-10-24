@@ -84,7 +84,9 @@ export default function LivePipeline({ initial, want }: { initial: LiveReply; wa
 
 function Run({ run, now }: { run: LiveRun; now: number }) {
   const building = run.state === "running" || run.state === "queued";
-  const total = run.startedAt ? (run.endedAt ?? now) - run.startedAt : null;
+  // ticks while it's building; once it has stopped, only a known end gives a total
+  const end = building ? now : run.endedAt;
+  const total = run.startedAt && end ? end - run.startedAt : null;
   const rec = run.stages.find((s) => s.stage === "reconstruct");
   const eyebrow = run.demo ? "Demo run on this Mac" : building ? "Live from HiPerGator" : run.state === "done" ? "Made on HiPerGator" : "On HiPerGator";
 
@@ -160,7 +162,7 @@ function GpuStat({ run, rec }: { run: LiveRun; rec?: LiveStage }) {
     );
   }
   if (run.state === "done" && rec?.gpus) {
-    return <Stat value={String(rec.gpus)} label="GPUs at once" sub={["All back with the lab now"]} />;
+    return <Stat value={String(rec.gpus)} label={rec.gpus === 1 ? "GPU at a time" : "GPUs at once"} sub={["All back with the lab now"]} />;
   }
   return null;
 }
@@ -211,7 +213,10 @@ function factsOf(s: LiveStage): string {
   if (s.state === "queued") parts.push("Waiting for a GPU");
   if (s.frames && s.state === "running") parts.push(`${s.frames.done} of ${s.frames.total} frames`);
   if (s.frames && s.state === "done") parts.push(`${s.frames.total} frames`);
-  if (s.gpus) parts.push(s.state === "done" ? `${s.gpus} GPUs at once` : `on ${s.gpus} ${s.gpus === 1 ? "GPU" : "GPUs"}`);
+  if (s.gpus) {
+    if (s.state !== "done") parts.push(`on ${s.gpus} ${s.gpus === 1 ? "GPU" : "GPUs"}`);
+    else parts.push(s.gpus === 1 ? "one GPU at a time" : `${s.gpus} GPUs at once`);
+  }
   if (s.waitedS) parts.push(`after ${span(s.waitedS)} in the queue`);
   if (s.state === "failed") parts.push("Stopped here");
   return parts.join(" · ");
@@ -227,7 +232,8 @@ function freshness(run: LiveRun, now: number): string {
 
 /** The right-hand side: the latest fitted frame, else an honest stand-in. Never a made-up fit. */
 function Look({ run, total }: { run: LiveRun; total: number | null }) {
-  if (run.peek) return <Fit peek={run.peek} total={total} />;
+  // keyed by run: when the page follows on to another run, the last run's strip never shows under the new name
+  if (run.peek) return <Fit key={run.id} peek={run.peek} total={total} />;
   if (run.thumb) {
     return (
       <figure className="live-look">
