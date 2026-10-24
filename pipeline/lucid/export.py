@@ -5,7 +5,11 @@ who stands on -Z looking toward +Z), writes every frame as PLY and as compact SP
 preview.mp4 and thumb.jpg, copies the clip's audio, and writes dream.json with real metrics.
 
     python -m lucid.export --recon <recon dir> --out <bundle dir> --id curry-01 --name "Steph's jumper" \
-        [--result <4DAnyone result dir>] [--clip <source clip>] [--fps 25]
+        [--result <4DAnyone result dir>] [--clip <source clip>] [--fps 25] [--placement-from <old dream.json>]
+
+--placement-from re-exports a re-reconstruction in an earlier bundle's space: its dream.json "placement" (rot | t) is
+used exactly instead of one computed from frame 0, so the files already in that space (joints.json, props.json, a
+hand-written experience.json) stay right.
 """
 
 from __future__ import annotations
@@ -44,6 +48,8 @@ def parse_args(argv=None):
     p.add_argument("--no-ply", dest="ply", action="store_false",
                    help="SPZ frames only (every player streams SPZ; the lab's disk is nearly full)")
     p.add_argument("--preview-bg", default="0,0,0", help="r,g,b in 0-255")
+    p.add_argument("--placement-from", type=Path, default=None,
+                   help="an earlier bundle's dream.json: reuse its placement (bundle = rot @ world + t) exactly")
     p.add_argument("--device", default="cuda:0")
     return p.parse_args(argv)
 
@@ -149,6 +155,20 @@ def placement(first: Gaussians, result: Path | None) -> tuple[np.ndarray, np.nda
     floor = np.percentile(rotated[:, 1], 0.5)
     t = -(rot @ centre) - np.array([0.0, floor, 0.0])
     return rot, t
+
+
+def placement_from(dream_json: Path) -> tuple[np.ndarray, np.ndarray, dict]:
+    """An earlier bundle's placement, exactly as its dream.json has it: (rot, t, the "placement" dict itself). Refuses
+    anything but a rotation about +Y (what placement() makes) and a 3-vector."""
+    p = json.loads(Path(dream_json).read_text()).get("placement")
+    if not p or "rot" not in p or "t" not in p:
+        raise SystemExit(f"{dream_json}: no placement to reuse")
+    rot, t = np.asarray(p["rot"], float), np.asarray(p["t"], float)
+    if rot.shape != (3, 3) or t.shape != (3,):
+        raise SystemExit(f"{dream_json}: placement is not a 3x3 rot and a 3-vector t")
+    if not np.allclose(rot @ rot.T, np.eye(3), atol=1e-6) or not np.allclose(rot[1], [0, 1, 0], atol=1e-6):
+        raise SystemExit(f"{dream_json}: placement rot is not a turn about +Y")
+    return rot, t, {"rot": p["rot"], "t": p["t"]}
 
 
 def front_cameras(result: Path) -> list[dict]:
@@ -277,9 +297,12 @@ def main(argv=None):
     out_frames = a.out / "frames"
     out_frames.mkdir(parents=True, exist_ok=True)
 
-    first = read_ply(frame_paths[0])
-    rot, t = placement(first, a.result)
-    placed_by = {"rot": rot.round(8).tolist(), "t": t.round(6).tolist()}  # result world -> bundle (props added later)
+    if a.placement_from:  # a re-reconstruction keeps the space its joints, props and lesson were made in
+        rot, t, placed_by = placement_from(a.placement_from)
+        print(f"[export] placement from {a.placement_from}")
+    else:
+        rot, t = placement(read_ply(frame_paths[0]), a.result)
+        placed_by = {"rot": rot.round(8).tolist(), "t": t.round(6).tolist()}  # result world -> bundle (props added later)
     cams = front_cameras(a.result) if a.result and (a.result / "cameras.json").exists() else []
     solved = sorted(a.recon.glob("source-camera-*.json"))
     if solved:  # the clip's real camera, solved in reconstruction: it may face the person's back, not their front
