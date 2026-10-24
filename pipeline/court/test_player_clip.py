@@ -182,6 +182,7 @@ class Layers(unittest.TestCase):
             (m / "p-alpha").mkdir()
             cv2.imwrite(str(m / "p-alpha" / "000007.png"), np.full((4, 4), 51, np.uint8))
             self.assertAlmostEqual(float(pc.load_matte(m, "p", 7, 4, 4).max()), 0.2)
+            self.assertEqual(float(pc.load_matte(m, "p", 7, 4, 4, use=False).min()), 1.0)  # opt-in only
 
     def test_extra_view_prefers_a_flat_soft_matte(self):
         import cv2

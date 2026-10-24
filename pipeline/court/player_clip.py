@@ -18,7 +18,8 @@ measure.json, court-run.json, job.json, and sheet.jpg / edge-k.png / k-vs-ref.pn
 <out>/runs/<id>/ (hard links + that id's job.json and court-run.json): exactly the folder to upload for that run.
 
 Config keys: video, calib, masks (<masks>/<name>/<frame:06d>.png, white = them), out, ref, repeat [mod, phase],
-repeat_range [first, last], crop [w, h], margin, bg [r, g, b], grow, near, n (121), sets {name: {player, with,
+repeat_range [first, last], crop [w, h], margin, bg [r, g, b], grow, near, n (121), matte (false: true composites
+with <masks>/<name>-alpha/ where it exists), sets {name: {player, with,
 front, stride, k}}, runs {id: {set, turbo}}. `front` lists who is nearer the camera than the player.
 """
 
@@ -140,11 +141,11 @@ def covered_fraction(own: np.ndarray, front: list[np.ndarray]) -> float:
     return float(cover.sum()) / area
 
 
-def load_matte(masks: Path, name: str, n: int, w: int, h: int) -> np.ndarray:
-    """The soft matte <masks>/<name>-alpha/<n>.png when one was made (SAM inside, a matting model's alpha at the edge),
-    else the binary mask."""
+def load_matte(masks: Path, name: str, n: int, w: int, h: int, use: bool = True) -> np.ndarray:
+    """The soft matte <masks>/<name>-alpha/<n>.png when asked for (config "matte": true) and made, else the binary
+    mask."""
     soft = masks / f"{name}-alpha" / f"{n:06d}.png"
-    return load_mask(soft.parent, n, w, h) if soft.exists() else load_mask(masks / name, n, w, h)
+    return load_mask(soft.parent, n, w, h) if use and soft.exists() else load_mask(masks / name, n, w, h)
 
 
 def load_mask(folder: Path, n: int, w: int, h: int) -> np.ndarray:
@@ -363,7 +364,7 @@ def layers(rgb, n, s, maps, cfg, w, h):
     m = cfg["masks"]
     wm = lambda f: warp(f, maps, cv2.INTER_LINEAR)  # noqa: E731
     own, front = wm(load_mask(m / s["player"], n, w, h)), [wm(load_mask(m / o, n, w, h)) for o in s.get("front", [])]
-    soft = [wm(load_matte(m, x, n, w, h)) for x in [s["player"], *s.get("with", [])]]
+    soft = [wm(load_matte(m, x, n, w, h, cfg.get("matte", False))) for x in [s["player"], *s.get("with", [])]]
     return img, own, front, player_alpha(soft[0], soft[1:], front, cfg.get("grow", 3))
 
 
@@ -489,7 +490,7 @@ def build_extras(cfg: dict, name: str, d: Path) -> list[dict]:
             cam = extra_view.make_view(Path(os.path.expanduser(e["video"])), Path(os.path.expanduser(e["calib"])),
                                        e["frame"], Path(os.path.expanduser(e["masks"])), s["player"], s.get("with", []),
                                        s.get("front", []), d / "real" / e["name"], cfg.get("margin", 32),
-                                       cfg.get("grow", 3), cfg.get("near", 200))
+                                       cfg.get("grow", 3), cfg.get("near", 200), cfg.get("matte", False))
         except FileNotFoundError as err:
             print(f"[{name}] extra view {e['name']} skipped: {err}")
             continue
