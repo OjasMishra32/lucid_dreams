@@ -230,6 +230,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (!inRoom && phase === "watching") clock.restart();
     if (inRoom && (phase === "easing" || phase === "handoff")) {
       clock.jumpToFreeze();
+      sound.timeStop(1); // landed on F: the full hush (it lifts only on the resume)
       tF = HANDOFF_END;
       handoff(tF, parts);
       go("open");
@@ -329,7 +330,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "ended":
         break;
     }
-    sound.update(head, clock.state);
+    sound.update(head, clock.state, seat.world); // the crowd turns with the court; the hush lifts only on the resume (sound.ts)
     // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4)
     if (head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
       seat.closer();
