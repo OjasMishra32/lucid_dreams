@@ -152,3 +152,19 @@ def test_frame_error_compares_the_live_region_with_the_freeze(tmp_path):
     # a freeze at another size is resized to the live region first
     big = cv2.resize(live, (lay.width * 2, lay.live[3] * 2), interpolation=cv2.INTER_NEAREST)
     assert enc.frame_error(stacked, lay, big)["mad_luma"] < 0.5
+
+
+def test_mp4_fallback_holds_only_the_first_frames_and_is_playable(tmp_path):
+    outs = [enc.Output(tmp_path / "show.h264", LAY.width, LAY.height), enc.Output(tmp_path / "pass1.mp4", LAY.width, LAY.height, fmt="mp4", limit=12)]
+    res = enc.encode(moving_clip(30), outs, n_frames=30, hz=72, idr=[0, 12], crf=23)
+    assert res[1].frames == 12
+    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames,codec_name,profile,width,height,r_frame_rate", "-of", "json", str(outs[1].path)], capture_output=True, text=True, check=True)
+    st = json.loads(probe.stdout)["streams"][0]
+    assert (st["nb_read_frames"], st["codec_name"], st["profile"], st["width"], st["height"]) == ("12", "h264", "High", LAY.width, LAY.height)
+    assert st["r_frame_rate"] == "72/1"
+    assert enc.scan_h264(outs[0].path).frames == 30
+
+
+def test_a_preset_that_loses_high_profile_is_refused(tmp_path):
+    with pytest.raises(RuntimeError, match="High"):
+        enc.encode(moving_clip(4), [enc.Output(tmp_path / "u.h264", LAY.width, LAY.height)], n_frames=4, hz=72, idr=[0], preset="ultrafast")

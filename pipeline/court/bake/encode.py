@@ -51,6 +51,8 @@ class Output:
     path: Path
     width: int
     height: int
+    fmt: str = "h264"  # "h264" raw Annex B, or "mp4" (the <video> element fallback: no AUDs, faststart)
+    limit: int | None = None  # only the first `limit` frames (pass 1 for the mp4)
 
 
 @dataclass
@@ -77,23 +79,26 @@ def zones_arg(protect: Sequence[int], qp: int) -> str:
 def ffmpeg_command(outputs: Sequence[Output], size: tuple[int, int], hz: float, idr: Sequence[int], crf: float, preset: str, protect: Sequence[int], protect_qp: int) -> list[str]:
     w, h = size
     keys = "expr:" + "+".join(f"eq(n,{i})" for i in sorted(set(idr)))
-    params = "aud=1:repeat-headers=1:colorprim=bt709:transfer=bt709:colormatrix=bt709"
-    if protect:
-        params += ":zones=" + zones_arg(protect, protect_qp)
+    color = "colorprim=bt709:transfer=bt709:colormatrix=bt709"
+    zones = (":zones=" + zones_arg([i for i in protect], protect_qp)) if protect else ""
     chains = []
     for k, o in enumerate(outputs):
         resize = "" if (o.width, o.height) == (w, h) else f"scale={o.width}:{o.height}:flags=lanczos:"
+        cut = f"trim=end_frame={o.limit},setpts=PTS-STARTPTS," if o.limit else ""
         # RGB -> BT.709 limited-range YUV 4:2:0, tagged bt709 in the SPS below
-        chains.append(f"[s{k}]{resize if resize else 'scale='}out_color_matrix=bt709:out_range=tv,format=yuv420p[o{k}]")
+        chains.append(f"[s{k}]{cut}{resize if resize else 'scale='}out_color_matrix=bt709:out_range=tv,format=yuv420p[o{k}]")
     graph = f"[0:v]split={len(outputs)}" + "".join(f"[s{k}]" for k in range(len(outputs))) + ";" + ";".join(chains)
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", f"{hz:g}", "-i", "pipe:0", "-filter_complex", graph]
     for k, o in enumerate(outputs):
         level = level_for(o.width, o.height, hz)
+        mp4 = o.fmt == "mp4"
+        # raw streams carry an AUD per frame (the player splits on them) and the headers at every IDR
+        params = color + zones if mp4 else "aud=1:repeat-headers=1:" + color + zones
         cmd += [
             "-map", f"[o{k}]", "-fps_mode", "passthrough", "-force_key_frames", keys,
             "-c:v", "libx264", "-profile:v", "high", "-level:v", level, "-preset", preset, "-crf", f"{crf:g}",
             "-bf", "0", "-refs", "3", "-g", "100000", "-keyint_min", "100000", "-sc_threshold", "0", "-forced-idr", "1",
-            "-x264-params", params, "-f", "h264", str(o.path),
+            "-x264-params", params, *(["-movflags", "+faststart", "-f", "mp4"] if mp4 else ["-f", "h264"]), str(o.path),
         ]
     return cmd
 
@@ -151,7 +156,13 @@ def encode(
             raise ValueError(f"{sent} frames given, {n_frames} promised")
     results = []
     for o in outputs:
+        if o.fmt == "mp4":
+            results.append(Result(o.path, min(n_frames, o.limit or n_frames), [0], o.path.stat().st_size, codec_for(o.width, o.height, hz)))
+            continue
         info = scan_h264(o.path)
+        want = codec_for(o.width, o.height, hz)
+        if info.codec != want:  # ultrafast/superfast drop the High-profile tools and x264 then writes Baseline/Main
+            raise RuntimeError(f"{o.path.name}: the SPS says {info.codec}, the format needs {want} (preset {preset!r} too fast for High profile?)")
         results.append(Result(o.path, info.frames, info.idr, o.path.stat().st_size, info.codec))
     return results
 
