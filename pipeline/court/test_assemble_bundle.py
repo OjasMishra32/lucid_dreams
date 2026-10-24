@@ -181,16 +181,16 @@ class Bundle(unittest.TestCase):
         self.assertIn(f"at-F-splats-outline-show{n:04d}.jpg", names)
 
     def test_a_mask_at_f_gives_each_players_silhouette_iou(self):
-        """A player's mask at F (raw source pixels) against its splats seen from camera F: its own silhouette scores
-        high, the same mask moved half a body away scores low."""
+        """A player's mask at F (raw source pixels) against its splats' true coverage seen from camera F: its own
+        silhouette scores ~1, the same mask moved half a body away scores low."""
         import cv2
 
         court = json.loads((self.out / "court.json").read_text())
         frames = json.loads((self.out / court["video"]["frames"]).read_text())
         camF = A.frame_camera(court["camera"], frames, court["video"])
-        bodies = [sp.read_ply(self.out / p["splats"]) for p in court["freeze"]["players"]]
-        _, ids = A.render_splats(camF.scaled(1280), bodies)
-        own = np.where(ids == 0, 255, 0).astype(np.uint8)
+        a = sp.read_ply(self.out / court["freeze"]["players"][0]["splats"])
+        cam = camF.scaled(960)
+        own = np.where(sp.coverage_image(a, cam, (0.0, 0.0, float(cam.w), float(cam.h)), cam.w, cam.h) >= 0.5, 255, 0).astype(np.uint8)
         cv2.imwrite(str(self.tmp / "mask-a.png"), cv2.resize(own, (camF.w, camF.h), interpolation=cv2.INTER_NEAREST))
         x = np.nonzero(own.any(0))[0]
         moved = np.roll(own, (x.max() - x.min()) // 2, axis=1)
@@ -200,9 +200,54 @@ class Bundle(unittest.TestCase):
         code, out = self.assemble_with("masks", players=players)
         self.assertEqual(code, 0)
         asm = json.loads((out / "assembly.json").read_text())
-        self.assertGreater(asm["pieces"]["player:a"]["silhouetteIoU"], 0.85)
+        self.assertGreater(asm["pieces"]["player:a"]["silhouetteIoU"], 0.95)
         self.assertLess(asm["pieces"]["player:b"]["silhouetteIoU"], 0.3)
         self.assertTrue(any(n.startswith("silhouette IoU at F") for n in asm["notes"]), asm["notes"])
+
+    def test_foot_error_is_against_a_depth_true_reference_only(self):
+        """footError (and the camera placement's vsFeet) compare the soles with a depth-true reference (players[].footRef:
+        a steep camera's or GVHMR's feet), never the source camera's own ground clicks, which can't see depth."""
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "footRef": {"source": "C", "xz": [[5.6, 0.6]]}}, cfg["players"][1]]
+        code, out = self.assemble_with("footref", players=players)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(asm["players"]["a"]["footError"]["against"], "C")
+        self.assertLess(asm["players"]["a"]["footError"]["m"], 0.5)
+        self.assertNotIn("footError", asm["players"]["b"])
+        self.assertIn("ground clicks", asm["players"]["b"]["placement"]["depthNote"])
+
+    def test_a_freeze_runs_crop_mask_is_the_silhouette_check(self):
+        """With its freeze run's clip folder (court-run.json, masks/<K>.png, ignore/<K>.png), a player is checked at the
+        run's own crop through its still camera, the ignored pixels left out."""
+        import cv2
+
+        court = json.loads((self.out / "court.json").read_text())
+        frames = json.loads((self.out / court["video"]["frames"]).read_text())
+        camF = A.frame_camera(court["camera"], frames, court["video"])
+        a = sp.read_ply(self.out / court["freeze"]["players"][0]["splats"])
+        u, v, _ = camF.project(a.pos[a.alpha > 0.5].astype(float))
+        x0, y0 = int(u.min()) - 40, int(v.min()) - 40
+        cw, ch = int(u.max()) + 40 - x0, int(v.max()) + 40 - y0
+        clip = self.tmp / "clip-a"
+        (clip / "masks").mkdir(parents=True, exist_ok=True)
+        (clip / "ignore").mkdir(parents=True, exist_ok=True)
+        still = {"R": camF.R.T.tolist(), "C": camF.C.tolist(), "K": [[camF.f, 0, camF.cx - x0], [0, camF.f, camF.cy - y0], [0, 0, 1]]}
+        (clip / "court-run.json").write_text(json.dumps({"K": 7, "crop": [x0, y0, cw, ch], "still": still}))
+        cam = A.still_camera(json.loads((clip / "court-run.json").read_text()))
+        cov = np.where(sp.coverage_image(a, cam, (0.0, 0.0, float(cw), float(ch)), cw, ch) >= 0.5, 255, 0).astype(np.uint8)
+        cov[:, : cw // 4] = 0  # a person in front hides the left quarter: the mask lost it, the ignore map holds it
+        ign = np.zeros_like(cov)
+        ign[:, : cw // 4] = 255
+        cv2.imwrite(str(clip / "masks" / "000007.png"), cov)
+        cv2.imwrite(str(clip / "ignore" / "000007.png"), ign)
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "courtRun": str(clip / "court-run.json")}, cfg["players"][1]]
+        code, out = self.assemble_with("crop-mask", players=players)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertGreater(asm["pieces"]["player:a"]["silhouetteIoU"], 0.97)
+        self.assertEqual(asm["pieces"]["player:a"]["silhouetteAgainst"], "crop")
 
     def staged_show(self, name: str) -> tuple[Path, dict]:
         S = json.loads((STANDIN / "court.json").read_text())
@@ -392,7 +437,8 @@ class Bundle(unittest.TestCase):
         bad = self.copy_bad("waived")
         asm = json.loads((bad / "assembly.json").read_text())
         asm["pieces"]["player:a"]["source"] = "real"
-        asm["players"]["a"]["run"] = {"variant": "v", "cap": "1k", "iou": 0.8123, "focal": 100.0, "focalHeld": True, "FOCAL": 100.0}
+        asm["players"]["a"]["run"] = {"variant": "v", "cap": "1k", "iou": 0.7, "focal": 100.0, "focalHeld": True, "FOCAL": 100.0,
+                                      "p42": {"iouSolve": 0.7, "iouFinal": 0.8123, "focalHeld": True, "focal": 100.0, "FOCAL": 100.0, "bar": 0.95, "pass": False}}
         (bad / "assembly.json").write_text(json.dumps(asm))
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("(P42)" in e and "0.8123" in e for e in errs), errs)
@@ -408,6 +454,48 @@ class Bundle(unittest.TestCase):
         (bad / "court.json").write_text(json.dumps(court))
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("seat.distance" in e for e in errs), errs)
+
+    def test_p42_is_geos_p42_json(self):
+        """P42 reads court_p42.py's verdict: focal held at FOCAL and the trained render's IoU (iouFinal) >= 0.95 pass,
+        whatever the pre-training solve's IoU (iouSolve, shown); a real body's run without p42.json fails loudly."""
+        bad = self.copy_bad("p42-json")
+        asm = json.loads((bad / "assembly.json").read_text())
+        asm["pieces"]["player:a"]["source"] = "real"
+        run = {"variant": "v", "cap": "1k", "iou": 0.8584, "focal": 100.0, "focalHeld": True, "FOCAL": 100.0}
+        asm["players"]["a"]["run"] = {**run, "p42": {"iouSolve": 0.8584, "iouFinal": 0.9995, "focalHeld": True, "focal": 100.0, "FOCAL": 100.0, "bar": 0.95, "pass": True}}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, info = A.validate(bad, A.WEBXR)
+        self.assertFalse(any("P42" in e for e in errs), errs)
+        self.assertTrue(any("iouFinal 0.9995" in x and "iouSolve 0.8584" in x for x in info), info)
+        asm["players"]["a"]["run"] = {**run, "p42": {"iouSolve": 0.8584, "iouFinal": 0.9995, "focalHeld": True, "focal": 99.0, "FOCAL": 100.0, "bar": 0.95, "pass": True}}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("(P42)" in e and "FOCAL" in e for e in errs), errs)  # its own pass can't hide a focal off FOCAL
+        asm["players"]["a"]["run"] = {**run, "p42": None}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("(P42)" in e and "p42.json" in e for e in errs), errs)
+
+    def test_ball_in_body_is_checked_on_the_holders_splats(self):
+        """freeze.ballInBody names the player whose splats hold the ball: --validate counts their solid splats at the
+        ball (info), and fails when there's no ball-sized blob there or when the ball would erase them."""
+        bad = self.copy_bad("ball-in-body")
+        court = json.loads((bad / "court.json").read_text())
+        holder = court["freeze"]["players"][0]
+        s = sp.read_ply(bad / holder["splats"])
+        court["freeze"]["ballInBody"] = holder["id"]
+        court["freeze"]["ball"]["erase"] = []
+        court["freeze"]["ball"]["centre"] = [float(x) for x in np.median(s.pos[s.alpha > 0.5], 0)]  # inside the body: plenty of splats
+        (bad / "court.json").write_text(json.dumps(court))
+        errs, _, info = A.validate(bad, A.WEBXR)
+        self.assertFalse(any("ballInBody" in e for e in errs), errs)
+        self.assertTrue(any(x.startswith(f"ballInBody {holder['id']}:") for x in info), info)
+        court["freeze"]["ball"]["centre"] = [0.0, 5.0, 0.0]  # nothing of theirs there
+        court["freeze"]["ball"]["erase"] = [{"player": holder["id"], "radius": 0.15}]
+        (bad / "court.json").write_text(json.dumps(court))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("ballInBody" in e and "splats" in e for e in errs), errs)
+        self.assertTrue(any("ballInBody" in e and "erase" in e for e in errs), errs)
 
     def test_a_waiver_in_the_config_lands_in_court_json(self):
         code, out = self.assemble_with("waiver-cfg", waivers={"P42": "turbo test"})

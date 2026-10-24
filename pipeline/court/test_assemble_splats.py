@@ -208,20 +208,35 @@ class Proxy(unittest.TestCase):
             self.assertAlmostEqual(float(alpha[100, 100]), 1 - 0.4 * 0.1, delta=0.01)
         self.assertLess(float(alpha[0, 0]), 1e-6)
 
+    def test_significance_counts_what_each_view_really_sees(self):
+        """Global significance: per Gaussian, the most it adds to any of the views (alpha x footprint x transmittance
+        summed over the pixels). A blob hidden behind another from the front scores ~0 there, but as much as the front
+        one from behind; so a cut over both views keeps it where a front-only cut wouldn't."""
+        front_cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=200, h=200, f=20000.0)
+        back_cam = look(np.array([0.0, 1.0, 20.0]), [0.0, 1.0, 0.0], w=200, h=200, f=20000.0)
+        front = self.blob(50, [0.0, 1.0, -0.05], 0.01, 4.0, spread=0.0005)
+        back = self.blob(50, [0.0, 1.0, 0.05], 0.004, 4.0, spread=0.0005, seed=15)  # smaller: wholly behind the front one
+        s = sp.Splats(np.concatenate([front.table, back.table]))
+        only_front = sp.significance(s, [front_cam])
+        both = sp.significance(s, [front_cam, back_cam])
+        self.assertLess(only_front[50:].sum(), 0.01 * only_front[:50].sum())
+        self.assertGreater(both[50:].sum(), 0.1 * both[:50].sum())
+        self.assertEqual(int(sp.keep_top(both, 60)[50:].sum()) > 0, True)
+
     def test_cap_keeps_the_largest_contributions(self):
         rng = np.random.default_rng(12)
-        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=20000.0)
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=2000.0)
         n = 1000
-        P = rng.normal(scale=0.1, size=(n, 3)) + [0.0, 1.0, 0.0]
+        P = np.c_[rng.uniform(-1.5, 1.5, n), rng.uniform(-0.5, 2.5, n), np.zeros(n)]  # apart: nothing in front of anything
         sc = np.full((n, 3), math.log(0.002))
         sc[:100] = math.log(0.02)  # the hundred that matter: ten times wider
         logit = np.full(n, 2.0)
         logit[100:200] = 4.0  # opaque but tiny: alpha alone would keep these
         s = sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), sc.astype(np.float32), logit.astype(np.float32), np.zeros((n, 3), np.float32))
-        keep = sp.cap(s, cam, 150)
+        keep = sp.keep_top(sp.significance(s, [cam]), 150)
         self.assertEqual(int(keep.sum()), 150)
         self.assertTrue(keep[:100].all())
-        np.testing.assert_array_equal(sp.cap(s, cam, 5000), np.ones(n, bool))
+        np.testing.assert_array_equal(sp.keep_top(sp.significance(s, [cam]), 5000), np.ones(n, bool))
 
     def blob(self, n, centre, sigma, logit, spread=0.002, seed=13) -> sp.Splats:
         P = np.asarray(centre, float) + np.random.default_rng(seed).normal(scale=spread, size=(n, 3))
