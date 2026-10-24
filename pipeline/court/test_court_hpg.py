@@ -209,6 +209,48 @@ class Masks(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("QOS=", p.stdout + p.stderr)
 
+    def test_cpu_bundle_after_a_sam_run(self):
+        L = fake_l(self.root, env_ready=False)  # a CPU bundle needs no SAM env
+        d = L / "data/court/court-layers-v9"
+        d.mkdir()
+        (d / "run.sh").write_text("echo hi\n")
+        env = {**os.environ, "L": str(L), "SBATCH_LOG": str(L / "sbatch.log"),
+               "PATH": f"{L / 'bin'}:{os.environ['PATH']}", "ACCOUNT": "lab2", "QOS": "lab2", "ENV_QOS": "lab2-b",
+               "CPUS": "16", "IN": "court-sam-x"}
+        run = lambda **e: subprocess.run(["bash", str(HERE / "court-hpg.sh"), "court-layers-v9"], capture_output=True,
+                                         text=True, env={**env, **e})
+        p = run()
+        self.assertNotEqual(p.returncode, 0)  # the SAM run's tar isn't there and nothing says to wait for it
+        self.assertIn("AFTER=", p.stderr)
+        self.assertNotEqual(run(AFTER="12x").returncode, 0)
+        p = run(AFTER="4242")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        c = (L / "sbatch.log").read_text().splitlines()
+        self.assertEqual(len(c), 1)
+        self.assertIn("--account=lab2 --qos=lab2-b --cpus-per-task=16 --dependency=afterok:4242 "
+                      "--job-name=court-layers-v9 --export=ALL,", c[0])
+        self.assertIn(f",OUT_FILE=layers-v9.tar,IN_TAR={L}/runs/court-sam-x/masks-sam.tar ", c[0])
+        self.assertTrue(c[0].endswith("court-cpu.sbatch"))
+        self.assertIn(f"result: {L}/runs/court-layers-v9/layers-v9.tar", p.stdout)
+
+    def test_a_bundle_may_name_its_output(self):
+        L = fake_l(self.root, env_ready=False)
+        d = L / "data/court/court-layers-v9b"
+        d.mkdir()
+        (d / "run.sh").write_text("echo hi\n")
+        env = {**os.environ, "L": str(L), "SBATCH_LOG": str(L / "sbatch.log"),
+               "PATH": f"{L / 'bin'}:{os.environ['PATH']}"}
+        run = lambda out: subprocess.run(["bash", str(HERE / "court-hpg.sh"), "court-layers-v9b"], capture_output=True,
+                                         text=True, env={**env, "OUT": out})
+        for bad in ("../x.tar", "x.zip", "a/b.tar"):
+            self.assertNotEqual(run(bad).returncode, 0, bad)
+        p = run("layers-v9.tar")  # a rerun under a new id still copies back what run.sh writes
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        c = (L / "sbatch.log").read_text().splitlines()
+        self.assertEqual(len(c), 1)
+        self.assertIn(",OUT_FILE=layers-v9.tar ", c[0])
+        self.assertIn(f"result: {L}/runs/court-layers-v9b/layers-v9.tar", p.stdout)
+
     def test_matte_needs_no_sam_env(self):
         rc, out = dryrun(make_upload(self.root, "court-matte"))
         self.assertEqual(rc, 0, out)
@@ -300,6 +342,41 @@ class Mac(unittest.TestCase):
         self.assertIn("/stage/up/ hpg2:/blue/lab2/me/x/data/court/court-sam-pair2/", out[2])
         self.assertTrue(out[3].endswith("hpg2 env L=/blue/lab2/me/x ACCOUNT=lab2 QOS=lab2 PARTITION=hpg-rtx6000 bash "
                                         "/blue/lab2/me/x/code/pipeline/court/court-hpg.sh court-sam-pair2"), out[3])
+
+    def test_bundle_and_its_fetch(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        up = Path(tmp.name)
+        (up / "run.sh").write_text("true\n")
+        p = subprocess.run(["bash", str(HERE / "court-masks-hpg.sh"), "bundle", "v9", str(up)], capture_output=True,
+                           text=True, env={**os.environ, "DRY": "1", "IN": "court-sam-x", "AFTER": "4242"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        out = p.stdout.splitlines()
+        self.assertIn("court-cpu.sbatch", out[1])
+        self.assertIn(f"{up}/ hpg:/blue/iruchkin/vishalnaveen/lucid/data/court/court-layers-v9/", out[2])
+        self.assertTrue(out[3].endswith("IN=court-sam-x AFTER=4242 bash /blue/iruchkin/vishalnaveen/lucid/code/"
+                                        "pipeline/court/court-hpg.sh court-layers-v9"), out[3])
+        out = self.mac("fetch", "bundle", "v9", "/w")
+        self.assertIn("runs/court-layers-v9/layers-v9.tar /w/", out[1])
+        self.assertEqual(out[2], "+ tar -xf /w/layers-v9.tar -C /w")
+
+    def test_bundle_output_named_for_the_fetch(self):
+        env = {**os.environ, "DRY": "1", "OUT": "layers-v9.tar"}
+        p = subprocess.run(["bash", str(HERE / "court-masks-hpg.sh"), "fetch", "bundle", "v9b", "/w"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        out = p.stdout.splitlines()
+        self.assertIn("runs/court-layers-v9b/layers-v9.tar /w/", out[1])
+        self.assertEqual(out[2], "+ tar -xf /w/layers-v9.tar -C /w")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / "run.sh").write_text("true\n")
+        p = subprocess.run(["bash", str(HERE / "court-masks-hpg.sh"), "bundle", "v9b", tmp.name], capture_output=True,
+                           text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue(p.stdout.splitlines()[-1].endswith("OUT=layers-v9.tar bash /blue/iruchkin/vishalnaveen/lucid/"
+                                                           "code/pipeline/court/court-hpg.sh court-layers-v9b"),
+                        p.stdout)
 
     def test_rematte_and_its_fetch(self):
         out = self.mac("rematte", "pair")
