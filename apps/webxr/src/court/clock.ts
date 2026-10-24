@@ -1,7 +1,8 @@
 // The show clock, in show frames: pass 1 (1x), pass 2 (court.video.pass2Speed, Step into the court live), the ease
 // ladder and its cutoff, a press in pass 1 armed for pass 2, the freeze on F, the resume through the make, the repeat. Every speed
-// change is baked into the stream, so the clock only picks which show frame is on screen: it steps
-// round(dt x displayHz) frames per XR frame and switches segments at their edges (never a seek, never a playbackRate).
+// change is baked into the stream, so the clock only picks which show frame is on screen: it steps whole show frames
+// (Cadence: round(dt x displayHz) at a matched display rate, displayHz / outputHz per frame at any other) and switches
+// segments at their edges (never a seek, never a playbackRate).
 // DOM-free (clock.test.ts imports it under node). Stream C (`core`) builds the Clock class; the curve functions below
 // are the contract between the bake (bake_show.py, standin.mjs) and the clock, written at T0 and tested now.
 import type { Court, ShowFrame } from "./format";
@@ -16,9 +17,145 @@ export const RESUME_RAMP_S = 0.8;
 /** The ease ladder's lengths, seconds, earliest start first (1.2 s starts 0.36 s of real time before F). */
 export const EASE_SECONDS: readonly number[] = [1.2, 1.0, 0.8];
 
-/** Show frames to advance for one XR frame of `dt` seconds (P6: round(dt x displayHz)). */
+/** Show frames to advance for one XR frame of `dt` seconds at a matched display rate (P6: round(dt x displayHz)). */
 export function stepFrames(dt: number, displayHz: number): number {
   return Math.max(0, Math.round(dt * displayHz));
+}
+
+/** Display rates an output rate snaps to within SNAP (after the show's own rate, which always wins), Hz. */
+const STANDARD_HZ: readonly number[] = [24, 25, 30, 48, 50, 60, 72, 75, 80, 90, 100, 120, 144, 165, 240];
+/** How close a rate must be to snap to the show's or a standard rate, as a fraction. */
+const SNAP = 0.02;
+/**
+ * An estimated rate counts as a different display only this far from the show's, as a fraction: past the +-10% a
+ * matched display's frame times may wander (P6), so no jitter pattern, however correlated, ever gets there...
+ */
+const MISMATCH = 0.15;
+/** ...and only after this many frames in a row there (the lock: soon enough that the frames stepped by the old rule meanwhile never put the show a frame off real time). */
+const MISMATCH_FRAMES = 2;
+/** Frame times kept for the output-rate estimate when the XR session doesn't give one (a desktop capture). */
+const RATE_SAMPLES = 121;
+/** The newest frame times whose lower quartile is the rough period (only to count each frame's periods: dropped frames, the long ones, never move it). */
+const ROUGH_SAMPLES = 15;
+/** Frame times outside these (a hitch, a tab in the background; two callbacks at once) never enter the estimate, seconds. */
+const RATE_MIN_DT = 0.002;
+const RATE_MAX_DT = 0.05;
+
+/**
+ * Show frames per output frame at any display rate. Each output frame counts the output periods it spans,
+ * round(dt x outputHz), which shrugs off +-10% jitter and counts a dropped frame as 2; a Bresenham accumulator turns
+ * periods into show frames at displayHz / outputHz, so the show keeps real time at 60, 90 or 120 Hz and steps as
+ * evenly as it can (72 on 90: 4 of every 5 frames). At a matched rate it is exactly stepFrames, frame for frame.
+ * outputHz is the XR session's frameRate when known (setOutputHz). Otherwise the cadence assumes the show's rate, the
+ * old rule exactly, until the frame times' estimate (the periods they count over the time they span) has been
+ * MISMATCH off it for MISMATCH_FRAMES frames in a row: then it locks onto the estimate (snapped to a standard rate)
+ * and settles the frames it showed at the wrong rate meanwhile, so real time holds from the lock on. A display within
+ * 15% of the show's rate (75 Hz for 72) is only told apart by the session's frameRate.
+ */
+export class Cadence {
+  readonly showHz: number;
+  private known: number | null = null;
+  private readonly dts = new Float64Array(RATE_SAMPLES);
+  private readonly rough = new Float64Array(ROUGH_SAMPLES);
+  private count = 0;
+  private next = 0;
+  /** Show frames owed, a fraction: starts half a frame in so steps land mid-period; reset whenever the rate matches. */
+  private owed = 0.5;
+  /** The rate stepped at: the show's (matched) or the output's. */
+  private rate: number;
+  /** Frames in a row the estimate has been MISMATCH off the show's rate, and their time and the show frames they stepped. */
+  private far = 0;
+  private farTime = 0;
+  private farShown = 0;
+
+  constructor(showHz: number) {
+    this.showHz = showHz;
+    this.rate = showHz;
+  }
+
+  /** The XR session's frameRate; null, undefined or 0 estimates it from the frame times. */
+  setOutputHz(hz: number | null | undefined): void {
+    this.known = hz && hz > 0 ? hz : null;
+  }
+
+  /** The output rate the last step used, Hz (the show's while matched). */
+  outputHz(): number {
+    return this.rate;
+  }
+
+  /** True while stepping by the old rule, round(dt x displayHz). */
+  matched(): boolean {
+    return this.rate === this.showHz;
+  }
+
+  /** Show frames to advance for one output frame of `dt` seconds. */
+  steps(dt: number): number {
+    if (dt >= RATE_MIN_DT && dt <= RATE_MAX_DT) {
+      this.dts[this.next] = dt;
+      this.next = (this.next + 1) % RATE_SAMPLES;
+      this.count = Math.min(this.count + 1, RATE_SAMPLES);
+    }
+    const was = this.rate;
+    let settle = 0;
+    if (this.known !== null) {
+      this.rate = snap(this.known, this.showHz);
+      this.far = 0;
+    } else {
+      const hz = this.estimate();
+      if (hz !== null && Math.abs(hz / this.showHz - 1) > MISMATCH) {
+        if (this.far++ === 0) this.farTime = this.farShown = 0;
+        if (this.far >= MISMATCH_FRAMES) {
+          if (was === this.showHz) settle = this.farTime * this.showHz - this.farShown; // the frames shown at the wrong rate
+          this.rate = snap(hz, this.showHz);
+        }
+      } else {
+        this.far = 0;
+        this.rate = this.showHz;
+      }
+    }
+    if (this.rate === this.showHz) {
+      this.owed = 0.5; // matched: P6's cadence exactly
+      const n = stepFrames(dt, this.showHz);
+      this.farTime += dt;
+      this.farShown += n;
+      return n;
+    }
+    if (was === this.showHz) this.owed = 0.5 + settle;
+    this.owed += (stepFrames(dt, this.rate) * this.showHz) / this.rate;
+    const n = Math.max(0, Math.floor(this.owed));
+    this.owed -= n;
+    return n;
+  }
+
+  /** The output rate from the kept frame times, Hz (null before any): the periods they count over the time they span. */
+  private estimate(): number | null {
+    if (!this.count) return null;
+    // the rough period: the lower quartile of the newest few (an insertion sort into a scratch array, no allocation)
+    const m = Math.min(this.count, ROUGH_SAMPLES);
+    const r = this.rough;
+    for (let i = 0; i < m; i++) {
+      const x = this.dts[(this.next - 1 - i + RATE_SAMPLES) % RATE_SAMPLES];
+      let j = i - 1;
+      for (; j >= 0 && r[j] > x; j--) r[j + 1] = r[j];
+      r[j + 1] = x;
+    }
+    const period = r[(m - 1) >> 2];
+    let time = 0;
+    let periods = 0;
+    for (let i = 0; i < this.count; i++) {
+      time += this.dts[i];
+      periods += Math.max(1, Math.round(this.dts[i] / period));
+    }
+    return periods / time;
+  }
+}
+
+/** A rate snapped to the show's, else the nearest standard rate, within SNAP; else as it is. */
+function snap(hz: number, showHz: number): number {
+  if (Math.abs(hz / showHz - 1) <= SNAP) return showHz;
+  let best: number | null = null;
+  for (const c of STANDARD_HZ) if (Math.abs(hz / c - 1) <= SNAP && (best === null || Math.abs(hz - c) < Math.abs(hz - best))) best = c;
+  return best ?? hz;
 }
 
 /** 6u^5 - 15u^4 + 10u^3 on [0, 1] (C2: zero slope and curvature at both ends). */
@@ -122,18 +259,30 @@ export class Clock {
   private armNext = false;
   /** resume() was called in the freeze: the next step enters the resume. */
   private resuming = false;
+  private readonly cadence: Cadence;
 
   constructor(court: Court, frames: readonly ShowFrame[]) {
     this.court = court;
     this.frames = frames;
+    this.cadence = new Cadence(court.video.displayHz);
     const first = court.video.segments.pass1[0];
     this.state = { frame: first, segment: "pass1", ease: null, speed: PASS1_SPEED, nextEase: 0, nextJump: null, armed: false, pass: 0, segmentFrame: 0 };
     this.restart();
   }
 
-  /** Advance by round(dt x displayHz) show frames across segment edges, one frame at a time; returns the state. */
+  /** The display's frame rate: the XR session's frameRate when it has one (at start and on frameratechange); null estimates it from dt. */
+  setOutputHz(hz: number | null | undefined): void {
+    this.cadence.setOutputHz(hz);
+  }
+
+  /** The output rate the cadence is using, Hz (for the frame log). */
+  outputHz(): number {
+    return this.cadence.outputHz();
+  }
+
+  /** Advance by the cadence's show frames for this output frame (round(dt x displayHz) at a matched rate) across segment edges, one frame at a time; returns the state. */
   update(dt: number): ClockState {
-    for (let n = stepFrames(dt, this.court.video.displayHz); n > 0; n--) this.step();
+    for (let n = this.cadence.steps(dt); n > 0; n--) this.step();
     this.refresh();
     return this.state;
   }
