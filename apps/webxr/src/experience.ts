@@ -165,3 +165,35 @@ function wrap(c: CanvasRenderingContext2D, text: string, x: number, y: number, m
   }
   if (line) c.fillText(line, x, y + n * lh);
 }
+
+/**
+ * Until the experience step has written a plan, the intent alone still shapes what happens: "teach me / show me / how
+ * to" becomes a lesson in three equal parts, "chess" a game, "be with / sit with / miss" a companion. Generic on
+ * purpose; Gemini's plan replaces it.
+ */
+export function fallbackExperience(dream: Dream, duration: number): Experience | null {
+  const intent = dream.intent?.trim();
+  if (!intent) return null;
+  const said = intent.toLowerCase();
+  if (/\bchess\b/.test(said)) return { intent, mode: "play", play: { game: "chess", strength: "gm" } };
+  if (/\b(teach|learn|show me|how (do|to)|practi[cs]e|coach)\b/.test(said)) {
+    const parts = duration >= 3 ? 3 : 2;
+    const len = duration / parts;
+    return {
+      intent,
+      mode: "teach",
+      title: intent.charAt(0).toUpperCase() + intent.slice(1),
+      place: /\b(dance|move|shoot|swing|throw|kick|form|step)\b/.test(said) ? "ahead" : "facing",
+      steps: Array.from({ length: parts }, (_, i) => ({
+        start: i * len,
+        end: (i + 1) * len,
+        title: `Part ${i + 1}`,
+        tip: i === 0 ? "Watch it slowly, then copy it." : "Same again: watch, then your turn.",
+        speed: 0.5,
+        repeat: 2,
+      })),
+    };
+  }
+  if (/\b(be with|sit with|stay with|miss|talk|hug|remember)\b/.test(said)) return { intent, mode: "companion", place: "facing" };
+  return { intent, mode: "watch" };
+}

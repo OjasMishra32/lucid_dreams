@@ -4,7 +4,7 @@ import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "./avatar";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
-import { Lesson, loadExperience, say, StepCard } from "./experience";
+import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
 import { fingertips, handOccluder, XrButton } from "./xr/hands";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
@@ -162,7 +162,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let shown = -1;
   const duration = avatar ? avatar.duration : Math.max(dream.durationS, 1 / dream.fps);
   // what you came to do with them (experience.json, written from your intent)
-  const experience = await loadExperience(dream);
+  const experience = (await loadExperience(dream)) ?? fallbackExperience(dream, duration);
   const steps = (experience?.steps ?? []).map((st) => ({ ...st, end: Math.min(st.end, duration) })).filter((st) => st.end > st.start);
   const lesson = experience?.mode === "teach" && steps.length ? new Lesson(steps) : null;
   if (experience?.title) $("#subtitle").textContent = experience.title;
