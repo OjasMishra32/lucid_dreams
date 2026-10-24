@@ -77,6 +77,17 @@ def main(argv=None) -> None:
     out = rgb.copy()
     out[specks] = med[specks]
 
+    # 2b. sleeves: a jacket arm is one cloth; light clusters on it are garbled logos (bigger than a speck)
+    ARMS = [J["left_collar"], J["right_collar"], J["left_shoulder"], J["right_shoulder"], J["left_elbow"], J["right_elbow"]]
+    arms = np.isin(dom, ARMS)
+    if arms.sum() > 64:
+        lum = out @ np.array([0.299, 0.587, 0.114])
+        cloth = np.median(out[arms & (lum < np.percentile(lum[arms], 60))], axis=0)
+        logo = arms & (lum > np.percentile(lum[arms], 60) + 0.12)
+        out[logo] = cloth * (0.9 + 0.2 * np.clip(lum[logo, None], 0, 1))
+    else:
+        logo = arms & False
+
     # 3. hair: halfway to the neighbours
     eyes_y = (joints[J["left_eye"], 1] + joints[J["right_eye"], 1]) / 2
     hair = head & (g.xyz[:, 1] > eyes_y + 0.01)
@@ -84,7 +95,8 @@ def main(argv=None) -> None:
 
     write_ply(ply, replace(g, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale))
     write_skin_bin(skin, idx, q)
-    report = {"hands": int(hands.sum()), "specks": int(specks.sum()), "hair": int(hair.sum()), "of": len(g)}
+    report = {"hands": int(hands.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()), "hair": int(hair.sum()),
+              "of": len(g)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
 
