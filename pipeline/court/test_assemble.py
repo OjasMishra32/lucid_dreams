@@ -184,9 +184,13 @@ class ReconFiles(unittest.TestCase):
             (d / "run.json").write_text(json.dumps({"K": 118, "crop": [x0, y0, 1216, 2160], "still": {
                 "R": full.R.T.tolist(), "C": full.C.tolist(), "K": [[crop.f, 0, crop.cx], [0, crop.f, crop.cy], [0, 0, 1]]}}))
             src, dst = A.recon_cameras({"sourceCamera": d / "src.json", "dream": d / "dream.json", "courtRun": d / "run.json"})
+            src_r, dst_r = A.recon_cameras({"sourceCamera": d / "src.json", "courtRun": d / "run.json", "splatsSpace": "recon"})
         sim, info = g.place_by_camera(P_bundle, src, dst)
         np.testing.assert_allclose(sim.apply(P_bundle), P_court, atol=0.03)
         self.assertLess(info["tilt_deg"], 1.5)
+        # the recon's own world: no placement needed
+        sim_r, _ = g.place_by_camera(to_rig(P_court), src_r, dst_r)
+        np.testing.assert_allclose(sim_r.apply(to_rig(P_court)), P_court, atol=0.03)
 
 
 class RunLayout(unittest.TestCase):
@@ -217,8 +221,31 @@ class RunLayout(unittest.TestCase):
             self.assertEqual(slot["metrics"]["heldOutPsnr"], 27.4)
             self.assertEqual(slot["run_report"], {"variant": "raw-default-r1", "cap": "300k", "iou": 0.962, "focal": 22350.0,
                                                   "focalHeld": True, "sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000, "heldOutPsnr": 27.4})
-            # one bundle in the run: no need to name it
+            # one recon in the run: no need to name it
             self.assertEqual(A.resolve_run({"run": str(run)})["run_report"]["variant"], "raw-default-r1")
+            # the recon's own PLY wins (matched straight to the still camera); only the A frame's source camera counts;
+            # court-run.json comes from the clips folder
+            (r / "frames").mkdir()
+            (r / "frames" / "000118.ply").write_bytes(b"x")
+            (r / "source-camera-B592-000118.json").write_text("{}")
+            slot = A.resolve_run({"run": str(run), "variant": "raw-default-r1", "cap": "300k"}, clips=Path(d) / "clips")
+            self.assertEqual((Path(slot["splats"]), slot["splatsSpace"]), (r / "frames" / "000118.ply", "recon"))
+            self.assertEqual(Path(slot["sourceCamera"]), r / "source-camera-000118.json")
+            self.assertEqual(Path(slot["courtRun"]), Path(d) / "clips" / "court-main-s2" / "court-run.json")
+
+    def test_a_show_written_into_the_bundle_is_taken(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "court-side"
+            self.assertEqual(A.show_dir({"out": str(out)}), (None, "calib"))
+            (out / "video").mkdir(parents=True)
+            (out / "video" / "video.json").write_text("{}")
+            self.assertEqual(A.show_dir({"out": str(out)}), (out / "video", "show"))
+            self.assertEqual(A.show_dir({"out": str(out), "show": {"dir": d, "cameras": "calib"}}), (None, "calib"))
 
 
 class Ball(unittest.TestCase):

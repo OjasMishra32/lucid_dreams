@@ -52,6 +52,13 @@ class Bundle(unittest.TestCase):
         (ex / "x-one" / "extra.json").write_text(json.dumps({"id": "x-one", "name": "One", "kind": "splats", "file": "body.ply", "reality": None,
                                                              "pose": {"camera": "C"}, "foot": {"xz": [9.0, -3.0], "y": 0.0}, "height_m": 2.0,
                                                              "cameraCentre": [0.0, 11.0, 31.0]}))
+        # one placed in court metres already, every Gaussian imagined ("reality": "all"), and one left out
+        Pc = person(rng, n=3000, height=1.9, foot=(10.0, -5.0))
+        sp.write_ply(ex / "x-three" / "placed.ply", sp.Splats.new(Pc, np.tile([1, 0, 0, 0], (n, 1)), np.full((n, 3), -4.6), np.full(n, 3.0), np.zeros((n, 3))))
+        (ex / "x-three" / "extra.json").write_text(json.dumps({"id": "x-three", "kind": "body", "file": "placed.ply", "reality": "all", "space": "court",
+                                                               "pose": {"camera": "C"}, "foot": {"xz": [10.0, -5.0]}, "height_m": None}))
+        (ex / "x-out").mkdir(parents=True)
+        (ex / "x-out" / "extra.json").write_text(json.dumps({"id": "x-out", "kind": "out", "file": None, "foot": {"xz": [0, 0]}}))
         (ex / "x-two").mkdir(parents=True)
         (ex / "x-two" / "extra.json").write_text(json.dumps({"id": "x-two", "kind": "splats", "file": None, "pose": {"camera": "C"},
                                                              "foot": {"xz": [10.0, 2.0]}, "height_m": 1.9, "status": "planned"}))
@@ -98,7 +105,12 @@ class Bundle(unittest.TestCase):
         court = json.loads((self.out / "court.json").read_text())
         asm = json.loads((self.out / "assembly.json").read_text())
         others = {o["id"]: o for o in court["freeze"]["others"]}
-        self.assertEqual(list(others), ["x-one"])
+        self.assertEqual(list(others), ["x-one", "x-three"])
+        np.testing.assert_allclose(others["x-three"]["foot"], [10.0, 0.0, -5.0], atol=0.01)
+        f = sp.read_ply(self.out / others["x-three"]["file"])
+        r = sp.read_ply(self.out / others["x-three"]["reality"])
+        self.assertFalse(np.any(np.all(np.isclose(f.dc, r.dc), 1)))  # all of it tinted
+        self.assertFalse(any("x-out" in n for n in asm["notes"]))
         np.testing.assert_allclose(others["x-one"]["foot"], [9.0, 0.0, -3.0], atol=0.01)
         self.assertAlmostEqual(others["x-one"]["height"], 2.0, delta=0.05)
         self.assertEqual(others["x-one"]["pose"], "C")

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+cv2.setNumThreads(2)  # a shared Mac
+
 from assemble_geom import Cam
 
 

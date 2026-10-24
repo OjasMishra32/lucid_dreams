@@ -18,6 +18,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+cv2.setNumThreads(2)  # a shared Mac
+
 from assemble_geom import Cam, Similarity, contact_points, matrix_to_quat
 
 C0 = 0.28209479177387814
@@ -199,14 +201,16 @@ def spz_colour_u8(dc) -> np.ndarray:
     return np.clip(np.round(np.asarray(dc, np.float64) * (SPZ_COLOR_SCALE * 255.0) + 127.5), 0, 255).astype(np.int16)
 
 
-def seen_from_spz(s: Splats, reality_spz, normal_spz=None) -> np.ndarray:
+def seen_from_spz(s: Splats, reality_spz, normal_spz=None, check_positions: bool = True) -> np.ndarray:
     """Which Gaussians the camera saw, read off the export's tint: the reality SPZ (same Gaussians, same order) pulls
-    the unseen ones toward blue. Compared with the normal SPZ when there is one, else with the PLY's own colours."""
+    the unseen ones toward blue. Compared with the normal SPZ when there is one, else with the PLY's own colours (base
+    colour doesn't change with placement). When the PLY sits in another space than the SPZ (the recon's own world,
+    or placed on the court), only the count and the order can be checked."""
     pos, col, fb = read_spz_colours(reality_spz)
     if len(pos) != len(s):
         raise ValueError(f"{reality_spz}: {len(pos)} Gaussians, the PLY has {len(s)}")
     tol = 2.0 / (1 << fb) + 1e-4
-    off = np.abs(pos - s.pos.astype(np.float64)).max()
+    off = np.abs(pos - s.pos.astype(np.float64)).max() if check_positions else 0.0
     if off > tol:
         raise ValueError(f"{reality_spz}: not in the PLY's order (positions differ by up to {off:.4f} m)")
     ref = read_spz_colours(normal_spz)[1].astype(np.int16) if normal_spz else spz_colour_u8(s.dc)

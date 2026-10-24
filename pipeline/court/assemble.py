@@ -30,7 +30,9 @@ is the stand-in's.
               reflection?}, paths relative to the manifest)
   stands      {proxy: [...], cards: [{id, image, quad}]} (court.json's freeze.stands with local image paths)
   audio       {loop: wav, swell: [t0, t1] (found in the loop when absent), search: [a, b], lufs}
-  seat        {distance, distanceRange, closer, clear, ringArea}
+  seat        {distance, distanceRange, clear}
+  clips       the folder of the clips' run folders (<id>/court-run.json: the still camera each clip was cut with)
+  cameras     {C: calibration JSON of camera C}: where extras posed from C were seen from
   light       overrides of the light field's levels
   metrics     {seatPsnr: {...}}: measured elsewhere (handoff_check.py), copied in
 """
@@ -50,6 +52,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+for _k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_k, "2")  # a shared Mac: two threads (run it under nice -n 10); heavy work goes to HiPerGator
 import numpy as np  # noqa: E402
 
 import assemble_audio as au  # noqa: E402
@@ -68,7 +72,7 @@ LENGTH, WIDTH = 28.65, 15.24
 RIM = [12.725, 3.05, 0.0]
 BOARD_X, BOARD_HALF, BOARD_Y = 13.106, 0.915, (2.90, 3.97)
 LIGHT = {"crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5, "alternative": {"crowd": 0.16, "floor": 0.14}}
-SEAT = {"distance": 5.0, "distanceRange": [4, 7], "closer": 2.0, "clear": 1.0, "ringArea": [4.5, 5.5]}
+SEAT = {"distance": 5.0, "distanceRange": [4, 7], "clear": 1.0}
 SPLAT_BUDGET = 500_000  # visible at the worst pose until the Quest says more (plan 8)
 PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|webp|ply|glb|bin|m4a|mp4|wav|spz)$", re.I)
 
@@ -124,10 +128,13 @@ class Writer:
 
 def show_dir(cfg: dict) -> tuple[Path | None, str]:
     """The real show's folder (holding video.json) and whose cameras its frames use: "show" (the ones it was baked
-    with, the default when its frames.json carries q and f) or "calib" (re-read from the calibration)."""
+    with, the default when its frames.json carries q and f) or "calib" (re-read from the calibration). Without a
+    `show` in the config, a video.json the bake wrote into the current bundle's own video/ counts (it is copied
+    into the new bundle before the old one is moved aside)."""
     show = cfg.get("show")
     if not show:
-        return None, "calib"
+        here = expand(cfg["out"]) / "video" if cfg.get("out") else None
+        return (here, "show") if here is not None and (here / "video.json").exists() else (None, "calib")
     d = expand(show["dir"] if isinstance(show, dict) else show)
     return (d if (d / "video.json").exists() else None), (show.get("cameras", "show") if isinstance(show, dict) else "show")
 
@@ -277,30 +284,39 @@ def standin_camera_f(S: dict, standin: Path) -> geo.Cam:
     return frame_camera(S["camera"], frames, S["video"])
 
 
-def resolve_run(slot: dict) -> dict:
+def resolve_run(slot: dict, clips: Path | None = None) -> dict:
     """A player slot filled in from a fetched freeze run (court-job.sbatch's results): {"run": dir, "variant":
-    "raw-default-r1", "cap": "300k"} names bundle-<variant>-<cap>/ (the export: frames/000000.ply in bundle space,
-    .spz, .reality.spz, dream.json with its placement) and recon-<variant>-<cap>/ (source-camera-<K>.json and the
-    recon's report: P42's iou, focal, focalHeld; the real frame's PSNR), and recon-metrics-<variant>/ for the held-out
-    PSNR against the generated views. Keys already in the slot win."""
+    "raw-default-r1", "cap": "300k"} names recon-<variant>-<cap>/ (frames/<K>.ply in the recon's own world,
+    source-camera-<K:06d>.json = the A frame's solved camera there, and the recon's report: P42's iou, focal,
+    focalHeld; the real frame's PSNR), bundle-<variant>-<cap>/ (the export: frames/000000.ply in its bundle space with
+    dream.json's placement, .spz, .reality.spz in the same Gaussian order), and recon-metrics-<variant>/ for the
+    held-out PSNR against the generated views. court-run.json (the still camera the clip was cut with) comes from
+    `clips`/<run id>/. Keys already in the slot win."""
     if not slot.get("run"):
         return slot
     run = expand(slot["run"])
     v, cap = slot.get("variant"), slot.get("cap")
     if not (v and cap):
-        found = sorted(d.name[len("bundle-"):] for d in run.glob("bundle-*") if d.is_dir())
+        found = sorted(d.name[len("recon-"):] for d in run.glob("recon-*") if d.is_dir() and not d.name.startswith("recon-metrics-"))
         if len(found) != 1:
-            raise ValueError(f"{run}: name the player's variant and cap (bundles here: {found or 'none'})")
+            raise ValueError(f"{run}: name the player's variant and cap (recons here: {found or 'none'})")
         v, cap = re.fullmatch(r"(.+)-(\d+k)", found[0]).groups()
     b, r = run / f"bundle-{v}-{cap}", run / f"recon-{v}-{cap}"
     out = dict(slot)
-    out.setdefault("splats", str(b / "frames" / "000000.ply"))
+    cams = sorted(p for p in r.glob("source-camera-*.json") if re.fullmatch(r"source-camera-\d{6}\.json", p.name))
+    if cams:
+        out.setdefault("sourceCamera", str(cams[0]))
+    k = re.search(r"(\d{6})", cams[0].name).group(1) if cams else None
+    if "splats" not in slot:
+        if k and (r / "frames" / f"{k}.ply").exists():
+            out["splats"], out["splatsSpace"] = str(r / "frames" / f"{k}.ply"), "recon"
+        else:
+            out["splats"], out["splatsSpace"] = str(b / "frames" / "000000.ply"), "bundle"
     out.setdefault("reality", str(b / "frames" / "000000.reality.spz"))
     out.setdefault("spz", str(b / "frames" / "000000.spz"))
     out.setdefault("dream", str(b / "dream.json"))
-    cams = sorted(r.glob("source-camera-*.json"))
-    if cams:
-        out.setdefault("sourceCamera", str(cams[0]))
+    if clips is not None and "courtRun" not in slot:
+        out["courtRun"] = str(clips / run.name / "court-run.json")
 
     def report(d: Path) -> tuple[dict, dict]:
         files = sorted(d.glob("recon-*.json"))
@@ -317,14 +333,17 @@ def resolve_run(slot: dict) -> dict:
 
 
 def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
-    """(the run's solved source camera in the PLY's bundle space, the court camera it was cut from) from the run's
-    files: recon's source-camera-<K>.json (the rig's world, OpenCV camera_to_world, K for source-4k.mkv's crop), the
-    export's dream.json `placement` (rig -> bundle: x' = rot x + t) and court-run.json's still camera (court space,
-    camera-from-world R, K with the crop's own principal point)."""
+    """(the run's solved source camera in the PLY's own space, the court camera it was cut from): recon's
+    source-camera-<K>.json (the recon's world, OpenCV camera_to_world, K for source-4k.mkv's crop), taken into the
+    export's bundle space with dream.json's `placement` (x' = rot x + t) when the PLY is the export's
+    (splatsSpace "bundle"), and court-run.json's still camera (court space, camera-from-world R, K with the crop's
+    own principal point)."""
     c = json.loads(expand(slot["sourceCamera"]).read_text())
-    pl = json.loads(expand(slot["dream"]).read_text())["placement"]
     run = json.loads(expand(slot["courtRun"]).read_text())
-    rot, t = np.asarray(pl["rot"], float), np.asarray(pl["t"], float)
+    rot, t = np.eye(3), np.zeros(3)
+    if slot.get("splatsSpace", "bundle") == "bundle":
+        pl = json.loads(expand(slot["dream"]).read_text())["placement"]
+        rot, t = np.asarray(pl["rot"], float), np.asarray(pl["t"], float)
     c2w = np.asarray(c["camera_to_world"], float)
     K = np.asarray(c["K"], float)
     W, H = int(c["image_width"]), int(c["image_height"])
@@ -352,7 +371,8 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
     feet = slot.get("foot")
     feet = np.asarray(feet, float).reshape(-1, 2) if feet is not None else None
     P = sp.solid(s)
-    has_cams = real and all(slot.get(k) and expand(slot[k]).exists() for k in ("sourceCamera", "dream", "courtRun"))
+    need = ("sourceCamera", "courtRun") + (("dream",) if slot.get("splatsSpace", "bundle") == "bundle" else ())
+    has_cams = real and all(slot.get(k) and expand(slot[k]).exists() for k in need)
     if has_cams:
         src_cam, dst_cam = recon_cameras(slot)
         cam_pos = src_cam.C
@@ -375,7 +395,8 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         sim, info = geo.place_by_feet(P, cam_pos, feet.mean(0), camF.C)
     base = f"players/{pid}"
     if real:
-        seen = seen_of(s, expand(slot["reality"]) if slot.get("reality") else None, expand(slot["spz"]) if slot.get("spz") else None, w, pid)
+        seen = seen_of(s, expand(slot["reality"]) if slot.get("reality") else None, expand(slot["spz"]) if slot.get("spz") else None, w, pid,
+                       same_space=slot.get("splatsSpace", "bundle") == "bundle")
     else:
         seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
     b = body_files(w, base, s, sim, seen, camF)
@@ -446,19 +467,22 @@ def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, spla
 
 
 def read_extra(m: Path) -> dict | None:
-    """One extras manifest, normalised; None while its model hasn't landed (`file` empty or missing). Accepts the
-    extras stream's layout: pose {camera: "C..."}, foot {xz: [x, z]}, height_m, files relative to the manifest."""
+    """One extras manifest, normalised; None while its model hasn't landed (`file` empty or missing) or when it is left
+    out (kind "out"). The extras stream's layout: pose {camera: "C..."}, foot {xz: [x, z]}, height_m, files relative
+    to the manifest, "space": "court" for a model it already placed in court metres, reality "all" (nothing seen as
+    drawn: all tinted) or the export's .reality.spz in the model's Gaussian order."""
     e = json.loads(m.read_text())
     loc = lambda p: None if not p else (expand(p) if str(p).startswith(("~", "/")) else m.parent / p)  # noqa: E731
     f = loc(e.get("file"))
-    if f is None or not f.exists():
+    if e.get("kind") == "out" or f is None or not f.exists():
         return None
     pose = e.get("pose")
     cam = pose.get("camera", "A") if isinstance(pose, dict) else (pose or "A")
     foot = e.get("foot")
     xz = foot["xz"] if isinstance(foot, dict) else [foot[0], foot[2]]
     calib = (foot.get("calibration") if isinstance(foot, dict) else None) or e.get("calibration")
-    return {"id": e["id"], "name": e.get("name"), "kind": e.get("kind", "splats"), "file": f, "reality": loc(e.get("reality")),
+    reality = "all" if e.get("reality") == "all" else loc(e.get("reality"))
+    return {"id": e["id"], "name": e.get("name"), "kind": e.get("kind", "splats"), "file": f, "reality": reality,
             "spz": loc(e.get("spz")), "pose": "C" if str(cam).upper().startswith("C") else "A", "foot": [float(xz[0]), 0.0, float(xz[1])],
             "height": float(e.get("height", e.get("height_m", 0)) or 0), "space": e.get("space", "bundle"),
             "cameraCentre": e.get("cameraCentre"), "calibration": calib, "shadow": e.get("shadow"), "reflection": e.get("reflection"), "dir": m.parent}
@@ -494,13 +518,15 @@ def body_files(w: Writer, base: str, s: sp.Splats, sim: geo.Similarity, seen: np
     return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean())}
 
 
-def seen_of(s: sp.Splats, reality: Path | None, spz: Path | None, w: Writer | None = None, who: str = "") -> np.ndarray:
+def seen_of(s: sp.Splats, reality, spz: Path | None, w: Writer | None = None, who: str = "", same_space: bool = True) -> np.ndarray:
     """What the cameras saw: from the export's .reality.spz, or a reality PLY in the same order (unchanged colour =
     seen). Without either everything counts as seen, and the assembly notes it (rule 6: never pass invention off as
     real, so the Reality check of such a body is incomplete until its reality file lands)."""
+    if reality == "all":  # no camera saw it as it is drawn: all of it is tinted
+        return np.zeros(len(s), bool)
     if reality is not None and reality.exists():
         if reality.suffix == ".spz":
-            return sp.seen_from_spz(s, reality, spz if spz and spz.exists() else None)
+            return sp.seen_from_spz(s, reality, spz if spz and spz.exists() else None, check_positions=same_space)
         r = sp.read_ply(reality)
         if len(r) == len(s):
             return np.all(np.isclose(r.dc, s.dc), 1)
@@ -516,7 +542,8 @@ def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF
     for m in manifests:
         e = read_extra(m)
         if e is None:
-            planned.append(m.parent.name)
+            if json.loads(m.read_text()).get("kind") != "out":
+                planned.append(m.parent.name)
             continue
         base = f"others/{e['id']}"
         ent = {"id": e["id"], "kind": e["kind"], "pose": e["pose"], "foot": rnd(e["foot"])}
@@ -535,7 +562,7 @@ def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF
                 sim = geo.Similarity(1.0, np.eye(3), np.zeros(3))
             else:
                 sim, _ = geo.place_by_feet(P0, [0.0, 1.0, -25.0], e["foot"][::2], extra_camera(e, cfg, camF))
-            b = body_files(w, base, s, sim, seen_of(s, e["reality"], e["spz"], w, f"extra {e['id']}"))
+            b = body_files(w, base, s, sim, seen_of(s, e["reality"], e["spz"], w, f"extra {e['id']}", same_space=False))
             ent["file"], ent["reality"] = f"{base}/freeze.ply", f"{base}/reality.ply"
             ent["height"] = round(float(np.percentile(b["P"][:, 1], 99.5)), 3)
             ent["foot"] = [round(float(x), 3) for x in (sp.contact_points_xz(b["P"])[0], 0.0, sp.contact_points_xz(b["P"])[1])]
@@ -665,7 +692,8 @@ def cfg_player(cfg: dict, pid: str) -> dict:
 
 def assemble(cfg: dict, standin: Path, out: Path) -> dict:
     standin = standin.resolve()
-    cfg = {**cfg, "players": [resolve_run(p) for p in cfg.get("players", [])]}
+    clips = expand(cfg["clips"]) if cfg.get("clips") else None
+    cfg = {**cfg, "players": [resolve_run(p, clips) for p in cfg.get("players", [])]}
     S = json.loads((standin / "court.json").read_text())
     calib_json = json.loads(expand(cfg["calib"]).read_text()) if cfg.get("calib") else None
     calib = geo.CalibTrack(calib_json) if calib_json else None
@@ -692,12 +720,12 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         seat_cfg = {**SEAT, **(cfg.get("seat") or {})}
         pair = np.mean([p["_"]["contact"] for p in players], 0)
         pair_centre = [round(float(pair[0]), 3), 0.0, round(float(pair[1]), 3)]
+        # the walking spots are the runtime's (seatmath.ts); these approximations only size the extras' maxRayAngle
         spots = geo.viewing_spots(pair_centre, camF.C, [(p["bounds"]["min"], p["bounds"]["max"]) for p in players], seat_cfg["clear"])
         seat = {"ray": "freeze", "distance": seat_cfg["distance"], "distanceRange": seat_cfg["distanceRange"],
-                "pairCentre": pair_centre, "closer": seat_cfg["closer"], "clear": seat_cfg["clear"], "spots": spots,
-                "ringArea": seat_cfg["ringArea"]}
+                "pairCentre": pair_centre, "clear": seat_cfg["clear"]}
         w.piece("seat", any(w.pieces[f"player:{p['id']}"]["source"] == "real" for p in players) or bool(cfg.get("players")),
-                "Decision W: pair centre from the placed soles, spots cleared of both bodies")
+                "Decision W: the pair's centre from the placed soles")
         others = others_piece(w, cfg, standin, S, spots, camF)
         stands = stands_piece(w, cfg, standin, S)
         audio = audio_piece(w, cfg, standin, S)
@@ -941,7 +969,7 @@ def report(bundle: Path) -> str:
                      + (f" tilt {pl['tilt_deg']:.2f} deg" if "tilt_deg" in pl else "")
                      + (f", soles {d['footError'] * 100:.1f} cm from the calibrated point" if "footError" in d else "")
                      + f", height {d['height']:.2f} m, {d['count']} splats")
-    lines.append(f"  seat: pair centre {court['seat']['pairCentre']}, D' {court['seat']['distance']} m, spots {court['seat']['spots']}")
+    lines.append(f"  seat: pair centre {court['seat']['pairCentre']}, D' {court['seat']['distance']} m")
     lines += [f"  note: {n}" for n in asm["notes"]]
     return "\n".join(lines)
 
