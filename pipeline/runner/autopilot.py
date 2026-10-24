@@ -113,7 +113,13 @@ def main():
                 # a held name also covers drop-folder runs of it, which get "-<date>-<time>" appended
                 if run_id in state["fetched"] or any(run_id == h or run_id.startswith(h + "-") for h in held):
                     continue
-                st = runner.status(run_id)
+                try:  # one broken or deleted run must never stop the others coming home
+                    st = runner.status(run_id)
+                except BaseException as e:  # runner.sh raises SystemExit on a failed ssh command
+                    if run_id not in state.setdefault("unreadable", []):
+                        log(f"{run_id}: status unreadable, skipped ({str(e)[:120]})")
+                        state["unreadable"].append(run_id)
+                    continue
                 if st["status"] == "done":
                     runner.fetch(run_id, runner.DEFAULT_DEST, with_ply=False)
                     state["fetched"].append(run_id)
