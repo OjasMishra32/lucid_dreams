@@ -122,8 +122,12 @@ export class SkinnedAvatar {
     return avatar;
   }
 
-  /** Pose at time t seconds (looping), blending between the motion's frames so it's smooth at any display rate. */
-  pose(t: number) {
+  /**
+   * Pose at time t seconds (looping), blending between the motion's frames so it's smooth at any display rate.
+   * edit (optional) may change those joint rotations and the root translation before skinning: a procedural pose or
+   * IK layered on the motion (the chess opponent sits and reaches this way). Both are fresh copies, safe to modify.
+   */
+  pose(t: number, edit?: (local: THREE.Quaternion[], rootT: THREE.Vector3, skeleton: Skeleton) => void) {
     const n = this.local.length;
     const f = (((t * this.motion.fps) % n) + n) % n;
     const i0 = Math.floor(f);
@@ -131,6 +135,7 @@ export class SkinnedAvatar {
     const a = f - i0;
     const local = this.local[i0].map((q, j) => q.clone().slerp(this.local[i1][j], a));
     const rootT = this.rootT[i0].clone().lerp(this.rootT[i1], a);
+    edit?.(local, rootT, this.skeleton);
     skinTransforms(this.skeleton, local, rootT).forEach(({ q, t }, j) => this.skinning.setBoneQuatPos(j, this.q.copy(q), this.t.copy(t)));
     this.skinning.updateBones();
   }
