@@ -8,7 +8,9 @@ Stages: upload, check, views, upscale, reconstruct, export (upscale is skipped w
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,15 +27,22 @@ def _load(run: Path) -> dict:
 
 
 def mark(run: Path, stage: str, state: str) -> None:
-    s = _load(run)
-    entry = s["stages"].setdefault(stage, {})
-    entry["state"] = state
-    entry.setdefault("startedAt", time.time())
-    if state in ("done", "failed"):
-        entry["endedAt"] = time.time()
-    tmp = run / "status.json.tmp"
-    tmp.write_text(json.dumps(s, indent=2))
-    tmp.replace(run / "status.json")
+    # a reconstruction array starts 12 tasks at once, all marking the same run: hold a lock for the read-modify-write,
+    # and give each writer its own temp file, so a lost race can never take a task down
+    with open(run / ".status.lock", "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except OSError:
+            pass  # a filesystem without locks: the unique temp file below still keeps every writer safe
+        s = _load(run)
+        entry = s["stages"].setdefault(stage, {})
+        entry["state"] = state
+        entry.setdefault("startedAt", time.time())
+        if state in ("done", "failed"):
+            entry["endedAt"] = time.time()
+        tmp = run / f"status.json.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(s, indent=2))
+        tmp.replace(run / "status.json")
 
 
 def show(run: Path) -> dict:
