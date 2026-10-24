@@ -20,6 +20,7 @@ SMPL-X vertex's weights), tone (the head's skin matched to the body's on the nec
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -41,6 +42,67 @@ MAX_SKELETON_ERR_M = 0.002  # skeleton.json vs this SMPL-X model with the bundle
 MAX_ALIGN_RMS_M = 0.03  # FLAME-to-SMPL-X head fit worse than this means the wrong ids or the wrong mesh
 REALITY_FILE = "avatar/reality.ply"
 REALITY_TINT = np.array([0.25, 0.45, 1.0])  # as digs_avatar.py tints what the photo didn't see
+# People who said yes to a photoreal face (AGENTS.md rule 5). Add a name only on that person's own word; never a
+# public figure, whatever photos exist of them.
+CONSENTED = frozenset({"vishal"})
+BUNDLE_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+PHOTO_STEM = re.compile(r"[\w. -]+")
+
+
+# ---------------------------------------------------------------- who and which head
+
+def held_ids(path: str | Path) -> set[str]:
+    """dreams/.held: ids held back from the library, one per line (Ojasva's; the web app reads the same file)."""
+    path = Path(path)
+    return set(path.read_text().split()) if path.is_file() else set()
+
+
+def consent_errors(person: str, bundle: str | Path, held: str | Path | None = None,
+                   new_id: str | None = None) -> list[str]:
+    """Why this head swap mustn't run (empty if it may): the person has to be in CONSENTED, the bundle has to be
+    their own avatar (id `<person>` or `<person>-...`, in a folder of that name), the new bundle has to be a new
+    `<person>-...` id that isn't another bundle, and none of them may be in dreams/.held (the one next to the bundle,
+    plus `held` if given: it adds to that list, never replaces it)."""
+    bundle = Path(bundle)
+    dream_id = dream_id_of(bundle)
+    errors = []
+    if person not in CONSENTED:
+        errors.append(f"{person!r} hasn't given consent for a photoreal face (CONSENTED in head_swap.py; AGENTS.md rule 5)")
+    if dream_id != person and not dream_id.startswith(f"{person}-"):
+        errors.append(f"{bundle.name} (id {dream_id!r}) isn't {person}'s own avatar: no one's face goes on someone "
+                      "else's body")
+    if bundle.resolve().name != dream_id:
+        errors.append(f"folder {bundle.resolve().name!r} holds dream id {dream_id!r}: they must match")
+    if new_id is not None:
+        out = bundle.parent / new_id
+        if not BUNDLE_ID.fullmatch(new_id) or not new_id.startswith(f"{person}-") or new_id == dream_id:
+            errors.append(f"new id {new_id!r} must be a new {person}-... id (lowercase letters, digits and dashes)")
+        elif out.exists() and not (out / "head_swap.json").is_file():
+            errors.append(f"{out} exists and is not a head swap: it is never replaced")
+    on_hold = (held_ids(bundle.parent / ".held") | (held_ids(held) if held else set())) & {person, dream_id, new_id}
+    if on_hold:
+        errors.append(f"{', '.join(sorted(on_hold))} in dreams/.held")
+    return errors
+
+
+def pick_head(heads: str | Path, person: str, photo: str | None = None) -> tuple[Path, Path]:
+    """(<photo>_gs_offset.ply, <photo>_textured_mesh.obj) from lam-head.sbatch's heads/ folder, which names every
+    head <person>-<photo>: the named one, or the person's first by name. Never another person's head."""
+    heads = Path(heads)
+    for what, value in (("person", person), ("photo", photo)):
+        if value is not None and (not PHOTO_STEM.fullmatch(value) or ".." in value):
+            raise ValueError(f"{what} {value!r} isn't a plain name (letters, digits, '.', '_', '-', spaces)")
+    if photo is not None and not photo.startswith(f"{person}-"):
+        raise ValueError(f"LAM head {photo!r} isn't {person}'s (lam-head.sbatch names them {person}-<photo>)")
+    found = [heads / f"{photo}_gs_offset.ply"] if photo else sorted(heads.glob(f"{person}-*_gs_offset.ply"))
+    plys = [p for p in found if p.is_file()]
+    if not plys:
+        raise ValueError(f"no LAM head of {person}{f' named {photo}' if photo else ''} in {heads} (lam-head.sbatch "
+                         f"NAME={person} writes {person}-<photo>_gs_offset.ply there)")
+    obj = plys[0].with_name(plys[0].name.removesuffix("_gs_offset.ply") + "_textured_mesh.obj")
+    if not obj.is_file():
+        raise ValueError(f"{obj.name} is missing next to {plys[0].name}: rerun lam-head.sbatch, which now copies it")
+    return plys[0], obj
 
 
 # ---------------------------------------------------------------- geometry
@@ -255,6 +317,8 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
     out = Path(dreams_dir) / new_id
     if out.resolve() == src.resolve():
         raise ValueError("the head swap writes a new bundle; give it a new id")
+    if out.exists() and not (out / "head_swap.json").is_file():
+        raise ValueError(f"{out} exists and isn't a head swap; it is never replaced")
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(src, out, ignore=shutil.ignore_patterns("*.work", "preview.mp4", "thumb.jpg"))

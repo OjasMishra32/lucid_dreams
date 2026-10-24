@@ -35,10 +35,11 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
 | `results_page.py` | `python -m lucid_avatars results <work dir>`: a fine-tune's table and renders into this README's Results section |
 | `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
+| `head_swap.py` | LAM's one-photo head on a consenting person's own avatar: consent gate, FLAME-to-SMPL-X fit, jaw-line seam, skinning, skin tone, the `<id>-head` bundle |
 
 GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
 4DAnyone views; `digs_perform.py` an avatar doing someone else's move; `gvhmr_motion.py` and `prep_views.py`
-(4DAnyone env) feed them.
+(4DAnyone env) feed them; `head_swap_render.py` (4DAnyone env) renders a head swap's turntable and side-by-side.
 
 ## One photo -> avatar on HiPerGator (Ojasva submits)
 
@@ -116,6 +117,30 @@ pixels the view doesn't have. If the pass fails, the job keeps the fine-tune's c
 `hpg/digs-perform.sbatch` with `AVATAR=<some avatar's code.pt>`, `RUN_ID=<the run with the move>`, `ID`, `NAME`:
 the move's joint rotations play on the avatar unchanged, the root path scaled by leg length, turned to face the
 viewer, and dropped so the avatar's lowest Gaussian over the clip touches the floor (crouches and jumps stay).
+
+## A real face: LAM head swap (consenting people only)
+
+DiGS guesses the face from a full-body photo, so it rarely reads as the person. LAM (aigc3d, SIGGRAPH 2025) builds an
+animatable FLAME Gaussian head from one close-up; the head swap puts it on the person's own avatar. Only people in
+`CONSENTED` (`lucid_avatars/head_swap.py`; add a name only on that person's word), only on their own avatar (bundle id
+`<person>` or `<person>-...`), and never anyone in `dreams/.held`; otherwise it stops before writing anything. Never a
+public figure (AGENTS.md rule 5).
+
+1. One or two frontal close-ups of the person in `$L/data/avatars/faces/<person>/` (a full-body photo gives a blotchy
+   head), then `sbatch --export=ALL,NAME=<person> avatars/hpg/lam-head.sbatch` (L4).
+2. `SMPL-X__FLAME_vertex_ids.npy` (SMPL-X site, model-transfer download) anywhere under `$L/models/smplx/`.
+3. `sbatch --export=ALL,NAME=<person> avatars/hpg/head-swap.sbatch` (minutes). `AVATAR=<id>` for another of their
+   avatars (e.g. `vishal-tuned`), `PHOTO=<stem>` for another LAM head, `SEAM_OFFSET=0.01` to raise the jaw-line seam 1 cm.
+
+It writes `dreams/<avatar>-head`: the bundle with a new preview.mp4 and thumb.jpg, `head_swap.json` (FLAME fit scale
+and RMS, seam height, Gaussians kept and dropped, identity) and `compare.png` (the photo | the old face | the new face,
+front and 3/4). Identity is the ArcFace cosine (InsightFace buffalo_l) of each face's front render to the photo, also
+in `metrics.identity`; it's skipped (null) if InsightFace isn't installed in the 4DAnyone env. Check in the log: the
+fit RMS (it refuses over 3 cm), `BUNDLE_OK`, `HEAD_SWAP_OK`; then look at compare.png before the bundle goes in the
+library. LAM's head saw one frontal photo, so its back is marked imagined in reality.ply. Each head Gaussian takes its nearest SMPL-X
+vertex's skinning weights: the head turns and nods but doesn't talk or blink yet (FLAME expressions are a next step).
+Locally, without a GPU: `uv run python -m lucid_avatars head-swap dreams/<person> <heads dir> --person <person>
+--smplx SMPLX_NEUTRAL.npz --flame-ids SMPL-X__FLAME_vertex_ids.npy` does the swap alone.
 
 ## Seated at the chess board
 

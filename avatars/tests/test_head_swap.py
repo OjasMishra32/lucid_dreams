@@ -1,4 +1,5 @@
 import json
+import shutil
 
 import numpy as np
 import pytest
@@ -175,3 +176,119 @@ def test_swap_refuses_a_skeleton_that_isnt_this_smplx(tmp_path):
         H.swap_bundle(root, tmp_path / "a_gs_offset.ply", tmp_path / "a_textured_mesh.obj",
                       tmp_path / "SMPLX_NEUTRAL.npz", tmp_path / "SMPL-X__FLAME_vertex_ids.npy", tmp_path / "dreams",
                       "x-head")
+
+
+def _lam_head_files(heads, stem, flame):
+    heads.mkdir(parents=True, exist_ok=True)
+    write_ply(heads / f"{stem}_gs_offset.ply", _gaussians(np.zeros_like(flame)))
+    (heads / f"{stem}_textured_mesh.obj").write_text("".join(f"v {p[0]} {p[1]} {p[2]}\n" for p in flame))
+
+
+def test_consent_allows_a_listed_person_on_their_own_avatar_only(tmp_path):
+    root, _, _ = _synthetic_body(tmp_path)
+    assert H.consent_errors("vishal", root) == []
+    assert any("consent" in e for e in H.consent_errors("bobby-fischer", root))
+    other = tmp_path / "dreams" / "ian"
+    shutil.copytree(root, other)
+    dream = json.loads((other / "dream.json").read_text())
+    (other / "dream.json").write_text(json.dumps({**dream, "id": "ian"}))
+    assert any("own avatar" in e for e in H.consent_errors("vishal", other))  # no one's face on someone else's body
+
+
+def test_consent_honours_dreams_held(tmp_path):
+    root, _, _ = _synthetic_body(tmp_path)
+    (tmp_path / "dreams" / ".held").write_text("bobby-fischer\nvishal\n")
+    assert any(".held" in e for e in H.consent_errors("vishal", root))
+
+
+def test_pick_head_takes_the_persons_named_photo_or_their_first_and_needs_the_textured_mesh(tmp_path):
+    heads = tmp_path / "heads"
+    with pytest.raises(ValueError, match="no LAM head"):
+        H.pick_head(heads, "vishal")
+    flame = np.zeros((H.FLAME_VERTS, 3))
+    _lam_head_files(heads, "vishal-b", flame)
+    _lam_head_files(heads, "vishal-a", flame)
+    _lam_head_files(heads, "magnus-a", flame)  # someone else's head in the same folder is never picked
+    assert H.pick_head(heads, "vishal") == (heads / "vishal-a_gs_offset.ply", heads / "vishal-a_textured_mesh.obj")
+    assert H.pick_head(heads, "vishal", "vishal-b")[0] == heads / "vishal-b_gs_offset.ply"
+    (heads / "vishal-a_textured_mesh.obj").unlink()
+    with pytest.raises(ValueError, match="textured_mesh"):
+        H.pick_head(heads, "vishal", "vishal-a")
+
+
+@pytest.mark.parametrize("photo", ["magnus-a", "*", "vishal-*", "../other/vishal-a", "vishal-a/../magnus-a"])
+def test_pick_head_refuses_another_persons_head_globs_and_paths(tmp_path, photo):
+    flame = np.zeros((H.FLAME_VERTS, 3))
+    _lam_head_files(tmp_path / "heads", "magnus-a", flame)
+    _lam_head_files(tmp_path / "other", "vishal-a", flame)
+    with pytest.raises(ValueError):
+        H.pick_head(tmp_path / "heads", "vishal", photo)
+
+
+def test_consent_refuses_an_output_id_that_isnt_a_new_head_bundle_of_theirs(tmp_path):
+    root, _, _ = _synthetic_body(tmp_path)
+    assert H.consent_errors("vishal", root, new_id="vishal-head") == []
+    for bad in ("ian", "vishal", "../vishal-head", "vishal-head/x", "Vishal-Head"):
+        assert H.consent_errors("vishal", root, new_id=bad), bad
+    (tmp_path / "dreams" / "vishal-other").mkdir()  # an existing bundle the swap didn't write is never replaced
+    assert any("not a head swap" in e for e in H.consent_errors("vishal", root, new_id="vishal-other"))
+
+
+def test_consent_refuses_a_bundle_whose_folder_and_id_disagree(tmp_path):
+    root, _, _ = _synthetic_body(tmp_path)
+    moved = root.rename(root.parent / "ian")  # Ian's folder, a dream.json that says vishal
+    assert any("folder" in e for e in H.consent_errors("vishal", moved))
+
+
+def test_consent_held_flag_adds_to_the_bundles_held_list_never_replaces_it(tmp_path):
+    root, _, _ = _synthetic_body(tmp_path)
+    (tmp_path / "dreams" / ".held").write_text("vishal\n")
+    (tmp_path / "empty").write_text("")
+    assert any(".held" in e for e in H.consent_errors("vishal", root, held=tmp_path / "empty"))
+
+
+def test_cli_head_swap_refuses_without_consent_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    from lucid_avatars.__main__ import main
+
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_head_files(tmp_path / "heads", "magnus-a", verts[flame_ids])
+    monkeypatch.setattr("sys.argv", ["lucid_avatars", "head-swap", str(root), str(tmp_path / "heads"),
+                                     "--person", "magnus-carlsen", "--smplx", str(tmp_path / "SMPLX_NEUTRAL.npz"),
+                                     "--flame-ids", str(tmp_path / "SMPL-X__FLAME_vertex_ids.npy")])
+    assert main() == 2
+    assert "REFUSED" in capsys.readouterr().out
+    assert sorted(p.name for p in (tmp_path / "dreams").iterdir()) == ["vishal"]
+
+
+def test_cli_head_swap_writes_and_validates_the_new_bundle(tmp_path, monkeypatch, capsys):
+    from lucid_avatars.__main__ import main
+
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_head_files(tmp_path / "heads", "vishal-a", verts[flame_ids])
+    monkeypatch.setattr("sys.argv", ["lucid_avatars", "head-swap", str(root), str(tmp_path / "heads"),
+                                     "--person", "vishal", "--smplx", str(tmp_path / "SMPLX_NEUTRAL.npz"),
+                                     "--flame-ids", str(tmp_path / "SMPL-X__FLAME_vertex_ids.npy")])
+    assert main() == 0
+    out = tmp_path / "dreams" / "vishal-head"
+    assert "OK" in capsys.readouterr().out and validate_bundle(out) == []
+    assert json.loads((out / "head_swap.json").read_text())["headPhoto"] == "vishal-a"
+
+
+def _cli(monkeypatch, root, tmp_path, *extra):
+    from lucid_avatars.__main__ import main
+
+    monkeypatch.setattr("sys.argv", ["lucid_avatars", "head-swap", str(root), str(tmp_path / "heads"),
+                                     "--smplx", str(tmp_path / "SMPLX_NEUTRAL.npz"),
+                                     "--flame-ids", str(tmp_path / "SMPL-X__FLAME_vertex_ids.npy"), *extra])
+    return main()
+
+
+def test_cli_head_swap_refuses_held_people_and_someone_elses_head(tmp_path, monkeypatch, capsys):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_head_files(tmp_path / "heads", "magnus-a", verts[flame_ids])
+    assert _cli(monkeypatch, root, tmp_path, "--person", "vishal") == 2  # only magnus's head is there
+    (tmp_path / "dreams" / ".held").write_text("vishal\n")
+    _lam_head_files(tmp_path / "heads", "vishal-a", verts[flame_ids])
+    assert _cli(monkeypatch, root, tmp_path, "--person", "vishal") == 2
+    assert capsys.readouterr().out.count("REFUSED") == 2
+    assert sorted(p.name for p in (tmp_path / "dreams").iterdir()) == [".held", "vishal"]

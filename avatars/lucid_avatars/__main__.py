@@ -1,5 +1,5 @@
 """Command line: `python -m lucid_avatars validate dreams/<id>`, `... idle motion.json`, `... bake dreams/<id>`,
-`... results <run>-tuned.work`."""
+`... results <run>-tuned.work`, `... head-swap dreams/<id> heads/<person>/heads --person <person> ...`."""
 
 import argparse
 import sys
@@ -27,6 +27,16 @@ def main() -> int:
     r = sub.add_parser("results", help="fine-tune work dir -> avatars/README.md Results section + avatars/results/")
     r.add_argument("work", help="the fine-tune's <run>-tuned.work dir (results.md, compare.png)")
     r.add_argument("--max-width", type=int, default=1600, help="renders wider than this are scaled down")
+    h = sub.add_parser("head-swap", help="avatar bundle + LAM head -> <id>-head bundle (consenting people only)")
+    h.add_argument("bundle", help="the person's own avatar bundle, dreams/<person>")
+    h.add_argument("heads", help="lam-head.sbatch's heads/ folder for this person")
+    h.add_argument("--person", required=True, help="who the face belongs to; must be in head_swap.CONSENTED")
+    h.add_argument("--smplx", required=True, help="SMPLX_NEUTRAL.npz (the model DiGS used)")
+    h.add_argument("--flame-ids", required=True, help="SMPL-X__FLAME_vertex_ids.npy")
+    h.add_argument("--photo", help="which LAM head, <person>-<photo> (default the person's first)")
+    h.add_argument("--id", help="new bundle id (default <id>-head, next to the source)")
+    h.add_argument("--held", help="another dreams/.held to honour too (the one next to the bundle always counts)")
+    h.add_argument("--seam-offset", type=float, default=0.0, help="move the jaw-line seam up (+) or down, metres")
     args = parser.parse_args()
 
     if args.cmd == "validate":
@@ -58,6 +68,28 @@ def main() -> int:
             print(f"wrote {c} ({c.stat().st_size // 1024} KB)")
         print(f"wrote {here / 'README.md'} (Results section)")
         return 0
+    if args.cmd == "head-swap":
+        from pathlib import Path
+
+        from . import head_swap as H
+
+        src = Path(args.bundle)
+        new_id = args.id or f"{src.name}-head"
+        refused = H.consent_errors(args.person, src, args.held, new_id)
+        if not refused:
+            try:
+                ply, obj = H.pick_head(args.heads, args.person, args.photo)
+            except ValueError as e:
+                refused = [str(e)]
+        if refused:
+            print("REFUSED", *refused, sep="\n     ")
+            return 2
+        root = H.swap_bundle(src, ply, obj, args.smplx, args.flame_ids, src.parent, new_id,
+                             seam_offset=args.seam_offset)
+        errors = validate_bundle(root)
+        print((root / "head_swap.json").read_text().strip())
+        print(f"{'FAIL' if errors else 'OK  '} {root}", *errors, sep="\n     ")
+        return 1 if errors else 0
     idle_loop(np.zeros(10), args.seconds, args.fps, args.stand_y).save(args.out)
     print(f"wrote {args.out}")
     return 0
