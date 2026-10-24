@@ -1,0 +1,179 @@
+"""assemble.py and its helpers on synthetic data (no broadcast numbers). Run from the repo root:
+python3 -I -m unittest discover -s pipeline/court -p 'test_assemble*.py' -v   (needs numpy, opencv, ffmpeg; node for
+the bundle check against format.ts)"""
+
+import json
+import math
+import os
+import sys
+import unittest
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import assemble_geom as g  # noqa: E402
+
+
+def random_rotation(rng) -> np.ndarray:
+    q = rng.normal(size=4)
+    return g.quat_to_matrix(q / np.linalg.norm(q))
+
+
+def look(C, target, w=1216, h=2160, f=2000.0, cx=None, cy=None) -> g.Cam:
+    """A camera at C looking at target with no roll (OpenCV axes, world-from-camera R)."""
+    fwd = np.asarray(target, float) - C
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, g.UP)
+    right /= np.linalg.norm(right)
+    down = np.cross(fwd, right)
+    R = np.stack([right, down, fwd], 1)
+    return g.Cam(np.asarray(C, float), R, f, (w - 1) / 2 if cx is None else cx, (h - 1) / 2 if cy is None else cy, w, h)
+
+
+def person(rng, n=4000, foot=(0.0, 0.0), height=2.0, facing=0.0) -> np.ndarray:
+    """A standing body's points: two legs with flat soles on y = 0, a torso, a head."""
+    legs = []
+    for side in (-0.12, 0.12):
+        r = 0.07 * np.sqrt(rng.uniform(0, 1, n // 10))
+        a = rng.uniform(0, 2 * math.pi, n // 10)
+        legs.append(np.stack([side + r * np.cos(a), np.zeros_like(r), r * np.sin(a)], 1))
+        t = rng.uniform(0, 1, n // 4)
+        a = rng.uniform(0, 2 * math.pi, n // 4)
+        legs.append(np.stack([side + 0.07 * np.cos(a), 0.47 * height * t, 0.07 * np.sin(a)], 1))
+    t = rng.uniform(0, 1, n // 3)
+    a = rng.uniform(0, 2 * math.pi, n // 3)
+    torso = np.stack([0.18 * np.cos(a), height * (0.47 + 0.33 * t), 0.12 * np.sin(a)], 1)
+    d = rng.normal(size=(n // 6, 3))
+    head = d / np.linalg.norm(d, axis=1, keepdims=True) * 0.11 + [0, height * 0.93, 0]
+    P = np.concatenate(legs + [torso, head])
+    P = P @ g.rot_y(facing).T
+    return P + [foot[0], 0.0, foot[1]]
+
+
+class Rotations(unittest.TestCase):
+    def test_quat_round_trip(self):
+        rng = np.random.default_rng(1)
+        for _ in range(50):
+            R = random_rotation(rng)
+            q = g.matrix_to_quat(R)
+            self.assertGreaterEqual(q[3], 0)
+            np.testing.assert_allclose(g.quat_to_matrix(q), R, atol=1e-12)
+
+    def test_quat_order_is_xyzw(self):
+        # 90 deg about +y: x -> -z
+        q = g.matrix_to_quat(g.rot_y(math.pi / 2))
+        np.testing.assert_allclose(q, [0, math.sin(math.pi / 4), 0, math.cos(math.pi / 4)], atol=1e-12)
+        np.testing.assert_allclose(g.rot_y(math.pi / 2) @ [1, 0, 0], [0, 0, -1], atol=1e-12)
+
+    def test_slerp_halfway(self):
+        q0 = g.matrix_to_quat(np.eye(3))
+        q1 = g.matrix_to_quat(g.rot_y(0.4))
+        np.testing.assert_allclose(g.quat_to_matrix(g.slerp(q0, q1, 0.5)), g.rot_y(0.2), atol=1e-12)
+
+    def test_kabsch_recovers_rotation(self):
+        rng = np.random.default_rng(2)
+        R = random_rotation(rng)
+        a = rng.normal(size=(30, 3))
+        np.testing.assert_allclose(g.kabsch(a, a @ R.T), R, atol=1e-10)
+
+
+class Calibration(unittest.TestCase):
+    def calib(self):
+        frames = []
+        for n in range(100, 111):
+            Rcw = g.rot_y(0.01 * (n - 100)).T  # camera-from-world, as the calibration stores it
+            frames.append({"source_frame": n, "R": Rcw.tolist(), "f": 1000.0 + 10 * (n - 100), "k1": 0.5})
+        return {"image_size": [3840, 2160], "C": [-10.0, 1.0, 2.0], "frames": frames}
+
+    def test_whole_frame_is_its_own_camera(self):
+        t = g.CalibTrack(self.calib())
+        q, f = t.at(105)
+        np.testing.assert_allclose(g.quat_to_matrix(q), g.rot_y(0.05), atol=1e-12)
+        self.assertEqual(f, 1050.0)
+        self.assertEqual(t.clamped, 0)
+
+    def test_in_between_is_slerp_and_lerp(self):
+        t = g.CalibTrack(self.calib())
+        q, f = t.at(102.25)
+        np.testing.assert_allclose(g.quat_to_matrix(q), g.rot_y(0.0225), atol=1e-12)
+        self.assertAlmostEqual(f, 1022.5)
+
+    def test_outside_is_clamped_and_counted(self):
+        t = g.CalibTrack(self.calib())
+        q, f = t.at(150)
+        self.assertEqual(f, 1100.0)
+        t.at(90)
+        self.assertEqual(t.clamped, 2)
+
+    def test_cam_projects_its_axis_to_the_centre(self):
+        cam = g.CalibTrack(self.calib()).cam(103)
+        u, v, z = cam.project(cam.C + 20 * cam.axis)
+        self.assertAlmostEqual(float(u), 1919.5)
+        self.assertAlmostEqual(float(v), 1079.5)
+        self.assertAlmostEqual(float(z), 20.0)
+
+
+class Placement(unittest.TestCase):
+    def test_camera_mode_keeps_pixels_and_stands_on_the_floor(self):
+        rng = np.random.default_rng(3)
+        # the truth: a 2.0 m player on the court, seen by a court camera through a crop of a wider frame
+        P_court = person(rng, foot=(5.0, 1.5), facing=0.7)
+        full = look(np.array([-16.0, 0.8, 2.5]), [5.0, 1.0, 1.5], w=3840, h=2160, f=22000.0)
+        crop = g.Cam(full.C, full.R, full.f, full.cx - 1400, full.cy - 0, 1216, 2160)  # crop at x0 = 1400
+        # the same player in a reconstruction's own y-up world: scaled 0.9, turned about +y and moved; its solved
+        # source camera there has a centred principal point (the recon sees only the crop)
+        s0 = 0.9
+        A = g.rot_y(1.1)
+        T = rng.normal(size=3)
+        P_rec = s0 * (P_court @ A.T) + T
+        Q = g.pixel_grid_rotation(g.Cam(crop.C, crop.R, crop.f, 607.5, 1079.5, 1216, 2160), crop)
+        R_src = A @ crop.R @ Q  # rec-world-from-camera so that its pixels match the crop's
+        src = g.Cam(s0 * (A @ crop.C) + T, R_src, crop.f, 607.5, 1079.5, 1216, 2160)
+        sim, info = g.place_by_camera(P_rec, src, crop)
+        placed = sim.apply(P_rec)
+        self.assertAlmostEqual(info["scale"], 1 / s0, delta=0.01)
+        self.assertLess(info["tilt_deg"], 0.2)
+        np.testing.assert_allclose(placed, P_court, atol=0.02)
+        u0, v0, _ = crop.project(P_court)
+        u1, v1, _ = crop.project(placed)
+        self.assertLess(np.max(np.hypot(u1 - u0, v1 - v0)), 2.0)
+
+    def test_feet_mode_turns_to_the_camera_and_lands_on_the_point(self):
+        rng = np.random.default_rng(4)
+        P = person(rng, foot=(0.0, 0.0), facing=0.0)  # bundle space: the source camera is at -z
+        sim, info = g.place_by_feet(P, [0.0, 1.0, -20.0], (6.0, 1.0), [-16.0, 0.8, 2.0])
+        placed = sim.apply(P)
+        feet = g.contact_points(placed).mean(0)
+        self.assertAlmostEqual(feet[0], 6.0, delta=0.01)
+        self.assertAlmostEqual(feet[2], 1.0, delta=0.01)
+        self.assertAlmostEqual(np.percentile(placed[:, 1], 0.5), 0.0, delta=1e-6)
+        # the direction that faced the source camera now faces the court camera
+        to_cam = sim.M @ np.array([0.0, 0.0, -1.0])
+        want = np.array([-16.0, 0.0, 2.0]) - np.array([6.0, 0.0, 1.0])
+        self.assertLess(g.angle_deg(to_cam, want), 0.5)
+
+
+class Spots(unittest.TestCase):
+    def test_spots_clear_every_body(self):
+        bounds = [([4.6, 0, 1.2], [5.4, 2.0, 2.0]), ([5.8, 0, 0.0], [6.9, 2.6, 1.0])]
+        spots = g.viewing_spots([5.8, 0, 1.2], [-16, 0.8, 2.5], bounds, clear=1.0)
+        self.assertEqual(len(spots), 3)
+        for s in spots:
+            self.assertEqual(s[1], 0.0)
+            for b in bounds:
+                self.assertGreaterEqual(g.box_distance_xz(s, b), 1.0)
+        # front spot is toward the camera
+        self.assertLess(spots[0][0], 5.8)
+
+
+class Rays(unittest.TestCase):
+    def test_triangulate_two_rays(self):
+        X = np.array([5.0, 1.0, 2.0])
+        o = [np.array([-16.0, 0.8, 2.5]), np.array([-15.0, 1.0, -2.0])]
+        X_hat, rms = g.triangulate(o, [X - oi for oi in o])
+        np.testing.assert_allclose(X_hat, X, atol=1e-9)
+        self.assertLess(rms, 1e-9)
+
+
+if __name__ == "__main__":
+    unittest.main()
