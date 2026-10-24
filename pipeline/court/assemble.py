@@ -325,30 +325,20 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
             feet = sp.solid(s)[:, [0, 2]][sp.solid(s)[:, 1] < 0.05].mean(0, keepdims=True)
             w.notes.append(f"{pid}: no calibrated foot point; kept where the stand-in stood")
         sim, info = geo.place_by_feet(P, cam_pos, feet.mean(0), camF.C)
-    placed = s.transformed(sim)
-    Pp = sp.solid(placed)
     base = f"players/{pid}"
-    sp.write_ply(w.path(f"{base}/freeze.ply"), placed)
-    if real and slot.get("reality") and expand(slot["reality"]).exists():
-        seen = sp.seen_from_spz(s, expand(slot["reality"]), expand(slot["spz"]) if slot.get("spz") else None)
+    if real:
+        seen = seen_of(s, expand(slot["reality"]) if slot.get("reality") else None, expand(slot["spz"]) if slot.get("spz") else None)
     else:
-        r = sp.read_ply(standin / S["freeze"]["players"][i]["reality"]) if not real else None
-        seen = np.all(np.isclose(r.dc, s.dc), 1) if r is not None and len(r) == len(s) else np.ones(len(s), bool)
-    sp.write_ply(w.path(f"{base}/reality.ply"), sp.reality(placed, seen))
-    w.path(f"{base}/proxy.glb").write_bytes(sp.proxy_glb(placed.pos, placed.alpha, camF, name=f"{pid}-proxy"))
-    rect = sp.floor_rect(Pp)
-    keep = placed.alpha > 0.5
-    shadow, refl = sp.floor_maps(Pp, placed.alpha[keep] if keep.sum() > 100 else placed.alpha,
-                                 placed.rgb[keep] if keep.sum() > 100 else placed.rgb, rect)
-    sp.write_png(w.path(f"{base}/shadow.png"), shadow)
-    sp.write_png(w.path(f"{base}/reflection.png"), refl)
+        seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
+    b = body_files(w, base, s, sim, seen, camF)
+    Pp, rect = b["P"], b["rect"]
     contact = sp.contact_points_xz(Pp)
     entry = {
         "id": pid, "name": name, "splats": f"{base}/freeze.ply", "reality": f"{base}/reality.ply", "proxy": f"{base}/proxy.glb",
         "bounds": sp.bounds(Pp), "seenFraction": round(float(seen.mean()), 3),
         "capsules": [{k: c[k] for k in ("a", "b", "r")} for c in sp.body_capsules(Pp)],
         "shadow": {"image": f"{base}/shadow.png", "rect": rect}, "reflection": {"image": f"{base}/reflection.png", "rect": rect},
-        "_": {"sim": sim, "contact": contact, "count": len(placed), "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
+        "_": {"sim": sim, "contact": contact, "count": b["count"], "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
               "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
     }
     if feet is not None:
@@ -382,43 +372,112 @@ def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, spla
     return {"centre": rnd(sim.apply(np.asarray(S["freeze"]["ball"]["centre"], float))), "radius": BALL_RADIUS, "erase": erase}
 
 
+def read_extra(m: Path) -> dict | None:
+    """One extras manifest, normalised; None while its model hasn't landed (`file` empty or missing). Accepts the
+    extras stream's layout: pose {camera: "C..."}, foot {xz: [x, z]}, height_m, files relative to the manifest."""
+    e = json.loads(m.read_text())
+    loc = lambda p: None if not p else (expand(p) if str(p).startswith(("~", "/")) else m.parent / p)  # noqa: E731
+    f = loc(e.get("file"))
+    if f is None or not f.exists():
+        return None
+    pose = e.get("pose")
+    cam = pose.get("camera", "A") if isinstance(pose, dict) else (pose or "A")
+    foot = e.get("foot")
+    xz = foot["xz"] if isinstance(foot, dict) else [foot[0], foot[2]]
+    calib = (foot.get("calibration") if isinstance(foot, dict) else None) or e.get("calibration")
+    return {"id": e["id"], "name": e.get("name"), "kind": e.get("kind", "splats"), "file": f, "reality": loc(e.get("reality")),
+            "spz": loc(e.get("spz")), "pose": "C" if str(cam).upper().startswith("C") else "A", "foot": [float(xz[0]), 0.0, float(xz[1])],
+            "height": float(e.get("height", e.get("height_m", 0)) or 0), "space": e.get("space", "bundle"),
+            "cameraCentre": e.get("cameraCentre"), "calibration": calib, "shadow": e.get("shadow"), "reflection": e.get("reflection"), "dir": m.parent}
+
+
+def extra_camera(e: dict, cfg: dict, camF: geo.Cam) -> np.ndarray:
+    """The centre of the camera that gave an extra's pose (the export turned that camera onto -z)."""
+    if e["cameraCentre"]:
+        return np.asarray(e["cameraCentre"], float)
+    if e["pose"] == "C":
+        c = (cfg.get("cameras") or {}).get("C")
+        if c:
+            return np.asarray(json.loads(expand(c).read_text())["C"], float)
+        raise ValueError(f"extra {e['id']}: posed from camera C, but neither its cameraCentre nor the config's cameras.C is given")
+    return camF.C
+
+
+def body_files(w: Writer, base: str, s: sp.Splats, sim: geo.Similarity, seen: np.ndarray, camF: geo.Cam | None = None) -> dict:
+    """A body placed in court space: freeze.ply, reality.ply, proxy.glb (camera F's depth mesh, when camF is given),
+    shadow.png and reflection.png under `base`. Returns the placed points and the floor rect."""
+    placed = s.transformed(sim)
+    keep = placed.alpha > 0.5
+    keep = keep if keep.sum() > 100 else np.ones(len(placed), bool)
+    P = placed.pos[keep]
+    sp.write_ply(w.path(f"{base}/freeze.ply"), placed)
+    sp.write_ply(w.path(f"{base}/reality.ply"), sp.reality(placed, seen))
+    if camF is not None:
+        w.path(f"{base}/proxy.glb").write_bytes(sp.proxy_glb(placed.pos, placed.alpha, camF, name=f"{Path(base).name}-proxy"))
+    rect = sp.floor_rect(P)
+    shadow, refl = sp.floor_maps(P, placed.alpha[keep], placed.rgb[keep], rect)
+    sp.write_png(w.path(f"{base}/shadow.png"), shadow)
+    sp.write_png(w.path(f"{base}/reflection.png"), refl)
+    return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean())}
+
+
+def seen_of(s: sp.Splats, reality: Path | None, spz: Path | None) -> np.ndarray:
+    """What the cameras saw: from the export's .reality.spz, or a reality PLY in the same order (unchanged colour =
+    seen), else everything."""
+    if reality is not None and reality.exists():
+        if reality.suffix == ".spz":
+            return sp.seen_from_spz(s, reality, spz if spz and spz.exists() else None)
+        r = sp.read_ply(reality)
+        if len(r) == len(s):
+            return np.all(np.isclose(r.dc, s.dc), 1)
+    return np.ones(len(s), bool)
+
+
 def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF: geo.Cam) -> list:
     d = expand(cfg["extras"]) if cfg.get("extras") else None
     manifests = sorted(d.glob("*/extra.json")) if d and d.exists() else []
-    out = []
+    out, planned = [], []
     for m in manifests:
-        e = json.loads(m.read_text())
+        e = read_extra(m)
+        if e is None:
+            planned.append(m.parent.name)
+            continue
         base = f"others/{e['id']}"
-        ent = {"id": e["id"], "kind": e["kind"], "pose": e["pose"], "foot": rnd(e["foot"]), "height": e["height"]}
-        if e.get("name"):
+        ent = {"id": e["id"], "kind": e["kind"], "pose": e["pose"], "foot": rnd(e["foot"])}
+        if e["name"]:
             ent["name"] = e["name"]
-        for k in ("file", "reality"):
-            src = m.parent / e[k]
-            ent[k] = w.copy(src, f"{base}/{k if k == 'reality' else 'freeze'}{src.suffix}")
-        chest = np.array([e["foot"][0], 0.6 * e["height"], e["foot"][2]])
-        ent["maxRayAngle"] = round(max(geo.angle_deg(chest - camF.C, chest - np.array([s[0], 1.6, s[2]])) for s in spots), 2)
-        for k in ("shadow", "reflection"):
-            if e.get(k):
-                ent[k] = {"image": w.copy(m.parent / e[k]["image"], f"{base}/{k}.png"), "rect": e[k]["rect"]}
-        if "shadow" not in ent or "reflection" not in ent:
-            s = sp.read_ply(m.parent / e["file"]) if e["file"].endswith(".ply") else None
-            if s is None:
-                raise ValueError(f"{m}: a relief needs its own shadow and reflection images")
-            P = sp.solid(s)
-            rect = sp.floor_rect(P)
-            sh, rf = sp.floor_maps(P, np.ones(len(P)), np.full((len(P), 3), 0.5), rect)
-            sp.write_png(w.path(f"{base}/shadow.png"), sh)
-            sp.write_png(w.path(f"{base}/reflection.png"), rf)
-            ent["shadow"] = {"image": f"{base}/shadow.png", "rect": rect}
-            ent["reflection"] = {"image": f"{base}/reflection.png", "rect": rect}
+        if e["kind"] == "relief":
+            ent["file"] = w.copy(e["file"], f"{base}/relief.glb")
+            ent["reality"] = w.copy(e["reality"], f"{base}/reality.glb")
+            for k in ("shadow", "reflection"):
+                ent[k] = {"image": w.copy(e["dir"] / e[k]["image"], f"{base}/{k}.png"), "rect": e[k]["rect"]}
+            ent["height"] = e["height"]
+        else:
+            s = sp.read_ply(e["file"])
+            P0 = sp.solid(s)
+            if e["space"] == "court":
+                sim = geo.Similarity(1.0, np.eye(3), np.zeros(3))
+            else:
+                sim, _ = geo.place_by_feet(P0, [0.0, 1.0, -25.0], e["foot"][::2], extra_camera(e, cfg, camF))
+            b = body_files(w, base, s, sim, seen_of(s, e["reality"], e["spz"]))
+            ent["file"], ent["reality"] = f"{base}/freeze.ply", f"{base}/reality.ply"
+            ent["height"] = round(float(np.percentile(b["P"][:, 1], 99.5)), 3)
+            ent["foot"] = [round(float(x), 3) for x in (sp.contact_points_xz(b["P"])[0], 0.0, sp.contact_points_xz(b["P"])[1])]
+            ent["shadow"] = {"image": f"{base}/shadow.png", "rect": b["rect"]}
+            ent["reflection"] = {"image": f"{base}/reflection.png", "rect": b["rect"]}
+            if e["height"] and abs(ent["height"] / e["height"] - 1) > 0.03:
+                w.notes.append(f"extra {e['id']}: {ent['height']:.2f} m tall as rebuilt, listed {e['height']:.2f} m (P12: 3%)")
+        chest = np.array([ent["foot"][0], 0.6 * ent["height"], ent["foot"][2]])
+        ent["maxRayAngle"] = round(max(geo.angle_deg(chest - camF.C, chest - np.array([q[0], 1.6, q[2]])) for q in spots), 2)
         out.append(ent)
-        w.piece(f"extra:{e['id']}", True, str(m.parent))
+        w.piece(f"extra:{e['id']}", True, str(e["file"]))
+    if planned:
+        w.notes.append(f"extras not landed yet: {', '.join(planned)}")
     if not out:
         for o in S["freeze"]["others"]:
             ent = json.loads(json.dumps(o))
             for rel in bundle_paths(ent):
                 w.copy(standin / rel, rel)
-            ent["name"] = f"{o.get('name', o['id'])}"
             out.append(ent)
             w.piece(f"extra:{o['id']}", False, "stand-in extra where the stand-in put it")
     return out
