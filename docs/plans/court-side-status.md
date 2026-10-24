@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 8:24 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
+Updated Sat 8:30 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60) at 6:15. Kept
@@ -88,14 +88,17 @@ Biggest risks: the video-to-3D hand-off matching to the pixel (calibration), Luk
 
 ## Blocked on
 
+- Vishal's PC (Tailscale on the Mac is logged out; only Vishal can log in): masks moved to the Mac meanwhile.
 - The Quest number (ask 7) for the final splat budget; Ojasva's yes on 8 before the build ships to main.
 
 ## Decisions
 
 - **Made overnight by the planning session (Vishal can change any):** the watch is the play at real speed, then
   its own real slow motion from the seat with "Step into the court" live, so any press lands on the freeze; the
-  splat budget is 500k visible until the Quest number says more; the made basket plays afterwards as a labelled
-  replay on the arena's big screen (camera A cuts before the ball lands); the court bundle is served only over USB
+  splat budget is 500k visible until the Quest number says more; the main camera stays on the ball until it drops
+  through the net (no cut: the "cuts" were single-frame arena strobes, replaced in the bake), so "Back to my seat"
+  plays on through the make; the freeze is the frame of Gobert's contest as Luka rises (the last sharp frame
+  before the camera tilts up); the court bundle is served only over USB
   from 127.0.0.1, never through a tunnel.
 - Video-first: only the freeze frame becomes 3D (Vishal, 6:55 AM). Full immersion, `?mode=court` only (6:50 AM).
 - Overnight (Vishal's standing orders): build on branch `court-side`, pushed for Ojasva to see; nothing merged to
