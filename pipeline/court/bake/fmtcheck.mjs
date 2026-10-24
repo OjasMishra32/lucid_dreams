@@ -1,7 +1,7 @@
 // Runs format.ts's validators (and annexb.ts's splitter) over a baked video/ folder. Read-only: the checkout is an
 // extract of origin/court-side (fmtcheck.py makes it); nothing there is edited.
 //   node fmtcheck.mjs <checkout> <video-dir> [--info video.json]
-// video.json = { "camera": SourceCamera?, "video": ShowVideoInfo } (what the bake writes for court.json's `video`).
+// video.json = { "camera": (a subset of) SourceCamera, "video": ShowVideoInfo } (what the bake writes for court.json's `video`).
 // Checks, for the main stream and each fallback: court.json validates with this video block spliced into the
 // court.json fixture, frames.json and cards.json validate for that stream, and the .h264 has one access unit per show
 // frame, an IDR at exactly every segment start and the SPS codec the court says.
@@ -19,7 +19,7 @@ const read = (p) => JSON.parse(readFileSync(p, "utf8"));
 const fixture = read(resolve(checkout, "apps/webxr/scripts/court/fixtures/court.json"));
 const info = read(infoPath);
 const bundleRoot = resolve(videoDir, "..");
-const court = { ...fixture, video: info.video, ...(info.camera ? { camera: info.camera } : {}) };
+const court = { ...fixture, video: info.video, camera: { ...fixture.camera, ...(info.camera ?? {}) } };
 const problems = [];
 // the fixture cues a one-shot on "make"; the bake may not know the make frame (a layers/assembly fact): check with a stand-in
 if (court.video.makeSource === undefined) court.video = { ...court.video, makeSource: court.video.freezeSource + 1 };

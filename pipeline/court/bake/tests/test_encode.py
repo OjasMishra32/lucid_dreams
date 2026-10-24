@@ -168,3 +168,25 @@ def test_mp4_fallback_holds_only_the_first_frames_and_is_playable(tmp_path):
 def test_a_preset_that_loses_high_profile_is_refused(tmp_path):
     with pytest.raises(RuntimeError, match="High"):
         enc.encode(moving_clip(4), [enc.Output(tmp_path / "u.h264", LAY.width, LAY.height)], n_frames=4, hz=72, idr=[0], preset="ultrafast")
+
+
+def test_decode_all_streams_every_frame_and_crops(tmp_path):
+    out = tmp_path / "e.h264"
+    frames = [textured_frame(i, seed=100 + i) for i in range(6)]
+    enc.encode(iter(frames), [enc.Output(out, LAY.width, LAY.height)], n_frames=6, hz=72, idr=[0], crf=10)
+    got = list(enc.decode_all(out, LAY.width, LAY.height))
+    assert len(got) == 6 and all(g.shape == frames[0].shape for g in got)
+    live = list(enc.decode_all(out, LAY.width, LAY.height, region=LAY.live))
+    assert len(live) == 6 and live[0].shape == (LAY.live[3], LAY.live[2], 3)
+    assert np.array_equal(live[2], got[2][: LAY.live[3]])
+
+
+def test_the_real_stacked_size_gets_level_5_1_and_the_format_codec(tmp_path):
+    from pipeline.court.bake.stack import MAIN
+
+    rng = np.random.default_rng(1)
+    base = rng.integers(0, 255, (MAIN.height, MAIN.width, 3), dtype=np.uint8)
+    out = tmp_path / "big.h264"
+    enc.encode(iter([base, base]), [enc.Output(out, MAIN.width, MAIN.height)], n_frames=2, hz=72, idr=[0], crf=30)
+    info = enc.scan_h264(out)
+    assert (info.width, info.height, info.codec, info.profile, info.level) == (1536, 2160, "avc1.640033", 100, 51)

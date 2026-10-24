@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Iterator, Sequence
 
 import cv2
 import numpy as np
@@ -287,6 +287,28 @@ def decode_frames(path: Path | str, indices: Sequence[int], width: int, height: 
         raise RuntimeError(f"decoded {len(r.stdout) / size:g} frames of the {len(want)} asked ({want}) from {path}")
     buf = np.frombuffer(r.stdout, np.uint8)
     return {i: buf[k * size : (k + 1) * size].reshape(height, width, 3).copy() for k, i in enumerate(want)}
+
+
+def decode_all(path: Path | str, width: int, height: int, region: tuple[int, int, int, int] | None = None) -> Iterator[np.ndarray]:
+    """Every decoded RGB frame of a stream in order, streamed (optionally cropped to a region x, y, w, h)."""
+    vf = "scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24"
+    w, h = width, height
+    if region:
+        x, y, w, h = region
+        vf = f"crop={w}:{h}:{x}:{y}," + vf
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "h264", "-i", str(path), "-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1"]
+    size = w * h * 3
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err)
+        while True:
+            buf = proc.stdout.read(size)
+            if len(buf) < size:
+                break
+            yield np.frombuffer(buf, np.uint8).reshape(h, w, 3).copy()
+        proc.stdout.close()
+        if proc.wait() != 0:
+            err.seek(0)
+            raise RuntimeError(f"ffmpeg decode failed: {err.read().decode('utf8', 'replace')[-500:]}")
 
 
 # ---------------------------------------------------------------- quality checks
