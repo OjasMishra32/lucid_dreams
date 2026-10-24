@@ -120,6 +120,7 @@ mkdir -p $OUT/heads
 # _textured_mesh.obj: every Gaussian's position in order (the .ply holds offsets); head_swap.py needs it
 cp exps/cano_gs/$NAME-*_gs_offset.ply exps/cano_gs/$NAME-*_shaped_mesh.obj exps/cano_gs/$NAME-*_textured_mesh.obj \
   $OUT/heads/ 2>/dev/null || true
+rm -f $OUT/videos/*_audio.mp4  # LAM muxes its sample motion's voice in; nobody we build speaks in someone else's voice
 cd $R && rm -rf $WORK/images $CWD
 ls -la $OUT/videos $OUT/heads
 [ -n "$(ls $OUT/heads/*_gs_offset.ply 2>/dev/null)" ] && echo LAM_HEAD_OK

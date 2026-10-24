@@ -30,6 +30,17 @@ This is the hardest and most important avatar work left. In order:
      it on `bobby-fischer` and `magnus-carlsen`. Ojasva swaps the chess legends to it if it wins.
    - **The number for the slide:** identity cosine (InsightFace `buffalo_l`) between a front render and the source
      photo, before and after.
+   - **Ready now (Sat 1:25 AM): Fischer's heads are built, and the 1966 portrait is the winner.** It reads as a
+     real person, and as Fischer; the full-body photos give blotchy heads (face too small), so ignore 03-07. Use
+     `heads/bobby-fischer/heads/bobby-fischer-01-1966-portrait_gs_offset.ply` (20,018 Gaussians) and its
+     `_shaped_mesh.obj` (5,023 FLAME vertices).
+   - **Two format facts** (LAM's `save_ply(rgb2sh=False, offset2xyz=True)`):
+     - `f_dc_*` holds plain RGB in 0-1, not SH. Convert with `(rgb - 0.5) / 0.28209479` before anything that
+       expects 3DGS.
+     - xyz spans about ±0.1 m, while the mesh spans y -0.19..0.13 and z -0.15..0.08. They aren't in an identical
+       frame, so align the Gaussians against the LAM render, not by assuming they sit on the mesh.
+   - Carlsen's heads follow (`heads/magnus-carlsen/`). Use the silent `<photo>.mp4` renders only: the `_audio.mp4`
+     copies carry LAM's sample voice, and a public figure never speaks.
 2. **Life when idle** (this kills most of the uncanny):
    - `motion.json` gets an optional `expr` per frame (FLAME's first 10 expression coefficients).
    - The bundle gets an optional `avatar/expr.bin`: per head Gaussian, 10 x xyz offsets from FLAME's expression
