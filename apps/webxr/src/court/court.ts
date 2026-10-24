@@ -287,6 +287,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         const s = clock.state;
         video.show(s.frame);
         proxies.project(s.frame);
+        // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)
+        courtWorld.frame(video.stats.onScreen >= 0 ? video.stats.onScreen : s.frame);
         video.prime(s.nextJump);
         const hush = 1 - s.speed / court.video.pass2Speed; // 0 at pass 2's speed, 1 frozen
         if (phase === "watching" && s.segment === "ease") go("easing");
@@ -353,6 +355,22 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     }
   };
 
+  // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again
+  // only when the bounds or the world's placement change
+  let sentBounds: unknown = undefined;
+  const sentPose = [NaN, NaN, NaN, NaN];
+  const syncBounds = () => {
+    const b = seat.bounds;
+    const [x, y, z] = seat.world.position;
+    if (b === sentBounds && x === sentPose[0] && y === sentPose[1] && z === sentPose[2] && seat.world.yaw === sentPose[3]) return;
+    sentBounds = b;
+    sentPose.splice(0, 4, x, y, z, seat.world.yaw);
+    freeze.bounds(b ? b.map(([bx, bz]) => {
+      const c = toCourt(seat.world, [bx, 0, bz]);
+      return [c[0], c[2]] as [number, number];
+    }) : null);
+  };
+
   // ---------------- the frame loop ----------------
   const loopErrors = new Set<string>();
   const logOnce = (e: unknown) => {
@@ -389,6 +407,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (renderer.xr.isPresenting) {
       seatDt = dt; // the frame's own dt (the e2e reads what Seat was handed)
       seat.update(seatDt, head); // the only writer of the world group (seat.ts), with the fade-jump veil
+      syncBounds();
       vrHands.update();
       ui.update(head, time, dt);
     }
