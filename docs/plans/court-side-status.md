@@ -30,7 +30,24 @@ private, outside the repo.
     - Leave every metadata field and `observed_keypoints_2d` as they are. Delete only the generated views, then
       re-run: the log line tells you it took yours.
     - Check the skeleton overlay before trusting it.
-    **(b) Being wired now:** `--extra-sources`, details here once its GPU test passes (~10:45).
+    **(b) Wired (Ojasva, 10:50 AM): `lucid.recon --extra-sources extra.json`**, alongside `--source-video`:
+    ```json
+    [{"video": "release-angle.mp4", "offset": 0, "masks": "masks-release", "ignore": "ignore-release",
+      "focal": 4100.0, "weight": 1.0},
+     {"video": "broadcast.mp4", "offset": 0, "masks": "masks-bc", "focal": 6200.0, "weight": 0.7}]
+    ```
+    - `offset`: that video's frame = recon frame + offset. For a one-frame freeze, make each video start on the
+      freeze instant (offset 0), or point offset at it.
+    - `masks` / `ignore`: the same per-frame PNGs as the main camera's (named by that video's own frame index).
+    - `focal`: in that video's own pixels.
+    - Each angle is solved on its own against the same Gaussians, so no shared calibration is needed. If the main
+      camera fails to solve, the others still can.
+    - Each angle trains like the main real view (`--source-agree` too), scaled by its `weight`.
+    - The log prints `[source] <name>: solved, IoU …`, `sourcePsnr.<name>` per frame, and
+      `peek-source-<name>-<frame>.jpg` / `source-camera-<name>-<frame>.json` in recon/.
+
+    Tested on a B200 (two frames, both modes). Not in stage-recon's job.json yet: call `lucid.recon` directly, or
+    ask and I'll add an `extraSources` key.
 17. **Your replay cleanup on our freeze frames:** `lucid.clean_support` reads `views/videos`, which our cleanup
     job deletes, and `clean_check` assumes bundle frame i = clip frame i (ours is the single freeze frame from
     its own 4K source). We'll keep views until the clean runs (`KEEP_VIEWS=1` in our scripts). Could `clean_check`
