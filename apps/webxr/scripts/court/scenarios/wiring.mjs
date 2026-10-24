@@ -1,12 +1,18 @@
 // court.ts's wiring of stream C (the Codex review of court-c, items 1, 2, 5 and 7): the live arrival is seat.arrival's
 // (the hand-over, then a seated head still 1 s; never a bare 1 s timer), Seat has the session through PersistentLock
 // (bounded-floor, persistent anchors), the drawn hands are lit (VrHands.light: dark in the arrival's hold, lit in the
-// watch), and seat.update is handed the frame's real dt (at a 90 Hz frame rate, 1/90 s, not one 72 Hz display frame).
-// Owner: the integrator.
+// watch) and drawn over the footage (the video layer draws at renderOrder 50-90 without the depth test, so the hands
+// must come after it), and seat.update is handed the frame's real dt (at a 90 Hz frame rate, 1/90 s, not one 72 Hz
+// display frame). Owner: the integrator.
+import { rig } from "../rig.mjs";
+
 export const owner = "integrator";
 export const needs = ["seat", "vrhands"];
 
 const HZ = 72;
+/** The 16 x 9 thumbnail's middle cells, where a hand 0.3 m straight ahead lands. */
+const MIDDLE = [3, 4, 5].flatMap((row) => [6, 7, 8, 9].map((col) => row * 16 + col));
+const change = (a, b) => MIDDLE.reduce((sum, k) => sum + Math.abs(a.thumb[k] - b.thumb[k]), 0) / MIDDLE.length;
 
 export default async function wiring(ctx) {
   const w = async () => (await ctx.snapshot()).wiring;
@@ -28,6 +34,21 @@ export default async function wiring(ctx) {
   ctx.check("C1: then the watch", run.at(-1)?.phase === "watching", `${run.at(-1)?.phase} after ${run.length} frames`);
   const lit = await w();
   ctx.check("C5: the drawn hands are lit in the watch (VrHands.light)", lit.hands > 0.05, `hands light ${lit.hands.toFixed(3)}`);
+  if (!ctx.timing) {
+    // a hand straight ahead of the eyes, then out of view: the middle of the picture must change far more than the
+    // footage changes by itself between two display frames
+    const r = rig(ctx);
+    const eye = (await ctx.snapshot()).head.room;
+    const quiet = await ctx.frames(2);
+    await r.moveJointTo("right", "middle-finger-metacarpal", [eye[0], eye[1] - 0.05, eye[2] - 0.3]);
+    const shown = await ctx.nextFrame();
+    await ctx.device((d) => d.hands.right.position.set(d.hands.right.position.x + 3, d.hands.right.position.y, d.hands.right.position.z));
+    await ctx.frames(2);
+    const gone = await ctx.nextFrame();
+    const hand = change(shown, gone);
+    const base = change(quiet[0], quiet[1]);
+    ctx.check("C5: a drawn hand shows over the picture", hand > 6 && hand > 4 * base + 2, `middle of the view changes ${hand.toFixed(1)} grey levels with the hand, ${base.toFixed(1)} frame to frame without`);
+  }
   ctx.check("C7: seat.update gets the frame's dt at the show's rate", Math.abs(lit.seatDt - 1 / HZ) < 1e-9, `dt ${lit.seatDt}`);
 
   // a 90 Hz frame rate: every frame is 1/90 s, and Seat must be handed exactly that
