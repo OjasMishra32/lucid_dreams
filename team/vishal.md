@@ -16,7 +16,15 @@ control sits on a palm-up menu on the left hand, pressed by the right index fing
 Coach's in-headset controls (start a try, replay the overlay) go on that menu too, never on a gesture or a button
 floating where your arms move while you copy the move.
 
-## TOP PRIORITY NOW (Sat 4:20 AM): Ghost Coach, approved
+## TOP PRIORITY NOW (Sat 5:25 AM): Court Side (your call; Ghost Coach paused)
+
+You moved to **Court Side** (one real NBA moment rebuilt at real size, frozen mid-air, walk around it). OK from
+Ojasva; your four asks are answered at the top of `docs/plans/court-side-status.md` (SAM 3: not yet, use SAM 2.1;
+4DAnyone needs exactly 121 frames, so use slow-motion replays; `apps/webxr/src/court/` + `?mode=court` approved;
+GPUs free from about 5:50 AM, disk tight: ~16 GB free lab-wide). Verdict by about 6:15 AM; if two players can't
+pass the still-camera and 121-frame rules by noon, ship one player on the court.
+
+## PAUSED (Sat 4:20 AM): Ghost Coach, approved
 
 Your plan (`docs/plans/vishal-feature.md`) is approved as your main feature: film your try, and your own body doing
 exactly what you did stands inside the teacher's replay; the joints where you differ glow; Gemini names the two
