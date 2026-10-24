@@ -158,6 +158,8 @@ def synth_clip(tmp_path_factory):
     root = tmp_path_factory.mktemp("synth")
     (root / "calib_A.json").write_text(json.dumps(clip.calib()))
     cfg = config.from_dict(clip.bake_config(root))
+    # the 90 Hz 1.2 s ease at 0.75x needs pass 2 to start >= 0.45 s of capture before F
+    assert clip.unique.index(cfg.freeze) - clip.unique.index(cfg.pass2_start) >= 54
     return clip, cfg
 
 

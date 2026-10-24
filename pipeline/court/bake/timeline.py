@@ -3,7 +3,7 @@
 Segments, in stream order (format.ts ShowSegments; inclusive, contiguous, never overlapping):
   pass1   real speed (1x), from the start of play to pass1_end (F by default); grid anchored so its last frame is
           exactly pass1_end.
-  pass2   pass2_speed, from pass2_start through the make to clip_end; grid anchored on F, so F is on it and, with
+  pass2   pass2_speed (cfg.pass2_speed_for(hz): 0.6 at 72 Hz, 0.75 at 90 Hz), from pass2_start through the make to clip_end; grid anchored on F, so F is on it and, with
           capture_fps x pass2_speed == displayHz, every pass-2 frame is a real captured frame.
   ease i  one per ease length, earliest start first: n = round(seconds x hz) frames (k = 1..n), speed pass2_speed ->
           0 by 1 - smootherstep, frame n is F. Entered from the pass-2 frame n/2 steps before F (`start`), which is
@@ -98,6 +98,11 @@ class Timeline:
         return {"displayHz": self.hz, "pass2Speed": self.pass2_speed, "segments": self.segments,
                 "cutoff": self.cutoff, "freezeSource": self.freeze}
 
+    def fallback_block(self) -> dict:
+        """video.fallbacks.hz90's timeline fields (format.ts ShowFallbacks.hz90): its own speed, segments, cutoff."""
+        return {"displayHz": self.hz, "pass2Speed": self.pass2_speed, "segments": self.segments,
+                "cutoff": self.cutoff}
+
     def interp_share(self) -> float:
         return sum(f.interp for f in self.frames) / len(self.frames)
 
@@ -129,7 +134,7 @@ def build(cfg: BakeConfig, hz: int, cap: CapTime | None = None) -> Timeline:
         if not cap.is_usable(s):
             raise ValueError(f"{what} {s} must be a usable real frame (not a repeat or strobe)")
     t_f = cap.time_of(cfg.freeze)
-    v = cfg.pass2_speed
+    v = cfg.pass2_speed_for(hz)
     step2 = v / hz
     eps = 1e-9
 

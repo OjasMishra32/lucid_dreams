@@ -39,6 +39,7 @@ class BakeConfig:
     watermark: tuple[int, int, int, int] = (2, 1, 20, 19)  # [x0, y0, x1, y1] source pixels, to inpaint
     # playback
     pass2_speed: float = 0.6  # x real time; capture_fps * pass2_speed = 72 makes every 72 Hz pass-2 frame real
+    pass2_speed_90: float | None = 0.75  # the 90 Hz bake's own (capture_fps * 0.75 = 90); None = pass2_speed
     ease_seconds: tuple[float, ...] = (1.2, 1.0, 0.8)  # earliest start first
     resume_ramp_s: float = 0.8
     display_hz: tuple[int, ...] = (72, 90)
@@ -55,6 +56,12 @@ class BakeConfig:
     tmp: str = ""  # scratch
     synthetic: bool = False  # written by synth.py
     notes: dict = field(default_factory=dict, compare=False)
+
+    def pass2_speed_for(self, hz: int) -> float:
+        """Pass 2's speed (and every ease's start speed, the resume's target) for a bake at `hz`."""
+        if hz == 90 and self.pass2_speed_90 is not None:
+            return self.pass2_speed_90
+        return self.pass2_speed
 
     @property
     def f_end(self) -> int:
@@ -75,6 +82,8 @@ class BakeConfig:
             e.append(f"freeze {self.freeze} is a strobe frame")
         if not (0 < self.pass2_speed < 1):
             e.append("expected 0 < pass2_speed < 1")
+        if self.pass2_speed_90 is not None and not (0 < self.pass2_speed_90 < 1):
+            e.append("expected 0 < pass2_speed_90 < 1")
         if list(self.ease_seconds) != sorted(self.ease_seconds, reverse=True):
             e.append("expected ease_seconds longest first (earliest start first)")
         if not (0 <= self.repeat_phase < self.repeat_mod):

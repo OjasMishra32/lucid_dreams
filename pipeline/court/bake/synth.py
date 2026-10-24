@@ -478,7 +478,7 @@ class SynthClip:
             "capture_fps": s.capture_fps, "source_fps": s.source_fps,
             "src_width": self.W, "src_height": self.H,
             "clip_first": s.first, "play_start": s.first, "pass1_end": None,
-            "pass2_start": u[int(len(u) * 0.3)], "freeze": freeze, "make": u[int(len(u) * 0.95)],
+            "pass2_start": u[int(len(u) * 0.15)], "freeze": freeze, "make": u[int(len(u) * 0.95)],
             "clip_end": self.srcs[-1],
             "repeat_mod": s.repeat_period, "repeat_phase": s.repeat_phase,
             "strobes": self.flash_srcs, "watermark": list(self.watermark_box),
