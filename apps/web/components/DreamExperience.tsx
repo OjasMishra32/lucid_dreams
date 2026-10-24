@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { ExperienceState } from "@/lib/dream";
+import { chessLabel } from "@/lib/showcase";
 import ShareButton from "./ShareButton";
 import WatchMeTry from "./WatchMeTry";
 import { ViewerLink } from "./ViewInRoom";
@@ -150,7 +151,7 @@ export default function DreamExperience({
             {e.mode === "teach"
               ? "In your room each step plays slowed down, then they pause for your turn. Tap a step to see it here."
               : e.mode === "play"
-                ? `A real chess engine plays at ${e.play?.strength ?? "club"} strength. Not affiliated with any player.`
+                ? chessLabel(e.play?.strength ?? "club")
                 : plannedFrom(e.source, e.intent)}
           </p>
           {tryOn && steps && steps.length > 0 && (
@@ -164,6 +165,7 @@ export default function DreamExperience({
 
 /** Say exactly what Gemini had to go on. */
 function plannedFrom(source: string | undefined, intent: string | null): string {
+  if (source === "intent") return "Shaped from your sentence.";
   const seen = source === "photo" ? "the photo" : source === "clip" ? "the clip" : source === "preview" ? "the 3D person" : null;
   const parts = [intent ? "your sentence" : null, seen].filter(Boolean);
   return parts.length ? `Planned by Gemini from ${parts.join(" and ")}.` : "Planned by Gemini.";

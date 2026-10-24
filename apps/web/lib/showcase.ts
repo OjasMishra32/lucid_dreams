@@ -19,7 +19,7 @@ export const MOMENTS: Moment[] = [
     line: "A piano teacher sits at your side and plays the piece in steps, slowed down, with your turn after each.",
     intent: "Sit next to me and teach me this piece",
     where: "Your room, or a concert hall",
-    ids: ["piano-han"],
+    ids: ["piano-han-hq", "piano-han"],
     action: "Start the lesson",
     credit: "Jason Han, piano teacher. Wikimedia Commons, CC BY-SA 4.0.",
   },
@@ -28,7 +28,7 @@ export const MOMENTS: Moment[] = [
     line: "His jump shot, life size, with the real ball in his hands and a regulation hoop where he aims.",
     intent: "Teach me this jump shot",
     where: "Your room, or a court",
-    ids: ["lebron-jumper"],
+    ids: ["lebron-jumper-hq", "lebron-jumper"],
     action: "Start the lesson",
     credit: "Clip supplied for this non-commercial demo. Not affiliated.",
   },
@@ -37,10 +37,19 @@ export const MOMENTS: Moment[] = [
     line: "Seated across a real-size board on your table, moving their own pieces, with a clock at your side. They never speak.",
     intent: "Play chess with me",
     where: "Your table",
-    ids: ["bobby-fischer-head", "bobby-fischer", "magnus-carlsen-head", "magnus-carlsen"], // the new LAM faces first
+    // the opponents the WebXR chess table seats (apps/webxr/src/chess/engine.ts), then older builds
+    ids: ["bobby-fischer-lhm", "magnus-carlsen-uika", "magnus-carlsen-lhm", "bobby-fischer-head", "bobby-fischer", "magnus-carlsen-head", "magnus-carlsen"],
     action: "Play chess with them",
-    chess: { "bobby-fischer-head": "fischer", "bobby-fischer": "fischer", "magnus-carlsen-head": "carlsen", "magnus-carlsen": "carlsen" },
-    credit: "Fischer: 1966 AP portrait, public domain. Carlsen: Ralf Roletschek, CC BY-SA 3.0.",
+    chess: {
+      "bobby-fischer-lhm": "fischer",
+      "bobby-fischer-head": "fischer",
+      "bobby-fischer": "fischer",
+      "magnus-carlsen-uika": "carlsen",
+      "magnus-carlsen-lhm": "carlsen",
+      "magnus-carlsen-head": "carlsen",
+      "magnus-carlsen": "carlsen",
+    },
+    credit: "Fischer: 1966 AP portrait, public domain, and Anefo / Nationaal Archief photos, CC0. Carlsen: Ralf Roletschek, CC BY-SA 3.0.",
   },
   {
     title: "Someone you’ve lost",
@@ -75,9 +84,14 @@ export function chessLabel(strength: string): string {
   return who ? `Stockfish at ${who}’s peak rating. Not affiliated.` : "A real chess engine. Not affiliated with any player.";
 }
 
-/** The engine strength a legend's dream plays at ("fischer" for bobby-fischer and bobby-fischer-head), else null. */
+/**
+ * The engine strength a legend's dream plays at ("fischer" for bobby-fischer, bobby-fischer-lhm, ...), else null. Any
+ * build of a legend counts, so a new one can never show up without its label.
+ */
 export function legendOf(id: string): string | null {
   for (const m of MOMENTS) if (m.chess?.[id]) return m.chess[id];
+  if (/^bobby-fischer/i.test(id)) return "fischer";
+  if (/^magnus-carlsen/i.test(id)) return "carlsen";
   return null;
 }
 

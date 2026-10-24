@@ -7,6 +7,8 @@ const config: NextConfig = {
   allowedDevOrigins: ["*.local", "192.168.*.*", "10.*.*.*", "172.*.*.*"],
   // Uploads stream straight to disk; never let the framework buffer a 4K clip.
   serverExternalPackages: ["busboy"],
+  // Posters are 1080x1920 renders; pages ask for them sized to the card (with ?v= for a rebuilt bundle).
+  images: { localPatterns: [{ pathname: "/dreams/**" }], formats: ["image/webp"] },
   // Next 16 writes an AGENTS.md here by default; the bridge finds the repo root by the first AGENTS.md above it,
   // so that file made it read apps/web/dreams (empty) instead of the repo's dreams/.
   agentRules: false,

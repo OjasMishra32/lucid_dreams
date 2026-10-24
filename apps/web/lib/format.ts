@@ -1,15 +1,4 @@
-import { formatCount, heightM, type Dream } from "./dream";
-
-export function dreamMeta(d: Dream): string {
-  const h = heightM(d);
-  return [
-    d.durationS ? `${d.durationS.toFixed(1)} s` : "",
-    h ? `${h.toFixed(2)} m tall` : "",
-    d.frames?.gaussiansPerFrame ? `${formatCount(d.frames.gaussiansPerFrame)} Gaussians` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
+import type { Dream } from "./dream";
 
 export function seenPercent(d: Dream): number | null {
   const s = d.metrics?.seenFraction;

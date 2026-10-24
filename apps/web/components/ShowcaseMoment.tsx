@@ -49,7 +49,7 @@ export default function ShowcaseMoment({
   const said = sentence(dream?.intent || moment.intent);
 
   const media = dream?.preview ? (
-    <video ref={video} src={dream.preview} poster={dream.poster ?? undefined} muted loop playsInline preload="metadata" aria-label={`${dream.name}, walked all the way around`} />
+    <video ref={video} src={dream.preview} poster={dream.poster ?? undefined} muted loop playsInline preload="none" aria-label={`${dream.name}, life size`} className="ready" />
   ) : dream?.poster ? (
     <img src={dream.poster} alt={dream.name} />
   ) : (
@@ -68,15 +68,15 @@ export default function ShowcaseMoment({
   return (
     <article className="moment" aria-labelledby={`moment-${n}`}>
       {query ? (
-        <ViewerLink query={query} className="frame moment-media">{media}</ViewerLink>
+        <ViewerLink query={query} className="person moment-media">{media}</ViewerLink>
       ) : (
-        <div className="frame moment-media">{media}</div>
+        <div className="person moment-media">{media}</div>
       )}
 
       <div className="moment-copy">
-        <p className="moment-n num">{n}</p>
+        <p className="moment-n num">{String(n).padStart(2, "0")}</p>
         <h2 className="section-title" id={`moment-${n}`}>{moment.title}</h2>
-        <p className="moment-said">&ldquo;{said}&rdquo;</p>
+        <p className="said moment-said">&ldquo;{said}&rdquo;</p>
         <p className="moment-line">{moment.line}</p>
         <p className="moment-where">
           {moment.where}

@@ -38,8 +38,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     ...CORS,
     "Content-Type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
     "Accept-Ranges": "bytes",
-    // files that change in place (the plan is added later and can be rewritten; captions arrive late): never cache
-    "Cache-Control": /(^|\/)(dream|experience|captions)\.[a-z0-9]+$/.test(file) ? "no-store" : "public, max-age=3600",
+    // files that change in place (the plan is added later and can be rewritten; captions arrive late): never cache.
+    // The pages ask for media with ?v=<when the bundle was last rebuilt>, so those addresses never go stale.
+    "Cache-Control": /(^|\/)(dream|experience|captions)\.[a-z0-9]+$/.test(file)
+      ? "no-store"
+      : new URL(req.url).searchParams.has("v")
+        ? "public, max-age=31536000, immutable"
+        : "public, max-age=3600",
   };
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");

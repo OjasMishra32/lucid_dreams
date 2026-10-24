@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Kiosk, { type KioskSlide } from "@/components/Kiosk";
 import { listReady } from "@/lib/bridge/dreams";
 import { intentOf } from "@/lib/bridge/experience";
-import { dreamFile, type Dream } from "@/lib/dream";
+import type { Dream } from "@/lib/dream";
+import { displayName, mediaUrl } from "@/lib/present";
 import { SHOWCASE_IDS, chessLabel, legendOf } from "@/lib/showcase";
 
 export const dynamic = "force-dynamic";
@@ -24,11 +25,11 @@ export default function KioskPage() {
     .sort((a, b) => rank(a) - rank(b)) // stable: the rest stay newest first
     .map((d) => ({
       id: d.id,
-      name: d.name,
+      name: displayName(d),
       line: line(d),
       ...(legendOf(d.id) ? { note: chessLabel(legendOf(d.id)!) } : {}),
-      preview: dreamFile(d.id, d.preview!),
-      poster: d.thumb ? dreamFile(d.id, d.thumb) : null,
+      preview: mediaUrl(d, d.preview)!,
+      poster: mediaUrl(d, d.thumb),
     }));
   return <Kiosk slides={slides} />;
 }
@@ -36,5 +37,5 @@ export default function KioskPage() {
 function line(d: Dream): string {
   const said = intentOf(d)?.replace(/[.!]+$/, "");
   if (said) return `“${said.charAt(0).toUpperCase()}${said.slice(1)}.”`;
-  return d.kind === "avatar" ? "From one photo, in your room." : "From one video, walked all the way around.";
+  return d.kind === "avatar" ? "From a few photos, in your room." : "From one video. Walk all the way around them.";
 }
