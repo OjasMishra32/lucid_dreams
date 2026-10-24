@@ -39,13 +39,15 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
 | `results_page.py` | `python -m lucid_avatars results <work dir>`: a fine-tune's table and renders into this README's Results section |
 | `frame_pick.py` | A clip's best frames for LHM++: sharpness (Laplacian variance on the person region), near-duplicate and junk rejection, a greedy pick spread over the clip, a PNG contact sheet |
+| `hand_fk.py`, `hand_poses.py` | Hand forward kinematics on an SMPL-X rest skeleton; named hand poses (relaxed, pinch, fist, point), slerp blend, joint limits, `hand_poses.json` |
+| `mano_hands.py` | A hand regressor's MANO pose as SMPL-X finger rotations (order, mean, left-hand mirroring), confidence blending with the original hands, a clip's hands as a time series |
 | `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
 | `head_swap.py` | LAM's one-photo head on a consenting person's own avatar: consent gate, FLAME-to-SMPL-X fit, jaw-line seam, skinning, skin tone, the `<id>-head` bundle |
 | `head_distill_core.py` | The head distill's plain parts: consent gates, the teacher's view sphere and cameras.json, cameras into the avatar's frame, seeding on SMPL-X head faces with barycentric skinning, the opacity floor, seam masks, colour from the teacher's views, the bundle |
 
 GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
 4DAnyone views; `digs_perform.py` an avatar doing someone else's move; `gvhmr_motion.py` and `prep_views.py`
-(4DAnyone env) feed them; `video_frames.py` (numpy + ffmpeg, any env) turns a phone clip into LHM++'s photo folder; `head_swap_render.py` (4DAnyone env) renders a head swap's turntable and side-by-side.
+(4DAnyone env) feed them; `fit_hands.py` (WiLoR env: real fingers from the photo or clip); `video_frames.py` (numpy + ffmpeg, any env) turns a phone clip into LHM++'s photo folder; `head_swap_render.py` (4DAnyone env) renders a head swap's turntable and side-by-side.
 
 ## One photo -> avatar on HiPerGator (Ojasva submits)
 
@@ -372,6 +374,41 @@ shoulder joint is about 0.64 m above the seat and the upper arm only about 0.26 
 so from a 0.45 m seat the elbows can't come down onto a 0.75 m table without folding the arms. `seated_rest_pose`
 therefore leans in (pelvis and spine, at most 0.5 rad) and, only if that isn't enough, lowers the seat (to 0.36 m at
 most; the chair is never drawn). Elbows and wrists then sit exactly on the table and stay put while the chest breathes.
+
+## Hands: named poses, and real fingers from the photo or clip
+
+**Named poses** (`hand_poses.py`, plain numpy; `hand_poses.json` for other languages): `relaxed`, `pinch` (thumb tip
+on index tip, middle / ring / pinky curled: lifting a chess piece), `fist`, `point`, each as absolute axis-angle for
+the 15 finger joints in SMPL-X order (what `motion.json` holds in `pose[40:55]`, right, and `pose[25:40]`, left; no
+hand mean). `blend(a, b, t)` slerps per joint. Left = right mirrored (negate the y and z components,
+`hand_fk.mirror_hand`). Forward kinematics (`hand_fk.py`) put the pinch's two fingertips (third joints + 2 cm along the
+bone) 0.02 mm apart on `tests/smplx_rest.py`'s skeleton, and within 1 cm for 8% bigger or smaller hands and 1.5 to 2.5
+cm fingertips; a real avatar's skeleton differs by millimetres, so a player that wants contact still aims the wrist.
+To use one in the WebXR chess person (`person.ts` / `seated.ts`): Vite imports JSON, so
+`import hands from "../../../../avatars/hand_poses.json"` (or copy the file; it is not served), then
+`hands.poses.pinch.right.quat[i]` is joint `40 + i`'s local quaternion `[x, y, z, w]` (left: `25 + i`); slerp from
+the idle's quaternion to it with your curl weight, instead of the finger table in `seated.ts`. Joint limits (`clamp_to_limits`) are the plausible ranges the tests hold every pose to.
+
+**Real fingers** (`fit_hands.py`, `hpg/hands.sbatch`; Ojasva submits): WiLoR (CVPR 2025, via WiLoR-mini) finds both hands
+in the source photo or in each sampled frame of a clip, regresses MANO poses, and `mano_hands.py` turns them into
+SMPL-X's: MANO's 15 joints are SMPL-X's 15 hand joints in the same order (identity map, tested); WiLoR and HaMeR
+regress absolute rotations, so no mean is added (a pkl-convention pose relative to MANO's mean is supported with
+`relative_to_mean`); a left hand is run on the mirrored image as a right hand and mirrored back. The wrist stays from the
+body fit. The result replaces the hands in `avatar/motion.json` (the DiGS hand mean in an idle, a time series for a
+clip) where the detector is confident (0.5 to 0.8 eases in, smoothed, plus a cut for small boxes and joints pulled in
+by the limits), and the bundle's original hands stay everywhere else (`avatar/motion.hands-original.json` keeps the
+untouched motion; reruns start from it). `hands.json` reports what was found.
+
+```
+sbatch --export=ALL,BUNDLE=<id>,PHOTO=<photo on HPG>[,BOX=x0,y0,x1,y1] avatars/hpg/hands.sbatch
+sbatch --export=ALL,BUNDLE=<id>,VIDEO=<clip on HPG>,START=<s> avatars/hpg/hands.sbatch    # EVERY=2, SPAN, OFFSET, STRENGTH
+```
+
+Licences: WiLoR's code and models are CC BY-NC-ND 4.0 (fine for this non-commercial project; we use only the poses it
+outputs and never redistribute its weights). HaMeR is MIT but needs ViTPose (and a detector) for hand boxes and its
+weights' terms are not stated on its page; both need MANO (non-commercial, own registration): `models/mano/MANO_RIGHT.pkl`
+must be our copy, the job stops without it and never fetches one from a mirror. Not yet run on HiPerGator: the
+WiLoR-mini calls (`hand_detector`, `predict_with_bboxes`, output shapes) are from its source, not from a run.
 
 ## The ball's 3D path (props)
 
