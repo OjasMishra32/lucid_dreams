@@ -33,13 +33,14 @@ export const MOMENTS: Moment[] = [
     credit: "Clip supplied for this non-commercial demo. Not affiliated.",
   },
   {
-    title: "Chess at a legend’s level",
-    line: "A teammate across a real-size board on your table, moving their own pieces, with the engine playing at a world champion’s peak.",
+    title: "Chess with the legends",
+    line: "Seated across a real-size board on your table, moving their own pieces, with a clock at your side. They never speak.",
     intent: "Play chess with me",
     where: "Your table",
-    ids: ["vishal-head", "vishal"], // a consenting teammate's avatar; no legend's likeness is used anywhere
+    ids: ["bobby-fischer-head", "bobby-fischer", "magnus-carlsen-head", "magnus-carlsen"], // the new LAM faces first
     action: "Play chess with them",
-    chess: { "vishal-head": "fischer", vishal: "fischer" },
+    chess: { "bobby-fischer-head": "fischer", "bobby-fischer": "fischer", "magnus-carlsen-head": "carlsen", "magnus-carlsen": "carlsen" },
+    credit: "Fischer: 1966 AP portrait, public domain. Carlsen: Ralf Roletschek, CC BY-SA 3.0.",
   },
   {
     title: "Someone you’ve lost",
@@ -62,6 +63,11 @@ export const MOMENTS: Moment[] = [
 ];
 
 const LEGEND: Record<string, string> = { fischer: "Fischer", carlsen: "Carlsen" };
+
+/** "Fischer" for strength fischer: how a legend is named next to a button. */
+export function legendName(strength: string): string {
+  return LEGEND[strength] ?? strength;
+}
 
 /** The label every chess legend carries (AGENTS.md, Consent): an engine rating, never the person. */
 export function chessLabel(strength: string): string {

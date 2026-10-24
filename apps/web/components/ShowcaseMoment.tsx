@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef } from "react";
-import { chessLabel, type Moment } from "@/lib/showcase";
+import { chessLabel, legendName, type Moment } from "@/lib/showcase";
 import { ViewerLink } from "./ViewInRoom";
 
 export interface MomentDream {
@@ -17,7 +17,19 @@ export interface MomentDream {
  * One showcase moment: the dream's 360 preview, big and quiet, beside its sentence. The preview only plays while it's
  * on screen, so five of them never fight for the laptop. Opens the viewer, or the chess table for the legends.
  */
-export default function ShowcaseMoment({ n, moment, dream, kept = false }: { n: number; moment: Moment; dream: MomentDream | null; kept?: boolean }) {
+export default function ShowcaseMoment({
+  n,
+  moment,
+  dream,
+  alt = null,
+  kept = false,
+}: {
+  n: number;
+  moment: Moment;
+  dream: MomentDream | null;
+  alt?: string | null; // chess: the other legend's dream, when theirs is ready too
+  kept?: boolean;
+}) {
   const video = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -47,7 +59,7 @@ export default function ShowcaseMoment({ n, moment, dream, kept = false }: { n: 
         {kept
           ? "Private. Shown only with her family’s permission."
           : strength
-            ? "The board is ready. A teammate sits here once their avatar is made."
+            ? "The board is ready. They take their seats once they pass the side-by-side with their photos."
             : "Not in the library yet."}
       </span>
     </span>
@@ -76,9 +88,20 @@ export default function ShowcaseMoment({ n, moment, dream, kept = false }: { n: 
           ) : (
             <span className="moment-wait">{kept ? "Private to the family" : "Ready once it’s made"}</span>
           )}
-          {dream && <Link href={`/library/${encodeURIComponent(dream.id)}`} className="more">The dream</Link>}
+          {alt && moment.chess?.[alt] && (
+            <ViewerLink query={`mode=chess&strength=${moment.chess[alt]}&opponent=${encodeURIComponent(alt)}`} className="more">
+              Or {legendName(moment.chess[alt])}
+            </ViewerLink>
+          )}
+          {dream && !alt && <Link href={`/library/${encodeURIComponent(dream.id)}`} className="more">The dream</Link>}
         </div>
-        {(strength || (dream && moment.credit)) && <p className="moment-credit">{strength ? chessLabel(strength) : moment.credit}</p>}
+        {strength && (
+          <p className="moment-credit">
+            {chessLabel(strength)}
+            {alt && moment.chess?.[alt] ? ` ${chessLabel(moment.chess[alt])}` : ""}
+          </p>
+        )}
+        {dream && moment.credit && <p className="moment-credit">{moment.credit}</p>}
       </div>
     </article>
   );

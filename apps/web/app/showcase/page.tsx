@@ -46,7 +46,9 @@ export default function Showcase() {
               }
             : null;
           const kept = !dream && m.ids.some((id) => privateIds.has(id));
-          return <ShowcaseMoment key={m.title} n={i + 1} moment={m} dream={dream} kept={kept} />;
+          // chess: the other legend too, when their dream is ready
+          const alt = d && m.chess ? (m.ids.find((id) => ready.has(id) && m.chess![id] !== m.chess![d.id]) ?? null) : null;
+          return <ShowcaseMoment key={m.title} n={i + 1} moment={m} dream={dream} alt={alt} kept={kept} />;
         })}
       </div>
     </>
