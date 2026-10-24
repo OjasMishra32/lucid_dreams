@@ -23,8 +23,13 @@ function dreams(): Plugin {
       server.middlewares.use("/dreams", (req, res, next) => {
         const path = decodeURIComponent((req.url ?? "/").split("?")[0]);
         if (path === "/index.json") {
+          // held dreams (dreams/.held: one id per line, as the web app reads it) stay out of the list; a link to one
+          // still opens it
+          const heldFile = join(DREAMS, ".held");
+          const held = new Set(existsSync(heldFile) ? readFileSync(heldFile, "utf8").split("\n").map((l) => l.trim()).filter(Boolean) : []);
           const list = existsSync(DREAMS)
             ? readdirSync(DREAMS)
+                .filter((id) => !held.has(id))
                 .map((id) => join(DREAMS, id, "dream.json"))
                 .filter((p) => existsSync(p))
                 .map((p) => ({ ...JSON.parse(readFileSync(p, "utf8")), mtime: statSync(p).mtimeMs }))
