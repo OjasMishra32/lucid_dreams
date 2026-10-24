@@ -39,6 +39,10 @@ const FIRST_QUESTION_MS = 15_000; // nothing asked in this long: the session end
 const FOLLOW_UP_MS = 10_000; // after an answer, this long for another question
 const ANSWER_MS = 15_000; // no answer this long after you stopped talking: listen again
 const SESSION_MS = 3 * 60_000;
+const CONNECT_MS = 15_000; // from the mic being open to Gemini accepting the setup
+// A speaking model's transcript runs on its own clock (no ordering with turnComplete, per the API): once the turn is
+// complete, the answer is whole when no more of its words have come for this long.
+const SETTLE_MS = 1500;
 const VOICE_MS = 300; // this much voice is a question, not a cough
 const PAUSE_MS = 800; // this much quiet after it and you've finished asking
 const RETRY = /not found|not supported|unsupported|modalit|invalid argument/i; // this model can't do it: try the next
@@ -68,6 +72,8 @@ interface Session {
   lines: string[]; // sentences waiting for the device's voice
   talking: boolean; // the device is saying one now
   turnDone: boolean;
+  complete: boolean; // Gemini sent turnComplete for this question (a speaking model's words may still be coming)
+  settle: number;
   leaving: boolean; // Gemini said it's closing soon: finish this answer, then stop
   talk: number; // ms of voice in what you're saying now
   quiet: number; // ms of quiet since
@@ -92,7 +98,8 @@ export class Coach {
     if (this.s) return;
     const s: Session = {
       ws: null, mic: null, attempt: ladder, ready: false, reply: "text", sending: false, heard: "", answer: "", unsaid: "",
-      lines: [], talking: false, turnDone: false, leaving: false, talk: 0, quiet: 0, floor: 0, timer: 0, cap: 0,
+      lines: [], talking: false, turnDone: false, complete: false, settle: 0, leaving: false, talk: 0, quiet: 0, floor: 0,
+      timer: 0, cap: 0,
     };
     this.s = s;
     if ("speechSynthesis" in window) speechSynthesis.cancel(); // the device stops talking so it can listen
@@ -117,6 +124,7 @@ export class Coach {
     this.s = null;
     clearTimeout(s.timer);
     clearTimeout(s.cap);
+    clearTimeout(s.settle);
     if (s.ws) {
       s.ws.onclose = s.ws.onmessage = null;
       s.ws.close(1000);
@@ -141,6 +149,8 @@ export class Coach {
 
   /** The socket, with this attempt's token; a model that refuses the setup hands over to the next attempt. */
   private async connect(s: Session, ask: CoachAsk, token: Promise<Token>) {
+    // a socket that never opens, or a setup Gemini never answers, would leave "Starting…" up with the mic open
+    this.wait(s, CONNECT_MS, () => this.fail("Gemini didn't answer. Ask again in a moment."));
     const t = await token;
     if (this.s !== s) return;
     s.attempt = t.attempt;
@@ -158,12 +168,18 @@ export class Coach {
     ws.onclose = (e) => {
       if (this.s !== s || s.ws !== ws) return;
       s.ws = null;
-      if (RETRY.test(e.reason) && t.attempt + 1 < t.attempts) {
-        ladder = t.attempt + 1; // remembered for the next question too
-        if (!s.ready) {
-          this.set("starting");
-          void this.connect(s, ask, mint(ask, ladder)).catch((err) => this.s === s && this.fail(String(err?.message ?? err)));
-          return;
+      if (RETRY.test(e.reason)) {
+        if (t.attempt + 1 < t.attempts) {
+          ladder = t.attempt + 1; // remembered for the next question too
+          if (!s.ready) {
+            this.set("starting");
+            void this.connect(s, ask, mint(ask, ladder)).catch((err) => this.s === s && this.fail(String(err?.message ?? err)));
+            return;
+          }
+        } else {
+          // the last model and reply mode refused too: there's nothing left to try, so the next Ask starts over
+          ladder = 0;
+          if (this.state !== "answering") return this.fail("None of the Gemini Live models answered. Set GEMINI_LIVE_MODEL on the bridge.");
         }
       }
       if (this.state === "answering") {
@@ -214,7 +230,19 @@ export class Coach {
         ? (c.modelTurn?.parts ?? []).filter((p) => typeof p.text === "string" && !p.thought).map((p) => p.text).join("")
         : (c.outputTranscription?.text ?? ""); // a speaking model's own words; its audio is never played
     if (words) this.hear(s, words);
-    if (c.turnComplete || (s.reply === "text" && c.generationComplete)) this.finishTurn(s);
+    if (s.reply === "text") {
+      if (c.turnComplete || c.generationComplete) this.finishTurn(s);
+    } else if (c.turnComplete) {
+      // the transcript can still be on its way (before or after this): wait until it has settled
+      s.complete = true;
+      this.settleTurn(s);
+    }
+  }
+
+  /** A speaking model's turn is over once Gemini says so and its transcript has stopped arriving. */
+  private settleTurn(s: Session) {
+    clearTimeout(s.settle);
+    s.settle = window.setTimeout(() => this.s === s && this.finishTurn(s), SETTLE_MS);
   }
 
   /** The answer arriving: shown as it comes, each finished sentence read out right away. */
@@ -228,6 +256,7 @@ export class Coach {
     }
     s.answer += words;
     this.on.answer?.(s.answer.trim());
+    if (s.complete) this.settleTurn(s); // more of a completed turn's transcript: wait for the rest
     s.unsaid += words;
     let cut = 0;
     for (const m of s.unsaid.matchAll(/[.!?…]+["')\]]*\s+/g)) cut = m.index! + m[0].length;
@@ -268,6 +297,8 @@ export class Coach {
 
   private listen(s: Session, ms: number) {
     s.sending = true;
+    s.complete = false; // a new question
+    clearTimeout(s.settle);
     s.talk = s.quiet = 0;
     this.set("listening");
     this.wait(s, ms, () => this.stop()); // nothing asked: done

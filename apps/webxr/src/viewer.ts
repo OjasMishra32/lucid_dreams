@@ -379,7 +379,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
       t = st.start;
     }
     const line = lesson.phase === "turn" ? "Your turn." : `${st.title}. ${st.tip ?? ""}`;
-    if (line !== lastSaid) say((lastSaid = line));
+    if (line !== lastSaid) {
+      // the lesson moved on (Again, or the turn): the device never reads it over the coach, nor into its open mic
+      coach?.stop();
+      say((lastSaid = line));
+    }
     syncAudio();
   };
   if (lesson) {
