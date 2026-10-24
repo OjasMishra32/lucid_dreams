@@ -6,6 +6,18 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## NOW (Fri 10:10 PM): what changed while you were in the exam
+
+- The product is one line (AGENTS.md, top): photo/video + one sentence of intent -> an experience
+  (`experience.json`: teach / companion / watch / play). Avatars run the same plans: a teach step's times are
+  `motion.json` time. A photo-only person with an idle loop is a `companion`.
+- Chess legends are queued as avatars from freely licensed photos: `bobby-fischer.jpg` and `magnus-carlsen.jpg` in
+  `~/Downloads/lucid-photos/`, submitted automatically once `ASSETS_OK`. Check their `ref_check.png` and `thumb.jpg`
+  like any other avatar. Fischer's photo is black and white and Carlsen's stops at the thighs: if DiGS struggles with
+  either, say so in the Status log.
+- Your seated idle and reach-and-place are now what makes them sit across the board and move the pieces.
+- Your list below is unchanged otherwise. Step 1 is still connecting Ojasva's Mac to HiPerGator.
+
 ## DO THIS NOW (Fri 9:15 PM): your list, in order
 
 This is your current list. Everything further down is earlier context.

@@ -3,6 +3,21 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## NOW (Fri 10:10 PM): run experience.json, the main goal
+
+Hands-only controls with a passing HandsCheck: excellent. The product is now one line (AGENTS.md, top): photo or
+video + one sentence of intent -> the person in your room doing it with you, driven by `experience.json` (AGENTS.md,
+Contracts, "Experience"). Your next item, before anything else in the backlog:
+
+1. **Teach mode in the Quest app:** steps from `experience.json`. Each step plays at its `speed`, `repeat` times, then
+   the person freezes in the step's last pose for your turn (the move's length at 1x + 1.5 s, with a thin progress
+   bar), then the next step, wrapping after the last. A step panel at eye level, off to the right of the person
+   (step n of N or "Your turn", title, tip), and Back / Again / Next added to your fingertip bar. Read tips aloud with
+   Android TTS (never the person's voice). Reference behaviour: `apps/webxr/src/experience.ts` (`Lesson`).
+2. **Placement by `place`:** `facing` (1.8 m in front, facing you), `beside` (0.8 m to your right, 0.5 m ahead,
+   facing your way), `ahead` (1.5 m ahead, facing away).
+3. Then the SPZ/avatar items as before.
+
 ## Your big chunk
 
 | Piece | Done means |

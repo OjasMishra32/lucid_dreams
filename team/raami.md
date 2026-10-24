@@ -4,6 +4,34 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## NOW (Fri 10:10 PM): your top item is the brain of the main goal
+
+Thanks for catching the export bug ("Jump shot" split on the space): fixed in `stage-export.sbatch` (every job field
+is read on its own now), before the first real runs reached export. That would have cost us the night.
+
+The product, in one line (AGENTS.md, top): **any photo or video + one sentence of what you want to do with that
+person -> they're in your room doing it with you.** The sentence is the `intent`; the plan is `experience.json`
+(AGENTS.md, Contracts, "Experience"). You own turning one into the other. This is also our MLH Gemini entry, and it
+replaces the separate "guide" item.
+
+1. **"What do you want to do with them?"** in Make a dream: one text field under the file, with three tappable
+   suggestions that fill it ("Teach me this", "Just be with me", "Play chess with me"). Send it as `intent` in
+   `POST /api/jobs`, and pass it to the runner as `--intent "<text>"` (the runner already takes it, and it lands in
+   `dream.json` as `intent`).
+2. **The experience step (Gemini):** when a dream finishes (it appears in `dreams/<id>/` on the Mac), call Gemini with
+   the clip window the person was built from (the uploaded file cut to `[startS, startS + durationS]`; not
+   `preview.mp4`, which is an orbit render), the intent and the name, with a JSON response schema matching
+   `experience.json`. Rules for the prompt: step times are seconds in that cut (0 = its first frame); 2-6 steps for
+   teach; `place` is `ahead` for moves you follow (dance, sport form), `facing` for things you watch hands do (guitar,
+   cooking) and for companions; tips are short, second person, one sentence. Write `dreams/<id>/experience.json`, add
+   `"experience": "experience.json"` to its `dream.json`. Cache: never call twice for the same id + intent.
+3. **Dream page:** show the plan (title, steps with times) and make "View in your room" the obvious action; for
+   `play` mode also link `https://<host>:5180/?mode=chess&opponent=<id>&strength=<strength>`.
+4. Then: the 5-second window picker, photo consent checkbox, captions track, chess nav link (unchanged).
+
+Test now without HiPerGator: `dreams/test-avatar/` on Ojasva's Mac has a hand-written `experience.json` (a two-step
+"wave hello" lesson). The WebXR viewer already runs it: `http://localhost:5181/?dream=test-avatar`.
+
 ## Your big chunk
 
 | Piece | Done means |

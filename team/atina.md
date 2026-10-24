@@ -4,6 +4,21 @@ You own what the judges see and read, and the footage everything is built from. 
 judgment and writing, not heavy AI use, so it fits a small Codex plan: use Codex for the README and Devpost polish,
 not for long coding sessions. Read `AGENTS.md` first.
 
+## NOW (Fri 10:10 PM): the hero demo is a lesson
+
+The product is one line (AGENTS.md, top): any photo or video + one sentence of what you want to do with that person
+-> they're in your room doing it with you. The demo should show exactly that, three times:
+
+1. **The hero clip: a teacher.** A consenting teammate teaching one simple thing to camera, 5-8 s, full body, still
+   camera, good light: a basic guitar strum, a dance step or a free-throw form. Shoot it tonight. Drop it into
+   `~/Downloads/lucid-clips/` on Ojasva's Mac with a `.txt` of the same name holding the intent, e.g.
+   `vishal-strum.mp4` + `vishal-strum.txt` containing `teach me this strum`. It comes back as a lesson.
+2. **The family moment:** the photo + "I just want to sit with her" (companion), once the written yes is in.
+3. **The fun one:** chess against the legends (labelled as the engine, as always).
+
+Devpost and the video script should open on the sentence: "Show it anyone. Tell it what you want to do with them."
+Captions and old-footage restoration (below) stay yours, after the hero clip.
+
 ## Your big chunk
 
 | Piece | Done means |

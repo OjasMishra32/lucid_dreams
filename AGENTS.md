@@ -15,6 +15,12 @@ Tagline: *Anyone from any video, standing in your room.*
 
 The name comes from lucid dreams: people who feel real enough to be in the room with you, and you're in control.
 
+**The main goal, in one line: any photo or video in, plus one sentence of what you want to do with that person, and
+they're in your room doing it with you.** A guitar teacher's clip + "teach me this strum" becomes a lesson (each step
+slowed down, then your turn). A grandparent's photo + "I just want to sit with her" becomes a quiet companion. A
+player's photo + "play chess with me" sits them across a board. The sentence is the `intent`; Gemini turns intent +
+clip into `experience.json` (Contracts, "Experience"); every player runs it. Everything else serves this.
+
 ## The bar: extreme fidelity
 
 The whole project lives or dies on how real the people look. **No blur, no floaters, no mushy faces or hands.**
@@ -55,7 +61,9 @@ We do **not** enter the Twinly API prize (conflict of interest: it's Ojasva's co
 4. Never commit secrets (Hugging Face tokens, API keys) or big binaries (model weights, raw videos, Gaussian files).
    Use `.gitignore`; large assets live on HiPerGator or in a shared drive.
 5. **Consent:** photoreal likeness and any voice only for people who agreed (team, family who said yes).
-   Public figures (e.g. Steph Curry clips) appear for the demo only: never clone their voice or have AI speak as them.
+   Public figures appear for the demo only, from their real footage or a freely licensed photo (credited): never
+   clone their voice, never have AI speak as them, and always label them (e.g. the chess legends are "Stockfish at
+   X's peak rating. Not affiliated."). Never use a public figure's likeness to suggest they endorse us.
 6. **Honesty:** generated content (the sides and back a camera never saw) can be revealed with a "seen vs imagined"
    toggle. We never present generated detail as real.
 7. Stay in your lane: each area below has one owner. Change a contract (bundle format, API) only after telling everyone.
@@ -174,11 +182,42 @@ Optional in any bundle: `"captions": "captions.vtt"` (WebVTT of what the person 
 `motion.json`: `{ "fps": 30, "betas": [10 floats], "frames": [ { "root_t": [x,y,z], "root_q": [x,y,z,w],
 "pose": [55 x 3 axis-angle, SMPL-X joint order] } ] }`
 
+### Experience (what you do with the person: `experience.json`, optional in any bundle)
+
+`dream.json` carries `"intent"` (the user's sentence, or null) and `"experience": "experience.json"` once the plan
+exists. Gemini writes the plan on the bridge (Raami) from the intent and the clip; players run it (WebXR: Ojasva,
+Quest: Ian). Unknown fields are ignored, so it can grow.
+
+```json
+{
+  "intent": "teach me this strum",
+  "mode": "teach",
+  "title": "Down, down-up: a first strum",
+  "summary": "One sentence on what they're doing.",
+  "place": "ahead",
+  "steps": [
+    { "start": 0.0, "end": 1.6, "title": "Rest the wrist", "tip": "Let it hang loose over the sound hole.", "speed": 0.5, "repeat": 2 }
+  ],
+  "play": { "game": "chess", "strength": "carlsen" }
+}
+```
+
+- `mode`: `teach` (steps: each plays at `speed`, `repeat` times, then the person freezes for your turn, then the next
+  step), `companion` (they're simply with you: idle, voice, captions), `watch` (plain playback), `play` (`play.game`:
+  `chess`, `strength` one of club, expert, master, gm, fischer, carlsen, max).
+- `place`: `facing` (1.8 m in front, facing you; default), `beside` (at your side, facing your way: copy them),
+  `ahead` (1.5 m ahead, facing away: follow them like a teacher at the front of a class).
+- `steps[].start/end`: seconds in the bundle's own clip time (0 = the bundle's first frame, after `startS`).
+- Tips are read in the device's voice, never the person's.
+
+The drop folder takes an intent too: a `.txt` with the same name next to the clip or photo
+(`guitar-teacher.mp4` + `guitar-teacher.txt`).
+
 ### Job API (the bridge on Ojasva's Mac; Raami builds it, Ojasva wires it to HiPerGator)
 
 | Call | Body / reply |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` (clip or photo), `name`, `kind` = `replay` or `avatar`, optional `startS` (seconds: where the 5-second window starts in a long clip) -> `{ "id" }` |
+| `POST /api/jobs` | multipart: `file` (clip or photo), `name`, `kind` = `replay` or `avatar`, optional `startS` (seconds: where the 5-second window starts in a long clip), optional `intent` (what to do with them; pass to the runner as `--intent`) -> `{ "id" }` |
 | `GET /api/jobs/:id` | `{ id, status: queued/running/done/failed, stage, progress 0-1, etaS, message }` |
 | `GET /api/dreams` | list of `dream.json` objects |
 | `GET /dreams/<id>/...` | the bundle's files, static |
@@ -266,3 +305,4 @@ samples/           a small sample dream bundle for development (kept tiny, or li
 - Fri 9:40 PM, Ojasva: fixed: fetching an avatar left out its `avatar.ply` (the fetch skipped every PLY; now only replay frames). Avatar bundles now carry Vishal's `reality.ply` as `avatar.reality`, and the viewer's Reality check works on avatars (skinned identically, with the seen %). Vishal: nothing to change on your side.
 - Fri 9:22 PM, Ian: Quest hands-only controls in apps/quest: quick pinch play/pause, pinch-drag the person along the floor, two hands turn, long pinch re-places where you point, a control bar in reach with fingertip buttons (once per push) and a pinch-drag timeline, real hands occlude the person, soft contact shadow under the feet. HandsCheck (simulated hands, real scene) passes every gesture; APK builds; not yet tried with real hands on the Quest.
 - Fri 9:45 PM, Raami: **heads-up for Ojasva, blocks exports.** pipeline/hpg/stage-export.sbatch: `read -r ID NAME FPS` splits on spaces, so any dream name with a space ("Jump shot", and most names from the web app) gives NAME=`"Jump` and FPS=`shot" 25`; export's `--fps` then fails after the GPU work. Reproduced in bash. One-line fix: put FPS before the name, `read -r ID FPS NAME` with `print(j["id"], j.get("fps", 25), json.dumps(...))` (read gives the rest of the line to the last variable).
+- Fri 10:05 PM, Ojasva: **the main goal is now explicit** (top of this file): photo/video + one sentence of intent -> an experience. `intent` flows from the job API / runner `--intent` / drop-folder `.txt` into dream.json; `experience.json` contract added (teach / companion / watch / play; place facing / beside / ahead). The WebXR viewer runs teach mode (steps slowed and repeated, your turn, step card, Back / Again / Next) and play mode. Raami: Gemini writes experience.json (your top item now). Chess legends: Fischer's and Carlsen's avatars from freely licensed photos are queued.
