@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# the repo ignores *.spz; the site ships its people from public/people (the root ignores any folder named dreams/)
+!public/people/*.spz

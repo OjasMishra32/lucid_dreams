@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="color-scheme" content="dark" />
+    <title>Lucid Dreams</title>
+    <meta name="description" content="Anyone from any video, standing in your room. Photoreal, life-size people from a single video, in Meta Quest passthrough or on a laptop." />
+    <meta property="og:title" content="Lucid Dreams" />
+    <meta property="og:description" content="Anyone from any video, standing in your room." />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <header class="nav" id="nav">
+      <div class="nav-inner">
+        <a class="wordmark" href="#top">Lucid Dreams</a>
+        <nav class="nav-links" aria-label="Sections">
+          <a href="#how">How it works</a>
+          <a href="#uses">Uses</a>
+          <a href="#honesty">Honesty</a>
+          <a href="#team">Team</a>
+        </nav>
+        <a class="nav-repo" data-repo href="https://github.com/OjasMishra32/lucid_dreams">GitHub</a>
+      </div>
+    </header>
+
+    <main>
+      <!-- Hero -->
+      <section class="hero" id="top">
+        <div class="hero-canvas" id="hero-canvas" aria-hidden="true"></div>
+        <div class="hero-inner">
+          <p class="hero-eyebrow seq" style="--seq: 0">Lucid Dreams</p>
+          <h1 class="hero-title">
+            <span class="mask"><span class="seq" style="--seq: 1"><span class="half">Anyone from</span> <span class="half">any video,</span></span></span>
+            <span class="mask"><span class="seq" style="--seq: 2"><span class="half">standing in</span> <span class="half">your room.</span></span></span>
+          </h1>
+          <div class="hero-figure" id="hero-figure"></div>
+          <p class="hero-lede seq" style="--seq: 5">
+            <strong>A photo or a video, and one sentence of what you want to do with them.</strong>
+            They’re in your room, life-size, doing it with you.
+          </p>
+          <p class="hero-caption seq" style="--seq: 6" id="hero-caption" aria-live="polite"></p>
+          <a class="hero-demo seq" style="--seq: 6" id="demo-link" href="#">Watch the demo <span aria-hidden="true">›</span></a>
+        </div>
+      </section>
+
+      <!-- Intent -->
+      <section class="intent" id="intent" aria-labelledby="intent-title">
+        <div class="intent-track" id="intent-track">
+          <div class="intent-sticky">
+            <p class="eyebrow">One sentence</p>
+            <h2 id="intent-title">Say what you want<br />to do with them.</h2>
+            <div class="field" aria-hidden="true">
+              <span class="field-text" id="typed">teach me this jump shot</span><span class="caret"></span>
+            </div>
+            <div class="modes" id="modes">
+              <div class="mode-names" role="list">
+                <span role="listitem" class="mode-name on" data-mode="0">Teach</span>
+                <span role="listitem" class="mode-name" data-mode="1">Companion</span>
+                <span role="listitem" class="mode-name" data-mode="2">Play</span>
+              </div>
+              <div class="mode-lines">
+                <p class="mode-line on" data-mode="0">Each step of the move, slowed down. Then your turn.</p>
+                <p class="mode-line" data-mode="1">They’re simply with you. Their voice, and captions beside them.</p>
+                <p class="mode-line" data-mode="2">A real-size board between you, and the engine across it.</p>
+              </div>
+            </div>
+            <p class="intent-foot">Gemini turns the sentence into the plan.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- How it works -->
+      <section class="how" id="how" aria-labelledby="how-title">
+        <div class="how-track" id="how-track">
+          <div class="how-sticky">
+            <div class="how-canvas" id="how-canvas" aria-hidden="true">
+              <div class="measure" id="measure"></div>
+            </div>
+            <div class="how-figure" id="how-figure"></div>
+            <div class="how-copy">
+              <p class="eyebrow" id="how-title">How it works</p>
+              <div class="steps">
+                <article class="step on" data-step="0">
+                  <p class="step-num">48</p>
+                  <h3>views around them</h3>
+                  <p>4DAnyone turns one video into 48 consistent views. Three rings of 16 cameras that were never there.</p>
+                  <p class="step-meta">4DAnyone, Ant Research. Public August 2026.</p>
+                </article>
+                <article class="step" data-step="1">
+                  <p class="step-num">12</p>
+                  <h3>GPUs per person</h3>
+                  <p>Every frame is rebuilt as 3D Gaussians on UF’s HiPerGator, each GPU taking a slice of the clip.</p>
+                  <div class="gpus" id="gpus" aria-hidden="true">
+                    <div class="gpu-row"></div>
+                    <div class="gpu-labels"><span>B200</span><span>RTX PRO 6000</span></div>
+                  </div>
+                </article>
+                <article class="step" data-step="2">
+                  <p class="step-num">1:1</p>
+                  <h3>on your floor</h3>
+                  <p>Life-size in passthrough on Quest 3S, or on a laptop. Walk around them. Never scaled.</p>
+                  <p class="step-meta">WebXR, local-floor. Their feet on your floor.</p>
+                </article>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Uses -->
+      <section class="uses" id="uses" aria-labelledby="uses-title">
+        <header class="section-head" data-reveal>
+          <p class="eyebrow">Uses</p>
+          <h2 id="uses-title">Who would you<br />bring in?</h2>
+        </header>
+        <ol class="use-list">
+          <li class="use" data-reveal>
+            <h3>Learn a move from a pro.</h3>
+            <div class="use-body">
+              <p>A basketball jump shot, slowed down step by step, in your driveway.</p>
+              <p class="use-intent"><q>Teach me this jump shot.</q><span class="use-mode">Teach</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>A teacher in your room.</h3>
+            <div class="use-body">
+              <p>A guitar strum or a dance step. Your turn after every step.</p>
+              <p class="use-intent"><q>Show me the strum, slowly.</q><span class="use-mode">Teach</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>Physical therapy at home.</h3>
+            <div class="use-body">
+              <p>Your therapist’s exercise video becomes your therapist, life-size, checking your form.</p>
+              <p class="use-intent"><q>Walk me through my knee exercises.</q><span class="use-mode">Teach</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>Someone you’ve lost.</h3>
+            <div class="use-body">
+              <p>An old home video of a grandparent. Their voice, and their words beside them. Consent first.</p>
+              <p class="use-intent"><q>I just want to sit with her.</q><span class="use-mode">Companion</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>Old film, brought back.</h3>
+            <div class="use-body">
+              <p>Buster Keaton, 1920, public domain, standing in your living room.</p>
+              <p class="use-intent"><q>Let me see him up close.</q><span class="use-mode">Companion</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>You, perfected.</h3>
+            <div class="use-body">
+              <p>Your own body doing a pro’s move: a rigged avatar from your photo, moving with their motion.</p>
+              <p class="use-intent"><q>Show me doing his jump shot.</q><span class="use-mode">Teach</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>Chess with the legends.</h3>
+            <div class="use-body">
+              <p>Stockfish at Fischer’s and Carlsen’s peak ratings, across a real-size board. Hands only.</p>
+              <p class="use-intent"><q>Play chess with me.</q><span class="use-mode">Play</span></p>
+            </div>
+          </li>
+          <li class="use" data-reveal>
+            <h3>Captions for everyone.</h3>
+            <div class="use-body">
+              <p>What they say floats beside them, where they stand. Their voice comes from there too.</p>
+              <p class="use-intent"><span class="use-mode">Every mode</span></p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <!-- Play -->
+      <section class="play" id="play" aria-labelledby="play-title">
+        <div class="play-stage">
+          <div class="play-canvas" id="chess-canvas" aria-hidden="true"></div>
+        </div>
+        <div class="play-copy" data-reveal>
+          <p class="eyebrow">Play</p>
+          <h2 id="play-title">Across a real board.</h2>
+          <p class="lede">Stockfish at a world champion’s peak rating. You move the pieces with your hands; it answers from the other side.</p>
+          <dl class="ratings">
+            <div><dt>Fischer, 1972</dt><dd>2785</dd></div>
+            <div><dt>Carlsen, 2014</dt><dd>2882</dd></div>
+          </dl>
+          <p class="fine">Always labelled as the engine, never as the person.</p>
+        </div>
+      </section>
+
+      <!-- Honesty -->
+      <section class="honesty" id="honesty" aria-labelledby="honesty-title">
+        <div class="honesty-grid">
+          <div class="honesty-stage">
+            <div class="honesty-canvas" id="honesty-canvas" aria-hidden="true"></div>
+            <div class="honesty-figure" id="honesty-figure"></div>
+          </div>
+          <div class="honesty-copy">
+            <p class="eyebrow" data-reveal>Honesty</p>
+            <h2 id="honesty-title" data-reveal>Blue is what the camera never saw.</h2>
+            <p class="lede" data-reveal>Reality check tints everything the AI imagined, and tells you how much was real.</p>
+            <div class="seen" data-reveal>
+              <p class="seen-num"><span id="seen-pct">–</span><span class="seen-unit">%</span></p>
+              <p class="seen-label">seen by the camera</p>
+              <button class="toggle" id="reality" type="button" aria-pressed="true">Reality check</button>
+              <p class="seen-note" id="seen-note" hidden>Estimated for this sample person. Real bundles tint each Gaussian from the camera’s own view.</p>
+            </div>
+          </div>
+        </div>
+        <ul class="promises">
+          <li data-reveal><h3>Consent first.</h3><p>Likeness and voice only from people who said yes.</p></li>
+          <li data-reveal><h3>Public figures, from real footage.</h3><p>Or freely licensed photos. Never their voice.</p></li>
+          <li data-reveal><h3>Engines say so.</h3><p>The chess player across from you is Stockfish, labelled as Stockfish.</p></li>
+        </ul>
+      </section>
+
+      <!-- Built with -->
+      <section class="built" id="built" aria-labelledby="built-title">
+        <header class="section-head" data-reveal>
+          <p class="eyebrow">Built with</p>
+          <h2 id="built-title">Fresh off the frontier.</h2>
+        </header>
+        <dl class="credits">
+          <div class="credit new" data-reveal><dt>4DAnyone</dt><dd>One video into 48 consistent views</dd><dd class="who">Ant Research · 2026</dd></div>
+          <div class="credit new" data-reveal><dt>DiGS-Avatar</dt><dd>A rigged person from one photo</dd><dd class="who">ECCV · 2026</dd></div>
+          <div class="credit" data-reveal><dt>gsplat</dt><dd>Gaussian reconstruction, frame by frame</dd><dd class="who">Nerfstudio</dd></div>
+          <div class="credit" data-reveal><dt>Spark</dt><dd>Splats in the browser and in WebXR</dd><dd class="who">World Labs</dd></div>
+          <div class="credit" data-reveal><dt>three.js</dt><dd>The 3D layer underneath</dd><dd class="who">Open source</dd></div>
+          <div class="credit" data-reveal><dt>Gemini</dt><dd>Your sentence, turned into the plan</dd><dd class="who">Google</dd></div>
+          <div class="credit" data-reveal><dt>Stockfish</dt><dd>The chess engine</dd><dd class="who">Open source</dd></div>
+          <div class="credit" data-reveal><dt>SMPL-X</dt><dd>The body model behind every rig</dd><dd class="who">Max Planck Institute</dd></div>
+          <div class="credit" data-reveal><dt>BiRefNet</dt><dd>The person, cut from the background</dd><dd class="who">Open source</dd></div>
+          <div class="credit" data-reveal><dt>GVHMR</dt><dd>Motion from video</dd><dd class="who">Zhejiang University</dd></div>
+          <div class="credit" data-reveal><dt>HiPerGator</dt><dd>B200 and RTX PRO 6000 GPUs</dd><dd class="who">University of Florida</dd></div>
+        </dl>
+      </section>
+
+      <!-- Team -->
+      <section class="team" id="team" aria-labelledby="team-title">
+        <header class="section-head" data-reveal>
+          <p class="eyebrow">Team</p>
+          <h2 id="team-title">Made in a weekend<br />at Gator Hack V.</h2>
+        </header>
+        <ul class="people">
+          <li data-reveal><span class="name">Ojasva Mishra</span><span class="role">Pipeline</span></li>
+          <li data-reveal><span class="name">Vishal Naveen</span><span class="role">Avatars</span></li>
+          <li data-reveal><span class="name">Ian Hoang</span><span class="role">Quest app</span></li>
+          <li data-reveal><span class="name">Raami</span><span class="role">Web app and Gemini</span></li>
+          <li data-reveal><span class="name">Atina Ruvinova</span><span class="role">Story and demo</span></li>
+        </ul>
+        <a class="repo" data-repo data-reveal href="https://github.com/OjasMishra32/lucid_dreams">
+          <span class="repo-label">Open source, MIT</span>
+          <span class="repo-url">github.com/OjasMishra32/<wbr />lucid_dreams <span aria-hidden="true">›</span></span>
+        </a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Lucid Dreams. Gator Hack V, University of Florida, October 2026.</p>
+      <p>Chess set by Riley Queen, Poly Haven, CC0. <a href="assets/CREDITS.md">Asset credits</a></p>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
