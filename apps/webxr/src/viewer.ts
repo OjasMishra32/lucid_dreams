@@ -33,7 +33,7 @@ const ASK: Record<CoachState, [string, string]> = {
   answering: ["Answering…", "Answering…"],
 };
 const PLACE_DISTANCE = 1.8; // meters in front of you when you enter the room
-const LOAD_CONCURRENCY = 4;
+const LOAD_CONCURRENCY = 6; // frames fetched at once (more hides a slow link's latency)
 const SPEEDS = [1, 0.5, 0.25];
 type Place3 = "facing" | "beside" | "ahead";
 const PLACE_ORDER: Place3[] = ["facing", "beside", "ahead"];
@@ -154,6 +154,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
     loaded++;
     onProgress();
   });
+  // the first frames in order, as far as they've arrived: playback never runs past them
+  const ready = () => {
+    let n = 0;
+    while (n < count && frames[n]) n++;
+    return n;
+  };
   // an avatar with a rig moves live (any motion, one Gaussian file); everything else plays its frames
   let avatar: SkinnedAvatar | null = null;
   if (SkinnedAvatar.canSkin(dream)) {
@@ -166,7 +172,16 @@ export async function renderViewer(root: HTMLElement, id: string) {
       console.warn("Showing the rest pose: the rig didn't load.", e);
     }
   }
-  if (!avatar) await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, count) }, worker));
+  // a replay starts once its first quarter is here and the rest keeps arriving in order behind the playhead, rather
+  // than after every frame (a world is ~500 MB; over a slow link that was minutes of waiting)
+  if (!avatar) {
+    const all = Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, count) }, worker));
+    const enough = Math.min(count, Math.max(12, Math.ceil(count * 0.25)));
+    await Promise.race([all, new Promise<void>((done) => {
+      const check = () => (ready() >= enough ? done() : setTimeout(check, 100));
+      check();
+    })]);
+  }
   const props = await propsReady;
   if (props) {
     person.add(props.group);
@@ -249,6 +264,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
 
   let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
   const show = (i: number, force = false) => {
+    while (i > 0 && !active[i]) i--; // still arriving: the nearest earlier frame, never nothing
     if (active[i]) active[i]!.opacity = reveal;
     if (i === shown && !force) return;
     for (const set of [frames, realityFrames]) if (shown >= 0 && set[shown]) set[shown]!.visible = false;
@@ -740,14 +756,17 @@ export async function renderViewer(root: HTMLElement, id: string) {
       t = hoopBall!.clip; // the game shows them waiting, catching and shooting
       if (audio && !audio.paused) audio.pause();
     } else if (lesson) {
-      if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration);
+      if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration, avatar ? duration : Math.max(0, (ready() - 1) / dream.fps));
       if (playing) t = lesson.update(t, performance.now());
       if (lesson.phase === "turn") {
         const pct = lesson.turnProgress(performance.now());
         $("#step-bar").style.width = `${pct * 100}%`;
         if (renderer.xr.isPresenting && Math.floor(pct * 30) !== Math.floor((pct - dt) * 30)) stepCard.draw(lesson, performance.now());
       }
-    } else if (playing) t = (t + dt * speed) % duration;
+    } else if (playing) {
+      const have = avatar ? count : ready(); // frames still arriving: hold at the last one here, then go on
+      t = have >= count ? (t + dt * speed) % duration : Math.min(t + dt * speed, Math.max(0, (have - 1) / dream.fps));
+    }
     reveal = Math.min(1, reveal + dt / 1.4);
     if (renderer.xr.isPresenting) {
       const target = !playing || performance.now() < captionUntil ? 1 : 0;

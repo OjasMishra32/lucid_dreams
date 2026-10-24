@@ -42,9 +42,19 @@ function dreams(): Plugin {
         }
         const file = resolve(DREAMS, "." + path);
         if (!file.startsWith(DREAMS) || !existsSync(file) || statSync(file).isDirectory()) return next();
+        // the headset keeps a copy and asks each time: an unchanged frame costs a 304, not 4 MB again; one a re-export
+        // changed comes fresh
+        const st = statSync(file);
+        res.setHeader("Last-Modified", st.mtime.toUTCString());
+        res.setHeader("Cache-Control", "no-cache");
+        const since = req.headers["if-modified-since"];
+        if (since && Date.parse(since) >= Math.floor(st.mtimeMs / 1000) * 1000) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
         res.setHeader("Content-Type", TYPES[extname(file)] ?? "application/octet-stream");
-        res.setHeader("Content-Length", String(statSync(file).size));
-        res.setHeader("Cache-Control", "public, max-age=3600");
+        res.setHeader("Content-Length", String(st.size));
         createReadStream(file).pipe(res);
       });
     },
