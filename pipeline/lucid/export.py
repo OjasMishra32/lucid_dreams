@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -49,6 +50,53 @@ def rotate_sh1(shN: np.ndarray, r: np.ndarray) -> np.ndarray:
     v = np.stack([-s[:, 2, :], -s[:, 0, :], s[:, 1, :]], axis=1)  # linear form in (x, y, z)
     v = np.einsum("ij,njc->nic", r, v)
     return np.stack([-v[:, 1, :], v[:, 2, :], -v[:, 0, :]], axis=1).astype(np.float32)
+
+
+SHOT = re.compile(r"\b(shot|shoot|shooting|jumper|basketball|free throw|layup|three)\b", re.I)
+RIM_HEIGHT = 3.05  # m, top of the ring
+RIM_DISTANCE = 4.2  # m from the shooter's feet: about the free-throw line
+
+
+def shot_direction(frames: list[Gaussians]) -> np.ndarray | None:
+    """Which way a shooter faces, from the reconstruction itself: around the frame where the body reaches highest (the
+    release), the ball and hands at the top sit ahead of the chest. Unit (x, z), or None when it can't tell."""
+    tops = []
+    for g in frames:
+        solid = g.means[1 / (1 + np.exp(-g.opacities)) > 0.5]
+        if len(solid) > 500:
+            tops.append(np.percentile(solid[:, 1], 99.5))
+    if not tops:
+        return None
+    peak = int(np.argmax(tops))
+    offsets = []
+    for g in frames[max(0, peak - 5): peak + 6]:
+        solid = g.means[1 / (1 + np.exp(-g.opacities)) > 0.5]
+        if len(solid) < 500:
+            continue
+        top_y = np.percentile(solid[:, 1], 99.5)
+        top = solid[solid[:, 1] > top_y - 0.25]
+        chest = solid[(solid[:, 1] > top_y * 0.45) & (solid[:, 1] < top_y * 0.65)]
+        if len(top) > 20 and len(chest) > 20:
+            offsets.append(top[:, [0, 2]].mean(0) - chest[:, [0, 2]].mean(0))
+    if not offsets:
+        return None
+    d = np.median(np.array(offsets), axis=0)
+    n = float(np.linalg.norm(d))
+    return d / n if n > 0.03 else None
+
+
+def shot_props(frames: list[Gaussians], words: str, fps: float) -> dict | None:
+    """props.json for a shooting clip: a regulation hoop where the shooter is aiming (AGENTS.md, Props). Added, not
+    seen: the hoop isn't reconstructed, it's placed."""
+    if not SHOT.search(words or ""):
+        return None
+    d = shot_direction(frames)
+    if d is None:
+        d = np.array([0.0, 1.0])  # unknown: away from the source camera, which looks along +Z in bundle space
+    feet = frames[0].means[:, [0, 2]].mean(0)
+    rim = feet + d * RIM_DISTANCE
+    return {"fps": fps, "objects": [{"kind": "hoop", "rim": [round(float(rim[0]), 3), RIM_HEIGHT, round(float(rim[1]), 3)],
+                                     "facing": [round(float(-d[0]), 4), 0.0, round(float(-d[1]), 4)], "added": True}]}
 
 
 def placement(first: Gaussians, result: Path | None) -> tuple[np.ndarray, np.ndarray]:
@@ -293,6 +341,10 @@ def main(argv=None):
                     "seenFraction": round(float(np.mean(seen_fractions)), 3) if seen_fractions else None},
         "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    props = shot_props(placed_frames, f"{a.intent} {a.name}", a.fps)
+    if props:
+        (a.out / "props.json").write_text(json.dumps(props, indent=2))
+        dream["props"] = "props.json"
     (a.out / "dream.json").write_text(json.dumps(dream, indent=2))
     print("[export]", json.dumps({k: dream[k] for k in ("id", "frameCount", "metrics")}), f"spz {spz_total / 1e6:.1f} MB")
 
