@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 7:56 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
+Updated Sat 8:24 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60) at 6:15. Kept
@@ -13,14 +13,21 @@ private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
+12. **The demo floor (Ojasva or Ian, for the venue):** Court Side needs about **4.5 x 5.5 m** of clear floor with
+    the Quest boundary set to it (a chair centred on a short side, the walk ring around the pair). In 3.5 x 3.5 m it
+    still works, with three fade-jump viewing spots instead of a full ring. Which floor can we get at Newell / Reitz?
+13. **Your conditions on 8, our design (please check):** the session is `immersive-ar` drawn fully opaque, so it
+    reads as full VR; "See my room" fades the arena and darkness out to passthrough while the frozen players stay.
+    The boundary stays on. Gate: the new Quest test page (ask 7) checks that the boundary still shows in an AR
+    session we paint over; if it doesn't, we add our own: the room fades in when the head is within 0.5 m of it.
 8. **Yes (Ojasva, 8:10 AM): immersive VR for `?mode=court` only**, `immersive-vr` + `local-floor`, court floor on
    the real floor. Two conditions: the Quest boundary stays on (never ask people to turn it off), and the palm menu
    has a "See my room" toggle that drops to passthrough with the frozen players still standing there (comfort and
    safety while walking). Every other mode stays passthrough.
-7. **The first real Quest 3S number (Ian or Ojasva, ~20 min).** Vishal sends `dropin.zip` (throwaway, never
-   commit): copy `court-quest.html` into `apps/webxr/` and `src/spike6/` into `apps/webxr/src/`, open
-   `/court-quest.html`, press "Enter at 0.5x", stand still; photo the results table; repeat at 0.75x and 1x. Steps
-   in its `HOW-TO.md`.
+7. **The first real Quest 3S number (Ian or Ojasva, ~20 min).** A new version of the test page is being built
+   now (adds WebCodecs 1440p72 video, the AR-opaque mode with See my room, the boundary check, splat sort lag,
+   headset off/on). It will be on branch `court-side-q0` (throwaway, never merged) with steps in its `HOW-TO.md`;
+   please wait for it rather than the old zip. ETA ~9:15 AM.
    **(Ojasva, 8:10 AM): waiting on a person in the headset; Ojasva runs it when he's up, unless Ian gets to it first.**
 9. **GPU, new shape:** (a) each main player: 50-step views on its 121-frame clip, then **only the freeze frame**
    reconstructed cold at 250-300k with more iterations (~30-45 min of one B200 each); (b) up to 8 other players:
@@ -54,11 +61,10 @@ private, outside the repo.
 
 ## Now
 
-- Plan `docs/plans/court-side.md` being finished (definition of perfect, footage, smoothness results, frame budget,
-  shot list); then break-it reviews and one independent review; then the build on branch `court-side`.
-- Three hand-off directions being prototyped in parallel on the VR rig: "Same Pixels", "House Lights",
-  "Depth Grows". The session picks one by ~8:45 and logs why here.
-- Court calibration of the chosen angle running (the tool is proven on a synthetic bench: ~0.2 px, ~0.3 cm).
+- Break-it reviews of the plan in: experience (19 findings), runtime (18), pipeline and Grok/Antigravity running.
+  Real findings are being folded in; then one independent review; then the build on branch `court-side` (~9:15).
+- Three hand-off directions prototyped in parallel ("Same Pixels", "House Lights", "Depth Grows"); pick by ~9:00.
+- Calibration of the main angle, SAM 2.1 masks of both players (Vishal's PC), and the freeze-frame choice running.
 
 ## Verdict so far
 
@@ -86,6 +92,11 @@ Biggest risks: the video-to-3D hand-off matching to the pixel (calibration), Luk
 
 ## Decisions
 
+- **Made overnight by the planning session (Vishal can change any):** the watch is the play at real speed, then
+  its own real slow motion from the seat with "Step into the court" live, so any press lands on the freeze; the
+  splat budget is 500k visible until the Quest number says more; the made basket plays afterwards as a labelled
+  replay on the arena's big screen (camera A cuts before the ball lands); the court bundle is served only over USB
+  from 127.0.0.1, never through a tunnel.
 - Video-first: only the freeze frame becomes 3D (Vishal, 6:55 AM). Full immersion, `?mode=court` only (6:50 AM).
 - Overnight (Vishal's standing orders): build on branch `court-side`, pushed for Ojasva to see; nothing merged to
   main until Vishal is back; choices he'd normally make are made here and logged with the reason.
