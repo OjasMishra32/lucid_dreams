@@ -163,10 +163,12 @@ class Body(unittest.TestCase):
         rgb = np.full((len(P), 3), 0.5)
         rect = sp.floor_rect(P, pad=0.6)
         shadow, refl = sp.floor_maps(P, np.ones(len(P)), rgb, rect, size=64)
-        self.assertEqual(shadow.shape, (64, 64, 4))
+        W, H = sp.floor_size(rect, 64)
+        self.assertEqual(shadow.shape, (H, W, 4))
+        self.assertAlmostEqual(H / W, (rect[3] - rect[1]) / (rect[2] - rect[0]), delta=0.03)  # square pixels
         # the image runs minX -> maxX left to right, minZ -> maxZ top to bottom
-        col = int((1.0 - rect[0]) / (rect[2] - rect[0]) * 63)
-        row = int((2.0 - rect[1]) / (rect[3] - rect[1]) * 63)
+        col = int((1.0 - rect[0]) / (rect[2] - rect[0]) * (W - 1))
+        row = int((2.0 - rect[1]) / (rect[3] - rect[1]) * (H - 1))
         self.assertGreater(shadow[row, col, 3], 100)
         self.assertLess(shadow[0, 0, 3], 5)
         self.assertTrue(np.all(shadow[..., :3] == 0))

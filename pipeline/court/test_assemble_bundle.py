@@ -96,6 +96,24 @@ class Bundle(unittest.TestCase):
         self.assertEqual(others["x-one"]["pose"], "C")
         self.assertTrue(any("x-two" in n for n in asm["notes"]))
 
+    def test_idr_frames_are_found_where_the_segments_start(self):
+        S = json.loads((STANDIN / "court.json").read_text())
+        seg = S["video"]["segments"]
+        starts = sorted([seg["pass1"][0], seg["pass2"][0], seg["resume"][0]] + [e["frames"][0] for e in seg["eases"]])
+        h = A.h264_info(STANDIN / S["video"]["file"])
+        self.assertEqual(h["idrFrames"], starts)
+
+    def test_a_pair_behind_camera_f_fails(self):
+        bad = self.tmp / "behind"
+        shutil.copytree(self.out, bad)
+        court = json.loads((bad / "court.json").read_text())
+        C = np.array(court["camera"]["centre"])
+        pc = np.array(court["seat"]["pairCentre"])
+        court["seat"]["pairCentre"] = [round(float(x), 3) for x in (2 * C - pc) * [1, 0, 1]]  # mirrored behind the camera
+        (bad / "court.json").write_text(json.dumps(court))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("behind camera F" in e for e in errs), errs)
+
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"
         shutil.copytree(self.out, bad)

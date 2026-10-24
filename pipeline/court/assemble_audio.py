@@ -87,9 +87,11 @@ def extract(x: np.ndarray, sr: int, t0: float, t1: float, pre: float = 0.3, post
     a, b = max(0, int((t0 - pre) * sr)), min(len(x), int((t1 + post) * sr))
     y = x[a:b].astype(np.float64).copy()
     shape = (-1,) + (1,) * (y.ndim - 1)
-    ni, no = int(fade_in * sr), int(fade_out * sr)
-    y[:ni] *= (0.5 - 0.5 * np.cos(np.pi * (np.arange(ni) / ni))).reshape(shape)
-    y[-no:] *= (0.5 + 0.5 * np.cos(np.pi * ((np.arange(no) + 1) / no))).reshape(shape)
+    ni, no = min(int(fade_in * sr), len(y) // 2), min(int(fade_out * sr), len(y) // 2)
+    if ni > 0:
+        y[:ni] *= (0.5 - 0.5 * np.cos(np.pi * (np.arange(ni) / ni))).reshape(shape)
+    if no > 0:
+        y[len(y) - no:] *= (0.5 + 0.5 * np.cos(np.pi * ((np.arange(no) + 1) / no))).reshape(shape)
     return y
 
 
@@ -126,8 +128,9 @@ def make_audio(x: np.ndarray, sr: int, swell: tuple[float, float], out_dir, lufs
         raw = loudness(wb)
         gain = lufs - raw["I"]
         trim = 0.0
-        for _ in range(3):  # the encoder's own overshoot is small; re-measure until the bed sits on target
-            encode(wb, out_dir / "bed.m4a", gain + trim)
+        for attempt in range(3):  # the encoder's own overshoot is small; re-measure until the bed sits on target
+            used = gain + trim
+            encode(wb, out_dir / "bed.m4a", used)
             got = loudness(out_dir / "bed.m4a")
             if got["TP"] > peak:
                 raise ValueError(f"the bed's true peak {got['TP']:.1f} dBTP passes {peak} at {lufs} LUFS")
@@ -135,8 +138,8 @@ def make_audio(x: np.ndarray, sr: int, swell: tuple[float, float], out_dir, lufs
                 break
             trim += lufs - got["I"]
         sw = loudness(ws)
-        over = max(0.0, sw["TP"] + gain + trim - (peak - 0.5))
-        encode(ws, out_dir / "swell.m4a", gain + trim - over)
-    return {"bedLufs": got["I"], "bedTruePeak": got["TP"], "gainDb": round(gain + trim, 2), "swellGainDb": round(over, 2),
+        over = max(0.0, sw["TP"] + used - (peak - 0.5))
+        encode(ws, out_dir / "swell.m4a", used - over)
+    return {"bedLufs": got["I"], "bedTruePeak": got["TP"], "gainDb": round(used, 2), "swellGainDb": round(over, 2),
             "swell": [round(swell[0], 3), round(swell[1], 3)], "bedSeconds": round(len(bed) / sr, 3),
             "swellSeconds": round(len(shot) / sr, 3), "channels": 1}

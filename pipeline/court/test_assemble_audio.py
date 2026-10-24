@@ -52,6 +52,14 @@ class Swell(unittest.TestCase):
         self.assertLess(np.abs(shot[-10:]).max(), 1e-3)
 
 
+class Edges(unittest.TestCase):
+    def test_one_shot_near_the_end_of_the_loop(self):
+        x = crowd(seconds=5.0, bump=(4.0, 4.9))
+        shot = au.extract(x, SR, 4.0, 4.9)
+        self.assertLess(np.abs(shot[-10:]).max(), 1e-3)
+        self.assertEqual(len(au.extract(x, SR, 1.0, 2.0, fade_in=0, fade_out=0)), int(2.6 * SR) - int(0.7 * SR))
+
+
 class Encode(unittest.TestCase):
     def test_bed_and_swell_share_one_gain_to_the_target(self):
         x = crowd()

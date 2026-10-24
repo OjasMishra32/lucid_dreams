@@ -70,7 +70,7 @@ BOARD_X, BOARD_HALF, BOARD_Y = 13.106, 0.915, (2.90, 3.97)
 LIGHT = {"crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5, "alternative": {"crowd": 0.16, "floor": 0.14}}
 SEAT = {"distance": 5.0, "distanceRange": [4, 7], "closer": 2.0, "clear": 1.0, "ringArea": [4.5, 5.5]}
 SPLAT_BUDGET = 500_000  # visible at the worst pose until the Quest says more (plan 8)
-PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|ply|glb|m4a|mp4|spz)$", re.I)
+PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|webp|ply|glb|bin|m4a|mp4|wav|spz)$", re.I)
 
 
 def expand(p) -> Path:
@@ -90,7 +90,7 @@ def bundle_paths(o) -> list[str]:
     elif isinstance(o, list):
         for v in o:
             out += bundle_paths(v)
-    elif isinstance(o, str) and PATH_EXT.search(o) and "/" in o and not o.startswith(("/", "http")):
+    elif isinstance(o, str) and PATH_EXT.search(o) and " " not in o:
         out.append(o)
     return out
 
@@ -169,9 +169,18 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
         rate_show = timing.get("sourceFps", 1) * timing.get("slow", 1)
         rate_real = rate_show if real else src_cfg.get("sourceFps", rate_show) * src_cfg.get("slow", 1)
         k = rate_real / rate_show
-        for fr in frames:
-            q, f = calib.at(f_real + (fr["src"] - f_show) * k)
-            fr["q"], fr["f"] = rnd(q, 9), round(float(f), 4)
+
+        def recamera(frs: list) -> None:
+            for fr in frs:
+                q, f = calib.at(f_real + (fr["src"] - f_show) * k)
+                fr["q"], fr["f"] = rnd(q, 9), round(float(f), 4)
+
+        recamera(frames)
+        hz90 = (video.get("fallbacks") or {}).get("hz90")
+        if hz90 and hz90.get("frames"):
+            other = json.loads((w.root / hz90["frames"]).read_text())
+            recamera(other)
+            w.json(hz90["frames"], other)
         timing = {**timing, "centre": rnd(calib.C)}
         w.piece("cameras", True, f"every show frame's camera from the calibration ({calib.clamped} frames outside its "
                 f"range {calib.range} held at its ends)", clamped=calib.clamped)
@@ -366,7 +375,7 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         sim, info = geo.place_by_feet(P, cam_pos, feet.mean(0), camF.C)
     base = f"players/{pid}"
     if real:
-        seen = seen_of(s, expand(slot["reality"]) if slot.get("reality") else None, expand(slot["spz"]) if slot.get("spz") else None)
+        seen = seen_of(s, expand(slot["reality"]) if slot.get("reality") else None, expand(slot["spz"]) if slot.get("spz") else None, w, pid)
     else:
         seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
     b = body_files(w, base, s, sim, seen, camF)
@@ -465,15 +474,18 @@ def body_files(w: Writer, base: str, s: sp.Splats, sim: geo.Similarity, seen: np
     return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean())}
 
 
-def seen_of(s: sp.Splats, reality: Path | None, spz: Path | None) -> np.ndarray:
+def seen_of(s: sp.Splats, reality: Path | None, spz: Path | None, w: Writer | None = None, who: str = "") -> np.ndarray:
     """What the cameras saw: from the export's .reality.spz, or a reality PLY in the same order (unchanged colour =
-    seen), else everything."""
+    seen). Without either everything counts as seen, and the assembly notes it (rule 6: never pass invention off as
+    real, so the Reality check of such a body is incomplete until its reality file lands)."""
     if reality is not None and reality.exists():
         if reality.suffix == ".spz":
             return sp.seen_from_spz(s, reality, spz if spz and spz.exists() else None)
         r = sp.read_ply(reality)
         if len(r) == len(s):
             return np.all(np.isclose(r.dc, s.dc), 1)
+    if w is not None:
+        w.notes.append(f"{who}: no reality file in its order ({reality}): nothing is marked imagined on it")
     return np.ones(len(s), bool)
 
 
@@ -503,7 +515,7 @@ def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF
                 sim = geo.Similarity(1.0, np.eye(3), np.zeros(3))
             else:
                 sim, _ = geo.place_by_feet(P0, [0.0, 1.0, -25.0], e["foot"][::2], extra_camera(e, cfg, camF))
-            b = body_files(w, base, s, sim, seen_of(s, e["reality"], e["spz"]))
+            b = body_files(w, base, s, sim, seen_of(s, e["reality"], e["spz"], w, f"extra {e['id']}"))
             ent["file"], ent["reality"] = f"{base}/freeze.ply", f"{base}/reality.ply"
             ent["height"] = round(float(np.percentile(b["P"][:, 1], 99.5)), 3)
             ent["foot"] = [round(float(x), 3) for x in (sp.contact_points_xz(b["P"])[0], 0.0, sp.contact_points_xz(b["P"])[1])]
@@ -677,15 +689,22 @@ def annexb_units(data: bytes) -> list[tuple[int, int]]:
 
 
 def h264_info(path: Path) -> dict:
+    """The stream's codec string (from its SPS), its frame count and which frames are IDR frames. A frame starts at an
+    access unit delimiter when the stream has them, else at a slice whose first_mb_in_slice is 0 (ue(v) 0 is a single
+    1 bit: the top bit of the byte after the NAL header), so a multi-slice IDR counts once."""
     data = path.read_bytes()
     units = annexb_units(data)
     sps = next((o for t, o in units if t == 7), None)
     codec = None if sps is None else "avc1.%02x%02x%02x" % (data[sps + 1], data[sps + 2], data[sps + 3])
-    aud = sum(1 for t, _ in units if t == 9)
-    # with an AUD per frame, frames = AUDs; else count slices whose first_mb_in_slice is 0 (top bit of the next byte)
-    frames = aud if aud else sum(1 for t, o in units if t in (1, 5) and data[o + 1] & 0x80)
-    idr = sum(1 for t, _ in units if t == 5)
-    return {"codec": codec, "frames": frames, "idr": idr, "bytes": len(data)}
+    has_aud = any(t == 9 for t, _ in units)
+    frame, idr_frames = -1, []
+    for t, o in units:
+        first_slice = t in (1, 5) and o + 1 < len(data) and data[o + 1] & 0x80
+        if (has_aud and t == 9) or (not has_aud and first_slice):
+            frame += 1
+        if t == 5 and first_slice and (not idr_frames or idr_frames[-1] != frame):
+            idr_frames.append(frame)
+    return {"codec": codec, "frames": frame + 1, "idr": len(idr_frames), "idrFrames": idr_frames, "bytes": len(data)}
 
 
 def node_validate(bundle: Path, webxr: Path) -> list[str]:
@@ -697,8 +716,11 @@ def node_validate(bundle: Path, webxr: Path) -> list[str]:
         "const m = await import(url.pathToFileURL(fmt).href);"
         "const read = (p) => JSON.parse(fs.readFileSync(path.join(dir, p), 'utf8'));"
         "const court = read('court.json'); let errs = m.validateCourt(court);"
-        "if (!errs.length) { const frames = read(court.video.frames); errs = m.validateFrames(frames, court);"
-        "  if (!errs.length && m.validateCards && court.video.cards) errs = m.validateCards(read(court.video.cards), court, frames); }"
+        "const check = (c, tag) => { const frames = read(c.video.frames); let e = m.validateFrames(frames, c);"
+        "  if (!e.length && m.validateCards && c.video.cards) e = m.validateCards(read(c.video.cards), c, frames);"
+        "  return e.map((x) => tag + x); };"
+        "if (!errs.length) errs = check(court, '');"
+        "if (!errs.length && court.video.fallbacks && court.video.fallbacks.hz90 && m.chooseStream) errs = check(m.chooseStream(court, 'hz90'), 'hz90 ');"
         "console.log(JSON.stringify(errs));"
     )
     p = subprocess.run(["node", "--experimental-transform-types", "--no-warnings", "--input-type=module", "-e", script, str(fmt), str(bundle)],
@@ -720,7 +742,9 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
     # every file named is there and readable
     for rel in sorted(set(bundle_paths(court))):
         p = bundle / rel
-        if not p.is_file() or p.stat().st_size == 0:
+        if rel.startswith("/") or ".." in Path(rel).parts or "://" in rel:
+            errs.append(f"{rel}: outside the bundle")
+        elif not p.is_file() or p.stat().st_size == 0:
             errs.append(f"{rel}: missing or empty")
     if errs:
         return errs, pending, info
@@ -732,9 +756,11 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         errs.append(f"{v['file']}: its SPS says {h['codec']}, court.json says {v['codec']}")
     if h["frames"] != len(frames):
         errs.append(f"{v['file']}: {h['frames']} frames, frames.json has {len(frames)}")
-    nseg = 3 + len(v["segments"]["eases"])
-    if h["idr"] < nseg:
-        errs.append(f"{v['file']}: {h['idr']} IDR frames for {nseg} segments (each starts with one)")
+    seg = v["segments"]
+    starts = sorted({seg["pass1"][0], seg["pass2"][0], seg["resume"][0], *(e["frames"][0] for e in seg["eases"])})
+    missing = [f for f in starts if f not in set(h["idrFrames"])]
+    if missing:
+        errs.append(f"{v['file']}: no IDR frame at segment start(s) {missing} (IDR frames at {h['idrFrames'][:12]})")
     for k, fb in (v.get("fallbacks") or {}).items():
         if isinstance(fb, dict) and fb.get("file"):
             hf = h264_info(bundle / fb["file"])
@@ -791,6 +817,8 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
     h = ax[[0, 2]] / np.linalg.norm(ax[[0, 2]])
     d = (pc - C)[[0, 2]]
     miss = abs(float(h[0] * d[1] - h[1] * d[0]))
+    if float(h @ d) <= 0:
+        errs.append("seat.pairCentre: it is behind camera F")
     info.append(f"seat: camera F's ray passes {miss:.2f} m from the pair's centre (on the floor)")
     if miss > 2.0:
         errs.append(f"seat.pairCentre: camera F's ray passes {miss:.2f} m from it")

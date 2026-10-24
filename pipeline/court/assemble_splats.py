@@ -279,29 +279,38 @@ def floor_rect(P, pad: float = 0.6) -> list[float]:
     return [round(float(lo[0] - pad), 3), round(float(lo[1] - pad), 3), round(float(hi[0] + pad), 3), round(float(hi[1] + pad), 3)]
 
 
-def _splat_floor(P, w, rect, size, sigma_m) -> np.ndarray:
+def floor_size(rect, size: int) -> tuple[int, int]:
+    """(width, height) in pixels of a floor map `size` wide on `rect`, with square pixels."""
     x0, z0, x1, z1 = rect
-    c = np.clip(np.round((P[:, 0] - x0) / (x1 - x0) * (size - 1)), 0, size - 1).astype(int)
-    r = np.clip(np.round((P[:, 2] - z0) / (z1 - z0) * (size - 1)), 0, size - 1).astype(int)
-    img = np.zeros((size, size))
+    return size, max(2, int(round(size * (z1 - z0) / (x1 - x0))))
+
+
+def _splat_floor(P, w, rect, shape, sigma_m) -> np.ndarray:
+    x0, z0, x1, z1 = rect
+    W, H = shape
+    c = np.clip(np.round((P[:, 0] - x0) / (x1 - x0) * (W - 1)), 0, W - 1).astype(int)
+    r = np.clip(np.round((P[:, 2] - z0) / (z1 - z0) * (H - 1)), 0, H - 1).astype(int)
+    img = np.zeros((H, W))
     np.add.at(img, (r, c), w)
-    px = sigma_m / ((x1 - x0) / size)
+    px = sigma_m / ((x1 - x0) / W)
     return cv2.GaussianBlur(img, (0, 0), max(0.5, px))
 
 
 def floor_maps(P, alpha, rgb, rect, size: int = 128) -> tuple[np.ndarray, np.ndarray]:
-    """(shadow, reflection) RGBA uint8 images laid on `rect` (columns minX -> maxX, rows minZ -> maxZ): a soft contact
-    shadow from the body's lowest Gaussians, and the body's colour faintly where its lower half would reflect."""
+    """(shadow, reflection) RGBA uint8 images laid on `rect` (columns minX -> maxX, rows minZ -> maxZ, square pixels,
+    `size` wide): a soft contact shadow from the body's lowest Gaussians, and the body's colour faintly where its
+    lower half would reflect."""
     P = np.asarray(P, float)
+    shape = floor_size(rect, size)
     y = np.maximum(P[:, 1], 0)
-    d = _splat_floor(P, alpha * np.exp(-y / 0.25), rect, size, 0.05)
+    d = _splat_floor(P, alpha * np.exp(-y / 0.25), rect, shape, 0.05)
     shade = 0.7 * (1 - np.exp(-3 * d / max(d.max(), 1e-9))) / (1 - math.exp(-3))
-    shadow = np.zeros((size, size, 4), np.uint8)
+    shadow = np.zeros((shape[1], shape[0], 4), np.uint8)
     shadow[..., 3] = np.round(255 * shade).astype(np.uint8)
     w = alpha * np.exp(-y / 0.8)
-    dens = _splat_floor(P, w, rect, size, 0.08)
-    col = np.stack([_splat_floor(P, w * rgb[:, k], rect, size, 0.08) for k in range(3)], -1) / np.maximum(dens, 1e-9)[..., None]
-    refl = np.zeros((size, size, 4), np.uint8)
+    dens = _splat_floor(P, w, rect, shape, 0.08)
+    col = np.stack([_splat_floor(P, w * rgb[:, k], rect, shape, 0.08) for k in range(3)], -1) / np.maximum(dens, 1e-9)[..., None]
+    refl = np.zeros((shape[1], shape[0], 4), np.uint8)
     refl[..., :3] = np.round(255 * np.clip(col, 0, 1)).astype(np.uint8)
     refl[..., 3] = np.round(255 * 0.25 * dens / max(dens.max(), 1e-9)).astype(np.uint8)
     return shadow, refl
