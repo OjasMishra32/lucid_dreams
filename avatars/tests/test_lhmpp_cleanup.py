@@ -113,3 +113,30 @@ def test_shirt_paint_open_paints_a_streak_down_an_open_collar():
     assert lum[streak].min() > 0.6 and len(tied) == 0
     jacket = np.abs(xyz[:, 0]) > 0.09
     assert np.allclose(out[jacket], rgb[jacket])
+
+
+def test_collar_mirror_restores_the_missing_side_of_a_collar():
+    rng = np.random.default_rng(5)
+    n = 4000
+    xyz = np.c_[rng.uniform(-0.07, 0.07, n), rng.uniform(-0.05, 0.05, n), np.full(n, 0.1)]
+    rgb = np.tile([0.85, 0.84, 0.82], (n, 1))  # a white collar both sides ...
+    hole = (xyz[:, 0] > 0.02) & (xyz[:, 0] < 0.05) & (xyz[:, 1] > 0.0)
+    rgb[hole] = [0.1, 0.09, 0.09]  # ... but dark on one
+    scale = np.log(np.tile([0.002, 0.002, 0.0005], (n, 1)))
+    scale[0] = np.log([0.02, 0.002, 0.0005])  # and a needle
+    out, sc, ids = C.collar_mirror(xyz, rgb, scale, np.ones(n, dtype=bool), 0.0)
+    assert (out[hole] @ C.LUM).min() > 0.7 and set(np.flatnonzero(hole)) <= set(ids)
+    assert np.exp(sc[0].max()) <= 3 * 0.002 + 1e-9
+
+
+def test_collar_mirror_paints_a_spot_on_the_jacket_with_the_jacket():
+    rng = np.random.default_rng(6)
+    n = 3000
+    xyz = np.c_[rng.uniform(-0.07, 0.07, n), rng.uniform(-0.05, 0.05, n), np.full(n, 0.1)]
+    rgb = np.tile([0.1, 0.09, 0.09], (n, 1))  # all jacket ...
+    spot = np.linalg.norm(xyz[:, :2] - [0.04, 0.02], axis=1) < 0.004
+    rgb[spot] = [0.6, 0.45, 0.35]  # ... with a brown spot on it
+    shirt = xyz[:, 0] < -0.055
+    rgb[shirt] = [0.85, 0.84, 0.82]  # and a white shirt well away from it (and from its mirror image)
+    out, _, ids = C.collar_mirror(xyz, rgb, np.log(np.full((n, 3), 0.002)), np.ones(n, dtype=bool), 0.0)
+    assert (out[spot] @ C.LUM).max() < 0.2 and set(np.flatnonzero(spot)) <= set(ids)

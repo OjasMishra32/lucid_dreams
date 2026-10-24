@@ -269,8 +269,9 @@ def shirt_paint(xyz: np.ndarray, rgb: np.ndarray, cand: np.ndarray, top_y: float
     """The shirt between the lapels as one cloth, in the rest pose (front +Z). Per centimetre of height between top_y
     and bottom_y the shirt's left and right edges are measured from its white among the candidates `cand`, smoothed
     over 5 cm and never extended past the heights that show it. Inside them (less `margin`):
-      tie   the tie is the grey band down the middle (between the jacket's darkness and the shirt's white, among
-            grey neighbours, its edges measured the same way): it takes the band's median colour with 15% of its own shading (no light flecks);
+      tie   the tie is the gap between the shirt's two white columns (row by row, the longest run of 5 mm cells where
+            white is the minority over 3 cm of height, so light flecks on it don't split it; its edges smoothed over 7 cm): it
+            takes its median colour with 15% of its own shading (no light flecks);
             everything else takes one clean white (the shirt's brightest third, half way to neutral, as
             lhmpp_avatar.py whites does) under a soft gradient: the shirt's own light and shade blurred over its 32
             nearest (within 12%), a little darker toward the lapels.
@@ -302,15 +303,31 @@ def shirt_paint(xyz: np.ndarray, rgb: np.ndarray, cand: np.ndarray, top_y: float
     edge = np.minimum(x[ids] - l_b[ids], h_b[ids] - x[ids]) / np.maximum((h_b[ids] - l_b[ids]) / 2, 1e-3)
     shade = soft * (0.94 + 0.06 * np.clip(2 * edge, 0, 1))
     tie = np.zeros(len(rgb), dtype=bool)
-    if mode == "tie":
-        z_ids = np.flatnonzero(inside)
-        ctx = np.zeros(len(rgb))
-        ctx[z_ids] = np.median(lum[z_ids][cKDTree(xyz[z_ids]).query(xyz[z_ids], k=min(17, len(z_ids)))[1][:, 1:]], axis=1)
-        band = inside & (lum > jacket_lum + 0.03) & (lum < 0.45) & (ctx < 0.45)  # grey among grey, not a speck on white
-        t_lo, t_hi = _edges(x, b, band, nb, (3, 97), 6, extend=True)  # the tie runs as far as the shirt
-        tie = inside & np.isfinite(t_lo[b]) & (x > t_lo[b]) & (x < t_hi[b])
+    if mode == "tie":  # the tie is the gap between the shirt's two white columns, measured row by row
+        gap_lo, gap_hi = np.full(nb, np.nan), np.full(nb, np.nan)
+        for k in range(nb):  # 5 mm cells across the row: the tie is the longest run where white is the minority
+            row = inside & (np.abs(b - k) <= 1)  # three rows: enough Gaussians per cell to tell white from flecked grey
+            if row.sum() < 12 or not np.isfinite(lo[k]):
+                continue
+            edges = np.arange(lo[k], hi[k] + 0.005, 0.005)
+            n_all = np.histogram(x[row], edges)[0]
+            n_white = np.histogram(x[row & light], edges)[0]
+            grey = (n_all > 0) & (n_white < 0.45 * np.maximum(n_all, 1))
+            best, run, start = (0, 0), 0, 0
+            for c, gcell in enumerate(grey):
+                run, start = (run + 1, start) if gcell else (0, c + 1)
+                if run > best[1] - best[0]:
+                    best = (start, c + 1)
+            if best[1] - best[0] >= 4:  # a tie is at least 2 cm wide
+                gap_lo[k], gap_hi[k] = edges[best[0]], edges[best[1]]
+        ok = np.flatnonzero(np.isfinite(gap_lo))
+        if len(ok) >= 3:
+            for v in (gap_lo, gap_hi):
+                f = np.interp(np.arange(nb), ok, v[ok])
+                v[:] = [np.median(f[max(0, k - 3):k + 4]) for k in range(nb)]  # 7 cm: a tie's edges are straight
+            tie = inside & (x > gap_lo[b]) & (x < gap_hi[b])
         if tie.sum() >= 20:
-            tie_c = np.median(rgb[tie & band], axis=0)
+            tie_c = np.median(rgb[tie & (lum < 0.45)], axis=0)
             t_l = max(float(tie_c @ LUM), 1e-3)
             out[tie] = np.clip(tie_c[None] * np.clip(1 + 0.15 * (lum[tie] / t_l - 1), 0.85, 1.15)[:, None], 0, 1)
         else:
@@ -321,6 +338,45 @@ def shirt_paint(xyz: np.ndarray, rgb: np.ndarray, cand: np.ndarray, top_y: float
     sel = paint[ids]
     out[ids[sel]] = np.clip(white[None] * shade[sel, None], 0, 1)
     return out, ids[sel], np.flatnonzero(tie)
+
+
+def collar_mirror(xyz: np.ndarray, rgb: np.ndarray, scale: np.ndarray, region: np.ndarray, mid_x: float,
+                  reach: float = 0.008) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A shirt collar is the same on both sides. In `region` (the front of the neck and collar): first, a light or
+    brown Gaussian among jacket-dark neighbours (a white needle, a spot on the lapel) takes their colour; then a dark
+    Gaussian whose mirror image across x = mid_x lands within `reach` of the shirt's white takes that white (its 4
+    nearest, mirrored back); and none there is a needle (longest axis at most 3x the middle one).
+    Returns (rgb, scale, painted ids)."""
+    out, sc = rgb.copy(), scale.copy()
+    tree = cKDTree(xyz)
+    r_all = np.flatnonzero(region)
+    if len(r_all) == 0:
+        return out, sc, np.array([], dtype=np.int64)
+    lum = rgb @ LUM
+    nb = tree.query(xyz[r_all], k=33)[1][:, 1:]
+    ctx = np.median(lum[nb], axis=1)
+    spot = (ctx < 0.25) & (lum[r_all] > ctx + 0.12)
+    on_jacket = r_all[spot]
+    out[on_jacket] = np.median(rgb[nb[spot]], axis=1)
+    lum = out @ LUM
+    sat = out.max(1) - out.min(1)
+    white = region & (lum > 0.55) & (sat < 0.2)
+    ids = on_jacket
+    if white.sum() >= 20:
+        w_ids = np.flatnonzero(white)
+        dark = np.flatnonzero(region & (lum < 0.3))
+        mirrored = xyz[dark] * np.array([-1.0, 1.0, 1.0]) + np.array([2 * mid_x, 0.0, 0.0])
+        d, i = cKDTree(xyz[w_ids]).query(mirrored, k=4)
+        hit = d[:, 0] < reach
+        out[dark[hit]] = out[w_ids[i[hit]]].mean(1)
+        ids = np.union1d(ids, dark[hit])
+    order = np.argsort(sc[r_all], axis=1)
+    srt = np.take_along_axis(sc[r_all], order, 1)
+    srt[:, 2] = np.minimum(srt[:, 2], srt[:, 1] + math.log(3.0))
+    s_new = np.empty_like(srt)
+    np.put_along_axis(s_new, order, srt, 1)
+    sc[r_all] = s_new
+    return out, sc, ids
 
 
 def main(argv=None) -> None:
@@ -358,6 +414,7 @@ def main(argv=None) -> None:
     p.add_argument("--from-current", action="store_true", help="start from the bundle as it is (passes another tool made stay), not from avatar.raw.ply")
     p.add_argument("--keep-colours", action="store_true", help="skip the suit-minded colour passes (specks, sleeve logos, back smears, trouser blobs): a white kit keeps its colours for lhmpp_avatar.py whites")
     p.add_argument("--back-collar-m", type=float, default=None, help="the back pass reaches up to this far above the neck joint (m; the shirt collar's band above it stays); default 5 cm below it")
+    p.add_argument("--collar-mirror", action="store_true", help="a dark patch on one side of the collar whose mirror image is the shirt's white takes it")
     p.add_argument("--back-smear", type=float, default=0.15, help="a Gaussian on the jacket's back this much lighter than its dark half's median is a smear")
     p.add_argument("--shirt-clean", choices=["tie", "open"], default=None,
                    help="the shirt between the lapels one clean white (grey blotches go) and, with tie, the tie one dark cloth")
@@ -637,8 +694,41 @@ def main(argv=None) -> None:
             & (np.abs(xyz[:, 0] - neck_j[0]) < 0.14)
         jacket_lum = float(np.percentile((out @ LUM)[cand], 30))  # the jacket either side of the shirt
         top = neck_j[1] - 0.05 if a.shirt_clean == "tie" else neck_j[1] + 0.035
-        out, shirt_ids, tie_ids = shirt_paint(xyz, out, cand, top, joints[J["pelvis"], 1] + 0.05, a.shirt_clean, jacket_lum)
+        belt = joints[J["pelvis"], 1] + 0.05
+        out, shirt_ids, tie_ids = shirt_paint(xyz, out, cand, top, belt, a.shirt_clean, jacket_lum)
         shirt_n, tie_n = len(shirt_ids), len(tie_ids)
+        # LHM++'s shirt is a hollow shell with gaps between small Gaussians, and through a gap shows the dark inside of
+        # the jacket's back: the painted ones are widened along the surface until neighbours meet (at most 12 mm)
+        cloth_ids = np.concatenate([shirt_ids, tie_ids]).astype(np.int64)
+        if len(cloth_ids) > 16:
+            d_n, _ = cKDTree(xyz[cloth_ids]).query(xyz[cloth_ids], k=5)
+            want = np.log(np.clip(1.0 * d_n[:, 1:].mean(1), 1e-4, 0.012))
+            order = np.argsort(scale[cloth_ids], axis=1)
+            srt = np.take_along_axis(scale[cloth_ids], order, 1)
+            srt[:, 1] = np.maximum(srt[:, 1], want)
+            srt[:, 2] = np.maximum(srt[:, 2], want)
+            s_new = np.empty_like(srt)
+            np.put_along_axis(s_new, order, srt, 1)
+            scale[cloth_ids] = s_new
+        if a.shirt_clean == "tie":  # under the belt the jacket hangs open over trousers: light blobs there are trousers
+            lum = out @ LUM
+            under = keep & ~hands & ~head & (xyz[:, 2] > s3[2] + 0.02) & (np.abs(xyz[:, 0] - neck_j[0]) < 0.09) \
+                & (xyz[:, 1] < belt) & (xyz[:, 1] > belt - 0.12)
+            dark_u = under & (lum < jacket_lum + 0.05)
+            if dark_u.sum() > 30:
+                blob_u = under & (lum > jacket_lum + 0.1)
+                out[blob_u] = np.median(out[dark_u], axis=0)
+                shirt_n += int(blob_u.sum())
+
+    # 9c. --collar-mirror: a collar is the same on both sides, so a dark patch where the mirror image is the shirt's
+    # white collar (the jacket showing through on one side, a needle of white across it) takes that white
+    mirrored_n = 0
+    if a.collar_mirror:
+        neck_j, mid = joints[J["neck"]], float(joints[J["spine3"], 0])  # the body's midline (the neck joint leans)
+        region = keep & ~hands & ~head & (np.abs(xyz[:, 0] - mid) < 0.055) & (xyz[:, 1] > neck_j[1] - 0.005) \
+            & (xyz[:, 1] < neck_j[1] + 0.06) & (xyz[:, 2] > neck_j[2] + 0.02)  # the collar band, by the neck
+        out, scale, m_ids = collar_mirror(xyz, out, scale, region, mid)
+        mirrored_n = len(m_ids)
 
     # 10. trousers with shape: LHM++'s guessed shading was noise, and toning them flattened them, so they are lit
     # again by a soft key light from above and in front, through SMPL-X's own normals (knees, shins and the tops of
@@ -738,7 +828,7 @@ def main(argv=None) -> None:
               "feetLum": a.feet_lum, "clothHue": a.cloth_hue, "hued": hued, "reskinnedHips": int(reskinned.sum()),
               "droppedFaint": int(faint.sum()), "madeSolid": int(firm.sum()), "widened": widened,
               "lightStreaks": int(streaks.sum()), "needlesCapped": needled, "legsRelit": relit, "skinConsistent": consistent,
-              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "backCollarM": a.back_collar_m, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "fromCurrent": a.from_current, "headFirst": head_first, "handShading": a.hand_shading, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
+              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "backCollarM": a.back_collar_m, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "collarMirrored": mirrored_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "fromCurrent": a.from_current, "headFirst": head_first, "handShading": a.hand_shading, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
               "of": len(g), "kept": int(keep.sum()) + (len(new_hands["xyz"]) if new_hands else 0)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
