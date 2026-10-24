@@ -30,6 +30,43 @@ export async function sitAtSeat(ctx, eye = 1.15) {
   await ctx.frames(2);
 }
 
+/** Put the IWER head at court-space `eye`, looking at court-space `target` (no roll). */
+export async function lookFrom(ctx, eye, target) {
+  await ctx.page.evaluate(
+    ([e, t]) => {
+      const g = window.__courtLook.world.group.parent;
+      g.updateWorldMatrix(true, false);
+      const m = g.matrixWorld.elements;
+      const toRoom = ([x, y, z]) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
+      const a = toRoom(e);
+      const b = toRoom(t);
+      const f = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const yaw = Math.atan2(-f[0], -f[2]);
+      const pitch = Math.asin(f[1] / Math.hypot(...f));
+      const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2), cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
+      const d = window.__xrDevice;
+      d.position.set(a[0], a[1], a[2]);
+      d.quaternion.set(cy * sp, sy * cp, -sy * sp, cy * cp);
+    },
+    [eye, target],
+  );
+  await ctx.frames(2);
+}
+
+/**
+ * The walk-around's stops (stream D's walk sheet): a ring 1.5 m round the pair's centre every 45 deg, 0 deg toward
+ * camera F (the filmed side), eye 1.6 m, each looking at the pair's centre 1.0 m up. Stop k is ring (k - 1) x 45 deg.
+ */
+export function walkStops(court) {
+  const [px, , pz] = court.seat.pairCentre;
+  const c = court.camera.centre;
+  const a0 = Math.atan2(c[2] - pz, c[0] - px);
+  return Array.from({ length: 8 }, (_, i) => {
+    const a = a0 + (i * Math.PI) / 4;
+    return { stop: i + 1, deg: i * 45, eye: [px + 1.5 * Math.cos(a), 1.6, pz + 1.5 * Math.sin(a)], target: [px, 1.0, pz] };
+  });
+}
+
 /** Put the IWER head at a court-space point (through the world group), keeping its orientation. */
 export async function headAt(ctx, court) {
   await ctx.page.evaluate((p) => {
@@ -130,12 +167,30 @@ export function lumaAt(ctx, name, view, points, r = 3) {
 }
 
 /**
- * Floor points the bundle marks as filmed and as rendered (imagined), for the Reality check (P23): a 0.5 m grid over the
- * court read against floor-seen.png (filmed: white within 0.6 m all round; imagined: black within 0.6 m all round, so
- * no point sits on the mask's soft edge), plus the apron round the court (outside floor-seen's extent, always rendered).
+ * How far inside show frame k's picture a court point lies, as a share of the frame (0 on its edge, below 0 outside;
+ * -1 behind its camera): the frame's own solved camera (world-from-camera q, its f, the court camera's centre).
+ */
+export function frameMargin(ctx, k, p) {
+  const cam = ctx.court.camera;
+  const fr = ctx.showFrames[k];
+  if (!fr) return -1;
+  const px = project({ q: fr.q, centre: cam.centre, viewport: [0, 0, cam.width, cam.height], cx: cam.cx + 0.5, cy: cam.cy + 0.5, fx: fr.f, fy: fr.f }, p);
+  if (!px) return -1;
+  const [u, v] = [px[0] / cam.width, px[1] / cam.height];
+  return Math.min(u, 1 - u, v, 1 - v);
+}
+
+/**
+ * Floor points filmed and imagined, for the Reality check (P23), by the one definition every layer uses: a floor
+ * point is filmed when floor-seen.png marks it or camera F's picture holds it (stream D's floor plate shows F there,
+ * from the seat). A 0.5 m grid over the court read against floor-seen.png (white within 0.6 m all round; black within
+ * 0.6 m all round, so no point sits on the mask's soft edge) plus the apron round the court (outside floor-seen's
+ * extent). Imagined: neither, more than 3% of the frame outside F's picture. With `plates` (D's floor plate draws F's
+ * picture), points well inside it (past its 10% feather) are filmed too; without, they are left out.
  * Points off the frame, or under a person, the ball or the hoop in `view`, are left out.
  */
-export async function realityPoints(ctx, view) {
+export async function realityPoints(ctx, view, { plates = false } = {}) {
+  const F = ctx.court.video.segments.eases[0]?.frames[1];
   const c = ctx.court.court;
   const [hl, hw] = [c.length / 2, c.width / 2];
   const grid = [];
@@ -183,12 +238,14 @@ export async function realityPoints(ctx, view) {
   const boxes = standingBoxes(ctx, view);
   const out = { seen: [], imagined: [] };
   grid.forEach(([x, z], i) => {
-    if (!marks[i]) return;
+    const inF = F === undefined ? -1 : frameMargin(ctx, F, [x, 0, z]);
+    const kind = inF < -0.03 ? marks[i] : marks[i] === "seen" || (plates && inF >= 0.12) ? "seen" : null;
+    if (!kind) return;
     const q = project(view, [x, 0, z]);
     const [vx, vy, vw, vh] = view.viewport;
     if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) return;
     if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) return;
-    out[marks[i]].push([x, 0, z]);
+    out[kind].push([x, 0, z]);
   });
   return out;
 }

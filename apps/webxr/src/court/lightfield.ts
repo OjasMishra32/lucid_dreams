@@ -98,6 +98,14 @@ export const OPEN_DONE_S = 5.0;
 export const BACK_DONE_S = OPEN_DONE_S - POOL_START_S;
 /** The house comes up this long after play resumes. */
 export const UP_LAG_S = 0.25;
+/**
+ * The filmed floor (lightFilmedFloor): the floor's footage is sharp across camera F's ray and smeared along it (a low
+ * camera far away: 40-60 mm a pixel), which reads as radial streaks the moment you leave the camera's own view. So it
+ * is the floor at the dolly seat (the hand-off's view, kept exact: P8) and gives way to the clean floor as you walk:
+ * whole within FILMED_NEAR of the seat (a seated lean), gone by FILMED_FAR (metres, on the floor).
+ */
+export const FILMED_NEAR = 0.4;
+export const FILMED_FAR = 1.4;
 /** The brightest surface (sRGB grey, 0-255) every light change keeps under 1 grey level per frame at 72 Hz: all of them. */
 export const SAFE_GREY = 255;
 
@@ -200,6 +208,8 @@ uniform vec4 uLightSpotsA; // walking spots 0, 1 (x, z each), court space
 uniform vec4 uLightSpotsB; // walking spots 2, 3
 uniform vec4 uLightGrow;  // seconds into the growth; ramp s for a whole change; spread s; the set's floor level
 uniform vec4 uLightView;  // unused; the arena's opacity: stands, floor (See my room, the edge); unused
+uniform vec4 uLightFilmed;  // the dolly seat's floor point (court x, z); FILMED_NEAR, FILMED_FAR
+uniform mat4 uLightCourtFromWorld;
 float lightRamp(float u, float a) {
   u = clamp(u, 0.0, 1.0);
   float k = 1.0 / (2.0 * a * (1.0 - a));
@@ -250,6 +260,12 @@ float lightCrowd() { return pow(uLightLevel.y * uLightLevel.w, 2.4); }
 float lightHouse() { return lightCrowd(); }
 float lightPair() { return pow(uLightLevel.z * uLightLevel.w, 2.4); }
 float lightAt(vec2 foot) { return lightFloor(foot, 1.0); }
+// 1 where the floor's footage is shown from this eye, 0 where the clean floor is: the seat's view, not the walk's
+// (p: the floor point, for a rule that one day depends on it)
+float lightFilmedFloor(vec3 p) {
+  vec3 eye = (uLightCourtFromWorld * vec4(cameraPosition, 1.0)).xyz;
+  return 1.0 - smoothstep(uLightFilmed.z, uLightFilmed.w, distance(eye.xz, uLightFilmed.xy));
+}
 // the multiplier for a footage, floor or stands fragment at a court-space position (part: PART.*)
 float courtLight(vec3 worldPos, float part) {
   if (part < 0.5) return lightFloor(worldPos.xz, 1.0);
@@ -390,6 +406,7 @@ export class LightField {
       uLightSpotsB: { value: new Vec4() },
       uLightGrow: { value: new Vec4(this.grow, POOL_RAMP_S, POOL_SPREAD_S, 1) },
       uLightView: { value: new Vec4(1, 1, 1, 0) },
+      uLightFilmed: { value: new Vec4(0, 0, FILMED_NEAR, FILMED_FAR) },
     };
     this.select(opts);
     if (bundle) this.fitFrames(bundle.frames);
@@ -458,6 +475,7 @@ export class LightField {
     (u.uLightSpot.value as Vec4).set(this.spot[0], this.spot[1], this.spot[2], this.falloff);
     (u.uLightFoot.value as Vec4).set(this.foot[0], this.foot[1], this.foot[2], LANE_HALF);
     (u.uLightLane.value as Vec4).set(this.seatDist, WALK_R, this.discs.length, this.reachR);
+    (u.uLightFilmed.value as Vec4).set(this.seatFloor[0], this.seatFloor[2], FILMED_NEAR, FILMED_FAR);
   }
 
   /** Court (x, z) in the pool's frame, into this.lu (across) and this.lv (along toward the seat): no allocation. */
@@ -673,6 +691,11 @@ export class LightField {
     const along = hx * this.axis[0] + hz * this.axis[1];
     const across = Math.abs(hx * this.axis[1] - hz * this.axis[0]);
     return ramp(((Math.atan2(across, along) * 180) / Math.PI) / OFF_RAY_DARK_DEG);
+  }
+
+  /** lightFilmedFloor's twin: how much of the floor's footage shows (at any floor point) from court-space `eye`. */
+  filmedAt(eye: readonly number[]): number {
+    return 1 - smoothstep(FILMED_NEAR, FILMED_FAR, Math.hypot(eye[0] - this.seatFloor[0], eye[2] - this.seatFloor[2]));
   }
 
   /** The pool at (x, z), 0..1 (GLSL lightPool); ot = that point's level outside the pool once the floor has dimmed. */
