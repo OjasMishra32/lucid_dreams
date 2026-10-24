@@ -280,13 +280,15 @@ export function parseGlb(buffer: ArrayBuffer): { positions: Float32Array; indice
 
 /**
  * The two plate layers' alphas where the frame's feathered edge is `f`, the arena's opacity (See my room, the edge
- * fade) `room` and the video layer is at opacity `v`: with e = f room, the video's plates (over the splats) at v e;
+ * fade) `room`, the floor's filmed weight `filmed` (the light field's lightFilmedFloor: 1 at the seat, 0 walking off
+ * F's view, the floor plate only) and the video layer is at opacity `v`: with e = f room filmed, the video's plates
+ * (over the splats) at v e;
  * the 3D's (under them) at e(1 - v) / (1 - v e), so the two stacked always add up to the one plate at alpha e (the
  * feathered edge never brightens), while whatever the splats add round the cards fades in with the cards. The plate
  * shader computes exactly this.
  */
-export function plateAlphas(v: number, f: number, room = 1): { video: number; background: number } {
-  const e = f * room;
+export function plateAlphas(v: number, f: number, room = 1, filmed = 1): { video: number; background: number } {
+  const e = f * room * filmed;
   return { video: v * e, background: v >= 1 ? 0 : (e * (1 - v)) / Math.max(1 - v * e, 1e-4) };
 }
 
@@ -369,7 +371,8 @@ export function layerVisibility(opacity: number, mask: number): { plates: boolea
 
 /**
  * lightfield.ts's GLSL, with any helper this module calls that the field doesn't define filled in as "no change"
- * (the stub has only courtLight): lightDither(rgb), lightRoomStands(), lightRoomFloor(), lightPair().
+ * (the stub has only courtLight): lightDither(rgb), lightRoomStands(), lightRoomFloor(), lightPair(),
+ * lightFilmedFloor(p).
  */
 export function lightChunk(glsl: string): string {
   const has = (name: string) => new RegExp(`\\b(?:float|vec3)\\s+${name}\\s*\\(`).test(glsl);
@@ -378,6 +381,7 @@ export function lightChunk(glsl: string): string {
   if (!has("lightRoomStands")) out += "float lightRoomStands() { return 1.0; }\n";
   if (!has("lightRoomFloor")) out += "float lightRoomFloor() { return 1.0; }\n";
   if (!has("lightPair")) out += "float lightPair() { return 1.0; }\n";
+  if (!has("lightFilmedFloor")) out += "float lightFilmedFloor(vec3 p) { return 1.0; }\n";
   return out;
 }
 
@@ -451,7 +455,9 @@ const plateFrag = (light: string) => /* glsl */ `
     // See my room and the edge fade: the arena's opacity, the stands' or the floor's, inside the layers' blend so the
     // two stacked stay the one plate (plateAlphas); the cinema mask's dark round the frame is the mask shell's
     float room = uKind == 1 ? lightRoomStands() : lightRoomFloor();
-    float edge = f * card * room;
+    // the floor plate is frame F's picture on the court plane: it holds only from near the seat; walking off F's view
+    // the light field's clean court floor takes over (lightFilmedFloor, stream E). In edge, so both layers take it
+    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0);
     float a = uLayer == 0 ? uOpacity * edge : uOpacity >= 1.0 ? 0.0 : edge * (1.0 - uOpacity) / max(1.0 - uOpacity * edge, 1e-4);
     gl_FragColor = vec4(col * a, a);
   }`;
