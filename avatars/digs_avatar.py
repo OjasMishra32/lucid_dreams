@@ -221,6 +221,59 @@ def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
         raise SystemExit(f"couldn't write {path}")
 
 
+# ---------------------------------------------------------------- bundle
+
+def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out: Path, dream_id: str, name: str,
+                  source: dict, work: Path, frames: int = 60, fps: int = 30, idle_seconds: float = 8.0,
+                  motion=None, metrics: dict | None = None) -> int:
+    """From a DiGS decoder code to a validated bundle: rest-pose avatar.ply, skin.bin + skeleton.json, turntable
+    preview.mp4 + thumb.jpg, and motion.json: an idle loop unless motion is given, as a Motion or as a function
+    (gaussians, (skin_idx, skin_w), skeleton, stand_y) -> Motion, e.g. retarget.place_on_floor. Returns 0 when the
+    bundle validates."""
+    from lib.utils.infer_util import add_root_rotate_to_smplx
+
+    dev = code.device
+    betas = torch.as_tensor(betas_np, dtype=torch.float32, device=dev)
+    gaussians = capture_rest_gaussians(model, code, betas, hand_mean, any_camera.reshape(1, 1, 20))
+    errors = D.rest_pose_errors(gaussians.xyz, gaussians.opacity)
+    if errors:
+        raise SystemExit("rest-pose capture looks wrong: " + "; ".join(errors))
+    stand = D.stand_y(gaussians.xyz, gaussians.opacity)
+    skin, skeleton = skin_avatar(model, gaussians, betas_np, dev)
+    visible_y = gaussians.xyz[1 / (1 + np.exp(-gaussians.opacity)) >= 0.5, 1]
+    height, middle_y = np.ptp(visible_y), (visible_y.min() + visible_y.max()) / 2
+
+    # Turntable: DiGS's A-pose spinning, centred, the whole body in frame. Orbit view 1 of 2 sits on +Z, in front
+    # of a body facing +Z like SMPL-X's rest pose, so the first frame (the thumbnail) is the front.
+    distance = focal * TURNTABLE_FILL * height / D.DIGS_H
+    camera = demo._prepare_orbit_cameras(D.DIGS_H, D.DIGS_W, 2, dev, focal, distance)[1].reshape(1, 1, 20)
+    spin = add_root_rotate_to_smplx(demo.get_default_smplx_params().squeeze().to(dev), frames, device=dev)
+    spin[:, 70:80] = betas.reshape(1, 10)
+    spin[:, 2] -= float(middle_y)
+    turntable = render(model, code, spin, camera)
+    save_mp4(turntable, work / "preview.mp4", fps)
+    Image.fromarray((turntable[0].numpy() * 255).astype(np.uint8)).save(work / "thumb.jpg", quality=92)
+    if motion is None:
+        motion = D.with_hand_mean(idle_loop(betas_np, idle_seconds, fps, stand), hand_mean)
+    elif callable(motion):  # a motion fitted to this avatar, e.g. a clip put on the floor
+        motion = motion(gaussians, skin, skeleton, stand)
+
+    root = write_avatar_bundle(out, dream_id, name, gaussians, motion, source=source, metrics=metrics,
+                               skin=skin, skeleton=skeleton)
+    for f in ("preview.mp4", "thumb.jpg"):
+        shutil.copy2(work / f, root / f)
+    dream = json.loads((root / "dream.json").read_text())
+    dream.update(preview="preview.mp4", thumb="thumb.jpg")
+    (root / "dream.json").write_text(json.dumps(dream, indent=2) + "\n")
+
+    problems = validate_bundle(root)
+    for p in problems:
+        print(f"[bundle] {p}")
+    print(f"{len(gaussians)} Gaussians, height {np.ptp(gaussians.xyz[:, 1]):.2f} m, stand_y {stand:.3f}")
+    print(f"{'BUNDLE_FAIL' if problems else 'BUNDLE_OK'} {root}")
+    return 1 if problems else 0
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> int:
@@ -241,7 +294,7 @@ def main() -> int:
     pose, betas_np, trans = nlf_fit(raw_crop, args.nlf, K_crop, dev)
 
     model, config, demo = load_digs(args.config, args.ckpt)
-    from lib.utils.infer_util import add_root_rotate_to_smplx, get_hand_pose_mean
+    from lib.utils.infer_util import get_hand_pose_mean
     from omegaconf import OmegaConf
 
     hand_mean = np.asarray(get_hand_pose_mean(), dtype=np.float64).reshape(90)
@@ -268,44 +321,10 @@ def main() -> int:
     side = np.concatenate([np.asarray(crop), (ref_render * 255).astype(np.uint8)], axis=1)
     Image.fromarray(side).save(work / "ref_check.png")
 
-    gaussians = capture_rest_gaussians(model, code, betas, hand_mean, ref_camera.reshape(1, 1, 20))
-    errors = D.rest_pose_errors(gaussians.xyz, gaussians.opacity)
-    if errors:
-        raise SystemExit("rest-pose capture looks wrong: " + "; ".join(errors))
-    stand = D.stand_y(gaussians.xyz, gaussians.opacity)
-    skin, skeleton = skin_avatar(model, gaussians, betas_np, dev)
-    visible_y = gaussians.xyz[1 / (1 + np.exp(-gaussians.opacity)) >= 0.5, 1]
-    height, middle_y = np.ptp(visible_y), (visible_y.min() + visible_y.max()) / 2
-
-    # Turntable: DiGS's A-pose spinning, centred, the whole body in frame. Orbit view 1 of 2 sits on +Z, in front
-    # of a body facing +Z like SMPL-X's rest pose, so the first frame (the thumbnail) is the front.
-    distance = focal * TURNTABLE_FILL * height / D.DIGS_H
-    camera = demo._prepare_orbit_cameras(D.DIGS_H, D.DIGS_W, 2, dev, focal, distance)[1].reshape(1, 1, 20)
-    spin = add_root_rotate_to_smplx(demo.get_default_smplx_params().squeeze().to(dev), args.frames, device=dev)
-    spin[:, 70:80] = betas.reshape(1, 10)
-    spin[:, 2] -= float(middle_y)
-    turntable = render(model, code, spin, camera)
-    save_mp4(turntable, work / "preview.mp4", args.fps)
-    Image.fromarray((turntable[0].numpy() * 255).astype(np.uint8)).save(work / "thumb.jpg", quality=92)
-    motion = D.with_hand_mean(idle_loop(betas_np, args.idle_seconds, args.fps, stand), hand_mean)
-
-    root = write_avatar_bundle(
-        out, args.id, args.name, gaussians, motion, skin=skin, skeleton=skeleton,
-        source={"photo": Path(args.image).name, "width": photo.width, "height": photo.height,
-                "model": "DiGS-Avatar student + NLF SMPL-X fit", "note": HANDS_NOTE},
-    )
-    for f in ("preview.mp4", "thumb.jpg"):
-        shutil.copy2(work / f, root / f)
-    dream = json.loads((root / "dream.json").read_text())
-    dream.update(preview="preview.mp4", thumb="thumb.jpg")
-    (root / "dream.json").write_text(json.dumps(dream, indent=2) + "\n")
-
-    problems = validate_bundle(root)
-    for p in problems:
-        print(f"[bundle] {p}")
-    print(f"{len(gaussians)} Gaussians, height {np.ptp(gaussians.xyz[:, 1]):.2f} m, stand_y {stand:.3f}")
-    print(f"{'BUNDLE_FAIL' if problems else 'BUNDLE_OK'} {root}")
-    return 1 if problems else 0
+    source = {"photo": Path(args.image).name, "width": photo.width, "height": photo.height,
+              "model": "DiGS-Avatar student + NLF SMPL-X fit", "note": HANDS_NOTE}
+    return export_bundle(model, demo, code, betas_np, hand_mean, focal, ref_camera, out, args.id, args.name, source,
+                         work, frames=args.frames, fps=args.fps, idle_seconds=args.idle_seconds)
 
 
 if __name__ == "__main__":
