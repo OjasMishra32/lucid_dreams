@@ -247,6 +247,71 @@ class RunLayout(unittest.TestCase):
             self.assertEqual(A.show_dir({"out": str(out)}), (out / "video", "show"))
             self.assertEqual(A.show_dir({"out": str(out), "show": {"dir": d, "cameras": "calib"}}), (None, "calib"))
 
+    def test_an_incomplete_staged_show_is_not_taken(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        with tempfile.TemporaryDirectory() as d:
+            show = Path(d) / "show"
+            (show / "video").mkdir(parents=True)
+            (show / "video.json").write_text(json.dumps({"video": {"file": "video/show.h264", "frames": "video/frames.json"}}))
+            (show / "video" / "frames.json").write_text("[]")
+            w = A.Writer(Path(d) / "out")
+            with self.assertRaises(KeyError):  # falls through to the stand-in's show: here there is none to read
+                A.show_piece(w, {"show": str(show)}, Path(d), {}, None)
+            self.assertTrue(any("isn't complete" in n and "video/show.h264" in n for n in w.notes), w.notes)
+
+
+class Paths(unittest.TestCase):
+    def test_every_declared_path_is_walked(self):
+        import assemble as A
+
+        court = {"court": {"floor": "court/missing floor.jpg", "floorSeen": "court/seen.weird"},
+                 "light": {"floor": 0.3}, "video": {"file": "video/show.h264", "freeze": "video/freeze.png",
+                 "fallbacks": {"hz90": {"file": "v/h.h264", "frames": "v/f.json", "cards": "v/c.json"}, "element": "v/p.mp4"}},
+                 "freeze": {"players": [{"splats": "p/a.ply", "shadow": {"image": "p/s.png"}}], "stands": {"cards": [{"image": "s/x.png"}]}},
+                 "audio": {"bed": "a/b.m4a", "oneShots": [{"file": "a/s.m4a"}], "events": [{"file": "a/e.m4a"}]}, "title": "Court Side"}
+        got = set(A.declared_paths(court))
+        self.assertEqual(got, {"court/missing floor.jpg", "court/seen.weird", "video/show.h264", "video/freeze.png", "v/h.h264", "v/f.json",
+                               "v/c.json", "v/p.mp4", "p/a.ply", "p/s.png", "s/x.png", "a/b.m4a", "a/s.m4a", "a/e.m4a"})
+
+    def test_a_bundle_inside_a_checkout_is_refused_before_anything_is_written(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        inside = A.REPO / "apps" / "webxr" / "public" / "court-side-test-should-not-exist"
+        with self.assertRaises(ValueError):
+            A.guard_out(inside)
+        with self.assertRaises(ValueError):  # the same place typed in other capitals
+            A.guard_out(Path(str(inside).replace("/apps/", "/APPS/")))
+        self.assertFalse(inside.exists())
+        with tempfile.TemporaryDirectory() as d:
+            A.guard_out(Path(d) / "court-side")  # outside every checkout: fine
+
+
+class BallMask(unittest.TestCase):
+    def test_the_ball_pixel_is_its_mask_centroid_in_source_pixels(self):
+        import tempfile
+        from pathlib import Path
+
+        import cv2
+
+        import assemble as A
+
+        m = np.zeros((1080, 1920), np.uint8)
+        cv2.circle(m, (800, 500), 40, 255, -1)
+        with tempfile.TemporaryDirectory() as d:
+            cv2.imwrite(str(Path(d) / "001244.png"), m)
+            u, v = A.mask_centroid(Path(d) / "001244.png", source_width=3840)
+            self.assertAlmostEqual(u, (800 + 0.5) * 2 - 0.5, delta=0.6)
+            self.assertAlmostEqual(v, (500 + 0.5) * 2 - 0.5, delta=0.6)
+            cv2.imwrite(str(Path(d) / "000001.png"), np.zeros((1080, 1920), np.uint8))
+            self.assertIsNone(A.mask_centroid(Path(d) / "000001.png", source_width=3840))
+
 
 class Ball(unittest.TestCase):
     def test_ball_on_its_pixel_at_the_hands_depth(self):

@@ -57,5 +57,23 @@ class Stands(unittest.TestCase):
         self.assertLess(front[0][2], front[1][2])  # bottom-left is at -z: left as seen from the court
 
 
+class Parallax(unittest.TestCase):
+    def test_rays_too_close_to_parallel_are_dropped(self):
+        rng = np.random.default_rng(2)
+        tex = cv2.resize(rng.uniform(0, 255, (45, 120, 3)).astype(np.uint8), (2400, 900), interpolation=cv2.INTER_CUBIC)
+        target = np.array([16.0, 2.5, 0.5])
+        a = look(np.array([-16.5, 0.8, 2.8]), target, w=W, h=H, f=1100.0)
+        b = look(np.array([-16.5, 0.8, 2.801]), target, w=W, h=H, f=1100.0)  # a 1 mm baseline: no depth to be had
+        ia = render_wall(a, tex, 17.0, (-12.0, 12.0), (0.0, 9.0))
+        ib = render_wall(b, tex, 17.0, (-12.0, 12.0), (0.0, 9.0))
+        X, err = st.triangulate_frames(ia, st.CalCam(a, 0.0), ib, st.CalCam(b, 0.0))
+        self.assertEqual(len(X), 0)
+
+    def test_too_few_points_give_a_flagged_guess(self):
+        planes, rep = st.stands_planes(np.zeros((0, 3)))
+        self.assertTrue(rep["guessed"])
+        self.assertEqual(len(planes), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

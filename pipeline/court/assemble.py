@@ -85,18 +85,49 @@ def rnd(v, d=4):
     return [round(float(x), d) for x in v]
 
 
-def bundle_paths(o) -> list[str]:
-    """Every bundle-relative file path named anywhere in a court.json block."""
+# every field format.ts declares as a bundle path (a string under one of these keys, anywhere in court.json)
+PATH_KEYS = {"floor", "floorSeen", "file", "frames", "cards", "freeze", "freezeClean", "standsMask", "inpaintMask", "element",
+             "splats", "reality", "proxy", "image", "bed"}
+
+
+def declared_paths(o, key: str | None = None) -> list[str]:
+    """Every bundle-relative file path in a court.json block: the string values of format.ts's path fields."""
     out = []
     if isinstance(o, dict):
-        for v in o.values():
-            out += bundle_paths(v)
+        for k, v in o.items():
+            out += declared_paths(v, k)
     elif isinstance(o, list):
         for v in o:
-            out += bundle_paths(v)
-    elif isinstance(o, str) and PATH_EXT.search(o) and " " not in o:
+            out += declared_paths(v, key)
+    elif isinstance(o, str) and key in PATH_KEYS:
         out.append(o)
     return out
+
+
+bundle_paths = declared_paths
+
+
+def _norm(p) -> str:
+    """A path as the file system sees it: symlinks resolved, and case-folded on macOS (its disks ignore case)."""
+    r = os.path.realpath(os.path.expanduser(str(p)))
+    return r.casefold() if sys.platform == "darwin" else r
+
+
+def checkouts() -> list[Path]:
+    """This repo's main checkout and every worktree of it."""
+    p = subprocess.run(["git", "-C", str(REPO), "worktree", "list", "--porcelain"], capture_output=True, text=True)
+    roots = [Path(ln[len("worktree "):]) for ln in p.stdout.splitlines() if ln.startswith("worktree ")]
+    return roots or [REPO]
+
+
+def guard_out(out: Path) -> None:
+    """The bundle never goes inside a checkout (Vite and the tunnel serve them, and git would see it: P36), nor holds
+    one; refused before anything is written."""
+    o = _norm(out)
+    for root in checkouts():
+        r = _norm(root)
+        if o == r or o.startswith(r + os.sep) or r.startswith(o + os.sep):
+            raise ValueError(f"refusing to write the bundle at {out}: it is inside (or holds) the checkout {root} (P36)")
 
 
 class Writer:
@@ -139,18 +170,34 @@ def show_dir(cfg: dict) -> tuple[Path | None, str]:
     return (d if (d / "video.json").exists() else None), (show.get("cameras", "show") if isinstance(show, dict) else "show")
 
 
+def staged(d: Path, rel: str) -> Path:
+    """A show file named "video/..." in the bundle: <d>/video/... in a staging folder, <d>/... in a video folder."""
+    p = d / rel
+    return p if p.exists() else d / rel.split("/", 1)[-1]
+
+
 def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTrack | None):
     """The video block, its frames.json (each show frame's own camera) and the rest of video/; the timing of the clip
     the frames count in. Returns (video block, frames, timing {sourceFps, captureFps, slow, centre?})."""
     d, cams = show_dir(cfg)
+    manifest = json.loads((d / "video.json").read_text()) if d is not None else None
+    if manifest is not None:
+        # a staged show is taken whole or not at all: every file it names present, and none still being written
+        vid = manifest["video"] if "video" in manifest else manifest
+        now = dt.datetime.now().timestamp()
+        missing = [rel for rel in bundle_paths(vid) if not staged(d, rel).is_file() or staged(d, rel).stat().st_size == 0]
+        fresh = [rel for rel in bundle_paths(vid) if rel not in missing and now - staged(d, rel).stat().st_mtime < 60]
+        if missing or fresh:
+            w.notes.append(f"the staged show at {d} isn't complete yet ({'missing ' + ', '.join(missing) if missing else ''}"
+                           f"{'; ' if missing and fresh else ''}{'still being written: ' + ', '.join(fresh) if fresh else ''}): the stand-in's is used")
+            d, manifest = None, None
     real = d is not None
     if real:
-        manifest = json.loads((d / "video.json").read_text())
         video = manifest["video"] if "video" in manifest else manifest
         timing = manifest.get("camera", {})
         for rel in bundle_paths(video):
-            w.copy(d / (rel.split("/", 1)[1] if rel.startswith("video/") else rel), rel)
-        frames = json.loads((d / Path(video["frames"]).name).read_text())
+            w.copy(staged(d, rel), rel)
+        frames = json.loads(staged(d, video["frames"]).read_text())
         w.piece("show", True, str(d))
         own = all("q" in fr and "f" in fr for fr in frames)
         if cams == "show" and not own:
@@ -191,6 +238,8 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
         timing = {**timing, "centre": rnd(calib.C)}
         w.piece("cameras", True, f"every show frame's camera from the calibration ({calib.clamped} frames outside its "
                 f"range {calib.range} held at its ends)", clamped=calib.clamped)
+        if calib.clamped:
+            w.pieces["cameras"]["source"] = "partial"
     else:
         w.piece("cameras", False, "the stand-in show's own cameras")
     w.json(video["frames"], frames)
@@ -421,6 +470,21 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
     return entry
 
 
+def mask_centroid(path: Path, source_width: int):
+    """The centroid of a binary mask (white = it) in source pixels (the mask may be at another width: pixel centres
+    scale as u' = (u + 0.5) s - 0.5); None when the mask is empty."""
+    import cv2
+
+    m = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if m is None:
+        raise ValueError(f"{path}: not an image")
+    ys, xs = np.nonzero(m > 127)
+    if not len(xs):
+        return None
+    s = source_width / m.shape[1]
+    return (float(xs.mean()) + 0.5) * s - 0.5, (float(ys.mean()) + 0.5) * s - 0.5
+
+
 def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, splats_by_id: dict, k1F: float = 0.0) -> dict:
     """The ball at F (plan 2: placed by hand, a 23.9 cm sphere; F's ball pixels are projected onto it at runtime and
     its unseen side is Reality-marked there). From the config: its centre, or F's ball pixel (`pixel` in the bundle's
@@ -434,6 +498,11 @@ def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, spla
         w.piece("ball", True, "config centre")
         return {"centre": rnd(b["centre"]), "radius": BALL_RADIUS, "erase": erase}
     px = b.get("pixel")
+    raw = b.get("pixelRaw")
+    if b.get("mask") and expand(b["mask"]).exists():
+        raw = mask_centroid(expand(b["mask"]), camF.w) or raw  # the SAM mask's centroid at F, in the raw frame
+    if raw:
+        b = {**b, "pixelRaw": raw}
     if b.get("pixelRaw"):
         import assemble_stands as stx
 
@@ -581,6 +650,8 @@ def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF
             ent = json.loads(json.dumps(o))
             for rel in bundle_paths(ent):
                 w.copy(standin / rel, rel)
+            if ent["file"].endswith(".ply"):  # its height as drawn (the stand-in's figure is posed, not standing tall)
+                ent["height"] = round(float(np.percentile(sp.solid(sp.read_ply(standin / ent["file"]))[:, 1], 99.5)), 3)
             out.append(ent)
             w.piece(f"extra:{o['id']}", False, "stand-in extra where the stand-in put it")
     return out
@@ -631,8 +702,11 @@ def stands_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
             block["cards"].append({"id": c["id"], "image": w.copy(expand(c["image"]), f"stands/{c['id']}.png"), "quad": c["quad"]})
         rep = made.get("report", {})
         up = rep.get("upper", {})
-        w.piece("stands", True, f"front plane at x = {rep.get('front', {}).get('x')} m from {rep.get('points')} triangulated points; "
-                f"upper plane {'fitted' if up.get('fit') else 'guessed 1.5 m behind (no points that high)'}")
+        if rep.get("guessed"):
+            w.piece("stands", False, f"stands planes guessed: only {rep.get('front', {}).get('n')} triangulated points with enough parallax")
+        else:
+            w.piece("stands", True, f"front plane at x = {rep.get('front', {}).get('x')} m from {rep.get('points')} triangulated points; "
+                    f"upper plane {'fitted' if up.get('fit') else 'guessed 1.5 m behind (no points that high)'}")
         if not block["cards"]:
             w.notes.append("stands: no depth cards yet (front row, photographers, ref): they need the clean plate and its people mattes")
         return block
@@ -691,6 +765,7 @@ def cfg_player(cfg: dict, pid: str) -> dict:
 # ---------------------------------------------------------------- assembly
 
 def assemble(cfg: dict, standin: Path, out: Path) -> dict:
+    guard_out(out)
     standin = standin.resolve()
     clips = expand(cfg["clips"]) if cfg.get("clips") else None
     cfg = {**cfg, "players": [resolve_run(p, clips) for p in cfg.get("players", [])]}
@@ -783,22 +858,51 @@ def annexb_units(data: bytes) -> list[tuple[int, int]]:
 
 
 def h264_info(path: Path) -> dict:
-    """The stream's codec string (from its SPS), its frame count and which frames are IDR frames. A frame starts at an
-    access unit delimiter when the stream has them, else at a slice whose first_mb_in_slice is 0 (ue(v) 0 is a single
-    1 bit: the top bit of the byte after the NAL header), so a multi-slice IDR counts once."""
+    """The stream's codec string (from its SPS), its pictures (a slice whose first_mb_in_slice is 0 starts one: ue(v)
+    0 is a single 1 bit, the top bit of the byte after the NAL header, so a multi-slice picture counts once and an
+    AUD with nothing behind it counts nothing) and which pictures are IDR."""
     data = path.read_bytes()
     units = annexb_units(data)
     sps = next((o for t, o in units if t == 7), None)
     codec = None if sps is None else "avc1.%02x%02x%02x" % (data[sps + 1], data[sps + 2], data[sps + 3])
-    has_aud = any(t == 9 for t, _ in units)
     frame, idr_frames = -1, []
     for t, o in units:
-        first_slice = t in (1, 5) and o + 1 < len(data) and data[o + 1] & 0x80
-        if (has_aud and t == 9) or (not has_aud and first_slice):
+        if t in (1, 5) and o + 1 < len(data) and data[o + 1] & 0x80:
             frame += 1
-        if t == 5 and first_slice and (not idr_frames or idr_frames[-1] != frame):
-            idr_frames.append(frame)
+            if t == 5:
+                idr_frames.append(frame)
     return {"codec": codec, "frames": frame + 1, "idr": len(idr_frames), "idrFrames": idr_frames, "bytes": len(data)}
+
+
+def decode_info(path: Path) -> dict:
+    """What a real decoder makes of the stream (ffprobe decodes every frame): its size, the frames that decode, and
+    any decoder complaints."""
+    p = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                        "stream=width,height,nb_read_frames", "-of", "json", str(path)], capture_output=True, text=True)
+    st = (json.loads(p.stdout or "{}").get("streams") or [{}])[0]
+    return {"width": st.get("width"), "height": st.get("height"), "decoded": int(st.get("nb_read_frames") or 0),
+            "errors": p.stderr.strip()[-300:] if p.returncode or p.stderr.strip() else ""}
+
+
+def check_stream(bundle: Path, label: str, s: dict, n_frames: int, seg: dict, errs: list, info: list) -> None:
+    """One encoded stream against what court.json says of it: codec, size, frame count (parsed and decoded) and an
+    IDR picture at every segment start."""
+    f = s["file"]
+    h, d = h264_info(bundle / f), decode_info(bundle / f)
+    info.append(f"{f} ({label}): {d['width']}x{d['height']}, {h['frames']} frames ({d['decoded']} decode), {h['idr']} IDR, "
+                f"{h['codec']}, {h['bytes'] / 1e6:.1f} MB")
+    if h["codec"] != str(s["codec"]).lower():
+        errs.append(f"{f}: its SPS says {h['codec']}, court.json says {s['codec']}")
+    if (d["width"], d["height"]) != (s["width"], s["height"]):
+        errs.append(f"{f}: the stream is {d['width']}x{d['height']}, court.json says {s['width']}x{s['height']}")
+    if h["frames"] != n_frames or d["decoded"] != n_frames:
+        errs.append(f"{f}: {h['frames']} frame(s) in the stream and {d['decoded']} decode, its frames.json has {n_frames}")
+    if d["errors"]:
+        errs.append(f"{f}: the decoder complains: {d['errors']}")
+    starts = sorted({seg["pass1"][0], seg["pass2"][0], seg["resume"][0], *(e["frames"][0] for e in seg["eases"])})
+    missing = [x for x in starts if x not in set(h["idrFrames"])]
+    if missing:
+        errs.append(f"{f}: no IDR frame at segment start(s) {missing} (IDR frames at {h['idrFrames'][:12]})")
 
 
 def node_validate(bundle: Path, webxr: Path) -> list[str]:
@@ -844,22 +948,13 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         return errs, pending, info
     v = court["video"]
     frames = json.loads((bundle / v["frames"]).read_text())
-    h = h264_info(bundle / v["file"])
-    info.append(f"{v['file']}: {h['frames']} frames, {h['idr']} IDR, {h['codec']}, {h['bytes'] / 1e6:.1f} MB")
-    if h["codec"] != v["codec"].lower():
-        errs.append(f"{v['file']}: its SPS says {h['codec']}, court.json says {v['codec']}")
-    if h["frames"] != len(frames):
-        errs.append(f"{v['file']}: {h['frames']} frames, frames.json has {len(frames)}")
-    seg = v["segments"]
-    starts = sorted({seg["pass1"][0], seg["pass2"][0], seg["resume"][0], *(e["frames"][0] for e in seg["eases"])})
-    missing = [f for f in starts if f not in set(h["idrFrames"])]
-    if missing:
-        errs.append(f"{v['file']}: no IDR frame at segment start(s) {missing} (IDR frames at {h['idrFrames'][:12]})")
-    for k, fb in (v.get("fallbacks") or {}).items():
-        if isinstance(fb, dict) and fb.get("file"):
-            hf = h264_info(bundle / fb["file"])
-            if hf["codec"] != fb["codec"].lower():
-                errs.append(f"{fb['file']}: its SPS says {hf['codec']}, court.json says {fb['codec']}")
+    check_stream(bundle, "main", v, len(frames), v["segments"], errs, info)
+    fb = v.get("fallbacks") or {}
+    if isinstance(fb.get("small"), dict):  # the same show frame for frame
+        check_stream(bundle, "small", fb["small"], len(frames), v["segments"], errs, info)
+    if isinstance(fb.get("hz90"), dict):  # its own frames and segments
+        hz = fb["hz90"]
+        check_stream(bundle, "hz90", hz, len(json.loads((bundle / hz["frames"]).read_text())), hz["segments"], errs, info)
     import cv2
     fz = cv2.imread(str(bundle / v["freeze"]), cv2.IMREAD_UNCHANGED)
     cam = court["camera"]
@@ -893,8 +988,22 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         if not len(pos) or idx.max() >= len(pos):
             errs.append(f"{p['proxy']}: an empty or broken mesh")
     for o in court["freeze"]["others"]:
-        if o["file"].endswith(".ply"):
-            total += len(sp.read_ply(bundle / o["file"]))
+        if not o["file"].endswith(".ply"):
+            continue
+        s = sp.read_ply(bundle / o["file"])
+        total += len(s)
+        P = sp.solid(s)
+        lo, top = float(np.percentile(P[:, 1], 0.5)), float(np.percentile(P[:, 1], 99.5))
+        off = float(np.linalg.norm(sp.contact_points_xz(P) - [o["foot"][0], o["foot"][2]]))
+        if off > 0.3:
+            errs.append(f"{o['id']}: its soles are {off:.2f} m from its foot point {o['foot']}")
+        if abs(lo) > 0.05:
+            errs.append(f"{o['id']}: lowest points at y = {lo:.3f} m, not on the floor")
+        if o.get("height") and abs(top / o["height"] - 1) > 0.03:
+            errs.append(f"{o['id']}: {top:.2f} m tall, court.json says {o['height']} m (P12: 3%)")
+        c = P.mean(0)
+        if abs(c[0]) > LENGTH / 2 + 3 or abs(c[2]) > WIDTH / 2 + 3:
+            errs.append(f"{o['id']}: stands off the court at ({c[0]:.1f}, {c[2]:.1f})")
     info.append(f"splats: {total} in all ({len(court['freeze']['players'])} players + {len(court['freeze']['others'])} extras), budget {SPLAT_BUDGET}")
     if total > SPLAT_BUDGET:
         errs.append(f"splats: {total} Gaussians is over the {SPLAT_BUDGET} budget (plan 8)")
@@ -936,9 +1045,12 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
                 pending.append(f"metrics.{grp}.{k}")
     asm = bundle / "assembly.json"
     if asm.exists():
-        for pid, d in json.loads(asm.read_text())["players"].items():
+        A_ = json.loads(asm.read_text())
+        for pid, d in A_["players"].items():
             rr = d.get("run")
             if not rr:
+                if A_["pieces"].get(f"player:{pid}", {}).get("source") == "real":
+                    (errs if strict else pending).append(f"{pid} (P42): not measured: no freeze run report (focalHeld, focal, IoU) for this body")
                 continue
             # P42: the real view really trained the freeze
             if not rr.get("focalHeld"):

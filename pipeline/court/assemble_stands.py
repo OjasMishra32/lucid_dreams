@@ -79,8 +79,11 @@ def match(img_a: np.ndarray, img_b: np.ndarray, ratio: float = 0.75, max_feature
     return uv_a, uv_b
 
 
-def triangulate_frames(img_a, ca: CalCam, img_b, cb: CalCam, max_err: float = 2.0):
-    """3D points (court space) where the two frames agree, and each point's worse reprojection error in pixels."""
+def triangulate_frames(img_a, ca: CalCam, img_b, cb: CalCam, max_err: float = 2.0, min_angle_deg: float = 2.0,
+                       depth: tuple[float, float] = (2.0, 100.0)):
+    """3D points (court space) where the two frames agree, and each point's worse reprojection error in pixels. A point
+    counts only if the two rays meet at `min_angle_deg` or more (less is too little parallax to say how deep it is)
+    and it lies `depth` metres from both cameras."""
     uv_a, uv_b = match(img_a, img_b)
     if not len(uv_a):
         return np.zeros((0, 3)), np.zeros(0)
@@ -89,29 +92,39 @@ def triangulate_frames(img_a, ca: CalCam, img_b, cb: CalCam, max_err: float = 2.
     ua, va, za = project(ca, X)
     ub, vb, zb = project(cb, X)
     err = np.maximum(np.hypot(ua - uv_a[:, 0], va - uv_a[:, 1]), np.hypot(ub - uv_b[:, 0], vb - uv_b[:, 1]))
-    keep = (s > 0) & (t > 0) & (za > 0) & (zb > 0) & (err < max_err)
+    ra, rb = X - ca.cam.C, X - cb.cam.C
+    na, nb = np.linalg.norm(ra, axis=1), np.linalg.norm(rb, axis=1)
+    angle = np.degrees(np.arccos(np.clip((ra * rb).sum(1) / np.maximum(na * nb, 1e-12), -1, 1)))
+    keep = ((s > 0) & (t > 0) & (za > 0) & (zb > 0) & (err < max_err) & (angle >= min_angle_deg)
+            & (na >= depth[0]) & (na <= depth[1]) & (nb >= depth[0]) & (nb <= depth[1]))
     return X[keep], err[keep]
 
 
 def stands_planes(X, x_min: float = 14.0, y_split: float = 2.5, half_width: float = 9.6, top: float = 12.0,
-                  min_upper: int = 30) -> tuple[list[dict], dict]:
+                  min_upper: int = 30, min_front: int = 10, guess_x: float = 16.5) -> tuple[list[dict], dict]:
     """The stands behind the far baseline as two proxy planes (format.ts: corners bottom-left, bottom-right, top-right,
     top-left as seen from the court; looking +x, left is -z), from the triangulated points beyond x_min:
       front  vertical, at the median depth of the points up to y_split (the courtside rows, photographers, the
              bench), floor to y_split, across the end (z +-half_width);
       upper  from y_split to `top`, its depth a line in height fitted to the points above y_split (the bowl rising
              back), or, with fewer than min_upper of them, vertical 1.5 m behind the front (said so in the report).
+    With fewer than min_front low points both planes are a guess (the front at guess_x), and the report says so.
     Returns (planes, report)."""
-    P = np.asarray(X, float)
+    P = np.asarray(X, float).reshape(-1, 3)
     P = P[P[:, 0] > x_min]
     low, high = P[P[:, 1] <= y_split], P[P[:, 1] > y_split]
-    if len(low) < 10:
-        raise ValueError(f"stands: only {len(low)} triangulated points below {y_split} m behind the baseline")
+    rnd = lambda q: [[round(float(v), 3) for v in p] for p in q]  # noqa: E731
+    if len(low) < min_front:
+        z0, z1, xf = -half_width, half_width, guess_x
+        planes = [[[xf, 0.0, z0], [xf, 0.0, z1], [xf, y_split, z1], [xf, y_split, z0]],
+                  [[xf + 1.5, y_split, z0], [xf + 1.5, y_split, z1], [xf + 1.5, top, z1], [xf + 1.5, top, z0]]]
+        return [{"kind": "plane", "points": rnd(q)} for q in planes], {"points": int(len(P)), "guessed": True,
+                                                                     "front": {"x": xf, "n": int(len(low))}, "upper": {"fit": False, "n": int(len(high))}}
     med = np.median(low[:, 0])
     mad = np.median(np.abs(low[:, 0] - med)) + 1e-6
     low = low[np.abs(low[:, 0] - med) < 4 * 1.4826 * mad]
     xf = float(np.median(low[:, 0]))
-    rep = {"points": int(len(P)), "front": {"x": round(xf, 3), "n": int(len(low)), "rms": round(float(np.sqrt(np.mean((low[:, 0] - xf) ** 2))), 3)}}
+    rep = {"points": int(len(P)), "guessed": False, "front": {"x": round(xf, 3), "n": int(len(low)), "rms": round(float(np.sqrt(np.mean((low[:, 0] - xf) ** 2))), 3)}}
     z0, z1 = -half_width, half_width
     front = [[xf, 0.0, z0], [xf, 0.0, z1], [xf, y_split, z1], [xf, y_split, z0]]
     if len(high) >= min_upper:
@@ -125,5 +138,4 @@ def stands_planes(X, x_min: float = 14.0, y_split: float = 2.5, half_width: floa
         x_at = lambda y: xf + 1.5  # noqa: E731
         rep["upper"] = {"fit": False, "n": int(len(high))}
     upper = [[x_at(y_split), y_split, z0], [x_at(y_split), y_split, z1], [x_at(top), top, z1], [x_at(top), top, z0]]
-    rnd = lambda q: [[round(float(v), 3) for v in p] for p in q]  # noqa: E731
     return [{"kind": "plane", "points": rnd(front)}, {"kind": "plane", "points": rnd(upper)}], rep

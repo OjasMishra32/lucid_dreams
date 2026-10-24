@@ -134,6 +134,48 @@ class Bundle(unittest.TestCase):
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("behind camera F" in e for e in errs), errs)
 
+    def copy_bad(self, name: str) -> Path:
+        bad = self.tmp / name
+        shutil.copytree(self.out, bad)
+        return bad
+
+    def test_a_stream_of_the_wrong_size_or_length_fails(self):
+        import subprocess
+
+        bad = self.copy_bad("tiny")
+        court = json.loads((bad / "court.json").read_text())
+        small = court["video"]["fallbacks"]["small"]["file"]
+        # a 1-frame 64x90 stream where the 1280-wide copy should be: its size, length and IDRs must all fail
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x90:d=0.04:r=25", "-frames:v", "1",
+                        "-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p", "-bsf:v", "h264_mp4toannexb", "-f", "h264",
+                        str(bad / small)], check=True)
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any(small in e and "64x90" in e for e in errs), errs)
+        self.assertTrue(any(small in e and "1 frame" in e for e in errs), errs)
+        self.assertTrue(any(small in e and "IDR" in e for e in errs), errs)
+
+    def test_an_extra_off_its_foot_point_fails(self):
+        bad = self.copy_bad("shifted")
+        court = json.loads((bad / "court.json").read_text())
+        o = court["freeze"]["others"][0]
+        s = sp.read_ply(bad / o["file"])
+        s.table["x"] += 100.0
+        s.table["y"] -= 20.0
+        sp.write_ply(bad / o["file"], s)
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any(o["id"] in e and "foot" in e for e in errs), errs)
+        self.assertTrue(any(o["id"] in e and "floor" in e for e in errs), errs)
+
+    def test_p42_unmeasured_is_pending_or_an_error_when_strict(self):
+        bad = self.copy_bad("p42")
+        asm = json.loads((bad / "assembly.json").read_text())
+        asm["pieces"]["player:a"]["source"] = "real"  # a real body given as a bare PLY: no run report to check
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, pending, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("P42" in p and "a" in p for p in pending), pending)
+        errs, _, _ = A.validate(bad, A.WEBXR, strict=True)
+        self.assertTrue(any("P42" in e for e in errs), errs)
+
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"
         shutil.copytree(self.out, bad)
