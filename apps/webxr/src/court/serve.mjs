@@ -1,9 +1,12 @@
 // The Court Side demo server (3.1, P36): the page and the court bundle, on 127.0.0.1 only (the Quest reaches it over USB
-// with `adb reverse tcp:<port> tcp:<port>`), never through a tunnel. Plain JS so tsc and the vite build leave it alone.
+// with `adb reverse tcp:<port> tcp:<port>`), never through a tunnel, except for a short headset test with --token (a
+// quick tunnel then shows a stranger only 404s). Plain JS so tsc and the vite build leave it alone.
 // Owned by the integrator.
 //   npm --prefix apps/webxr run build
 //   node apps/webxr/src/court/serve.mjs --bundle <bundle folder, outside the repo> [--port 5185] [--dist apps/webxr/dist]
 //   node apps/webxr/src/court/serve.mjs --dev --bundle <folder> [--standin] [--port 0] [--headset-dir <folder>]
+//   either, plus --token <openssl rand -hex 16>: every request needs the cookie that /?k=<token> sets (token-gate.mjs);
+//                       anything else is a 404 with no body
 // Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/), or with --dev apps/webxr's vite dev
 //                       server as middleware (plain http, HMR on this port; the only way to get IWER's ?emulate, which
 //                       loads in dev only: the e2e runs through this)
@@ -22,6 +25,7 @@ import { createServer } from "node:http";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HEADSET_PATH, headsetDir, headsetSink } from "./headset-sink.mjs";
+import { goodToken, tokenGate } from "./token-gate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEBXR = resolve(HERE, "../..");
@@ -77,6 +81,12 @@ if (!DEV && !existsSync(join(DIST_ARG, "index.html"))) {
 }
 const DIST = DEV ? null : real(DIST_ARG);
 const HEADSET_DIR = DEV ? headsetDir(opt("--headset-dir", null)) : null;
+const TOKEN = opt("--token", null);
+if (args.includes("--token") && !goodToken(TOKEN)) {
+  console.error("--token needs at least 16 letters, digits, - or _: use $(openssl rand -hex 16)");
+  process.exit(2);
+}
+const gate = TOKEN ? tokenGate(TOKEN) : null;
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
@@ -115,6 +125,12 @@ server.on("request", (req, res) => {
     res.end();
   };
   if (!LOCAL_HOST?.test(req.headers.host ?? "")) return deny(403);
+  const shut = gate?.(req);
+  if (shut) {
+    if (shut.cookie) res.setHeader("Set-Cookie", shut.cookie);
+    if (shut.location) res.setHeader("Location", shut.location);
+    return deny(shut.status);
+  }
   if (DEV && req.method === "POST" && (req.url ?? "").split("?")[0] === HEADSET_PATH) return headsetSink(req, res, HEADSET_DIR);
   if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") return deny(405);
   let path;
@@ -157,7 +173,8 @@ server.on("request", (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   const port = server.address().port;
   LOCAL_HOST = new RegExp(`^(127\\.0\\.0\\.1|localhost)(:${port})?$`);
-  console.log(`Court Side on http://127.0.0.1:${port}/?mode=court&bundle=/bundle/${DEV ? "&emulate" : ""} (bundle ${BUNDLE}${DEV ? ", vite dev" : ""})`);
+  console.log(`Court Side on http://127.0.0.1:${port}/?${TOKEN ? `k=${TOKEN}&` : ""}mode=court&bundle=/bundle/${DEV ? "&emulate" : ""} (bundle ${BUNDLE}${DEV ? ", vite dev" : ""})`);
+  if (TOKEN) console.log("token gate on: every request needs the cookie that ?k=<token> sets; anything else gets 404");
   console.log(`Quest over USB: adb reverse tcp:${port} tcp:${port}, then open that URL in the Quest browser`);
   if (DEV) console.log(HEADSET_DIR ? `?probe=headset records -> ${HEADSET_DIR}` : "?probe=headset records: none kept (pass --headset-dir or set COURT_DATA)");
 });
