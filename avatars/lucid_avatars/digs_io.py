@@ -154,3 +154,23 @@ def with_hand_mean(m: Motion, hand_mean: np.ndarray) -> Motion:
     pose[:, LEFT_HAND] = hand_mean[:45].reshape(15, 3)
     pose[:, RIGHT_HAND] = hand_mean[45:].reshape(15, 3)
     return replace(m, pose=pose)
+
+
+def seen_from_camera(xyz_cam: np.ndarray, K: np.ndarray, rendered_xyz: np.ndarray, tol: float = 0.03) -> np.ndarray:
+    """Which points (N, 3, in the camera's OpenCV frame) the camera really saw: they project inside the image and are
+    the front surface there, i.e. within tol metres of the position image rendered from that camera ((H, W, 3) or
+    (3, H, W): each pixel the 3D point it shows, as DiGS's visibility pass draws it)."""
+    pos = np.asarray(rendered_xyz, dtype=np.float64)
+    if pos.shape[0] == 3 and pos.shape[-1] != 3:
+        pos = np.moveaxis(pos, 0, -1)
+    h, w = pos.shape[:2]
+    xyz = np.asarray(xyz_cam, dtype=np.float64)
+    z = xyz[:, 2]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        u = np.round(K[0, 0] * xyz[:, 0] / z + K[0, 2]).astype(np.int64)
+        v = np.round(K[1, 1] * xyz[:, 1] / z + K[1, 2]).astype(np.int64)
+    inside = (z > 0) & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+    seen = np.zeros(len(xyz), dtype=bool)
+    i = np.flatnonzero(inside)
+    seen[i] = np.linalg.norm(pos[v[i], u[i]] - xyz[i], axis=1) < tol
+    return seen

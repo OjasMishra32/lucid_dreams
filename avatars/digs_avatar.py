@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import shutil
+from dataclasses import replace
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,7 @@ from lucid_avatars import digs_io as D  # noqa: E402
 from lucid_avatars import skinning as S  # noqa: E402
 from lucid_avatars.smplx_layout import SMPLX_PARENTS  # noqa: E402
 from lucid_avatars.bundle import validate_bundle, write_avatar_bundle  # noqa: E402
+from lucid_avatars.gaussian_ply import write_ply  # noqa: E402
 from lucid_avatars.idle import idle_loop  # noqa: E402
 
 HANDS_NOTE = "avatar.ply is the SMPL-X zero pose (flat hands); motion.json holds the hands in DiGS's relaxed hand mean"
@@ -212,6 +214,31 @@ def skin_avatar(model, gaussians, betas_np, dev):
     return S.quantize_top4(weights), S.skeleton_dict(joints)
 
 
+def seen_by_photo(model, code, ref_smpl, ref_camera, K: np.ndarray) -> np.ndarray:
+    """Per Gaussian (same order as avatar.ply), whether the photo really saw it: posed as in the photo, it projects
+    inside the crop and is the front surface there. DiGS's visibility pass (drawn right after the colour pass when
+    not training) paints each pixel with the 3D point it shows, which is the depth test."""
+    renderer = model.idol_decoder.renderer
+    original = renderer.render_gaussian
+    calls = []
+
+    def capture(means3D, colors_precomp, rotations, opacities, scales, cov3D_precomp=None):
+        image = original(means3D, colors_precomp, rotations, opacities, scales, cov3D_precomp)
+        if len(calls) < 2:
+            calls.append((means3D.detach().float().cpu().numpy(), image.detach().float().cpu().numpy()))
+        return image
+
+    renderer.render_gaussian = capture
+    try:
+        render(model, code, ref_smpl, ref_camera.reshape(1, 1, 20))
+    finally:
+        renderer.render_gaussian = original
+    if len(calls) < 2:
+        raise SystemExit("DiGS didn't draw its visibility pass; can't tell seen from imagined")
+    (means, _), (_, positions) = calls
+    return D.seen_from_camera(means, K, positions)
+
+
 def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
     """DiGS's own writer (imageio, then OpenCV), which only prints when both fail: check the file."""
     from lib.utils.infer_util import save_video
@@ -225,7 +252,7 @@ def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
 
 def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out: Path, dream_id: str, name: str,
                   source: dict, work: Path, frames: int = 60, fps: int = 30, idle_seconds: float = 8.0,
-                  motion=None, metrics: dict | None = None) -> int:
+                  motion=None, metrics: dict | None = None, seen: np.ndarray | None = None) -> int:
     """From a DiGS decoder code to a validated bundle: rest-pose avatar.ply, skin.bin + skeleton.json, turntable
     preview.mp4 + thumb.jpg, and motion.json: an idle loop unless motion is given, as a Motion or as a function
     (gaussians, (skin_idx, skin_w), skeleton, stand_y) -> Motion, e.g. retarget.place_on_floor. Returns 0 when the
@@ -240,6 +267,15 @@ def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out
         raise SystemExit("rest-pose capture looks wrong: " + "; ".join(errors))
     stand = D.stand_y(gaussians.xyz, gaussians.opacity)
     skin, skeleton = skin_avatar(model, gaussians, betas_np, dev)
+    if seen is not None:  # reality.ply: the rest-pose avatar with everything the photo didn't see tinted blue
+        if len(seen) != len(gaussians):
+            raise SystemExit(f"seen mask has {len(seen)} entries for {len(gaussians)} Gaussians")
+        tint = gaussians.f_dc.copy()
+        tint[~seen] = 0.5 * tint[~seen] + 0.5 * (np.array([0.25, 0.45, 1.0]) - 0.5) / D.SH_C0
+        write_ply(work / "reality.ply", replace(gaussians, f_dc=tint))
+        metrics = {**(metrics or {"psnr": None, "ssim": None, "lpips": None, "views": None}),
+                   "seenFraction": round(float(seen.mean()), 4)}
+        print(f"seen by the photo: {seen.mean():.1%} of the Gaussians (the rest is imagined)")
     visible_y = gaussians.xyz[1 / (1 + np.exp(-gaussians.opacity)) >= 0.5, 1]
     height, middle_y = np.ptp(visible_y), (visible_y.min() + visible_y.max()) / 2
 
@@ -315,6 +351,7 @@ def main() -> int:
     ref_smpl = demo._load_ref_smpl_params(str(fit_path), betas, dev)
     code = demo._sample_decoder_code(demo_args, model, ref_chw.permute(0, 2, 3, 1), ref_camera, ref_smpl, ref_chw, dev)
     torch.save({"code": code.detach().cpu(), "betas": betas_np, "hand_mean": hand_mean}, work / "code.pt")
+    seen = seen_by_photo(model, code, ref_smpl, ref_camera, K_crop)
 
     # Reference check: the avatar re-rendered from the photo's camera, beside the crop it came from.
     ref_render = render(model, code, ref_smpl, ref_camera.reshape(1, 1, 20))[0].numpy()
@@ -324,7 +361,7 @@ def main() -> int:
     source = {"photo": Path(args.image).name, "width": photo.width, "height": photo.height,
               "model": "DiGS-Avatar student + NLF SMPL-X fit", "note": HANDS_NOTE}
     return export_bundle(model, demo, code, betas_np, hand_mean, focal, ref_camera, out, args.id, args.name, source,
-                         work, frames=args.frames, fps=args.fps, idle_seconds=args.idle_seconds)
+                         work, frames=args.frames, fps=args.fps, idle_seconds=args.idle_seconds, seen=seen)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,9 @@ Order: `pipeline/hpg/setup-digs.sbatch` (once), then `hpg/digs-assets.sbatch` (o
 3. Put a consented, head-to-toe photo at `$L/data/avatars/inputs/sample.jpg`, or pass your own:
    `sbatch --export=ALL,IMAGE=/path/photo.jpg,ID=grandma-01,NAME="Grandma" avatars/hpg/digs-sample.sbatch`.
    Ends `BUNDLE_OK <dir>` and `SAMPLE_OK`; the bundle is `$L/data/avatars/dreams/<id>/`.
-4. Check `<id>.work/ref_check.png` (the photo crop beside DiGS's re-render from the photo's camera: should overlap)
+4. Honesty: `metrics.seenFraction` in `dream.json` is the share of Gaussians the photo really saw (a depth test
+   against DiGS's visibility pass from the photo's camera); `<id>.work/reality.ply` tints the imagined rest blue.
+5. Check `<id>.work/ref_check.png` (the photo crop beside DiGS's re-render from the photo's camera: should overlap)
    and `preview.mp4` (turntable). Debug files: `matte.png`, `crop.png`, `ref_smplx.json`.
 
 What it does: rembg matte -> 640x896 crop around the person -> NLF SMPL-X fit on the crop (55-degree FOV assumed, principal point centred as DiGS requires) -> DiGS

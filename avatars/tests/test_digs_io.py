@@ -118,3 +118,22 @@ def test_centred_crop_intrinsics_keeps_the_focal_scale_and_centres_the_principal
     np.testing.assert_allclose(Kc[0, 0], K[0, 0])  # crop is already 640 wide: no scaling
     np.testing.assert_allclose(Kc[:2, 2], [320, 448])  # DiGS's mesh renderer assumes the centre
     np.testing.assert_allclose(D.centred_crop_intrinsics(K, (0, 0, 320, 448), 640, 896)[1, 1], 2 * K[1, 1])
+
+
+def test_seen_from_camera_depth_tests_against_the_rendered_positions():
+    K = np.array([[100.0, 0, 50], [0, 100.0, 50], [0, 0, 1]])
+    ys, xs = np.mgrid[0:100, 0:100]
+    # the rendered front surface: a plane at z = 2 (OpenCV camera, identity extrinsics)
+    pos = np.stack([(xs - 50) / 100 * 2, (ys - 50) / 100 * 2, np.full(xs.shape, 2.0)], axis=-1)
+    front = np.array([[0.0, 0.0, 2.0], [0.3, -0.2, 2.0]])
+    behind = np.array([[0.0, 0.0, 2.5]])  # hidden by the plane
+    outside = np.array([[5.0, 0.0, 2.0]])  # projects off the image
+    seen = D.seen_from_camera(np.concatenate([front, behind, outside]), K, pos)
+    assert seen.tolist() == [True, True, False, False]
+
+
+def test_seen_from_camera_accepts_channel_first_renders():
+    K = np.array([[10.0, 0, 5], [0, 10.0, 5], [0, 0, 1]])
+    pos = np.zeros((3, 10, 10))
+    pos[2] = 1.0
+    assert D.seen_from_camera(np.array([[0.0, 0.0, 1.0]]), K, pos).tolist() == [True]
