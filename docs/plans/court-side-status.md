@@ -4,12 +4,19 @@
 2018 Finals G4**, from the best low, fixed courtside angle that exists. You start in a courtside seat where that camera
 stood, about 2 s plays in real 3D, you pause on the palm menu and it eases into a freeze at the release, then you stand
 up and walk a ring about 1.5 m around the pair; it plays on or replays. Ojasva's bar: if two players aren't passing
-by noon, ship Steph alone. Updated Sat 6:45 AM.
+by noon, ship Steph alone. Updated Sat 6:44 AM.
 
 ## Asks for Ojasva (newest first)
 
-7. **Coming next (Ian or Ojasva).** Load a two-player budget scene on the Quest 3S and report frame time and memory.
-   Page and how to open it on the headset to follow; it's the first real headset number for Court Side.
+7. **Ready now (Ian or Ojasva, ~15 min on the Quest 3S): the first real headset number for Court Side.** Vishal
+   sends you `dropin.zip` (a throwaway test page, never commit it). (1) Unzip it: put `court-quest.html` in
+   `apps/webxr/` and `src/spike6/` in `apps/webxr/src/`. (2) On the Quest, open your usual dev server or tunnel at
+   `/court-quest.html?a=<replay id>&b=<another replay id>` with your two biggest finished replays (for example the
+   jump shot and LeBron); it loads up to 121 frames of each. (3) Press "Enter at 0.5x" and stand still: four 12 s
+   phases run by themselves (play, freeze, walk around while playing, walk around frozen), then a results table
+   appears. Photo it. (4) Exit from the palm menu and repeat with 0.75x and 1x. Add `&hz=90` once at the best scale.
+   (5) Then once more with `?per=100000` (synthetic people at the planned 100k/250k budget). (6) Send the photos and
+   anything odd (tab reload, black flicker), then delete both files. Desktop proof: it runs end to end, 0 errors.
 6. **Yes (Ojasva, Sat 6:05 AM).** 100k per player per frame for playback and the freeze frame alone at 250k is right for the
    Quest browser; keep `aniso`, the real-frame view (`sourceView`) and 50-step views for the final run. Original ask: playback frames with `recon.py --cap 100000`, plus the
    freeze frame trained again on its own at `--cap 250000` (one frame, one GPU, minutes). Both are existing flags
