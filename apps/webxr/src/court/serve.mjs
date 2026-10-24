@@ -3,13 +3,15 @@
 // Owned by the integrator.
 //   npm --prefix apps/webxr run build
 //   node apps/webxr/src/court/serve.mjs --bundle <bundle folder, outside the repo> [--port 5185] [--dist apps/webxr/dist]
-//   node apps/webxr/src/court/serve.mjs --dev --bundle <folder> [--standin] [--port 0]
+//   node apps/webxr/src/court/serve.mjs --dev --bundle <folder> [--standin] [--port 0] [--headset-dir <folder>]
 // Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/), or with --dev apps/webxr's vite dev
 //                       server as middleware (plain http, HMR on this port; the only way to get IWER's ?emulate, which
 //                       loads in dev only: the e2e runs through this)
 //          /bundle/...  the bundle folder (court.json beside it); CORS only for pages on localhost / 127.0.0.1, so the
 //                       dev page and the e2e runner can read a real bundle without vite ever serving it
 //          /court-sw.js the Service Worker (sw.js), scoped to /
+//          POST /__court/headset (--dev only): `?probe=headset`'s records, appended to --headset-dir (else
+//                       $COURT_DATA/qa/headset)/<session>.jsonl (headset-sink.mjs)
 // Refuses: any Host but 127.0.0.1 or localhost (DNS rebinding); a bundle inside any checkout of the repo, worktrees
 // included (vite and the tunnel serve apps/webxr/ and dreams/; only the synthetic stand-in may be served from there,
 // with --standin); and any path (symlinks included) that leaves its folder. `--port 0` takes a free port; the first
@@ -19,6 +21,7 @@ import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HEADSET_PATH, headsetDir, headsetSink } from "./headset-sink.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEBXR = resolve(HERE, "../..");
@@ -73,6 +76,7 @@ if (!DEV && !existsSync(join(DIST_ARG, "index.html"))) {
   process.exit(2);
 }
 const DIST = DEV ? null : real(DIST_ARG);
+const HEADSET_DIR = DEV ? headsetDir(opt("--headset-dir", null)) : null;
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
@@ -111,6 +115,7 @@ server.on("request", (req, res) => {
     res.end();
   };
   if (!LOCAL_HOST?.test(req.headers.host ?? "")) return deny(403);
+  if (DEV && req.method === "POST" && (req.url ?? "").split("?")[0] === HEADSET_PATH) return headsetSink(req, res, HEADSET_DIR);
   if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") return deny(405);
   let path;
   try {
@@ -154,6 +159,7 @@ server.listen(PORT, "127.0.0.1", () => {
   LOCAL_HOST = new RegExp(`^(127\\.0\\.0\\.1|localhost)(:${port})?$`);
   console.log(`Court Side on http://127.0.0.1:${port}/?mode=court&bundle=/bundle/${DEV ? "&emulate" : ""} (bundle ${BUNDLE}${DEV ? ", vite dev" : ""})`);
   console.log(`Quest over USB: adb reverse tcp:${port} tcp:${port}, then open that URL in the Quest browser`);
+  if (DEV) console.log(HEADSET_DIR ? `?probe=headset records -> ${HEADSET_DIR}` : "?probe=headset records: none kept (pass --headset-dir or set COURT_DATA)");
 });
 const stop = () => {
   server.close();

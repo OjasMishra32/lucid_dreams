@@ -110,7 +110,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const queue: (() => void)[] = [];
   const actions = new Map<UiAction, () => void>();
   // the e2e harness, dev only (scripts/court/e2e.mjs runs through serve.mjs --dev)
-  const probe = import.meta.env.DEV && params.has("probe")
+  const probe = import.meta.env.DEV && params.has("probe") && params.get("probe") !== "headset" // ?probe=headset: real time, headset.ts
     ? new Probe(params.get("probe"), {
         snapshot: () => ({
           phase, setup, still: Number((seat.arrival.waited ?? -1).toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
@@ -151,7 +151,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const { court, frames } = bundle;
   const hz = court.video.displayHz;
   xr.showHz = hz;
-  if (params.has("stats") || params.get("probe") === "timing") stats = new FrameStats(gl, hz);
+  if (params.has("stats") || params.get("probe") === "timing" || params.get("probe") === "headset") stats = new FrameStats(gl, hz);
   // ?stats on the headset: remote devtools reads __courtStats.report() and __courtStats.xr (the display rate)
   if (stats) (window as unknown as { __courtStats?: FrameStats }).__courtStats = stats;
 
@@ -201,6 +201,14 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     proxies.project(frame);
     fed = frame;
   };
+  // ?probe=headset (dev only, never built in): the real headset's telemetry, posted to serve.mjs --dev every 2 s (headset.ts)
+  const headset = import.meta.env.DEV && params.get("probe") === "headset"
+    ? new (await import("./headset")).HeadsetTelemetry({
+        bundle, phase: () => phase, inRoom: () => inRoom, clock: () => clockState, onScreen: () => video.stats.onScreen, video: () => video.stats,
+        splats: () => spark.activeSplats, xr: () => xr, session: () => renderer.xr.getSession(), stats: () => stats?.report() ?? null,
+      })
+    : null;
+  headset?.start();
   await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
 
   // ---------------- the machine ----------------
@@ -498,6 +506,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     renderer.render(scene, camera);
     stats?.gpu.end();
     stats?.frame(phase, interval, performance.now() - frameStart);
+    headset?.frame(interval);
   };
   renderer.setAnimationLoop((time) => {
     frameStart = performance.now();
