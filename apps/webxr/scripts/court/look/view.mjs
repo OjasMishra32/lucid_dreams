@@ -87,6 +87,27 @@ export function project(view, p) {
   return [view.viewport[0] + view.cx + (view.fx * c[0]) / c[2], view.viewport[1] + view.cy + (view.fy * c[1]) / c[2]];
 }
 
+/** Luma (0-255) of a saved frame in an r-pixel window round each court point, one value per point (NaN off screen). */
+export function lumaEach(ctx, name, view, points, r = 3) {
+  const img = readPng(join(ctx.out, `${name}.png`));
+  return points.map((p) => {
+    const px = project(view, p);
+    if (!px) return NaN;
+    let sum = 0;
+    let n = 0;
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        const X = Math.round(px[0]) + dx;
+        const Y = Math.round(px[1]) + dy;
+        if (X < 0 || Y < 0 || X >= img.width || Y >= img.height) continue;
+        const o = (Y * img.width + X) * img.channels;
+        sum += 0.2126 * img.data[o] + 0.7152 * img.data[o + 1] + 0.0722 * img.data[o + 2];
+        n++;
+      }
+    return n ? sum / n : NaN;
+  });
+}
+
 /** Mean luma (0-255) of a saved frame in r-pixel windows round each court point (the points' own pixels). */
 export function lumaAt(ctx, name, view, points, r = 3) {
   const img = readPng(join(ctx.out, `${name}.png`));
@@ -159,7 +180,21 @@ export async function realityPoints(ctx, view) {
     },
     [grid, c.floorSeen, c.length, c.width],
   );
-  // what stands on the floor, as screen boxes
+  const boxes = standingBoxes(ctx, view);
+  const out = { seen: [], imagined: [] };
+  grid.forEach(([x, z], i) => {
+    if (!marks[i]) return;
+    const q = project(view, [x, 0, z]);
+    const [vx, vy, vw, vh] = view.viewport;
+    if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) return;
+    if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) return;
+    out[marks[i]].push([x, 0, z]);
+  });
+  return out;
+}
+
+/** What stands on the floor in `view` (the players, the extras, the ball, the hoop), as screen boxes with 8 px to spare. */
+export function standingBoxes(ctx, view) {
   const fz = ctx.court.freeze;
   const boxes = [];
   const box = (min, max) => {
@@ -172,17 +207,26 @@ export async function realityPoints(ctx, view) {
   for (const o of fz.others) box([o.foot[0] - 0.7, 0, o.foot[2] - 0.7], [o.foot[0] + 0.7, o.height + 0.1, o.foot[2] + 0.7]);
   const b = fz.ball;
   box(b.centre.map((v) => v - b.radius), b.centre.map((v) => v + b.radius));
-  const rim = c.rim;
+  const rim = ctx.court.court.rim;
   box([rim[0] - 2.2, 0, rim[2] - 1.2], [rim[0] + 2.2, rim[1] + 1.3, rim[2] + 1.2]); // ring, board, pole and base
-  const out = { seen: [], imagined: [] };
-  grid.forEach(([x, z], i) => {
-    if (!marks[i]) return;
-    const q = project(view, [x, 0, z]);
-    const [vx, vy, vw, vh] = view.viewport;
-    if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) return;
-    if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) return;
-    out[marks[i]].push([x, 0, z]);
-  });
+  return boxes;
+}
+
+/** Court floor points (0.5 m grid) at least `away` metres from the pair's centre, on screen in `view`, not under anyone. */
+export function backgroundPoints(ctx, view, away = 4.5) {
+  const c = ctx.court.court;
+  const [px, , pz] = ctx.court.seat.pairCentre;
+  const boxes = standingBoxes(ctx, view);
+  const [vx, vy, vw, vh] = view.viewport;
+  const out = [];
+  for (let x = -c.length / 2 + 0.25; x < c.length / 2; x += 0.5)
+    for (let z = -c.width / 2 + 0.25; z < c.width / 2; z += 0.5) {
+      if (Math.hypot(x - px, z - pz) < away) continue;
+      const q = project(view, [x, 0, z]);
+      if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) continue;
+      if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) continue;
+      out.push([x, 0, z]);
+    }
   return out;
 }
 

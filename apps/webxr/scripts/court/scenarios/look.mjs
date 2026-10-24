@@ -6,7 +6,7 @@
 //   house goes down while the pair's own pixels move <= 1 grey level. P23: the Reality check tints the floor the
 //   bundle marks as never filmed and leaves the filmed floor alone. (P17, the capsule fade, is scenarios/proximity.mjs.)
 // Owner: stream E.
-import { HZ, alphaOk, blueRedAt, lumaAt, realityPoints, runLight, sitAtSeat, worstStep } from "../look/view.mjs";
+import { HZ, alphaOk, backgroundPoints, blueRedAt, lumaAt, lumaEach, realityPoints, runLight, sitAtSeat, worstStep } from "../look/view.mjs";
 
 export const owner = "E (look)";
 export const needs = ["light", "world", "freeze"];
@@ -20,12 +20,40 @@ export default async function look(ctx) {
     window.__courtLook.world.light.set("watch", 0);
     window.__courtLook.freeze.reveal(1);
   });
+  // the picture on F, as at the real time stop: with the video layer built (stream D's player and proxies on
+  // __courtLook) the pair's pixels are F's own, so the light can be judged on them; the stubs keep the 3D alone
+  const F = ctx.court.video.segments.eases[0]?.frames[1];
+  const onF = await ctx.page.evaluate(
+    async ([f, hz]) => {
+      const L = window.__courtLook;
+      if (!L.video || !L.proxies || f === undefined) return null;
+      L.video.opacity = 1;
+      for (let i = 0; i < 5 * hz; i++) {
+        L.video.show(f);
+        L.proxies.project(f);
+        L.world.frame(f);
+        await window.__court.nextFrame();
+        if (L.video.stats.onScreen === f) return { frames: i + 1, onScreen: f };
+      }
+      return { frames: -1, onScreen: L.video.stats.onScreen };
+    },
+    [F, HZ],
+  );
+  if (onF) ctx.check("the picture is on F for the time stop (P28)", onF.frames > 0, `show frame ${onF.onScreen} on screen after ${onF.frames} frames (F is ${F})`);
   await ctx.frames(Math.round(0.5 * HZ)); // Spark's first generation and sort (shown late, splats pop for 2-6 frames)
   const watch = await ctx.save("look-watch");
   const ease = Array.from({ length: Math.round(1.2 * HZ) }, (_, i) => ["ease", i / HZ, null]);
   const open = Array.from({ length: 5 * HZ + 1 }, (_, i) => ["handoff", i / HZ, null]);
   const a = await runLight(ctx, ease);
   const atF = await ctx.save("look-freeze");
+  // the field at F (perceived): its floor level, and which floor points it leaves at that level (outside the spot that
+  // holds the pair), for the background's dim
+  const cand = backgroundPoints(ctx, watch.view, 0);
+  const { floorAtF, outside } = await ctx.page.evaluate((pts) => {
+    const light = window.__courtLook.world.light;
+    const level = Math.pow(light.levels.floor, 1 / 2.4);
+    return { floorAtF: level, outside: pts.map(([x, , z]) => Math.abs(Math.pow(light.at(x, z), 1 / 2.4) - level) < 0.01) };
+  }, cand);
   const b = await runLight(ctx, open);
   const opened = await ctx.save("look-open");
   const all = [...a, ...b];
@@ -41,7 +69,23 @@ export default async function look(ctx) {
   const torsos = ctx.court.freeze.players.map((p) => p.capsules[0].a.map((v, i) => (v + p.capsules[0].b[i]) / 2));
   const before = lumaAt(ctx, "look-watch", watch.view, torsos);
   const after = lumaAt(ctx, "look-freeze", atF.view, torsos);
-  ctx.check("the pair stays at 1.0 through the time stop (P28: <= 1 grey level)", Math.abs(after - before) <= 1, `torso luma ${before.toFixed(2)} -> ${after.toFixed(2)}`);
+  ctx.check(
+    `the pair stays at 1.0 through the time stop (P28: <= 1 grey level${onF ? ", the picture on F" : ", the 3D alone"})`,
+    Math.abs(after - before) <= 1,
+    `torso luma ${before.toFixed(2)} -> ${after.toFixed(2)}`,
+  );
+  // and the background does dim, as the house light says: the floor the field leaves outside the pair's spot at F
+  // (points bright enough at the watch to measure, luma 20 or more), against the field's level
+  const lw = lumaEach(ctx, "look-watch", watch.view, cand);
+  const lf = lumaEach(ctx, "look-freeze", atF.view, cand);
+  const lit = cand.map((_, i) => i).filter((i) => outside[i] && lw[i] >= 20 && Number.isFinite(lf[i]));
+  const mean = (xs) => xs.reduce((s, x) => s + x, 0) / Math.max(1, xs.length);
+  const [bw, bf] = [mean(lit.map((i) => lw[i])), mean(lit.map((i) => lf[i]))];
+  ctx.check(
+    "the background away from the pair dims at F as the house light says (P28: within 0.1 of the field's floor level)",
+    lit.length >= 12 && bf / bw <= 0.9 && Math.abs(bf / bw - floorAtF) <= 0.1,
+    `${lit.length} lit floor points outside the pair's spot: luma ${bw.toFixed(2)} -> ${bf.toFixed(2)} (x${(bf / bw).toFixed(3)}); the field's floor at F ${floorAtF.toFixed(3)}`,
+  );
   // the Reality check, judged on the floor the bundle marks: what was never filmed goes clearly blue, and what was
   // filmed doesn't move (a tint missing and a tint leaking onto real footage both fail)
   await ctx.pressFrames("reality", 3);
@@ -96,6 +140,6 @@ export default async function look(ctx) {
     lagging === 0 && sync[0].hoop !== sync.at(-1).hoop && sync[0].glow !== sync.at(-1).glow,
     `${lagging} of ${sync.length} frames drawn a frame behind; hoop ${sync[0].hoop.toFixed(4)} -> ${sync.at(-1).hoop.toFixed(4)}, glow ${sync[0].glow.toFixed(4)} -> ${sync.at(-1).glow.toFixed(4)}`,
   );
-  ctx.report.luma = { watch: a[0].luma, freeze: a.at(-1).luma, open: b.at(-1).luma, pairBefore: before, pairAfter: after };
+  ctx.report.luma = { watch: a[0].luma, freeze: a.at(-1).luma, open: b.at(-1).luma, pairBefore: before, pairAfter: after, onF, background: { points: lit.length, watch: bw, freeze: bf, floorAtF } };
   ctx.report.frames = all.map(({ thumb, view, ...f }) => f);
 }
