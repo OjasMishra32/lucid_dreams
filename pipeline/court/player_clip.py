@@ -361,12 +361,13 @@ def plan_set(cfg: dict, name: str, calib: dict, still: dict, frames_by_n: dict, 
     wc, hc, sc = clip_window(union, cw, ch, tuple(cfg.get("clip_max", CLIP_MAX)), margin)
     size = [wc, hc] if sc == 1 else [int(wc * sc) // 2 * 2, int(hc * sc) // 2 * 2]
     out["clip"] = {"window": [*fit_crop(union, wc, hc, w, h, margin), wc, hc], "scale": round(sc, 4), "size": size}
-    # how tall the player stands: in the clip, and in 4DAnyone's 704x1280 views if it fits the union of their masks
-    # (+4%) into that frame, as fdanyone/geometry/crop.py does
+    # how tall the player stands: in the clip, and in 4DAnyone's 704x1280 crop of it (the union of their masks + 4%,
+    # its source_crop_policy). Its generated views are framed by their own 3D orbit around the whole path (radius for
+    # ~80% of the frame's height), so the player is often much taller there: read that off the views.
     hs = {n: b[3] - b[1] for n, b in boxes.items()}
     hk = hs.get(cfg["ref"], float(np.median(list(hs.values()))))
     fit_views = min(VIEWS[0] / (out["unionSize"][0] * 1.04), VIEWS[1] / (out["unionSize"][1] * 1.04))
-    out["heights"] = {"canvasAtK": round(hk), "inputAtK": round(hk * sc), "viewsAtK": round(hk * fit_views),
+    out["heights"] = {"canvasAtK": round(hk), "inputAtK": round(hk * sc), "sourceCropAtK": round(hk * fit_views),
                       "inputMedian": round(float(np.median(list(hs.values()))) * sc)}
     # the real frame the freeze trains against: cw x ch native pixels around the player at the reference frame
     if cfg["ref"] in boxes:
@@ -705,8 +706,8 @@ def main(argv=None):
                + (str(p["crop"]) if "crop" in p else f"NONE: {p.get('error', 'no mask at the reference frame')}"))
         print(f"[{name}] {p['player']} stride {p['stride']} window {p['window'][0]}-{p['window'][1]} k={p['k']}: "
               f"union {p['unionSize'][0]:.0f}x{p['unionSize'][1]:.0f} px over {p['measured']} frames; {fit}; "
-              f"player {p['heights']['inputAtK']} px tall at k in input.mp4, ~{p['heights']['viewsAtK']} px in the "
-              f"views; {len(p['fill'])} frames need fill (max covered {p['maxCovered']:.1%}); "
+              f"player {p['heights']['inputAtK']} px tall at k in input.mp4, ~{p['heights']['sourceCropAtK']} px in "
+              f"4DAnyone's crop of it; {len(p['fill'])} frames need fill (max covered {p['maxCovered']:.1%}); "
               f"magnified {p['magnification'][0]}-{p['magnification'][1]}x"
               + (f"; {len(p['skipped'])} frames not measured yet" if p["skipped"] else ""))
     if a.measure_only or a.allow_partial:
