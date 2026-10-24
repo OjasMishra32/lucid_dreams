@@ -20,6 +20,7 @@ export interface Dream {
   createdAt?: string;
   updatedAt?: string; // set when a bundle is changed in place (recoloured, re-exported)
   props?: string | null; // props.json: the objects around the person (a ball and its track, a hoop)
+  joints?: string | null; // joints.json: the clip's body joints per frame, in bundle space (Follow along)
   preview: string | null;
   thumb: string | null;
   metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null; seenFraction?: number | null };

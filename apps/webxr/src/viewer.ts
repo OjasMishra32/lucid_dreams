@@ -13,6 +13,7 @@ import { Basketball, wantsBall } from "./basketball";
 import { Golf, wantsClub } from "./club";
 import { Guitar, lessonChords, wantsGuitar } from "./guitar";
 import { setMirrored } from "./mirror";
+import { FollowAlong, loadJoints } from "./follow";
 import { WorldLock } from "./xr/anchor";
 import { handOccluder, XrButton } from "./xr/hands";
 import { HandMenu, handSides } from "./xr/menu";
@@ -222,6 +223,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const duration = avatar ? avatar.duration : Math.max(dream.durationS, 1 / dream.fps);
   // what you came to do with them (experience.json, written from your intent)
   const experience = (await loadExperience(dream)) ?? fallbackExperience(dream, duration);
+  const bodyJoints = await loadJoints(dream); // their joints through the clip (joints.json), for Follow along
   const steps = (experience?.steps ?? []).map((st) => ({ ...st, end: Math.min(st.end, duration) })).filter((st) => st.end > st.start);
   const lesson = experience?.mode === "teach" && steps.length ? new Lesson(steps) : null;
   // eye contact: someone you're with or playing against looks at you (a teacher looks at the move)
@@ -614,6 +616,20 @@ export async function renderViewer(root: HTMLElement, id: string) {
     menu.add(...chordButtons, fingersButton);
   }
   const headTurn = new THREE.Quaternion();
+  // follow along: in a lesson, targets where your head and wrists should be (from their joints), and a match score
+  const follow = lesson && bodyJoints ? new FollowAlong(scene, bodyJoints, hands, sideOf, listener) : null;
+  if (follow) {
+    follow.label.position.set(0, -0.125, 0.001);
+    stepCardGroup.add(follow.label);
+    const xrFollow: XrButton = new XrButton("follow", "Follow along", () => {
+      follow.setEnabled(!follow.enabled);
+      xrFollow.setOn(follow.enabled);
+    });
+    xrFollow.setOn(true);
+    menu.add(xrFollow);
+  }
+  let followStep = -1;
+  const personCentre = new THREE.Vector3();
   const personRadius = dream.bounds ? Math.max(0.25, ...[0, 2].flatMap((k) => [Math.abs(dream.bounds!.min[k]), Math.abs(dream.bounds!.max[k])])) : 0.35;
   const releaseLocks = () =>
     locks.forEach((l) => {
@@ -660,6 +676,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       golf?.setActive(true);
       hoopBall?.setActive(true);
       guitar?.setActive(true);
+      follow?.setActive(true);
     },
     onExitXr: () => {
       coach?.stop(); // leaving the room ends the question: the mic is released
@@ -674,6 +691,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       }
       hoopBall?.setActive(false);
       guitar?.setActive(false);
+      follow?.setActive(false);
       person.position.set(0, 0, 0);
       person.rotation.set(0, Math.PI, 0);
       caption.visible = false;
@@ -752,6 +770,14 @@ export async function renderViewer(root: HTMLElement, id: string) {
       golf?.update(dt, open);
       hoopBall?.update(dt, open, eyes, flatForward(ahead));
       if (guitar) guitar.update(dt, open, eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn));
+      if (follow && lesson) {
+        if (lesson.i !== followStep) {
+          followStep = lesson.i;
+          follow.resetStep();
+        }
+        person.localToWorld(personCentre.set(0, height * 0.55, 0));
+        follow.update(dt, t, eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn), placeMode, mirrored, personCentre, lesson.phase === "turn");
+      }
     }
     const game = !!hoopBall?.driving;
     if (props) props.ballsVisible = !game; // one ball: theirs follows the clip, unless you're passing yours to them
@@ -800,7 +826,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, hands, setMirror };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, hands, setMirror };
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */
