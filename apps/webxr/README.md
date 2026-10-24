@@ -26,15 +26,20 @@ Dreams come from `dreams/` at the repo root (the autopilot fetches them there). 
 | Hold a pinch (about a second) | Brings the person 1.8 m in front of you, facing you |
 | Push a fingertip through a button | Pause, speed (1x, 0.5x, 0.25x), Reality check, Bring here |
 | Reach toward them | Your real hand stays in front of them |
+| Fingertip "Place" button | Swaps your room for a 360-degree place around them: concert hall, court, gym, ring, studio, mountains (and back) |
 
-Captions float in front of the person when the bundle has `captions.vtt`. Reality check tints everything the camera
+A lesson (`experience.json`, or just the sentence you gave) adds a step card and Back / Again / Next buttons: each
+step plays slowed down, then they freeze for your turn. Basketball dreams come with the real ball and a regulation
+hoop where the shooter aims (`props.json`). Captions float in front of the person when the bundle has `captions.vtt`. Reality check tints everything the camera
 (or the photo) never saw blue.
 
 ## Chess
 
 `?mode=chess` (also linked from the library): a real-size board on your table, an engine opponent from Club 1400 to
 full strength, including Fischer's and Carlsen's peak ratings (labelled as the engine at that rating, not the players).
-`?mode=chess&opponent=<avatar id>` stands a consenting teammate's avatar across the table.
+`?mode=chess&opponent=<avatar id>` (or picking Fischer or Carlsen) seats an avatar across the table: it thinks with its
+chin on its fist, reaches over and moves its own pieces, taps the chess clock, tips its king when it loses and offers a
+handshake you can meet with your hand.
 
 | In the room | Does |
 | --- | --- |

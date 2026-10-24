@@ -123,9 +123,15 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 .hint { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 9; font-size: 13px; color: var(--muted); }
 
 @media (max-width: 640px) {
-  .controls { gap: 10px; }
+  /* two rows on a phone: play + scrub, then the pills, never wider than the screen */
+  .controls { gap: 8px 10px; flex-wrap: wrap; justify-content: center; }
+  .controls #scrub { flex: 1 1 calc(100% - 60px); min-width: 0; }
   .time { display: none; }
   .segmented button { padding: 6px 7px; }
+  .controls .pill { padding: 6px 11px; font-size: 13px; }
+  #place > span:first-child { display: none; }
+  .cue { bottom: calc(max(28px, env(safe-area-inset-bottom)) + 128px); }
+  .step-card { bottom: calc(max(28px, env(safe-area-inset-bottom)) + 128px) !important; }
 }
 
 /* ---------- chess ---------- */
