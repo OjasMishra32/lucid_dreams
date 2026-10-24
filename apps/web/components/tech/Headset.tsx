@@ -3,10 +3,11 @@
 import { useEffect, useRef, type RefObject } from "react";
 import "./headset.css";
 
-// The headset on the technology page, live in 3D (lib/three/headset.ts). It turns as `track` scrolls through the
-// viewport: front, side, the inside, then the two eye frusta. If WebGL 2 is missing the host simply stays empty.
+// The headset, live in 3D (lib/three/headset.ts), driven by how far `track` has scrolled through the viewport: it
+// assembles, turns, explodes, shows its lenses, then its eyes beam out to `person`. If WebGL 2 is missing the host
+// simply stays empty.
 
-export default function HeadsetCanvas({ track }: { track: RefObject<HTMLElement | null> }) {
+export default function HeadsetCanvas({ track, person }: { track: RefObject<HTMLElement | null>; person?: string | null }) {
   const host = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,7 +24,7 @@ export default function HeadsetCanvas({ track }: { track: RefObject<HTMLElement 
       if (!gone && host.current) host.current.dataset.failed = "";
     };
     import("@/lib/three/headset")
-      .then((m) => m.mountHeadset(host.current!, { progress, failed }))
+      .then((m) => m.mountHeadset(host.current!, { progress, failed, person }))
       .then((d) => {
         if (gone) d();
         else dispose = d;
@@ -33,7 +34,7 @@ export default function HeadsetCanvas({ track }: { track: RefObject<HTMLElement 
       gone = true;
       dispose?.();
     };
-  }, [track]);
+  }, [track, person]);
 
   return <div ref={host} className="headset-host" aria-hidden="true" />;
 }

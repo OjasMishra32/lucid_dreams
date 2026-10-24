@@ -5,6 +5,7 @@ import SceneGallery, { type GroupCopy } from "@/components/home/SceneGallery";
 import { heroFrames, measured, playClips, rigCameras, scenes } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
 import TechnologySection from "@/components/tech/TechnologySection";
+import HeadsetStage from "@/components/tech/HeadsetStage";
 import MakeDream from "@/components/MakeDream";
 import "./home.css";
 
@@ -35,6 +36,10 @@ export default function Home() {
         views={hero?.views ?? null}
         poster="/media/hero-dance.jpg"
       />
+
+      <section id="headset" className="tech t-headset" aria-label="Meta Quest 3S">
+        <HeadsetStage person={hero?.frame ?? null} />
+      </section>
 
       {clips.length > 0 && (
         <section className="play-section" aria-labelledby="play-title">

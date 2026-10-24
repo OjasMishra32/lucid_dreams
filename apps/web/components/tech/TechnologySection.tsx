@@ -5,7 +5,6 @@ import GaussianPlayground from "@/components/tech/GaussianPlayground";
 import Compositing from "@/components/tech/Compositing";
 import Trajectories from "@/components/tech/Trajectories";
 import FillRate from "@/components/tech/FillRate";
-import HeadsetStage from "@/components/tech/HeadsetStage";
 import { MeasuredTable, TruthSlider } from "@/components/home/Measured";
 import { heroFrames, heroJoints, measured, rigCameras } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
@@ -130,7 +129,7 @@ export default function TechnologySection() {
         <p className="t-eyebrow">Technology</p>
         <h2 id="tech-title" className="t-title">The math</h2>
         <p className="t-lede">
-          Each person is about 290k 3D Gaussians, fit to 48 views and rendered twice per frame at 72 Hz on a Quest 3S.
+          Each person is about 290k 3D Gaussians, fit to 48 views and rendered twice per frame at 72 Hz.
         </p>
         <div className="math-strip" aria-hidden="true">
           <div className="math-run">
@@ -145,7 +144,6 @@ export default function TechnologySection() {
           <li><a href="#pixel">Rendering</a></li>
           <li><a href="#fit">Training</a></li>
           <li><a href="#physics">Ball physics</a></li>
-          <li><a href="#headset">Quest 3S</a></li>
         </ol>
       </header>
 
@@ -221,10 +219,6 @@ export default function TechnologySection() {
           <Eq tex={String.raw`\dot{\mathbf v}=\mathbf g\ -\ k_D\lVert\mathbf v\rVert\,\mathbf v\ +\ k_L\,C_L\lVert\mathbf v\rVert^{2}\,(\hat{\boldsymbol\omega}\times\hat{\mathbf v})`} label="gravity, drag, Magnus lift" />
         </div>
         <Trajectories />
-      </section>
-
-      <section id="headset" className="t-headset">
-        <HeadsetStage />
       </section>
 
       <section className="t-chapter t-wide t-fill">

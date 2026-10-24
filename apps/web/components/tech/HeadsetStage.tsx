@@ -3,30 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import HeadsetCanvas from "./Headset";
 
-// The headset chapter: the real Quest 3S model rendered live (lib/three/headset.ts), pinned while three captions pass.
+// The headset, right after the opening: the real Quest 3S rendered live (lib/three/headset.ts), pinned while short
+// captions pass, ending with what its eyes see.
 
 const CAPS = [
-  {
-    from: 0,
-    to: 0.32,
-    title: "Meta Quest 3S",
-    text: "Snapdragon XR2 Gen 2, 8 GB RAM, 1832 × 1920 per eye, 96° field of view.",
-  },
-  {
-    from: 0.32,
-    to: 0.62,
-    title: "Passthrough",
-    text: "WebXR immersive-ar in a local-floor space, so y = 0 is your floor. People are pinned with spatial anchors. Hand tracking gives 25 joints per hand.",
-  },
-  {
-    from: 0.62,
-    to: 1.01,
-    title: "Two renders per frame",
-    text: "One per eye, 63 mm apart, inside 13.9 ms at 72 Hz. Miss it and the frame judders.",
-  },
+  { from: 0, to: 0.3, title: "Meta Quest 3S", text: "The headset it all runs on." },
+  { from: 0.3, to: 0.64, title: "Inside", text: "Snapdragon XR2 Gen 2, 8 GB RAM, 1832 × 1920 per eye behind Fresnel lenses." },
+  { from: 0.64, to: 0.8, title: "Hands only", text: "No controllers. 25 tracked joints per hand, and your real room through its cameras." },
+  { from: 0.8, to: 1.01, title: "Two eyes, two renders", text: "Each eye gets its own render, 72 times a second. This is who they see." },
 ];
 
-export default function HeadsetStage() {
+export default function HeadsetStage({ person }: { person?: string | null }) {
   const track = useRef<HTMLDivElement>(null);
   const [p, setP] = useState(0);
   useEffect(() => {
@@ -45,12 +32,11 @@ export default function HeadsetStage() {
   return (
     <div ref={track} className="hs-track">
       <div className="hs-stage">
-        <HeadsetCanvas track={track} />
+        <HeadsetCanvas track={track} person={person} />
         <div className="hs-caps">
           {CAPS.map((c) => (
             <div key={c.title} className={`hs-cap ${p >= c.from && p < c.to ? "on" : ""}`}>
-              <p className="t-num">07</p>
-              <h2>{c.title}</h2>
+                            <h2>{c.title}</h2>
               <p>{c.text}</p>
             </div>
           ))}

@@ -134,7 +134,7 @@
 
 /* the headset */
 .t-headset { border-top: 1px solid var(--t-line); }
-.hs-track { position: relative; height: 230vh; }
+.hs-track { position: relative; height: 320vh; }
 .hs-stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }
 .hs-stage::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
