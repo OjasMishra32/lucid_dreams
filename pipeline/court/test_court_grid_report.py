@@ -129,5 +129,62 @@ class Pick(unittest.TestCase):
         self.assertIn("pick court-x-s2: 1. seed1 recon-raw-default-r1-300k", text)
 
 
+
+def sweep(root: Path, name: str, faces: int, floater: float):
+    """qa-sweep's sweep.json for one candidate (its own name: <run id>/<seed>/bundle-<variant>-<cap>k/<frame>)."""
+    d = root / name.replace("/", "__")
+    d.mkdir(parents=True)
+    (d / "sweep.json").write_text(json.dumps({"name": name, "complete": True, "summary": {
+        "max_faces": faces, "worst_floater_frac": floater, "sharp_median": 100.0}}))
+
+
+class Sweep(unittest.TestCase):
+    """qa-sweep in the pick: a second face anywhere drops a freeze; its floater score breaks ties after the depth view."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.run = self.root / "runs" / "court-x-s2" / "seed1-mgpu"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def pick(self):
+        rows = list(rep.rows(self.run))
+        sw = rep.load_sweeps(self.root / "sweep")
+        for r in rows:
+            r["sweep"] = sw.get((r["id"], r["seed"], r["recon"]))
+        return [r["variant"] for r in rep.pick_order(rows, depth_view="D")]
+
+    def test_two_faces_drop_a_freeze(self):
+        freeze(self.run, "raw-default-r0", 26.0, {"D": 28.0}, p42=True)
+        freeze(self.run, "raw-default-r1", 26.0, {"D": 27.0}, p42=True)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r0-300k/000000", 2, 0.0)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r1-300k/000000", 1, 0.0)
+        self.assertEqual(self.pick(), ["raw-default-r1"])
+
+    def test_floaters_break_a_depth_tie(self):
+        freeze(self.run, "raw-default-r0", 26.0, {"D": 28.05}, p42=True)  # the same 0.25 dB step as r1's
+        freeze(self.run, "raw-default-r1", 26.0, {"D": 28.10}, p42=True)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r0-300k/000000", 1, 0.002)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r1-300k/000000", 1, 0.030)
+        self.assertEqual(self.pick(), ["raw-default-r0", "raw-default-r1"])
+
+    def test_a_clear_depth_win_stands_over_floaters(self):
+        freeze(self.run, "raw-default-r0", 26.0, {"D": 27.0}, p42=True)
+        freeze(self.run, "raw-default-r1", 26.0, {"D": 29.0}, p42=True)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r0-300k/000000", 1, 0.0)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r1-300k/000000", 1, 0.030)
+        self.assertEqual(self.pick(), ["raw-default-r1", "raw-default-r0"])
+
+    def test_the_table_shows_faces_and_floaters(self):
+        freeze(self.run, "raw-default-r1", 26.2, {"D": 27.0}, p42=True)
+        sweep(self.root / "sweep", "court-x-s2/seed1-mgpu/bundle-raw-default-r1-300k/000000", 1, 0.012)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rep.main([str(self.run), "--pick", "--depth-view", "D", "--sweep", str(self.root / "sweep")])
+        self.assertIn("1 / 1.2%", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

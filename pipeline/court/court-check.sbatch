@@ -9,7 +9,8 @@
 # Court Side: the pick's checks where the runs are, so only a sheet and small files come back. For run ID's seed
 # folders ($D/runs/$ID/$GLOB, default seed*): P42 (court_p42.py), the stance in court space (court_stance.py; REF = the
 # measured stance,along,across from the private notes), the gate-2 sheet with its orbit row (court_gate2_sheet.py) and
-# the pick report (court_grid_report.py --pick --depth-view ${DEPTH_VIEW:-stance}). Submitted by court-check-submit.sh.
+# the pick report (court_grid_report.py --pick --depth-view ${DEPTH_VIEW:-stance}, with qa-sweep's verdicts when
+# SWEEP names its output root). Submitted by court-check-submit.sh.
 # The run folders are only read: the tools work in a tree of links on $TMPDIR (their p42.json / stance.json are written
 # there, never through a link), and everything lands in a new $D/checks/$ID-<job id>/. Nothing is deleted.
 set -euo pipefail
@@ -46,7 +47,8 @@ set +e
 $PY "$C/court_p42.py" --clips "$D/data/court" "$T/$ID"/*/ > "$OUT/p42.txt" 2>&1
 $PY "$C/court_stance.py" --clips "$D/data/court" ${REF:+--ref "$REF"} "$T/$ID"/*/ > "$OUT/stance.txt" 2>&1
 $PY "$C/court_gate2_sheet.py" --out "$OUT/gate-$ID.jpg" --clips "$D/data/court" "$T/$ID"/*/ > "$OUT/sheet.txt" 2>&1
-$PY "$C/court_grid_report.py" --pick --depth-view "${DEPTH_VIEW:-stance}" "$T/$ID"/*/ > "$OUT/report.txt" 2>&1
+$PY "$C/court_grid_report.py" --pick --depth-view "${DEPTH_VIEW:-stance}" ${SWEEP:+--sweep "$SWEEP"} "$T/$ID"/*/ \
+  > "$OUT/report.txt" 2>&1
 set -e
 find "$ID" \( -name p42.json -o -name stance.json \) -type f | tar -cf "$OUT/checks.tar" -T -
 cat "$OUT/p42.txt" "$OUT/stance.txt" "$OUT/report.txt"
