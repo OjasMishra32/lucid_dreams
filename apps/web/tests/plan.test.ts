@@ -249,6 +249,13 @@ describe("objects", () => {
     assert.deepEqual(e.objects, ["dumbbell", "bench", "kettlebell", "water bottle"]);
   });
 
+  test("plurals the plain rules would get wrong", () => {
+    const e = clean(answer({ mode: "watch", place: "facing", objects: ["Tomatoes", "bay leaves", "Blueberries", "cookies"] }), replay("let me watch this"));
+    assert.deepEqual(e.objects, ["tomato", "bay leaf", "blueberry", "cookie"]);
+    const f = clean(answer({ mode: "watch", place: "facing", objects: ["canoes", "oboes", "shoes", "glasses"] }), replay("let me watch this"));
+    assert.deepEqual(f.objects, ["canoe", "oboe", "glasses"]); // a shoe is clothing
+  });
+
   test("plain names for the same thing", () => {
     const e = clean(answer({ mode: "watch", place: "facing", objects: ["Chess pieces", "skillet", "knives", "drums"] }), replay("let me watch this"));
     assert.deepEqual(e.objects, ["chessboard", "pan", "knife", "drum kit"]);

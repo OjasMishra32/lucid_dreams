@@ -323,16 +323,33 @@ const NOT_OBJECTS = new Set([
   "court", "studio", "gym", "ring", "concert hall", "mountain",
 ]);
 
+// Plurals the plain rules below get wrong ("tomatoes" isn't "tomatoe", "leaves" isn't "leave", "berries" is "berry").
+const IRREGULAR: Record<string, string> = {
+  leaves: "leaf", loaves: "loaf", shelves: "shelf", halves: "half", scarves: "scarf", knives: "knife", wolves: "wolf",
+  hooves: "hoof", clothes: "clothes", series: "series", species: "species",
+};
+const IE = new Set(["cookie", "movie", "pie", "tie", "brownie", "smoothie", "hoodie", "goalie", "selfie", "beanie", "veggie", "birdie", "zombie", "calorie"]);
+const OE = new Set(["shoe", "toe", "oboe", "canoe", "hoe", "tiptoe"]);
+
+/** The singular of one plural English word, as far as plain rules go. */
+function singular(w: string): string {
+  if (w.length <= 3 || PLURAL_KEEP.has(w)) return w;
+  if (IRREGULAR[w]) return IRREGULAR[w];
+  if (/ies$/.test(w)) return IE.has(w.slice(0, -1)) ? w.slice(0, -1) : `${w.slice(0, -3)}y`;
+  if (/oes$/.test(w)) return OE.has(w.slice(0, -1)) ? w.slice(0, -1) : w.slice(0, -2);
+  if (/(sh|ch|x|ss|z)es$/.test(w)) return w.slice(0, -2);
+  if (/[^s]s$/.test(w) && !/(us|is)$/.test(w)) return w.slice(0, -1);
+  return w;
+}
+
 /** One object as a lowercase singular noun in plain words, or "" when it isn't one. */
 function noun(v: unknown): string {
   if (typeof v !== "string") return "";
   let n = v.toLowerCase().replace(/[’']/g, "").replace(/\s+/g, " ").trim().replace(/^(an?|the|some|pair of) /, "");
   n = SAME[n] ?? n;
   const words = n.split(" ");
-  const last = words[words.length - 1];
-  if (!n.includes(" of ") && !PLURAL_KEEP.has(last)) {
-    if (/(sh|ch|x|ss|z)es$/.test(last)) words[words.length - 1] = last.slice(0, -2);
-    else if (/[^s]s$/.test(last) && !/(us|is|ies)$/.test(last) && last.length > 3) words[words.length - 1] = last.slice(0, -1);
+  if (!n.includes(" of ")) {
+    words[words.length - 1] = singular(words[words.length - 1]);
     n = SAME[words.join(" ")] ?? words.join(" ");
   }
   return /^[a-z][a-z -]{1,30}$/.test(n) && !NOT_OBJECTS.has(n) ? n : "";
