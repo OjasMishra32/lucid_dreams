@@ -152,6 +152,9 @@ clear over the music.
   which froze the Quest mid-session. `:5180` now runs `vite preview` of the last commit. After committing new WebXR
   work, run `~/LucidDreams-held/rebuild-stable.sh` (builds HEAD and restarts `:5180`; same tunnel URL), then reload
   the page on the Quest. `:5181` stays the live dev server for desktop checks.
+- **Headset errors land in `~/Library/Logs/lucid-xr-errors.log`** (one JSON line each, from `src/xr/report.ts`).
+  Every frame loop runs through `src/xr/loop.ts`, so an error no longer freezes the headset on a head-locked frame.
+  If Ojasva says it froze, read that log first.
 - **Ports:**
   - `:5170` web app + bridge (`apps/web`, runner mode);
   - `:5175` Talk (`apps/talk`, keys in its git-ignored `.env`);
