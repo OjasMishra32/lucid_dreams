@@ -4,6 +4,13 @@ You own what people actually see: photoreal people standing on the real floor in
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 
+## IAN (Sat 5:05 PM): grandma is public, with the family's yes
+
+My family agreed to her being shown and heard: in the library, on the home page's Talk with them, in the showcase,
+on the headset through the tunnel, and in the launch video. Her `dream.json` says `"private": false` (Ojasva's
+Sat 4:46 PM entry). Still true: her replies are labelled AI voice and never invent memories, her clip and photos never
+go to Gemini, and nothing of hers goes in git.
+
 ## FROM OJASVA (Sat 7:20 AM): your Quest kit is staged on my Mac
 
 - Your app (LucidDreams.apk), grandma's replay (fetched, kept in dreams/.held) and the Talk server (your .env and
@@ -111,8 +118,8 @@ Then check on the real headset with your own hands, and log what you measured.
 passthrough only (Place button, places and panoramas gone, APK 45 MB). HandsCheck and HeadLookCheck pass.
 
 **Grandma (moment 4), decided: the replay is her demo version.** `ian-grandma`, from the frontal home video:
-121 frames, 1.69 m, views PSNR 28.5 dB / SSIM 0.98 (trained on, not held out), 58% seen; her own voice. Private: held on both Macs, never
-in git, never on the site, kiosk or showcase. Family consent is in, including her voice. Every avatar route was
+121 frames, 1.69 m, views PSNR 28.5 dB / SSIM 0.98 (trained on, not held out), 58% seen; her own voice. Public since
+Sat 4:46 PM with the family's yes to showing her and hearing her; never in git. Every avatar route was
 tried and is held, not used, because none of the faces read as her yet:
 - `ian-grandma-avatar-head`: DiGS body + LAM head. Colours fixed by Vishal's tone fix; still wide and messy at 3/4.
 - `ian-grandma-lhm` / `ian-grandma-lhm2`: LHM++ from 16 photos, then 16 frames with no glasses (identity 0.36
@@ -181,6 +188,7 @@ Best Social Impact entry. It has to be the most real and most careful thing we s
 1. **Consent first, in writing.** Her yes, or the family member's who can give it if she can't. Use
    `demo/consent.md`; the record stays private (not in git). Agree two things separately: building her for us to
    see, and showing her to judges or in the video. Her voice is included only if the family says yes to that too.
+   **Done:** the family said yes to all three (building her, showing her, her voice).
 2. **What to bring, best first:**
    - **A home video** of her alone, whole body, camera still, 5+ seconds. It becomes a replay: her real footage, the
      most real result we can make. If she speaks in it, her own voice comes with it, separated from the room
@@ -219,7 +227,8 @@ Best Social Impact entry. It has to be the most real and most careful thing we s
    - Once you say she's right: add `"private": true` to her `dream.json`, then take her ids out of `.held`. The Quest
      library then lists her, but the landing page, `/showcase`, `/kiosk` and share links still leave her out (Raami's
      Sat 2:35 AM entry). Drop `"private"` only if the family agreed to showing.
-   - Never on the public site, the kiosk or `/showcase` unless the family agreed to showing.
+   - Never on the public site, the kiosk or `/showcase` unless the family agreed to showing. **They did (Sat 4:46
+     PM):** her `dream.json` now says `"private": false`, so she shows like everyone else.
    - Never in git; HiPerGator copies are deleted after the event.
 5. **The moment itself:** `companion` mode, `beside` you on a sofa or chair in your room, her voice from where she
    sits, captions, no buttons in view. Tune it in the headset until it feels quiet and right. That clip goes in the
