@@ -168,3 +168,19 @@ Family photo, once the written yes is in: AirDrop it into `~/Downloads/lucid-pho
 it should appear (`grandma-rose.jpg` -> "Grandma Rose"). It becomes an avatar with a breathing, blinking idle by itself.
 Only photos with consent recorded in `demo/consent.md` go in that folder.
 
+## Caption implementation decisions
+
+- Prioritize the Python caption generator and tests before Quest UI mockups, per Atina's approval. Only
+  `pipeline/lucid/captions.py`, caption tests/fixture and Atina's documents are in this implementation's scope.
+  Restoration, player code, export wiring and shared contracts remain untouched.
+- Use whisper.cpp JSON word-segment offsets in integer milliseconds; preserve leading silence and never apply
+  `startS` twice. Audio must already be on the bundle clock. Use `voice` before `audio`, with a missing-file fallback.
+- Enforce two 42-character lines and non-overlapping 1–6-second cues. If speech cannot fit those constraints,
+  fail with existing captions preserved rather than estimate new word times or silently lose spoken words.
+- Keep model downloads explicit and outside the repository. Standard-library tests use synthetic audio and fake
+  tool processes; actual Whisper, AAC decoding and three human-reviewed speech bundles are separate acceptance checks.
+- The existing WebXR caption parser does not decode VTT entities; Ojasva owns that display edge case. Standard
+  WebVTT escaping stays in the generator. Native Unity caption support stays with Ian.
+- Atina approved publishing the caption implementation after 52 passing tests and a real speech memo review,
+  including natural sentence/phrase segmentation. The full three-bundle and viewer acceptance checklist remains
+  open; see `demo/README.md` for the runbook. Restoration has not been started.
