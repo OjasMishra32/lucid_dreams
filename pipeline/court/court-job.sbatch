@@ -23,7 +23,9 @@
 # the run's other real views (real/extras.json, in order, with their weights) train beside A's frame); CAPS (300000);
 # METRICS (1: per variant a recon holding out every 8th view and every unused real view, weight 0); ITERS (15000);
 # FACE (2.0); TAG (results in $L/runs/$ID/$TAG); SEED (4DAnyone's seed; SEED_FLAG, default --seed); MIN_SCRATCH_GB
-# (200); KEEP_MB (900: past that the recon PLYs stay behind). COURT_DATA_L: where data/court/, runs/ and these scripts
+# (200); KEEP_MB (900: past that the recon PLYs stay behind); VIEWS_FROM (a folder holding a whole earlier set of views,
+# videos/NN.mp4 + cameras.json, e.g. a gated seed's saved from its scratch: used instead of making new ones, with the
+# prepped.mp4 beside it). COURT_DATA_L: where data/court/, runs/ and these scripts
 # live when not beside the stack at $L (e.g. /home while /blue is full); the stack is then only read.
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack (env.sh, repos, envs): only read
@@ -105,11 +107,24 @@ copy_back() {  # copy_back <path relative to the run>... : results only, into $O
     cp -r "$S/run/$p" "$OUTD/$(dirname "$p")/"
   done
 }
+if [ -n "${VIEWS_FROM:-}" ]; then  # a gated seed's own views (saved from its scratch while it ran): no 4DAnyone run
+  NV=$(( VPL * ($(tr -cd , <<< "$PITCHES" | wc -c) + 1) ))
+  nv=$(find "$VIEWS_FROM/videos" -maxdepth 1 -name '[0-9][0-9].mp4' 2>/dev/null | wc -l)
+  (( nv == NV )) && test -s "$VIEWS_FROM/cameras.json" || { log "VIEWS_FROM $VIEWS_FROM: $nv views, need $NV + cameras.json"; exit 1; }
+  log "prep + the views of $VIEWS_FROM ($nv, no 4DAnyone run)"
+  if [ -s "$VIEWS_FROM/../prepped.mp4" ] && [ -s "$VIEWS_FROM/../prep.json" ]; then  # the clip those views were made from
+    cp "$VIEWS_FROM/../prepped.mp4" "$VIEWS_FROM/../prep.json" .
+  else
+    $PY -m lucid.prep_clip input.mp4 --out prepped.mp4 --start-s 0 > prep.json
+  fi
+  cp -r "$VIEWS_FROM" "$S/run/views"
+else
 log "prep + 4DAnyone views"  # on every GPU the job holds (inference.py's gpu_ids: all visible); RC kills idle ones
 $PY -m lucid.prep_clip input.mp4 --out prepped.mp4 --start-s 0 > prep.json
 ( cd "$L/repos/4DAnyone" && export OMP_NUM_THREADS=$CPUS MKL_NUM_THREADS=$CPUS && $PY inference.py --video_path "$S/run/prepped.mp4" \
     --output_dir "$S/run/views" --views_per_layer "$VPL" --layer_pitches "$PITCHES" \
     $( ((TURBO)) || echo --enable_turbo=False ) ${SEED:+$SEED_FLAG $SEED} )
+fi
 SAMPLES=(views/videos/{00,02,04,06,08,10,12,14}.mp4)  # the first ring every 45 degrees, its back included (~12 MB)
 copy_back prep.json prepped.mp4 views/cameras.json views/metadata.json views/gvhmr "${SAMPLES[@]}"
 log "views done; gate-2 samples in $OUTD/views"

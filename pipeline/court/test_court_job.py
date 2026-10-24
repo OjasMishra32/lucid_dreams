@@ -2,6 +2,7 @@
 machine. Run from the repo root: python3 -I -m unittest discover -s pipeline/court -p 'test_*.py' -v"""
 
 import json
+import shutil
 import os
 import re
 import stat
@@ -184,6 +185,40 @@ class Job(unittest.TestCase):
         rec = next(c for c in self.recons() if "--source-video" in c["args"])["args"]
         self.assertEqual(rec[rec.index("--source-video") + 1], str(d / "data" / "court" / self.id / "source-4k.mkv"))
 
+    def saved_views(self, n=48, seed="seed1-mgpu"):
+        """A gated seed's whole set of views, saved beside its results (with the clip they were made from)."""
+        src = self.L / "runs" / self.id / seed
+        v = src / "views-full"
+        (v / "videos").mkdir(parents=True)
+        (v / "gvhmr").mkdir()
+        for i in range(n):
+            shutil.copy(self.t / "tiny.mp4", v / "videos" / f"{i:02d}.mp4")
+        cams = [{"camera_id": i, "K": [[10, 0, 8], [0, 10, 16], [0, 0, 1]], "image_width": 16, "image_height": 32}
+                for i in range(n)]
+        (v / "cameras.json").write_text(json.dumps({"cameras": cams}))
+        shutil.copy(self.t / "tiny.mp4", src / "prepped.mp4")
+        (src / "prep.json").write_text("{}")
+        return v
+
+    def test_views_from_a_gated_seed_skip_4danyone(self):
+        v = self.saved_views()
+        before = sorted(str(x) for x in v.parent.rglob("*"))
+        p = self.run_job(VIEWS_FROM=str(v), TAG="winnerv-s1", VARIANTS="up:default", REALS="0", METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertFalse(any(c["args"][0].endswith("inference.py") for c in self.calls))
+        self.assertFalse(any(c["args"][:2] == ["-m", "lucid.prep_clip"] for c in self.calls))  # its own clip reused
+        self.assertTrue(any(c["args"][0].endswith("inference_cli.py") for c in self.calls))  # SeedVR2 still runs
+        out = self.L / "runs" / self.id / "winnerv-s1"
+        self.assertTrue((out / "bundle-up-default-r0-300k" / "dream.json").exists())
+        self.assertEqual(sorted(str(x) for x in v.parent.rglob("*")), before)  # the seed's folder is only read
+
+    def test_views_from_an_incomplete_set_stops_before_any_gpu_work(self):
+        v = self.saved_views(n=8)  # only the gate samples: not enough to train on
+        p = self.run_job(VIEWS_FROM=str(v), TAG="winnerv-s1", VARIANTS="up:default", REALS="0", METRICS="0")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("8 views, need 48", p.stdout + p.stderr)
+        self.assertEqual(self.recons(), [])
+
     def test_cpus_set_the_thread_counts(self):
         p = self.run_job(VARIANTS="raw:default", REALS="0", SLURM_CPUS_PER_TASK="8")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -308,6 +343,16 @@ class Submit(unittest.TestCase):
         self.assertIn("ID=court-turbo-main-s2,", c[0])
         self.assertIn("ID=court-turbo-def-s2,", c[1])
         self.assertIn("SUBMITTED court-turbo-def-s2 job=1002", out)
+
+    def test_views_from_is_one_tagged_job_on_that_runs_own_views(self):
+        a = make_data(self.root, "court-main-s2")
+        for env, msg in (({"VIEWS_FROM": "/x/views"}, "VIEWS_FROM goes with TAG"),
+                         ({"VIEWS_FROM": "/elsewhere/views", "TAG": "winnerv-s1"}, "VIEWS_FROM must be under"),
+                         ({"JOB": "../evil.sbatch"}, "JOB=")):
+            rc, out = dryrun(a, **env)
+            self.assertNotEqual(rc, 0, env)
+            self.assertIn(msg, out)
+            self.assertEqual(calls(out), [])
 
     def test_missing_file_submits_nothing(self):
         a = make_data(self.root, "court-turbo-main-s2")

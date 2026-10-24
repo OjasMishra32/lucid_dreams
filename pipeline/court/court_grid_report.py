@@ -12,7 +12,8 @@ non-ignored pixels; face = the same on the face crop; iou = A's silhouette match
 with (held: ours); by view = each held-out real view's PSNR; P42 and stance = court_p42.py's and court_stance.py's files
 beside the recon, when made. --rank sorts best first: held-out real, then held-out views, then iou. Missing numbers
 print "-". --pick then orders each run's freezes, after the eye gate (no Janus face, no doubled figure: by eye on the
-gate sheet): a P42 failure drops out; an r2 freeze (trained on every real view) comes first when its held-out views PSNR
+gate sheet): a P42 failure drops out, and so does every freeze of a seed whose views lost the ball the player holds
+(the gate sheet's --ball wrote its ball.json); an r2 freeze (trained on every real view) comes first when its held-out views PSNR
 is within 0.5 dB of the best r0/r1; the r0/r1 ones follow, ranked by --depth-view (the held-out real view that sees the
 source camera's depth axis; "stance" instead ranks by court_stance.py's distance to the measured stance, for runs
 where that view never solved), then the rest; the last word is the eye. --sweep ROOT adds qa-sweep's verdict per
@@ -104,7 +105,7 @@ def rows(run: Path):
                "gaussians": fr.get("gaussians"), "byView": held_out_views(run, variant, held),
                "p42": _json(d / "p42.json"), "stance": _json(d / "stance.json"), "recon": d.name,
                "id": run.parent.name if seeded else run.name, "seed": run.name if seeded else "",
-               "reals": int(reals.group(1)) if reals else None, "sweep": None}
+               "reals": int(reals.group(1)) if reals else None, "sweep": None, "ball": _json(run / "ball.json")}
 
 
 def load_sweeps(root: Path) -> dict:
@@ -124,7 +125,8 @@ def load_sweeps(root: Path) -> dict:
 def pick_order(table: list[dict], depth_view: str | None = None, margin: float = 0.5) -> list[dict]:
     """One run's freezes in pick order (the eye gate comes first, by hand): see the module's --pick."""
     ok = [r for r in table if not (r["p42"] is not None and not r["p42"].get("pass"))
-          and not (r.get("sweep") and r["sweep"].get("max_faces", 0) > 1)]
+          and not (r.get("sweep") and r["sweep"].get("max_faces", 0) > 1)
+          and not (r.get("ball") and not r["ball"].get("pass"))]
     r01 = [r for r in ok if r["reals"] in (0, 1)]
     r2 = [r for r in ok if (r["reals"] or 0) >= 2]
     best = max((r["views"] for r in r01 if r["views"] is not None), default=None)

@@ -5,11 +5,15 @@
 #                                                                          pack, upload, submit the all-people masks
 #   court-masks-hpg.sh sam <name> <upload dir>   upload a court_sam.py set (or folder of sets), submit court-sam-<name>
 #   court-masks-hpg.sh rematte <name>            the band matte again on court-sam-<name>'s masks (no upload)
+#   court-masks-hpg.sh bundle <x> <upload dir>   a CPU bundle (run.sh + files) as court-layers-<x>; IN=court-sam-<name>
+#                                              gives it that run's masks, AFTER=<job id> waits for it,
+#                                              OUT=<file>.tar names what run.sh leaves, JOB_ENV=NAME=v,... reaches run.sh
 #   court-masks-hpg.sh matte <clip> <masks dir> <staging dir> <name>...    pack, upload, submit the pair's soft edges
 #   court-masks-hpg.sh fetch people <dir>      masks-people.tar into <dir>, unpacked there (label/, prob/, objects.json)
 #   court-masks-hpg.sh fetch sam <name> <dir> [unpack flags]   masks-sam.tar into <dir>, unpacked there
 #                                              (--size w,h for a cropped set, --single for one-frame sets)
 #   court-masks-hpg.sh fetch rematte <name> <dir>   masks-alpha.tar into <dir>, unpacked as <dir>/<object>-alpha/
+#   court-masks-hpg.sh fetch bundle <x> <dir>       layers-<x>.tar (or OUT) into <dir>, untarred there
 #   court-masks-hpg.sh fetch matte <masks dir> <staging dir>    the alpha mattes into <masks dir>/<name>-alpha/
 # Data paths are arguments (nothing about the footage lives in git). The HPG side is court-hpg.sh: it checks the upload
 # and the group quota, submits, and deletes nothing. Env: DRY=1 prints what would run; HOST (hpg) and L (its /blue base)
@@ -19,7 +23,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 HOST=${HOST:-hpg}; L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 PASS=" L=$L"
-for v in ACCOUNT QOS PARTITION CPUS ENV_QOS ENV_PARTITION QUOTA_GROUP MIN_GB; do
+for v in ACCOUNT QOS PARTITION CPUS ENV_QOS ENV_PARTITION QUOTA_GROUP MIN_GB IN AFTER OUT JOB_ENV; do
   [ -n "${!v:-}" ] && PASS="$PASS $v=$(printf %q "${!v}")"
 done
 SSH="ssh -o ControlMaster=no -o BatchMode=yes"
@@ -30,8 +34,8 @@ fi
 up_code() {
   run $SSH "$HOST" "mkdir -p $C $L/data/court"
   run rsync -a -e "$SSH" "$HERE"/court-lib.sh "$HERE"/court-hpg.sh "$HERE"/court-sam-env.sbatch \
-    "$HERE"/court-masks.sbatch "$HERE"/court-sam.sbatch "$HERE"/court-matte.sbatch "$HERE"/court_sam.py \
-    "$HERE"/court_matte.py "$HOST:$C/"
+    "$HERE"/court-masks.sbatch "$HERE"/court-sam.sbatch "$HERE"/court-matte.sbatch "$HERE"/court-cpu.sbatch \
+    "$HERE"/court_sam.py "$HERE"/court_matte.py "$HOST:$C/"
 }
 submit() { run $SSH "$HOST" "env$PASS bash $C/court-hpg.sh $1"; }
 case "${1:-}" in
@@ -50,6 +54,12 @@ case "${1:-}" in
     # -H: sets that share one clip (hard links) send it once
     run rsync -aH --partial -e "$SSH" "$U/" "$HOST:$L/data/court/court-sam-$N/"
     submit "court-sam-$N" ;;
+  bundle)
+    X=${2:?name}; U=${3:?upload dir}
+    test -s "$U/run.sh" || { echo "no $U/run.sh" >&2; exit 1; }
+    up_code
+    run rsync -aH --partial -e "$SSH" "$U/" "$HOST:$L/data/court/court-layers-$X/"
+    submit "court-layers-$X" ;;
   rematte)
     N=${2:?name}
     up_code
@@ -78,6 +88,12 @@ case "${1:-}" in
         run mkdir -p "$O"
         run rsync -a -e "$SSH" "$HOST:$L/runs/court-rematte-$N/masks-alpha.tar" "$O/"
         run python3 -I "$HERE/court_sam.py" unpack "$O/masks-alpha.tar" --out "$O" "${@:5}" ;;
+      bundle)
+        X=${3:?name}; O=${4:?dir}
+        run mkdir -p "$O"
+        F=${OUT:-layers-$X.tar}
+        run rsync -a -e "$SSH" "$HOST:$L/runs/court-layers-$X/$F" "$O/"
+        run tar -xf "$O/$F" -C "$O" ;;
       matte)
         M=${3:?masks dir}; O=${4:?staging dir}
         run mkdir -p "$O"
@@ -86,5 +102,5 @@ case "${1:-}" in
       *) echo "fetch people <dir> | fetch sam <name> <dir> [flags] | fetch matte <masks dir> <staging dir>" >&2
          exit 1 ;;
     esac ;;
-  *) sed -n '2,15p' "$0" >&2; exit 1 ;;
+  *) sed -n '2,18p' "$0" >&2; exit 1 ;;
 esac

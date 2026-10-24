@@ -98,5 +98,39 @@ class Gate2Sheet(unittest.TestCase):
         self.assertEqual(rows[0].shape[0], 48)
 
 
+
+def disc(rgb, r, h=1280, w=704):
+    """A grey generated view with one filled disc of colour rgb and radius r in the middle."""
+    import cv2
+    img = np.full((h, w, 3), 128, np.uint8)
+    cv2.circle(img, (w // 2, h // 2), r, tuple(int(c) for c in rgb[::-1]), -1)
+    return img
+
+
+class Ball(unittest.TestCase):
+    """The ball gate: a saturated orange ball, not skin, not a speck; half the ring must show it."""
+
+    def test_an_orange_ball_counts(self):
+        self.assertTrue(g2.ball_in(disc((230, 120, 30), 40)))
+
+    def test_skin_does_not(self):
+        self.assertFalse(g2.ball_in(disc((140, 90, 60), 40)))  # dark skin: orange hue, too little chroma
+        self.assertFalse(g2.ball_in(disc((235, 190, 160), 40)))  # light skin
+
+    def test_a_speck_does_not(self):
+        self.assertFalse(g2.ball_in(disc((230, 120, 30), 8)))
+
+    def test_half_the_ring_passes_and_ball_json_says_so(self):
+        with tempfile.TemporaryDirectory() as t:
+            run = Path(t)
+            ball, none = disc((230, 120, 30), 40), disc((128, 128, 128), 1)
+            r = g2.ball_check(run, {"00": ball, "04": ball, "08": none, "12": none, "14": None})
+            self.assertEqual((r["views"], r["of"], r["pass"]), (["00", "04"], 4, True))
+            self.assertEqual(json.loads((run / "ball.json").read_text())["pass"], True)
+            r = g2.ball_check(run, {"00": ball, "04": none, "08": none})
+            self.assertFalse(r["pass"])
+            self.assertFalse(json.loads((run / "ball.json").read_text())["pass"])
+
+
 if __name__ == "__main__":
     unittest.main()

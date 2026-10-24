@@ -112,6 +112,15 @@ class Pick(unittest.TestCase):
         self.assertEqual([r["variant"] for r in rep.pick_order(rows, depth_view="stance")],
                          ["raw-default-r1", "raw-default-r0"])  # 3 cm off the measured stance beats 15 cm
 
+    def test_a_seed_that_lost_the_ball_drops_out(self):
+        other = self.run.parent / "seed2"
+        freeze(self.run, "raw-default-r0", 26.0, {"D": 28.0}, p42=True)
+        freeze(other, "raw-default-r0", 27.0, {"D": 29.0}, p42=True)
+        (other / "ball.json").write_text(json.dumps({"views": [], "of": 8, "pass": False}))
+        (self.run / "ball.json").write_text(json.dumps({"views": ["00"], "of": 2, "pass": True}))
+        rows = list(rep.rows(self.run)) + list(rep.rows(other))
+        self.assertEqual([r["seed"] for r in rep.pick_order(rows, depth_view="D")], ["seed1"])
+
     def test_a_p42_failure_drops_out(self):
         freeze(self.run, "raw-default-r0", 26.0, {"D": 28.0}, p42=True)
         freeze(self.run, "raw-agree-r0", 27.0, {"D": 29.0}, p42=False)

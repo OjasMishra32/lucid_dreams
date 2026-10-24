@@ -8,27 +8,33 @@
 #                     each prompts.json + frames.zip, or + the clip it names (decoded on the node)
 #   court-rematte-<name>  the band matte again on court-sam-<name>'s masks (court-sam.sbatch, MASKS_TAR): reuses
 #                     its upload and $L/runs/court-sam-<name>/masks-sam.tar; result masks-alpha.tar
+#   court-layers-<x>  a CPU bundle (court-cpu.sbatch): $L/data/court/court-layers-<x>/run.sh and its files, run in
+#                     node scratch; it leaves layers-<x>.tar (OUT=<file>.tar names another), the only file copied
+#                     back. IN=court-sam-<name> hands it that run's masks-sam.tar (unpacked) as run.sh's argument;
+#                     AFTER=<job id> waits for that job; JOB_ENV=NAME=value,... reaches run.sh (e.g. its switches).
 #   court-matte       soft edges for the pair's SAM masks (court-matte.sbatch); needs
 #                     $L/data/court/court-matte/crops.zip (court_matte.py pack, then rsync)
 # Nothing is submitted if a file is missing, a job was submitted before, or the group quota has less than MIN_GB (5)
 # free. Login-node safe: bash, awk and sbatch only. Deletes nothing.
 # Another allocation: L (its /blue base: code/, data/, runs/, envs/, models/, repos/) reaches the jobs; ACCOUNT, QOS,
-# PARTITION and CPUS override the GPU jobs' #SBATCH lines; ENV_QOS and ENV_PARTITION the env build's (a CPU job, e.g. a
-# burst QOS); QUOTA_GROUP picks whose /blue space is checked.
+# PARTITION override the GPU jobs' #SBATCH lines and ENV_QOS, ENV_PARTITION the CPU jobs' (the env build and the
+# bundles, e.g. on a burst QOS); CPUS the submitted job's cores; QUOTA_GROUP picks whose /blue space is checked.
 set -euo pipefail
 ID=${1:-}
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 DATA=$L/data/court/$ID; RUN=$L/runs/$ID
 source "$(dirname "$0")/court-lib.sh"
-for v in ACCOUNT QOS PARTITION ENV_QOS ENV_PARTITION; do
+for v in ACCOUNT QOS PARTITION ENV_QOS ENV_PARTITION IN; do
   [[ -z ${!v:-} || ${!v} =~ ^[A-Za-z0-9_.,-]+$ ]] || fail "$v='${!v}'"
 done
 [[ -z ${CPUS:-} || $CPUS =~ ^[1-9][0-9]?$ ]] || fail "CPUS=$CPUS"
+[[ -z ${AFTER:-} || $AFTER =~ ^[0-9]+$ ]] || fail "AFTER=$AFTER"
 SB=(${ACCOUNT:+--account=$ACCOUNT})  # both jobs: the allocation (the ${X[@]+...} forms keep bash 3 happy)
 GPU_SB=(${SB[@]+"${SB[@]}"} ${QOS:+--qos=$QOS} ${PARTITION:+--partition=$PARTITION} ${CPUS:+--cpus-per-task=$CPUS})
 EQ=${ENV_QOS:-${QOS:-}}  # the env build is CPU-only: a burst QOS fits it
 ENV_SB=(${SB[@]+"${SB[@]}"} ${EQ:+--qos=$EQ} ${ENV_PARTITION:+--partition=$ENV_PARTITION})
-(( $# == 1 )) || fail "one id: court-sam-env, court-sam-people, court-sam-<name>, court-rematte-<name> or court-matte"
+CPU_SB=(${ENV_SB[@]+"${ENV_SB[@]}"} ${CPUS:+--cpus-per-task=$CPUS})
+(( $# == 1 )) || fail "one id (court-sam-env, court-sam-people, court-sam-<name>, court-rematte-<name>, ...)"
 ENV_OK=$L/envs/sam2/.court-sam-ok
 # SAM sets in an upload: the folder itself or its subfolders, each prompts.json + frames.zip (or a clip it names)
 count_sets() {
@@ -51,11 +57,29 @@ case $ID in
     EXTRA=",MASKS_TAR=$L/runs/$SRC/masks-sam.tar"
     test -s "$L/runs/$SRC/masks-sam.tar" || fail "no $L/runs/$SRC/masks-sam.tar to matte"
     (( $(count_sets "$DATA") )) || fail "no set (prompts.json + frames.zip or a clip) in $DATA or its folders" ;;
+  court-layers-*)
+    [[ $ID =~ ^court-layers-[a-z0-9][a-z0-9-]*$ ]] || fail "id '$ID'"
+    NEED="run.sh"; JOB=court-cpu.sbatch; TAR=${OUT:-${ID#court-}.tar}
+    [[ $TAR =~ ^[a-z0-9][a-z0-9.-]*\.tar$ ]] || fail "OUT=$TAR (a file name ending .tar)"
+    EXTRA=",OUT_FILE=$TAR"
+    if [ -n "${IN:-}" ]; then
+      [[ $IN =~ ^court-sam-[a-z0-9][a-z0-9-]*$ ]] || fail "IN=$IN (a court-sam-<name> run)"
+      EXTRA="$EXTRA,IN_TAR=$L/runs/$IN/masks-sam.tar"
+      # with AFTER the SAM job is still running: its tar exists once afterok lets this one start
+      [ -n "${AFTER:-}" ] || test -s "$L/runs/$IN/masks-sam.tar" ||
+        fail "no $L/runs/$IN/masks-sam.tar (AFTER=<its job id>?)"
+    fi
+    if [ -n "${JOB_ENV:-}" ]; then
+      V='[A-Z][A-Z0-9_]*=[A-Za-z0-9._/-]*'
+      [[ $JOB_ENV =~ ^$V(,$V)*$ ]] || fail "JOB_ENV=$JOB_ENV (NAME=value[,NAME=value...])"
+      if [[ ,$JOB_ENV =~ ,(L|RUN|DATA|OUT_FILE|IN_TAR)= ]]; then fail "JOB_ENV may not set ${BASH_REMATCH[1]}"; fi
+      EXTRA="$EXTRA,$JOB_ENV"
+    fi ;;
   court-sam-*)
     [[ $ID =~ ^court-sam-[a-z0-9][a-z0-9-]*$ ]] || fail "id '$ID'"
     NEED=""; JOB=court-sam.sbatch; TAR=masks-sam.tar
     (( $(count_sets "$DATA") )) || fail "no set (prompts.json + frames.zip or a clip) in $DATA or its folders" ;;
-  *) fail "id '$ID' (court-sam-env, court-sam-people, court-sam-<name> or court-matte)" ;;
+  *) fail "id '$ID' (court-sam-env, court-sam-people, court-sam-<name>, court-rematte-<name>, court-layers-<x>)" ;;
 esac
 for f in $NEED; do test -s "$DATA/$f" || fail "missing $DATA/$f"; done
 if [ "$ID" = court-sam-env ]; then
@@ -79,7 +103,8 @@ if [ "$ID" = court-sam-env ]; then
 fi
 mkdir -p "$RUN/logs"
 cd "$RUN/logs"
-J=$(sbatch --parsable ${GPU_SB[@]+"${GPU_SB[@]}"} --job-name="$ID" --export=ALL,L=$L,RUN=$RUN,DATA=$DATA${EXTRA:-} \
-  "$C/$JOB")
+if [ "$JOB" = court-cpu.sbatch ]; then SBA=(${CPU_SB[@]+"${CPU_SB[@]}"}); else SBA=(${GPU_SB[@]+"${GPU_SB[@]}"}); fi
+J=$(sbatch --parsable ${SBA[@]+"${SBA[@]}"} ${AFTER:+--dependency=afterok:$AFTER} --job-name="$ID" \
+  --export=ALL,L=$L,RUN=$RUN,DATA=$DATA${EXTRA:-} "$C/$JOB")
 echo "job=$J" > "$RUN/logs/submitted"
 echo "SUBMITTED $ID job=$J (log: $RUN/logs/$ID-$J.log; result: $RUN/$TAR)"
