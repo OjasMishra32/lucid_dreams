@@ -90,7 +90,8 @@ export default function JobProgress({ id, name, kind, initial }: { id: string; n
       ) : (
         <p className="job-note">
           {kind === "avatar" ? "This takes a few minutes on the GPUs." : "This takes about half an hour on the GPUs."} You can
-          close this page: the dream appears in your library when it&apos;s ready.
+          close this page: the dream appears in your library when it&apos;s ready.{" "}
+          <Link href={`/live?id=${encodeURIComponent(id)}`} className="more">Watch it on the GPUs</Link>
         </p>
       )}
     </div>

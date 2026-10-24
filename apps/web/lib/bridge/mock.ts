@@ -42,6 +42,19 @@ export function mockStatus(job: JobRecord): JobStatus {
   return finish(job);
 }
 
+/**
+ * When each step of a mock job starts and ends (ms): the very schedule mockStatus walks, for the live page. "queued" is
+ * the wait for a GPU before the check.
+ */
+export function mockTimeline(job: JobRecord): { stage: Stage | "queued"; startedAt: number; endedAt: number }[] {
+  let at = job.createdAt;
+  return TIMELINE.map((step) => {
+    const startedAt = at;
+    at += step.share * TOTAL_S * 1000;
+    return { stage: step.stage, startedAt, endedAt: at };
+  });
+}
+
 function finish(job: JobRecord): JobStatus {
   let made = readDream(job.id);
   if (!made && (made = standIn(job))) ensureExperience(job.id);

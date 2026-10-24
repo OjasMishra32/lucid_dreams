@@ -18,6 +18,23 @@ On the demo table: `/showcase` is the five moments from `demo/showcase.md`, each
 for the legends); `/kiosk` cycles the best dreams full screen, 8 s each (F for full screen, arrow keys to step). Every
 dream page has its Places (the viewer with `?place=`) and an "Open on Quest" address to type in the headset's browser.
 
+## Live (`/live`): how it works, shown
+
+For the judges' laptop: one run, read from HiPerGator every 5 s and refreshed in place. Its stages with real timings
+(from the run's `status.json`, plus the time each one waited for a GPU), the GPUs on it right now by model (the lab's
+jobs in `squeue`, matched by the run's `slurm.json` or its folder), and the latest fitted frame: the strip
+`recon.py --peek` writes to `runs/<id>/recon/peek-<frame>.jpg`, each pair 4DAnyone's view beside our render from the
+same camera. `/live?id=<run>` shows that run; plain `/live` follows the newest run still building, else shows the newest
+one. Linked from the library's "In progress" row and from each job page.
+
+- Everything comes through lucid_runner's own SSH connection and rsync (read-only: files and `squeue`, never a job
+  change). One read per run every 5 s, however many people are watching; fitted frames are copied to `.data/live/`.
+- If HiPerGator stops answering, the page keeps the last answer and says how old it is.
+- Mock mode shows the demo run's real stages and timeline on this Mac, labelled as a demo, with the sample bundle's
+  thumbnail and no fitted frame (there is none to show).
+
+`GET /api/live?id=<run>[&follow=1]` returns what the page shows (`LiveReply` in `lib/live.ts`).
+
 ## Modes
 
 | `BRIDGE_MODE` | What happens |

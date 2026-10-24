@@ -30,7 +30,10 @@ export default async function Library() {
 
       {jobs.length > 0 && (
         <section>
-          <h2 className="row-title">In progress</h2>
+          <div className="row-head">
+            <h2 className="row-title">In progress</h2>
+            <Link href="/live" className="more">Watch it live</Link>
+          </div>
           <div className="in-progress">
             {jobs.map(({ id, name, status }) => (
               <JobTile key={id} id={id} name={name} initial={status} />
