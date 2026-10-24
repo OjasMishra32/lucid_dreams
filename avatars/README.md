@@ -55,12 +55,30 @@ uv run python -m lucid_avatars validate ../samples/<id>           # check a bund
 uv run python -m lucid_avatars idle motion.json --seconds 8       # write an idle motion
 ```
 
-## motion.json conventions (proposed, to confirm with Ian)
+## motion.json and skinning (for Ian's player and the WebXR viewer)
+
+Conventions (agreed with Ojasva, Fri night):
 
 - `root_t`, `root_q` are SMPL-X `transl` and `global_orient`, applied exactly the way SMPL-X applies them.
 - `pose[0]` (pelvis) is always zero; the root rotation lives only in `root_q`, so it is never applied twice.
 - `pose` holds absolute joint rotations, hands included (no hand-mean offset, no PCA).
-- `avatar.ply` is in SMPL-X rest space (faces +Z); the 180-degree turn to face -Z is in `root_q`.
+- `avatar.ply` is in SMPL-X rest space (zero rotations, flat hands, faces +Z); the 180-degree turn to face -Z is in `root_q`.
 
-Open questions for the Quest side: how per-Gaussian skinning weights travel (extra PLY properties or a
-side file), and whether `motion.json` gets an optional `expr` field so avatars can blink.
+Skinning files (named in `dream.json` as `avatar.skin` and `avatar.skeleton`; the validator checks both):
+
+- `avatar/skin.bin`: per Gaussian, in `avatar.ply`'s order, 8 bytes: 4 x uint8 joint index, then 4 x uint8 weight
+  summing to 255. Unused slots are index 0 with weight 0.
+- `avatar/skeleton.json`: `{"joints": [55 SMPL-X names], "parents": [55, -1 for the pelvis], "rest": [55 x [x,y,z]]}`,
+  the rest-pose joint positions in metres for this avatar's body shape.
+
+Posing one frame (the reference is `lucid_avatars/skinning.py`, `skin_matrices` + `pose_points`):
+
+```
+G_0 = [R(root_q) R(pose[0]) | rest_0]          G_j = G_parent(j) [R(pose[j]) | rest_j - rest_parent(j)]
+M_j = G_j [I | -rest_j] + [0 | root_t]         x = sum_k (w_k / 255) M_{i_k} x_rest
+```
+
+Rotate each Gaussian's own rotation by the blended M's 3x3 as well; scales stay. Weights come from the SMPL-X
+template: each Gaussian blends its 4 nearest rest vertices' weights by inverse distance, top 4 joints kept.
+
+Still open: an optional `expr` (10 floats per frame) in `motion.json` for blinking.

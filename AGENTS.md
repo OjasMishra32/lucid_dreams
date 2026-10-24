@@ -129,6 +129,8 @@ dreams/<id>/
   frames/000000.ply ...  replay: one Gaussian file per frame (3DGS PLY; may switch to compressed later)
   avatar/avatar.ply      avatar: Gaussians in the rig's rest pose
   avatar/motion.json     avatar: the motion to play
+  avatar/skin.bin        avatar: per-Gaussian skinning, 4 joints x uint8 index + uint8 weight (sum 255)
+  avatar/skeleton.json   avatar: SMPL-X rest joints + parents (see avatars/README.md for how to pose)
 ```
 
 `dream.json`:
@@ -161,7 +163,8 @@ Replays also ship `frames.reality` (`%06d.reality.spz`): the same frame with eve
 not have seen tinted blue, for the "seen vs imagined" toggle, and `metrics.seenFraction` (0-1, how much was really seen).
 
 For an avatar, `kind` is `"avatar"`, `frames` is null and
-`"avatar": { "file": "avatar/avatar.ply", "rig": "smplx", "motion": "avatar/motion.json" }`.
+`"avatar": { "file": "avatar/avatar.ply", "rig": "smplx", "motion": "avatar/motion.json", "skin": "avatar/skin.bin",
+"skeleton": "avatar/skeleton.json" }`.
 
 `motion.json`: `{ "fps": 30, "betas": [10 floats], "frames": [ { "root_t": [x,y,z], "root_q": [x,y,z,w],
 "pose": [55 x 3 axis-angle, SMPL-X joint order] } ] }`
@@ -244,3 +247,4 @@ samples/           a small sample dream bundle for development (kept tiny, or li
 - Fri 8:00 PM, Raami: web app + bridge in apps/web on :5170 (landing, Make a dream with in-browser clip checks, live progress, library, dream pages with seen % and fidelity). Job API done; mock mode by default, BRIDGE_MODE=runner calls lucid_runner.py. Ian: GET http://<mac>:5170/api/dreams. Run: npm --prefix apps/web install && npm --prefix apps/web run dev.
 - Fri 10:15 PM, Ojasva: avatar environment (DiGS-Avatar) built on HiPerGator with public weights; gsplat runs on L4s too (about 290 more GPUs for reconstruction). Seen-vs-imagined frames + seenFraction in every replay. Still blocked: SMPL-X download (stalled in Safari), DINOv3 access.
 - Fri 11:00 PM, Ojasva: runner submits avatars too (`--kind avatar`, photo -> Vishal's DiGS job). `startS` approved in the job API. Sample bundle committed at samples/synthetic-test. Every brief now has a long self-serve backlog.
+- Fri 8:30 PM, Vishal: avatar bundles now carry `avatar/skin.bin` + `avatar/skeleton.json` (format and posing maths in avatars/README.md; reference LBS in `lucid_avatars/skinning.py`). Ian: that's everything your player needs to pose `avatar.ply` with `motion.json`.

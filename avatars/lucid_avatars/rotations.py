@@ -49,3 +49,13 @@ def rotate_by_quat(q: np.ndarray, v: np.ndarray) -> np.ndarray:
     v = np.asarray(v, dtype=np.float64)
     t = 2.0 * np.cross(u, v)
     return v + w * t + np.cross(u, t)
+
+
+def quat_to_matrix(q: np.ndarray) -> np.ndarray:
+    """Unit quaternion (..., 4) to rotation matrix (..., 3, 3)."""
+    x, y, z, w = np.moveaxis(np.asarray(q, dtype=np.float64), -1, 0)
+    return np.stack([
+        np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], axis=-1),
+        np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], axis=-1),
+        np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], axis=-1),
+    ], axis=-2)

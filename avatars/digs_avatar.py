@@ -27,11 +27,14 @@ from PIL import Image, ImageOps
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(1, os.getcwd())  # the DiGS-Avatar repo: run_demo_DiGS, lib.*
 from lucid_avatars import digs_io as D  # noqa: E402
+from lucid_avatars import skinning as S  # noqa: E402
+from lucid_avatars.smplx_layout import SMPLX_PARENTS  # noqa: E402
 from lucid_avatars.bundle import validate_bundle, write_avatar_bundle  # noqa: E402
 from lucid_avatars.idle import idle_loop  # noqa: E402
 
 HANDS_NOTE = "avatar.ply is the SMPL-X zero pose (flat hands); motion.json holds the hands in DiGS's relaxed hand mean"
 TURNTABLE_FILL = 1.15  # frame height / body height
+MAX_BODY_GAP_M = 0.1  # median Gaussian-to-SMPL-X-surface distance above this means the rig won't fit the avatar
 # Losing more than this share of a module's weights means it would run random: fail instead.
 MAX_MISSING_SHARE = 0.5
 CHECKED_MODULES = ("dino_encoder.dino_model.", "diffusion_model.", "enhance.", "idol_decoder.")
@@ -185,6 +188,29 @@ def capture_rest_gaussians(model, code, betas, hand_mean, camera_1x1x20):
     return D.rendered_to_gaussians(**got)
 
 
+def skin_avatar(model, gaussians, betas_np, dev):
+    """skin.bin records and skeleton.json for the rest-pose Gaussians, from DiGS's own SMPL-X model: each Gaussian
+    takes the inverse-distance blend of its 4 nearest rest vertices' skinning weights, then the top 4 joints."""
+    bm = model.idol_decoder.deformer.body_model
+    parents = bm.parents[: len(SMPLX_PARENTS)].tolist()
+    parents[0] = -1
+    if parents != SMPLX_PARENTS:
+        raise SystemExit(f"DiGS's SMPL-X tree differs from ours: {parents}")
+    as_np = lambda t: t.detach().float().cpu().numpy()  # noqa: E731
+    joints, verts = S.rest_joints(as_np(bm.v_template), as_np(bm.shapedirs), as_np(bm.J_regressor), betas_np)
+    pts = torch.as_tensor(gaussians.xyz, dtype=torch.float32, device=dev)
+    vt = torch.as_tensor(verts, dtype=torch.float32, device=dev)
+    nearest = [torch.cdist(c, vt).topk(4, largest=False) for c in pts.split(65536)]
+    dist = torch.cat([n.values for n in nearest]).cpu().numpy()
+    idx = torch.cat([n.indices for n in nearest]).cpu().numpy()
+    gap = float(np.median(dist[:, 0]))
+    print(f"skinning: median Gaussian-to-SMPL-X-vertex distance {gap * 100:.1f} cm")
+    if gap > MAX_BODY_GAP_M:
+        raise SystemExit(f"the avatar sits {gap:.2f} m from its SMPL-X body: rest-pose coordinates don't match the rig")
+    weights = S.blend_vertex_weights(bm.lbs_weights.detach().float().cpu().numpy(), idx, dist)
+    return S.quantize_top4(weights), S.skeleton_dict(joints)
+
+
 def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
     """DiGS's own writer (imageio, then OpenCV), which only prints when both fail: check the file."""
     from lib.utils.infer_util import save_video
@@ -245,6 +271,7 @@ def main() -> int:
     if errors:
         raise SystemExit("rest-pose capture looks wrong: " + "; ".join(errors))
     stand = D.stand_y(gaussians.xyz, gaussians.opacity)
+    skin, skeleton = skin_avatar(model, gaussians, betas_np, dev)
     visible_y = gaussians.xyz[1 / (1 + np.exp(-gaussians.opacity)) >= 0.5, 1]
     height, middle_y = np.ptp(visible_y), (visible_y.min() + visible_y.max()) / 2
 
@@ -261,7 +288,7 @@ def main() -> int:
     motion = D.with_hand_mean(idle_loop(betas_np, args.idle_seconds, args.fps, stand), hand_mean)
 
     root = write_avatar_bundle(
-        out, args.id, args.name, gaussians, motion,
+        out, args.id, args.name, gaussians, motion, skin=skin, skeleton=skeleton,
         source={"photo": Path(args.image).name, "width": photo.width, "height": photo.height,
                 "model": "DiGS-Avatar student + NLF SMPL-X fit", "note": HANDS_NOTE},
     )

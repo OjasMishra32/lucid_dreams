@@ -8,8 +8,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .gaussian_ply import Gaussians, header_errors, write_ply
+from .gaussian_ply import Gaussians, header_errors, read_header, write_ply
 from .motion import Motion, is_vec, validate_motion_dict
+from .skinning import SKELETON_FILE, SKIN_FILE, skin_errors, write_skin_bin
 
 AVATAR_FILE = "avatar/avatar.ply"
 MOTION_FILE = "avatar/motion.json"
@@ -27,8 +28,13 @@ def write_avatar_bundle(
     motion: Motion,
     source: dict | None = None,
     metrics: dict | None = None,
+    skin: tuple[np.ndarray, np.ndarray] | None = None,
+    skeleton: dict | None = None,
 ) -> Path:
     """Write dreams/<id>/ with dream.json, avatar/avatar.ply and avatar/motion.json. Returns the bundle dir.
+
+    skin (uint8 joint indices, uint8 weights, each (N, 4)) and skeleton (skinning.skeleton_dict) add
+    avatar/skin.bin and avatar/skeleton.json so players can pose the Gaussians.
 
     preview.mp4 and thumb.jpg come from a render pass; set them in dream.json once they exist.
     Bounds are the rest-pose extent stood on the floor: a guide for placement, not a tight box for every frame.
@@ -37,6 +43,13 @@ def write_avatar_bundle(
     (root / "avatar").mkdir(parents=True, exist_ok=True)
     write_ply(root / AVATAR_FILE, gaussians)
     motion.save(root / MOTION_FILE)
+    avatar = {"file": AVATAR_FILE, "rig": "smplx", "motion": MOTION_FILE}
+    if skin is not None and skeleton is not None:
+        write_skin_bin(root / SKIN_FILE, *skin)
+        (root / SKELETON_FILE).write_text(json.dumps(skeleton) + "\n")
+        avatar.update(skin=SKIN_FILE, skeleton=SKELETON_FILE)
+    elif skin is not None or skeleton is not None:
+        raise ValueError("skin and skeleton come together")
 
     lo, hi = gaussians.xyz.min(axis=0), gaussians.xyz.max(axis=0)
     centre = (lo + hi) / 2
@@ -55,7 +68,7 @@ def write_avatar_bundle(
             "max": [round(half_xz[0], 3), round(hi[1] - lo[1], 3), round(half_xz[2], 3)],
         },
         "frames": None,
-        "avatar": {"file": AVATAR_FILE, "rig": "smplx", "motion": MOTION_FILE},
+        "avatar": avatar,
         "audio": None,
         "preview": None,
         "thumb": None,
@@ -125,7 +138,11 @@ def _avatar_errors(dream: dict, avatar: dict, inside) -> list[str]:
         errors.append("dream.json: avatar.rig must be 'smplx'")
     ply = inside("avatar.file", avatar.get("file", AVATAR_FILE))
     if ply:
-        errors += [f"{ply.name}: {e}" for e in header_errors(ply)]
+        ply_errors = [f"{ply.name}: {e}" for e in header_errors(ply)]
+        errors += ply_errors
+        paths_ok = all(inside(f"avatar.{k}", avatar[k]) for k in ("skin", "skeleton") if k in avatar)
+        if not ply_errors and paths_ok:
+            errors += skin_errors(inside("bundle", "."), avatar, read_header(ply)[1])
     motion_path = inside("avatar.motion", avatar.get("motion", MOTION_FILE))
     if not motion_path:
         return errors

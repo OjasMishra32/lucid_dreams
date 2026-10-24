@@ -31,3 +31,11 @@ DIGS_JAW = slice(170, 173)
 DIGS_EYES = slice(173, 179)
 DIGS_EXPR = slice(179, 189)
 DIGS_PARAM_DIM = 189
+
+# Parent of each joint (-1 for the pelvis), the SMPL-X kinematic tree. Each finger chain hangs off its wrist.
+SMPLX_PARENTS: list[int] = [
+    -1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19,
+    15, 15, 15,
+    *[p for base in range(25, 40, 3) for p in (J["left_wrist"], base, base + 1)],
+    *[p for base in range(40, 55, 3) for p in (J["right_wrist"], base, base + 1)],
+]
