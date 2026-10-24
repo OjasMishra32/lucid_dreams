@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 10:21 AM. Vishal is up and runs HiPerGator himself now (his account).
+Updated Sat 10:51 AM. Vishal is up; HiPerGator jobs run from his account.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -143,14 +143,16 @@ private, outside the repo.
 
 ## Now
 
-- **Build running on `court-side`:** interfaces frozen and pushed (107 unit tests, build, stand-in bundle and an
-  emulator run all green); four streams build in parallel worktrees (core, video + hand-off, world + light,
-  sound), each reviewed before it's merged into `court-side`. The redacted plan is on the branch.
-- **GPU:** Vishal is logged in and submits. The group quota has ~13 GB free, so every job now runs inside one node's
-  local scratch and copies back only small results (nothing on /blue is deleted). First: the other-players
-  prototype (Edwards), then Luka and Gobert's views at Turbo and full quality together, then the freeze A/B grid
-  (default vs `--source-agree`, as you suggested).
-- Waiting on: the two players' masks (landing now), the backboard-square scan that pins the camera's depth.
+- **Build on `court-side`:** interfaces and sound are merged. Core, video + hand-off, world + light, and the private
+  data bundle are building in parallel worktrees; each is reviewed before it merges. A QA runner (all checks from the
+  plan plus a numbered headset sheet) is under review now. On today's branch it reports 0 failing.
+- **Show video:** the bake's timeline and per-frame cameras are done and tested (eases match the player's clock).
+  Stacking and encoding are next. 90 Hz playback will slow pass 2 to 0.75x instead of 0.6x, so every frame is real.
+- **GPU (HiPerGator, node-local scratch, nothing deleted):** masks for Luka, Gobert and the ball, and for the other
+  angles, finished on HPG in minutes. The masks for everyone else are running, and the other-players jobs are
+  running. Next: Luka and Gobert's views (Turbo first for the noon gate, then full quality), then the freeze A/B
+  grid (default vs `--source-agree`).
+- Waiting on: the soft mattes for the pair masks, and the full-show camera solve.
 
 ## Verdict so far
 
