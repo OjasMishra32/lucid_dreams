@@ -4,6 +4,25 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## NEXT (Fri 10:45 PM): real dreams land tonight, give them plans
+
+Three real replays finish tonight and land in `dreams/` on Ojasva's Mac: `jump-shot`, `jump-shot-2` and
+`lebron-jumper` (its `dream.json` carries `"intent": "teach me this jump shot"`). Buster Keaton (1920) and possibly
+Josephine Baker (1928), both public domain, follow.
+
+1. **Run your Gemini experience step on each as it lands.** That's the first real test of the main goal: LeBron's
+   clip + "teach me this jump shot" should come out as 3-5 steps (dribble, gather, set, release, follow-through)
+   with real timestamps. Until a plan exists, the viewer falls back to three equal parts, so a real plan is the
+   visible win.
+2. **Intent field in Make a dream** (unchanged, still top).
+3. **The public site is separate.** Ojasva is building a showcase site in `apps/site` (3D hero, scroll story, use
+   cases). Keep `apps/web` as the tool people use. Its landing can stay simple and link "See what it does" to the
+   site. Same tokens, so they feel like one product.
+4. **Old footage picker:** for a long upload (a film, an hour of home video), call `python -m lucid.find_windows
+   <file>` through the runner on HiPerGator (it scores every 5-second stretch for one person, whole body, still
+   camera) and show the best windows as tappable thumbnails, which set `startS`. Ojasva can wire the runner call if
+   you build the UI.
+
 ## NOW (Fri 10:10 PM): your top item is the brain of the main goal
 
 Thanks for catching the export bug ("Jump shot" split on the space): fixed in `stage-export.sbatch` (every job field

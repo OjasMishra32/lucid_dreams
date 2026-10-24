@@ -6,6 +6,19 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## NEXT (Fri 10:45 PM): once you're back
+
+- HiPerGator is connected and running (your login, thanks). Your `digs-assets` failed: `student.ckpt` has no DINOv3
+  weights and `pretrained/dinov3_vitb16.pth` was missing. Ojasva requested Meta's DINOv3 download. A watcher on his
+  Mac (`pipeline/runner/after_dinov3.py`) installs the `.pth` the moment it arrives, then re-queues digs-assets,
+  Bobby, Magnus and both jump-shot fine-tunes as one Slurm chain. Check that `ASSETS_OK` appears, and that the
+  Meta-format file loads the way your check expects.
+- **LeBron's jump shot** is processing as a replay (`runs/lebron-jumper`). Once its views exist, its GVHMR motion is
+  the best "you, perfected" demo: `digs-perform.sbatch AVATAR=$L/runs/vishal/out/vishal.work/code.pt
+  RUN_ID=lebron-jumper ID=vishal-lebron NAME="Vishal, LeBron's jumper"`. That needs your photo (in
+  `~/Downloads/lucid-photos/vishal.jpg`) and the assets.
+- Seated idle + reach-and-place for the chess legends, then hands/face pass: unchanged.
+
 ## NOW (Fri 10:10 PM): what changed while you were in the exam
 
 - The product is one line (AGENTS.md, top): photo/video + one sentence of intent -> an experience

@@ -4,6 +4,26 @@ You own what the judges see and read, and the footage everything is built from. 
 judgment and writing, not heavy AI use, so it fits a small Codex plan: use Codex for the README and Devpost polish,
 not for long coding sessions. Read `AGENTS.md` first.
 
+## NEXT (Fri 10:45 PM): sources, credits, and the three demo moments
+
+What's processing tonight: LeBron's jump shot (a clip Ojasva supplied; demo only, never in the repo), two Pexels jump
+shots, Buster Keaton in "Neighbors" (1920, public domain), possibly Josephine Baker (1928, public domain), and Bobby
+Fischer and Magnus Carlsen avatars (licensed photos) once Meta's DINOv3 weights arrive.
+
+1. **`demo/credits.md`:** one line per source with its link and license. Keaton and Baker films (Wikimedia Commons,
+   public domain); Fischer (W. Punt / Anefo, Nationaal Archief, CC0); Carlsen (Wikimedia user Autopilot, CC BY-SA 3.0);
+   the Pexels clips (Pexels license); the LeBron clip (supplied for a non-commercial demo, not redistributed). Every
+   open-source model too. This is the MLH Open Source prize and the judges' first consent question.
+2. **Your restoration test has perfect footage now:** the Keaton and Baker films are real 1920s film (B&W, grain,
+   flicker). Ojasva can copy you a 10-second cut of each. Run `restore.py` on them and compare.
+3. **Video script v1** (`demo/video.md`), three moments, about 40 s each:
+   - LeBron teaching you his jump shot in your room (the lesson).
+   - Buster Keaton, 1920, standing in your living room (old footage brought back).
+   - The family moment (your consented family photo or video).
+   Then how it works and the team.
+4. **Judge Q&A** (`demo/judges.md`): add "Why are there public figures?" Answer: demo only, from their real footage
+   or freely licensed photos, never their voice, always labelled, never implied endorsement.
+
 ## NOW (Fri 10:10 PM): the hero demo is a lesson
 
 The product is one line (AGENTS.md, top): any photo or video + one sentence of what you want to do with that person

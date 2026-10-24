@@ -3,6 +3,24 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## NEXT (Fri 10:45 PM): you're ahead, here's the next big chunk
+
+Teach mode, reality check, SPZ and hands in one evening: excellent. Real bundles start landing in `dreams/` tonight:
+two Pexels jump shots and **LeBron's jump shot** (intent "teach me this jump shot"), then Buster Keaton (1920,
+public domain). In order:
+
+1. **Avatar player (GPU skinning).** Bobby Fischer, Magnus Carlsen and Vishal's avatars are queued (they start once
+   Meta's DINOv3 weights arrive). Pose `avatar/avatar.ply` from `skin.bin` + `skeleton.json` + `motion.json` exactly as
+   `apps/webxr/src/avatar.ts` does (identity rest per bone, the full skinning transform per bone per frame,
+   dual-quaternion blend, slerp between motion frames). Test data now: `dreams/test-avatar/` on Ojasva's Mac (a waving
+   SMPL-X body; derived from the licensed SMPL-X model, so AirDrop it, never commit it).
+2. **Their voice and words:** `voice.m4a` (fall back to `audio.m4a`) as a spatial source at mouth height
+   (`bounds.max.y - 0.13`, 8 cm in front of the face); `captions.vtt` as a quiet caption in front of them at chest height.
+3. **Library in the headset:** `GET /api/dreams` from the bridge, a grid of thumbs you poke to open, newest first.
+4. **Numbers:** fps on the Quest 3S with LeBron's real replay loaded (121 frames). If it's under 72, tell Ojasva the
+   Gaussian count that holds 72 and he'll re-export at that cap.
+5. **Capture:** once LeBron lands, record a clean passthrough clip of the lesson in a real room for Atina's video.
+
 ## NOW (Fri 10:10 PM): run experience.json, the main goal
 
 Hands-only controls with a passing HandsCheck: excellent. The product is now one line (AGENTS.md, top): photo or
