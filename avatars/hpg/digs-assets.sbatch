@@ -2,7 +2,8 @@
 #SBATCH --job-name=lucid-digs-assets
 #SBATCH --account=iruchkin
 #SBATCH --qos=iruchkin
-#SBATCH --partition=hpg-default
+#SBATCH --partition=hpg-turin,hpg-rtx6000
+#SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
 #SBATCH --time=01:00:00
