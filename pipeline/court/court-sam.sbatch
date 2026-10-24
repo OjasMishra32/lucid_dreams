@@ -16,7 +16,8 @@
 # tar ([<set>/]masks|prob|alpha/<name>/*.png, report.json, prompts.json) is copied to $RUN. With MASKS_TAR (an earlier
 # run's masks-sam.tar) only the matte runs, on those masks: $RUN/masks-alpha.tar. Deletes nothing.
 set -euo pipefail
-L=/blue/iruchkin/vishalnaveen/lucid; C=$L/code/pipeline/court
+L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court  # L: court-hpg.sh passes it
+export NCCL_IB_DISABLE=1  # as court-job.sbatch: harmless for one GPU, and it keeps a RoCE node's NCCL quiet
 module load conda/26.7 cuda/12.8.1 >/dev/null 2>&1
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/4danyone

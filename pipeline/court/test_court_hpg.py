@@ -181,6 +181,34 @@ class Masks(unittest.TestCase):
         self.assertIn("no set", out)
         self.assertEqual(c, [])
 
+    def test_another_allocation(self):
+        L = fake_l(self.root, env_ready=False)
+        p = subprocess.run(["bash", str(HERE / "court-hpg.sh"), "court-sam-env"], capture_output=True, text=True,
+                           env={**os.environ, "L": str(L), "SBATCH_LOG": str(L / "sbatch.log"),
+                                "PATH": f"{L / 'bin'}:{os.environ['PATH']}", "ACCOUNT": "lab2", "QOS": "lab2",
+                                "ENV_QOS": "lab2-b", "PARTITION": "hpg-rtx6000", "CPUS": "2"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        c = (L / "sbatch.log").read_text().splitlines()
+        self.assertIn("--account=lab2 --qos=lab2-b --output=", c[0])  # the CPU build on the burst QOS
+        self.assertIn(f"--export=ALL,L={L} ", c[0])
+        self.assertNotIn("--partition", c[0])
+        (L / "envs/sam2/.court-sam-ok").write_text("ok")
+        (L / "models/sam2/checkpoints/sam2.1_hiera_large.pt").write_bytes(b"x")
+        make_upload(L / "data/court", "court-sam-people")
+        p = subprocess.run(["bash", str(HERE / "court-hpg.sh"), "court-sam-people"], capture_output=True, text=True,
+                           env={**os.environ, "L": str(L), "SBATCH_LOG": str(L / "sbatch.log"),
+                                "PATH": f"{L / 'bin'}:{os.environ['PATH']}", "ACCOUNT": "lab2", "QOS": "lab2",
+                                "PARTITION": "hpg-rtx6000", "CPUS": "2"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        c = (L / "sbatch.log").read_text().splitlines()
+        self.assertIn("--account=lab2 --qos=lab2 --partition=hpg-rtx6000 --cpus-per-task=2 --job-name=court-sam-people "
+                      "--export=ALL,L=", c[1])
+        p = subprocess.run(["bash", str(HERE / "court-hpg.sh"), "court-matte"], capture_output=True, text=True,
+                           env={**os.environ, "L": str(L), "SBATCH_LOG": str(L / "sbatch.log"),
+                                "PATH": f"{L / 'bin'}:{os.environ['PATH']}", "QOS": "x;rm"})
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("QOS=", p.stdout + p.stderr)
+
     def test_matte_needs_no_sam_env(self):
         rc, out = dryrun(make_upload(self.root, "court-matte"))
         self.assertEqual(rc, 0, out)
@@ -260,6 +288,18 @@ class Mac(unittest.TestCase):
         out = self.mac("fetch", "sam", "views", "/m", "--single")
         self.assertIn("runs/court-sam-views/masks-sam.tar /m/", out[1])
         self.assertTrue(out[2].endswith("court_sam.py unpack /m/masks-sam.tar --out /m --single"), out[2])
+
+    def test_another_host_and_allocation(self):
+        p = subprocess.run(["bash", str(HERE / "court-masks-hpg.sh"), "sam", "pair2", "/stage/up"], capture_output=True,
+                           text=True, env={**os.environ, "DRY": "1", "HOST": "hpg2", "L": "/blue/lab2/me/x",
+                                           "ACCOUNT": "lab2", "QOS": "lab2", "PARTITION": "hpg-rtx6000"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        out = p.stdout.splitlines()
+        self.assertIn("hpg2:/blue/lab2/me/x/code/pipeline/court/", out[1])
+        self.assertIn("rsync -aH --partial", out[2])
+        self.assertIn("/stage/up/ hpg2:/blue/lab2/me/x/data/court/court-sam-pair2/", out[2])
+        self.assertTrue(out[3].endswith("hpg2 env L=/blue/lab2/me/x ACCOUNT=lab2 QOS=lab2 PARTITION=hpg-rtx6000 bash "
+                                        "/blue/lab2/me/x/code/pipeline/court/court-hpg.sh court-sam-pair2"), out[3])
 
     def test_rematte_and_its_fetch(self):
         out = self.mac("rematte", "pair")

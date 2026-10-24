@@ -13,7 +13,7 @@
 # Weights: sam2.1_hiera_large.pt from Meta's own URL, sha256-checked against the Mac's copy, so every host runs the same
 # model. Disk on Blue: ~0.9 GB of weights + a few MB of venv; pip and the build stay in $TMPDIR. Safe to re-run.
 set -euo pipefail
-L=/blue/iruchkin/vishalnaveen/lucid
+L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # L: court-hpg.sh passes it
 COMMIT=2b90b9f5ceec907a1c18123530e92e794ad901a4   # facebookresearch/sam2, 2024-12-15 (the Mac's vendor/sam2 checkout)
 URL=https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
 SHA=2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318

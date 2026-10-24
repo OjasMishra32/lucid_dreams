@@ -14,7 +14,7 @@
 # Frames are unpacked and masks written on the node's $TMPDIR; only one uncompressed tar of the PNGs
 # (label/ 16-bit ids, prob/ 8-bit soft edges, objects.json, log.txt) is copied to $RUN. Nothing on Blue is deleted.
 set -euo pipefail
-L=/blue/iruchkin/vishalnaveen/lucid
+L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # L: court-hpg.sh passes it
 module load conda/26.7 cuda/12.8.1 >/dev/null 2>&1
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/4danyone
