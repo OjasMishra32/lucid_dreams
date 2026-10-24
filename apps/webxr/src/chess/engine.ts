@@ -17,7 +17,7 @@ export const STRENGTHS: Strength[] = [
   // (the face-swapped bundle first, then the photo avatar). They never speak, and they're always labelled as the
   // engine: not the person, and never presented as them.
   { id: "fischer", label: "Fischer 2785", elo: 2785, legend: "Bobby Fischer", avatar: ["bobby-fischer-head", "bobby-fischer"] },
-  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen", avatar: ["magnus-carlsen-head", "magnus-carlsen"] },
+  { id: "carlsen", label: "Carlsen 2882", elo: 2882, legend: "Magnus Carlsen", avatar: ["magnus-carlsen-lhm"] },
   { id: "max", label: "Engine", elo: null },
 ];
 
