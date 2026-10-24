@@ -113,7 +113,7 @@ const bedBuffer = (ctx, kind, seconds) => {
   const buf = ctx.createBuffer(1, n, ctx.sampleRate);
   const d = buf.getChannelData(0);
   let seed = 7;
-  const tones = { sine50: [50], sine2500: [2500], tone3k: [3000], tones: [150, 3000, 9000], tone1k: [1000], tone2k: [2000] }[kind];
+  const tones = { sine50: [50], sine2500: [2500], tone3k: [3000], tones: [150, 3000, 9000], tone1k: [1000], tone2k: [2000], tone400: [400] }[kind];
   for (let i = 0; i < n; i++) {
     if (tones) {
       let v = 0;
@@ -141,7 +141,7 @@ window.renderSound = async (spec) => {
     base: "",
     file: (p) => p,
   };
-  const buffers = { bed: bedBuffer(off, spec.bed, 6.37), swell: bedBuffer(off, spec.swell ?? "tone1k", spec.swellSeconds ?? 0.3), sfx: bedBuffer(off, "tone3k", 0.2) };
+  const buffers = { bed: bedBuffer(off, spec.bed, 6.37), swell: bedBuffer(off, spec.swell ?? "tone1k", spec.swellSeconds ?? 0.3), sfx: bedBuffer(off, "tone3k", 0.2), sfxB: bedBuffer(off, "tone400", 0.2) };
   const sound = new Sound(bundle, { context: off, decode: async (path) => buffers[path] });
   await sound.load();
   sound.start();
@@ -468,18 +468,25 @@ for (const bed of ["sine50", "sine2500"]) {
   test(`P20 no clicks (${bed}): the largest sample jump through arrival, hush, rush and See my room never exceeds a steady render's`, async () => {
     const T0 = 4.4;
     const T1 = T0 + 2.2;
+    const OUT = T1 + 1; // See my room out, then back: both fades are inside the render
+    const BACK = OUT + 1.4;
+    const END = BACK + 1.4;
     const steady = new Signal(await render({ seconds: 5, bed, calls: [...perFrame(5, (t) => [listen(t)]), { t: 0, fn: "arrive", args: [1] }] }));
     const baseline = steady.maxJump(2, 5);
     const calls = [
       ...arrival(),
-      ...ease(T0, 1.2, (t) => [
-        ...(t >= T1 ? [listen(t, SEAT, clockAt(10, "resume"))] : []),
-        { t, fn: "room", args: [t < T1 + 1 ? 0 : Math.min(1, (t - T1 - 1) / 0.6)] },
+      ...perFrame(END, (t) => [
+        t >= T1 ? listen(t, SEAT, clockAt(10, "resume")) : listen(t),
+        ...(t >= T0 && t < T1 ? [{ t, fn: "timeStop", args: [smootherstep((t - T0) / 1.2)] }] : []),
+        { t, fn: "room", args: [t < OUT ? 0 : t < BACK ? Math.min(1, (t - OUT) / 0.6) : Math.max(0, 1 - (t - BACK) / 0.8)] },
       ]),
     ];
-    const s = new Signal(await render({ seconds: T1 + 3, bed, calls }));
-    const worst = s.maxJump(0.1, T1 + 3);
+    const s = new Signal(await render({ seconds: END + 0.5, bed, calls }));
+    const worst = s.maxJump(0.1, END + 0.5);
     assert.ok(worst <= baseline * 1.05, `max jump ${worst.toExponential(3)} vs steady ${baseline.toExponential(3)}`);
+    const inRoom = s.maxJump(OUT - 0.1, END + 0.4);
+    assert.ok(inRoom <= baseline * 1.05, `through See my room out and back: ${inRoom.toExponential(3)} vs steady ${baseline.toExponential(3)}`);
+    assert.ok(s.db(OUT + 0.8, BACK - 0.1, bed === "sine50" ? 50 : 2500) < s.db(...REF, bed === "sine50" ? 50 : 2500) - 8, "the fade really ran in this render");
     // the detector does see a click: a 20% unsmoothed gain step on the same tone (only a slow tone shows a small step)
     if (bed !== "sine50") return;
     const control = await page.evaluate<{ l: string }>((a) => (window as unknown as { renderControl(a: unknown): Promise<never> }).renderControl(a), { bed });
@@ -551,6 +558,29 @@ test("the swell fires once each time the show passes the make; the step-in swell
     was = on;
   }
   assert.equal(n, 2, "each pass over the make fires the swell once");
+});
+
+test("events: each one plays its own file (same kind, different files), and through the crowd's arrival fade once, not twice", async () => {
+  const frames = Array.from({ length: 101 }, (_, i) => ({ src: i }));
+  const events = [
+    { frame: 20, kind: "bounce", at: [2, 0, 1], file: "sfx" }, // 3 kHz
+    { frame: 40, kind: "bounce", at: [2, 0, 1], file: "sfxB" }, // 400 Hz
+  ];
+  const sweep = perFrame(100 / 72, (t, i) => [listen(t + 0.2, SEAT, clockAt(i))]);
+  const run = async (arrive: number) =>
+    new Signal(await render({ seconds: 2.2, bed: "sine50", calls: [{ t: 0, fn: "arrive", args: [arrive] }, ...sweep], events, frames }));
+  const full = await run(1);
+  const onset = (s: Signal, hz: number) => s.cross(hz, s.db(0.05, 0.15, hz) + 25, 0.15, 2.1);
+  const a = onset(full, 3000)!;
+  const b = onset(full, 400)!;
+  assert.ok(Math.abs(a - (0.2 + 20 / 72)) < 0.1, `first bounce plays its own file at its frame (${a})`);
+  assert.ok(Math.abs(b - (0.2 + 40 / 72)) < 0.1, `second bounce plays its own file, not the first one's (${b})`);
+  assert.equal(full.cross(3000, full.db(0.05, 0.15, 3000) + 25, 0.2 + 30 / 72 + 0.25, 2.1), null, "the first file doesn't play again at the second frame");
+  // an event goes through the crowd gain: arriving half way (-9 dB) takes 9 dB off it. Two paths would take about 3 dB.
+  const half = await run(0.5);
+  const peak = (s: Signal) => Math.max(...Array.from({ length: 30 }, (_, i) => s.db(a + i * 0.005, a + i * 0.005 + 0.03, 3000)));
+  const drop = peak(full) - peak(half);
+  assert.ok(Math.abs(drop - -20 * Math.log10(arrivalGain(0.5))) < 1, `event follows the arrival fade (${drop.toFixed(1)} dB vs ${(-20 * Math.log10(arrivalGain(0.5))).toFixed(1)})`);
 });
 
 test("AudioContext: start() resumes inside the tap, the first gesture resumes it if the browser held it back, update() asks again while suspended", async () => {

@@ -217,15 +217,20 @@ export class Sound {
     }
   }
 
-  /** A sound at a court-space position (audio.events), by the kind court.json lists. */
+  /** A sound at a court-space position: the audio.events entry of this kind at `at` (else the first of the kind). */
   event(kind: string, at: Vec3): void {
+    const same = this.bundle.court.audio.events.filter((e) => e.kind === kind);
+    const found = same.find((e) => e.at.every((v, i) => v === at[i])) ?? same[0];
+    if (found) this.play(found, at);
+  }
+
+  /** One audio.events entry, with its own file, through its own panner and the crowd's gain (the arrival, the stop). */
+  private play(entry: CourtBundle["court"]["audio"]["events"][number], at: Vec3): void {
     if (!this.started || !this.arrived) return;
-    const found = this.bundle.court.audio.events.find((e) => e.kind === kind);
-    if (!found) return;
     const node = this.ctx.createBufferSource();
     const panner = this.panner(at);
-    node.buffer = this.buffers.get(found.file)!;
-    node.connect(panner).connect(this.stopLP);
+    node.buffer = this.buffers.get(entry.file)!;
+    node.connect(panner);
     node.onended = () => panner.disconnect();
     node.start();
   }
@@ -367,7 +372,7 @@ export class Sound {
     const passed = (at: number) => lastSrc < at && src >= at;
     const make = this.bundle.court.video.makeSource;
     if (make !== undefined && passed(make)) this.oneShot("make");
-    for (const e of this.bundle.court.audio.events) if (passed(e.frame)) this.event(e.kind, e.at);
+    for (const e of this.bundle.court.audio.events) if (passed(e.frame)) this.play(e, e.at);
   }
 
   // ---------------- the context ----------------
