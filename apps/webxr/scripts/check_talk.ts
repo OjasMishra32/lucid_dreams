@@ -2,7 +2,7 @@
 // the right way on his own rig and never past 8.6 degrees; the relay answers for Vishal and refuses a family's talk;
 // a spoken question gets a reply in his words (and, once his voice is cloned, a WAV of it). Needs the Talk server
 // (:5175) and a viewer server (the dev server, LUCID_HTTP=1 on :5181, by default).
-//   node scripts/check_talk.ts [http://localhost:5181] [dreams/vishal-lhm]
+//   node scripts/check_talk.ts [http://localhost:5181] [dreams/vishal]
 import { registerHooks } from "node:module";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
@@ -33,7 +33,7 @@ const check = (name: string, ok: boolean, detail: string) => {
   if (!ok) failed++;
 };
 const base = process.argv[2] ?? "http://localhost:5181";
-const bundle = resolve(dirname(fileURLToPath(import.meta.url)), "../../..", process.argv[3] ?? "dreams/vishal-lhm");
+const bundle = resolve(dirname(fileURLToPath(import.meta.url)), "../../..", process.argv[3] ?? "dreams/vishal");
 
 // ---------------- his jaw, on his own rig
 const skeleton = JSON.parse(readFileSync(join(bundle, "avatar/skeleton.json"), "utf8"));
