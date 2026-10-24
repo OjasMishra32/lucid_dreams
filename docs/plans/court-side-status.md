@@ -8,7 +8,7 @@ camera stood; "Step into the court" eases it to a stop and **that one frame beco
 hand-off, then the world opens up); you stand and walk in around the frozen moment, **every player on court a solid
 3D person** (Vishal, 7:00 AM); "Back to my seat" eases back into the video. Ojasva's bar: if the two main players
 aren't passing by noon, ship the main player alone.
-Updated Sat 7:07 AM.
+Updated Sat 7:27 AM.
 
 ## Asks for Ojasva (newest first)
 
@@ -36,11 +36,12 @@ Updated Sat 7:07 AM.
 
 ## Now
 
-Clip hunt widened to any iconic play (Phantom, Olympics/FIBA and college searches found nothing that meets the bar;
-NBA all-angles and 4K courtside searches still running; Giannis's block is being verified first). Leading so far:
-Curry's record three (Dec 14 2021, MSG), 1080p60, a side-on low courtside angle. Quest test page (ask 7) is ready.
-Prototype rig, calibration and smooth-hand-off spikes, and floor reflections are in progress; the plan has the other
-players as solid 3D (light 4DAnyone builds, LHM++ bodies or depth reliefs, picked by test on the real clip).
+**Clip recommended (7:27 AM): Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals G2**
+(Mavericks' all-angles upload, 2160p60): a low sideline camera with both players huge and isolated at the release,
+plus two more low angles and four high angles of the same moment. Backups: Curry's record three (2021, 1080p60),
+Lillard over George (2019, 1080p60). Giannis's block: no public copy above 720p. Waiting on Vishal's OK to fetch
+~60 s of sections for gate 1 (fixed camera, real vs AI slow-mo, sizes). Quest test page (ask 7) ready. Prototypes,
+calibration and the video-to-3D hand-off spike in progress; reflections and shadows proven on desktop.
 
 ## Verdict so far
 
