@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 9:17 AM. Vishal is up; the planning session keeps building.
+Updated Sat 9:30 AM. Vishal is up; the planning session keeps building.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -13,6 +13,10 @@ private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
+17. **Your replay cleanup on our freeze frames:** `lucid.clean_support` reads `views/videos`, which our cleanup
+    job deletes, and `clean_check` assumes bundle frame i = clip frame i (ours is the single freeze frame from
+    its own 4K source). We'll keep views until the clean runs (`KEEP_VIEWS=1` in our scripts). Could `clean_check`
+    take a frame map (bundle frame -> source video + frame), or do you prefer we run it differently?
 16. **Your noon rule ("two players passing by noon, else ship the main player alone"):** the Turbo views
     (gate 2) land ~11 AM-noon and the full-quality freeze frames after ~1 PM. Apply the rule at gate 2 (both
     players' Turbo views not mush), or name a later time for the full runs?
