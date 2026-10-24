@@ -41,15 +41,15 @@ def body(feet):
 
 class Stance(unittest.TestCase):
     def setUp(self):
-        self.C = np.array([-15.0, 1.0, 3.0])
-        self.feet = [(4.8, 1.8), (5.4, 2.0)]
-        self.R = look_at(self.C, [5.1, 1.0, 1.9])
+        self.C = np.array([-10.0, 1.5, -2.0])
+        self.feet = [(2.0, -1.0), (2.6, -0.8)]
+        self.R = look_at(self.C, [2.3, 1.0, -0.9])
         self.still = {"R": self.R.tolist(), "C": self.C.tolist(), "K": [[F, 0, CX], [0, F, CY], [0, 0, 1]]}
 
     def test_stance_in_court_space(self):
         s = cs.stance_of(body(self.feet), np.ones(len(body(self.feet))), self.C)
         self.assertAlmostEqual(s["stance"], np.hypot(0.6, 0.2), delta=0.02)
-        view = np.array([5.1, 1.9]) - self.C[[0, 2]]
+        view = np.array([2.3, -0.9]) - self.C[[0, 2]]
         view /= np.linalg.norm(view)
         self.assertAlmostEqual(abs(s["along"]), abs(np.array([0.6, 0.2]) @ view), delta=0.02)
 
