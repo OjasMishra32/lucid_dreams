@@ -51,6 +51,10 @@ REALITY_TINT = np.array([0.25, 0.45, 1.0])  # as digs_avatar.py tints what the p
 # People who said yes to a photoreal face (AGENTS.md rule 5). Add a name only on that person's own word; never a
 # public figure, whatever photos exist of them.
 CONSENTED = frozenset({"vishal", "ian-grandma"})  # ian-grandma: written family consent (Ian, Sat 2 AM)
+# People whose own voice may move their own lips (lips.py; a separate yes from the face's). Only on that person's own
+# say-so: Ian's grandma's voice is the family's call through Ian, not ours. Never a public figure (AGENTS.md rule 5:
+# never clone their voice, never have AI speak as them).
+VOICE_CONSENTED = frozenset({"vishal"})  # his own voice, his own say-so
 BUNDLE_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 PHOTO_STEM = re.compile(r"[\w. -]+")
 
@@ -88,6 +92,18 @@ def consent_errors(person: str, bundle: str | Path, held: str | Path | None = No
     on_hold = (held_ids(bundle.parent / ".held") | (held_ids(held) if held else set())) & {person, dream_id, new_id}
     if on_hold:
         errors.append(f"{', '.join(sorted(on_hold))} in dreams/.held")
+    return errors
+
+
+def voice_consent_errors(person: str, bundle: str | Path, held: str | Path | None = None,
+                         new_id: str | None = None) -> list[str]:
+    """Why this person's voice mustn't drive their face (empty if it may): they have to be in VOICE_CONSENTED, and
+    everything consent_errors asks of a face holds too (CONSENTED, their own avatar, a new `<person>-...` id, nothing
+    in dreams/.held)."""
+    errors = consent_errors(person, bundle, held, new_id)
+    if person not in VOICE_CONSENTED:
+        errors.insert(0, f"{person!r} hasn't given consent for their voice to drive their face (VOICE_CONSENTED in "
+                         "head_swap.py; only on that person's own word; AGENTS.md rule 5: never a public figure)")
     return errors
 
 
@@ -241,8 +257,9 @@ def head_skin(points: np.ndarray, rows: np.ndarray, pairs: np.ndarray | None, fl
     return idx, q
 
 
-def living_idle(src: Motion, source: dict | None, blink: bool = True) -> Motion | None:
-    """The 20 s living idle (blinking through face_expr's blink channel) for an avatar whose motion is an idle: it
+def living_idle(src: Motion, source: dict | None, blink: bool = True, seconds: float = IDLE_S) -> Motion | None:
+    """The living idle (20 s, or `seconds`: lips.py makes one as long as the clip; blinking through face_expr's blink
+    channel) for an avatar whose motion is an idle: it
     stands in place (root within 5 cm, height within 3 cm) and its source names no motion (digs-perform's move and
     digs-finetune's clip do; digs-sample's photo avatar doesn't). Betas, standing height and finger pose (DiGS's hand mean) come from the source. None when
     the motion is something to keep."""
@@ -251,7 +268,7 @@ def living_idle(src: Motion, source: dict | None, blink: bool = True) -> Motion 
         return None
     if np.ptp(src.root_t[:, [0, 2]], axis=0).max() > 0.05 or np.ptp(src.root_t[:, 1]) > 0.03:
         return None
-    m = idle_loop(src.betas, IDLE_S, int(round(src.fps)), float(np.median(src.root_t[:, 1])),
+    m = idle_loop(src.betas, seconds, int(round(src.fps)), float(np.median(src.root_t[:, 1])),
                   blink_expr=np.eye(FE.N_CHANNELS)[FE.BLINK] if blink else None)
     m.pose[:, LEFT_HAND] = src.pose[0, LEFT_HAND]
     m.pose[:, RIGHT_HAND] = src.pose[0, RIGHT_HAND]

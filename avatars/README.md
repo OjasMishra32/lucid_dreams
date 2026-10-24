@@ -23,6 +23,8 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | `motion.py` | `motion.json` read/write/validate; DiGS-Avatar packed SMPL-X <-> motion; turning a motion to face the viewer on the floor |
 | `idle.py` | Seamless idle loops so a person never freezes: standing (20 s: breathing, weight shift, head sway, eye saccades, blinks) and seated at the chess board (forearms on the table, looking at the board) |
 | `face_expr.py` | Life in a head-swapped face: `avatar/expr.bin` (FLAME's expressions per LAM Gaussian) and a blink fitted to the person's own eyelids |
+| `arkit.py` | ARKit's 52 blendshapes: LAM_Audio2Expression's JSON (validated names, fps, frame times) and ARKit's shapes on FLAME (FBX-to-FLAME vertex correspondence by index or nearest neighbour, refused when the RMS is off) |
+| `lips.py` | A consenting person's own voice moves their lips: ARKit's shapes on the head Gaussians, the utterance's 9 principal components as `mouth0`..`mouth8` in a new `expr.bin`, `motion.json` as long as the clip, `voice.m4a` |
 | `ik.py` | Closed-form two-bone arm IK (elbow can rest on a table) and head aim on the SMPL-X skeleton |
 | `ball.py` | The basketball's 3D path: pixel box of a 24 cm ball -> GVHMR camera -> GVHMR world (incam + global fits) -> any 4x4 |
 | `ball_props.py` | props.json's basketball for an export: YOLO ball boxes in `views/source.mkv` + GVHMR's MotionResult -> bundle coordinates (4DAnyone env) |
@@ -211,6 +213,62 @@ SMPL-X, a FLAME that doesn't fit the head (over 3 cm RMS: wrong ids), and a head
 FLAME can't shut skip `expr.bin` and the reorder (reason in `face.json` `expr.skipped`) but still get the idle. It adds
 no likeness, so there is no consent gate. Not yet run on a real DiGS or LHM++ bundle.
 
+## Their own voice moves their lips (voice-consenting people only)
+
+Only people in `VOICE_CONSENTED` (`lucid_avatars/head_swap.py`; today only `vishal`: his own voice, his own say-so; a
+separate yes from the face's `CONSENTED`), on their own head swap (`<person>-head`), nobody in `dreams/.held`. Ian's
+grandma's voice is the family's call through Ian, not ours; never a public figure's, whatever recordings exist
+(AGENTS.md rule 5). `python -m lucid_avatars lips ... --check` and `hpg/lips.sbatch` run the gate before any
+environment, download or audio is touched, and `lips_bundle` runs it again. The audio must be the person's own recording
+of their own voice: the gate can't hear whose it is.
+
+How it works (`arkit.py`, `lips.py`, plain numpy and tested; the cluster parts are `arkit_on_flame_npz.py` and the sbatch):
+
+1. **Audio -> ARKit.** LAM_Audio2Expression (aigc3d, Apache-2.0; `inference.py` with `lam_audio2exp_config_streaming.py`,
+   the one config whose weights are released) writes per frame the weights of ARKit's 52 blendshapes at 30 fps (JSON
+   via `save_json_path`; `arkit.read_a2e_json` checks the names, the fps, the frame times and every weight). The job
+   turns its spleeter vocal extraction off (`ex_vol=False`): the recording is the voice alone.
+2. **ARKit on FLAME.** LAM's team fitted the 52 shapes to FLAME's topology; they are the morph targets of
+   `assets/sample_oac/template_file.fbx` (`sample_oac.tar`). `arkit_on_flame_npz.py` (the python 3.10 `envs/a2e`, LAM's FBX SDK wheel,
+   once) writes `$L/models/flame/arkit_on_flame.npz` (names, `(52, 5023, 3)` deltas in FLAME's frame and metres; it
+   never leaves HiPerGator: licences). The template's mesh may be in other axes and units, subdivided once (20018
+   vertices: FLAME's 5023 first, as LAM orders its Gaussians) or reordered, so it finds which FBX vertex is which FLAME
+   vertex (by index when the first vertices fit FLAME's template, else by nearest neighbour from 24 axis turns) and
+   **refuses** over 4% of the head's extent in RMS, or if the nearest match isn't one-to-one, or if `jawOpen` doesn't move
+   the chin down by centimetres. `--list` prints what the FBX holds when a name or mesh isn't what it expects.
+3. **Into the bundle.** The speech shapes (jaw, mouth, cheeks, nose: 32 of the 52; not brows or eyes) go onto LAM's head
+   Gaussians exactly as FLAME's expressions do (`face_expr.lam_fit` + `carry_fields`: vertex pairs of the subdivided
+   mesh, `k R0` into LAM's frame, then `s R` into the avatar's). The head is recomputed from the same LAM head and SMPL-X
+   files as the swap, and the job refuses unless its recomputed FLAME channels equal the bundle's own `expr.bin`
+   (`flameChannelCheckMm` in lips.json): the same Gaussians, frames and pairs. For the utterance, every frame's
+   displacement of every head Gaussian is weights x shapes; its 9 principal components (SVD over frames about the
+   neutral face; never builds the frames x Gaussians matrix) are channels `mouth0`..`mouth8` of a new `expr.bin`;
+   channel 9 is the head swap's own `blink`, untouched. Coefficients are unit-variance, the channels carry the metres.
+4. **motion.json** is the living idle (breathing, sway, saccades, blink every 3-5 s) as long as the clip, `expr` per frame
+   = the 9 coefficients (interpolated to the motion's fps) + the idle's own blink curve. A performance's motion is never
+   replaced (it refuses). **voice.m4a** is the audio itself, for players to play in sync; captions are another pipeline's job.
+
+Run (Ojasva submits; needs the head swap with FLAME, `sbatch --export=ALL,NAME=vishal avatars/hpg/head-swap.sbatch` first):
+
+```
+sbatch --export=ALL,NAME=vishal,AUDIO=/blue/iruchkin/vishalnaveen/lucid/data/avatars/voice/vishal.m4a avatars/hpg/lips.sbatch
+```
+
+First run builds `envs/a2e` (Python 3.10, torch 2.1.2 cu121, so L4s), fetches A2E and its weights
+(`huggingface-cli download 3DAIGC/LAM_audio2exp`), and extracts ARKit-on-FLAME once. Out: `dreams/<bundle>-voice` with
+`lips.json`. `MAX_S=120` caps the audio's length; `BUNDLE=`, `PHOTO=`, `ID=` as in head-swap.
+
+What to check before anyone sees it: in the log, `FBX SDK OK`, the `[arkit]` line (`route`, `rmsOverExtent` well under
+0.04, `jawOpenMaxMm` a few centimetres at most), `LIPS_OK`. In `lips.json`: `varianceKept` > 0.95 (the share of the mouth's
+motion, against its own mean, that the 9 channels keep: the stricter measure; `energyKept` is against neutral; a
+busy mouth under it prints a WARNING), `clipS` equal to the recording's length, `flameChannelCheckMm` ~0, `peakMm` a
+few centimetres. Then **look at a render with the mouth open and shut**: nothing here renders the speaking face yet.
+
+Not measured yet: SyncNet confidence on a front render, before (idle) and after (voice-driven), is the number for the
+slide: render the bundle front-on to a video with `voice.m4a` muxed in, run SyncNet on both, and report the two
+confidences. Untested on the cluster: the whole job (A2E env, weights layout, its CLI), and above all the FBX route:
+the SDK calls, the channel names, whether shapes come out as absolute positions, and the template's vertex order.
+
 ## Seated at the chess board
 
 `seated_idle(rest, betas)` (`idle.py`) is the opponent's idle: hips on a 0.45 m seat, feet on the floor, forearms on a
@@ -296,3 +354,7 @@ then skin `x_rest'` as above. Channels (`exprChannels`): `flame0`..`flame8`, the
 that only wants blinks needs channel 9 alone: `x_rest + expr[9] * d[i][9]`. The 20 s idle's blinks are 150 ms (50 ms
 shut, 100 ms open, one frame fully shut), so interpolate `expr` between frames like the pose. The eye saccades are
 plain joint rotations (`left_eye`, `right_eye`): any skinning player already shows them.
+
+A bundle whose lips follow a voice (`lips.json` next to `head_swap.json`) names its channels `mouth0`..`mouth8`, `blink`
+(`exprChannels`; the blink is still index 9) and has `voice.m4a`; the motion is as long as the clip. Same formula, no
+player change: play `voice.m4a` from `t = 0` with the motion, and interpolate `expr` between frames.

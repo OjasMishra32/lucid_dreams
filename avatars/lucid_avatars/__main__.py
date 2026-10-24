@@ -1,5 +1,7 @@
 """Command line: `python -m lucid_avatars validate dreams/<id>`, `... idle motion.json`, `... bake dreams/<id>`,
-`... results <run>-tuned.work`, `... head-swap dreams/<id> heads/<person>/heads --person <person> ...`, `... blink dreams/<id> --smplx ...`."""
+`... results <run>-tuned.work`, `... head-swap dreams/<id> heads/<person>/heads --person <person> ...`,
+`... blink dreams/<id> --smplx ...`, `... lips dreams/<person>-head --person <person> ...` (their own voice moves their
+lips)."""
 
 import argparse
 import sys
@@ -47,7 +49,58 @@ def main() -> int:
     bl.add_argument("--flame-ids", required=True, help="SMPL-X__FLAME_vertex_ids.npy")
     bl.add_argument("--flame-expr", required=True, help="FLAME extract from flame_expr_npz.py")
     bl.add_argument("--keep-motion", action="store_true", help="keep the bundle's motion.json even if it is an idle")
+    lp = sub.add_parser("lips", help="head-swapped bundle + a person's own voice -> <id>-voice bundle whose lips follow "
+                        "it (voice-consenting people only)")
+    lp.add_argument("bundle", help="the person's head swap, dreams/<person>-head (with FLAME, so it has expr.bin)")
+    lp.add_argument("--person", required=True, help="whose voice and face; must be in head_swap.VOICE_CONSENTED")
+    lp.add_argument("--id", help="new bundle id (default <id>-voice, next to the source)")
+    lp.add_argument("--held", help="another dreams/.held to honour too (the one next to the bundle always counts)")
+    lp.add_argument("--check", action="store_true", help="run the consent gate only (hpg/lips.sbatch does, first)")
+    lp.add_argument("--heads", help="lam-head.sbatch's heads/ folder for this person")
+    lp.add_argument("--photo", help="which LAM head (default: the one the head swap used, head_swap.json)")
+    lp.add_argument("--smplx", help="SMPLX_NEUTRAL.npz")
+    lp.add_argument("--flame-ids", help="SMPL-X__FLAME_vertex_ids.npy")
+    lp.add_argument("--flame-expr", help="flame_expr_npz.py's FLAME extract")
+    lp.add_argument("--arkit", help="arkit_on_flame_npz.py's ARKit-on-FLAME extract")
+    lp.add_argument("--a2e-json", help="LAM_Audio2Expression's save_json_path file for the audio")
+    lp.add_argument("--voice", help="the audio as .m4a: becomes the bundle's voice.m4a")
     args = parser.parse_args()
+
+    if args.cmd == "lips":
+        import json
+        from pathlib import Path
+
+        from . import head_swap as H
+        from .lips import lips_bundle
+
+        src = Path(args.bundle)
+        new_id = args.id or f"{src.name}-voice"
+        refused = H.voice_consent_errors(args.person, src, args.held, new_id)
+        if refused:
+            print("REFUSED", *refused, sep="\n     ")
+            return 2
+        if args.check:
+            print(f"consent OK: {args.person}'s voice may drive {src.name} -> {new_id}")
+            return 0
+        need = ("heads", "smplx", "flame_ids", "flame_expr", "arkit", "a2e_json", "voice")
+        if missing := [n.replace("_", "-") for n in need if not getattr(args, n)]:
+            parser.error("lips needs " + ", ".join("--" + m for m in missing) + " (or --check)")
+        try:
+            photo = args.photo or json.loads((src / "head_swap.json").read_text())["headPhoto"]
+            ply, obj = H.pick_head(args.heads, args.person, photo)
+            root = lips_bundle(src, args.person, ply, obj, args.smplx, args.flame_ids, args.flame_expr, args.arkit,
+                               args.a2e_json, args.voice, src.parent, new_id, held=args.held)
+        except (PermissionError, ValueError, OSError) as e:
+            print("REFUSED" if isinstance(e, PermissionError) else "FAILED", e, sep="\n     ")
+            return 2 if isinstance(e, PermissionError) else 1
+        errors = validate_bundle(root)
+        report = json.loads((root / "lips.json").read_text())
+        print((root / "lips.json").read_text().strip())
+        if not report["meetsTarget"]:
+            print(f"WARNING: the 9 channels keep {report['varianceKept']:.1%} of the mouth's motion (want "
+                  f"{report['target']:.0%}): look at a render before anyone sees it")
+        print(f"{'FAIL' if errors else 'OK  '} {root}", *errors, sep="\n     ")
+        return 1 if errors else 0
 
     if args.cmd == "validate":
         failed = 0

@@ -252,28 +252,55 @@ def subdivision_parents(base: np.ndarray, faces: np.ndarray, n: int | None = Non
     return pairs, unmatched
 
 
-def head_channels(base: np.ndarray, flame: Flame) -> tuple[np.ndarray, np.ndarray, dict]:
-    """((M, 10, 3) expression offsets per LAM Gaussian in LAM's frame, (M, 2) its FLAME vertex pair, report).
+@dataclass
+class LamFit:
+    """How FLAME's frame meets LAM's head: LAM = k R0 FLAME + t0, and each Gaussian's FLAME vertex pair."""
+    k: float
+    R0: np.ndarray
+    t0: np.ndarray
+    rms_mm: float          # FLAME's template against LAM's mesh, in FLAME's own units (mm if metres)
+    pairs: np.ndarray      # (M, 2): (i, i) for FLAME's vertices, the edge for a midpoint (subdivision_parents)
+    unmatched: int
+    n_gaussians: int
 
-    base is every Gaussian's vertex in LAM's canonical space (position - offset), FLAME's 5023 first. FLAME's
-    template is fitted to LAM's mesh with a similarity, so the blink is worked out on this person's own eyelids in
-    FLAME's frame and every direction is carried into LAM's by the fit's rotation and scale."""
+
+def lam_fit(base: np.ndarray, flame: Flame) -> LamFit:
+    """FLAME's template fitted to LAM's mesh with a similarity, and every Gaussian's vertex pair. base is every
+    Gaussian's vertex in LAM's canonical space (position - offset), FLAME's 5023 first."""
     from .head_swap import umeyama  # head_swap imports this module
 
     base = np.asarray(base, dtype=np.float64)
     lam = base[:FLAME_VERTS]
     k, R0, t0 = umeyama(flame.v_template, lam)
     rms = float(np.sqrt((((k * flame.v_template @ R0.T + t0) - lam) ** 2).sum(1).mean()))
-    person = (lam - t0) @ R0 / k  # this head's own shape, in FLAME's frame
+    pairs, unmatched = subdivision_parents(base, flame.faces, FLAME_VERTS)
+    return LamFit(k, R0, t0, rms / k * 1000, pairs, unmatched, len(base))
+
+
+def carry_fields(fields: np.ndarray, fit: LamFit) -> np.ndarray:
+    """(M, C, 3): per-vertex direction fields in FLAME's frame, (5023, 3, C) in metres, carried to every LAM Gaussian:
+    the mean over its vertex pair (pytorch3d's subdivision averages an edge's attributes), then into LAM's frame by
+    the fit's rotation and scale (directions: no shift). Expressions, the blink and ARKit's shapes all go this way."""
+    per = 0.5 * (fields[fit.pairs[:, 0]] + fields[fit.pairs[:, 1]])  # (M, 3, C)
+    return fit.k * np.einsum("ij,mjc->mci", fit.R0, per)
+
+
+def head_channels(base: np.ndarray, flame: Flame) -> tuple[np.ndarray, np.ndarray, dict]:
+    """((M, 10, 3) expression offsets per LAM Gaussian in LAM's frame, (M, 2) its FLAME vertex pair, report).
+
+    base is every Gaussian's vertex in LAM's canonical space (position - offset), FLAME's 5023 first. FLAME's
+    template is fitted to LAM's mesh with a similarity, so the blink is worked out on this person's own eyelids in
+    FLAME's frame and every direction is carried into LAM's by the fit's rotation and scale."""
+    base = np.asarray(base, dtype=np.float64)
+    fit = lam_fit(base, flame)
+    person = (base[:FLAME_VERTS] - fit.t0) @ fit.R0 / fit.k  # this head's own shape, in FLAME's frame
     blink, blink_report = blink_field(person, flame.expr_dirs)
     channels = np.concatenate([flame.expr_dirs[:, :, :N_CHANNELS - 1], blink[:, :, None]], axis=2)  # (V, 3, 10)
-    pairs, unmatched = subdivision_parents(base, flame.faces, FLAME_VERTS)
-    per = 0.5 * (channels[pairs[:, 0]] + channels[pairs[:, 1]])  # (M, 3, 10)
-    d = k * np.einsum("ij,mjc->mci", R0, per)
-    report = {"channels": list(EXPR_CHANNELS), "templateRmsMm": round(rms / k * 1000, 4),
-              "subdivision": {"matched": int(len(base) - FLAME_VERTS - unmatched), "unmatched": unmatched},
+    d = carry_fields(channels, fit)
+    report = {"channels": list(EXPR_CHANNELS), "templateRmsMm": round(fit.rms_mm, 4),
+              "subdivision": {"matched": int(len(base) - FLAME_VERTS - fit.unmatched), "unmatched": fit.unmatched},
               "blink": blink_report}
-    return d, pairs, report
+    return d, fit.pairs, report
 
 
 # ---------------------------------------------------------------- expr.bin
