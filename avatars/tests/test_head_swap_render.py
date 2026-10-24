@@ -71,3 +71,29 @@ def test_render_refuses_a_bundle_the_swap_gate_would_refuse(tmp_path, monkeypatc
                                      str(tmp_path), "--person", "vishal"])
     assert R.main() == 2 and "REFUSED" in capsys.readouterr().out
     assert not (new / "preview.mp4").exists()
+
+
+def test_with_expr_shuts_the_eyes_the_way_a_player_does(tmp_path):
+    from dataclasses import dataclass
+
+    from lucid_avatars import face_expr as F
+
+    @dataclass
+    class G:  # lucid.gaussians.Gaussians' fields that matter here
+        means: np.ndarray
+
+    (tmp_path / "avatar").mkdir()
+    d = np.zeros((2, 10, 3))
+    d[:, F.BLINK, 1] = -0.004
+    F.write_expr_bin(tmp_path / F.EXPR_FILE, 3, d)
+    out = R.with_expr(G(np.zeros((5, 3), np.float32)), tmp_path, {"avatar": {"expr": F.EXPR_FILE}}, np.eye(10)[F.BLINK])
+    assert out.means.dtype == np.float32
+    np.testing.assert_allclose(out.means[:3], 0)
+    np.testing.assert_allclose(out.means[3:, 1], -0.004, atol=5e-6)  # float16 in the file
+
+
+def test_eyes_zooms_the_eye_band_to_the_views_size():
+    face = np.zeros((100, 100, 3), np.uint8)
+    face[25:55, 35:65] = 200  # the eyes box
+    zoom = R.eyes(face)
+    assert zoom.shape == face.shape and zoom.mean() > 190

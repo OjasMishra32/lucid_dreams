@@ -4,6 +4,8 @@ import shutil
 import numpy as np
 import pytest
 
+from test_face_expr import place_eyes
+
 from lucid_avatars import face_expr as F
 from lucid_avatars import head_swap as H
 from lucid_avatars.bundle import validate_bundle, write_avatar_bundle
@@ -18,6 +20,9 @@ def _rot(axis, angle):
     axis = np.asarray(axis, float) / np.linalg.norm(axis)
     K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
     return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
+
+
+EYES_AT = [np.array([0.032, 0.36, 0.06]), np.array([-0.032, 0.36, 0.06])]
 
 
 def _gaussians(xyz, rgb=0.5, alpha=0.9):
@@ -105,6 +110,25 @@ def test_lab_round_trip_and_tone_match_moves_the_ring_to_the_body():
     np.testing.assert_allclose(H.rgb_to_lab(out[ring]).mean(0), H.rgb_to_lab(body_ring).mean(0), atol=0.5)
 
 
+def test_tone_match_keeps_dark_brown_eyes_brown_and_never_amplifies_colour():
+    """Ian's grandma came out blue-eyed: scaling the head's colour spread up to the body's (x2 at most) pushed
+    everything that isn't skin (brown eyes, warm grey hair, lips) through grey toward blue and purple."""
+    rng = np.random.default_rng(5)
+    skin = rng.normal([0.78, 0.60, 0.50], 0.005, size=(300, 3))  # LAM's smooth neck: very little colour spread
+    eye, hair = np.array([[0.30, 0.20, 0.14]]), np.array([[0.74, 0.71, 0.67]])  # dark brown, warm grey
+    head_rgb = np.concatenate([skin, eye, hair])
+    ring = np.arange(len(head_rgb)) < 300
+    body_ring = rng.normal([0.76, 0.58, 0.47], 0.05, size=(300, 3))  # DiGS's neck: much more spread
+    out = H.match_tone(head_rgb, ring, body_ring)
+    lab_in, lab_out = H.rgb_to_lab(head_rgb), H.rgb_to_lab(out)
+    shift = lab_out[ring].mean(0) - lab_in[ring].mean(0)
+    np.testing.assert_allclose(lab_out[300:] - lab_in[300:], np.tile(shift, (2, 1)), atol=0.05)  # a shift, no stretch
+    a, b = lab_out[300, 1:]
+    assert a > 0 and b > 0  # still brown, not blue
+    unweighted = H.match_tone(head_rgb, ring, body_ring, weight=np.r_[np.ones(300), 0.0, 0.0])
+    np.testing.assert_allclose(unweighted[300:], head_rgb[300:], atol=1e-6)  # weight 0: LAM's colour untouched
+
+
 def _synthetic_body(tmp_path):
     """A tiny SMPL-X-like model: a column of vertices, the top ones the FLAME head, joints regressed from them."""
     rng = np.random.default_rng(4)
@@ -113,6 +137,10 @@ def _synthetic_body(tmp_path):
                               rng.uniform(-0.1, 0.1, n_body)])
     head_v = np.column_stack([rng.uniform(-0.08, 0.08, n_head), rng.uniform(0.12, 0.45, n_head),
                               rng.uniform(-0.09, 0.11, n_head)])
+    for c in EYES_AT:  # FLAME-like eyes (face_expr needs a real opening to shut), the rest kept clear of them
+        near = np.linalg.norm(head_v - c, axis=1) < 0.03
+        head_v[near] += (head_v[near] - c) / np.linalg.norm(head_v[near] - c, axis=1, keepdims=True) * 0.03
+    place_eyes(head_v, EYES_AT, rng)
     joints = np.zeros((NUM_JOINTS, 3))
     joints[:, 1] = np.linspace(-1.2, 0.1, NUM_JOINTS)
     joints[J["neck"]], joints[J["head"]], joints[J["jaw"]] = [0, 0.11, 0], [0, 0.27, 0], [0, 0.22, 0.04]
@@ -160,7 +188,16 @@ def test_swap_puts_the_lam_head_on_the_avatar_and_writes_a_valid_bundle(tmp_path
     new = g.xyz[report["bodyKept"]:]
     assert new[:, 1].min() >= report["seamY"] - report["bandM"] - 1e-9  # the new head starts at the seam
     rgb = 0.5 + SH_C0 * g.f_dc[report["bodyKept"]:]
-    assert np.abs(rgb - 0.7).max() < 0.02  # toned to the body's skin
+    y = new[:, 1]
+    at_seam, face = y <= report["seamY"], y >= report["seamY"] + H.TONE_FADE_M
+    assert at_seam.any() and face.any()
+    assert np.abs(rgb[at_seam] - 0.7).max() < 0.02  # the neck is toned to the body's skin
+    assert np.abs(rgb[face] - 0.4).max() < 1e-3  # the face keeps LAM's colours, from her close-up
+    assert report["toneShiftLab"] and len(report["toneShiftLab"]) == 3
+    # the old face (head, jaw, eyes) and neck never show above the seam; anything else left there is counted by joint
+    above = report["bodyVisibleAboveSeam"]
+    assert not {"head", "jaw", "left_eye", "right_eye", "neck"} & set(above)
+    assert set(above) <= {"spine3"} and sum(above.values()) <= 3  # only the synthetic body's spine3 helper vertices
     dream = json.loads((out / "dream.json").read_text())
     assert dream["id"] == "vishal-head" and dream["source"]["head"]["model"].startswith("LAM")
     assert 0 < dream["metrics"]["seenFraction"] < 1 and (out / dream["avatar"]["reality"]).exists()
@@ -298,7 +335,8 @@ def test_cli_head_swap_refuses_held_people_and_someone_elses_head(tmp_path, monk
 
 # ---------------- life in the face: expr.bin, the living idle, skinning by correspondence ----------------
 
-FACES = np.array([[i, i + 1, i + 2] for i in range(0, H.FLAME_VERTS - 2, 3)])
+FACES = np.concatenate([place_eyes(np.zeros((H.FLAME_VERTS, 3)), EYES_AT, np.random.default_rng(0)),
+                        [[0, 1, 2], [3, 4, 5], [3000, 3001, 3002]]])
 MID_EDGES = [(0, 1), (3, 4), (3001, 3002)]
 
 
@@ -340,6 +378,7 @@ def test_swap_writes_expr_bin_in_the_avatars_frame_and_a_living_idle(tmp_path):
     np.testing.assert_allclose(d[:, 0], np.tile(want, (len(d), 1)), atol=2e-6)
     assert report["expr"]["subdivision"] == {"matched": len(MID_EDGES), "unmatched": 0}
     assert set(report["expr"]["blink"]) == {"openFraction", "pcaShare", "leakMm"}
+    assert report["expr"]["blink"]["openFraction"] < 0.1  # the fitted blink shuts these eyes
     # the source's idle is now the living one: 20 s, blinking through the blink channel only
     m = Motion.load(out / dream["avatar"]["motion"])
     assert report["motion"] == "living idle" and m.num_frames / m.fps == pytest.approx(20.0)
@@ -410,3 +449,24 @@ def test_cli_head_swap_with_flame_writes_expr_and_can_keep_the_motion(tmp_path, 
                 "--keep-motion") == 0
     assert json.loads((out / "head_swap.json").read_text())["motion"] == "kept"
     assert "OK" in capsys.readouterr().out and validate_bundle(out) == []
+
+
+def test_swap_without_an_eye_opening_skips_expr_but_still_swaps(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_with_flame(tmp_path, verts, flame_ids)
+    z = dict(np.load(tmp_path / "flame.npz"))
+    np.savez(tmp_path / "flame.npz", **{**z, "faces": FACES[-3:]})  # FLAME's faces without the eyes
+    out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
+    report = json.loads((out / "head_swap.json").read_text())
+    assert "eye opening" in report["expr"]["skipped"] and report["motion"] == "kept"
+    assert not (out / F.EXPR_FILE).exists() and validate_bundle(out) == []
+
+
+def test_swap_keeps_a_fine_tunes_own_clip(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    dream = json.loads((root / "dream.json").read_text())
+    dream["source"] = {"views": "runs/jump-shot/views", "motion": "runs/jump-shot/views/gvhmr", "start": "vishal"}
+    (root / "dream.json").write_text(json.dumps(dream))  # digs_finetune.py's source: the clip it was tuned on
+    _lam_with_flame(tmp_path, verts, flame_ids)
+    out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
+    assert json.loads((out / "head_swap.json").read_text())["motion"] == "kept"

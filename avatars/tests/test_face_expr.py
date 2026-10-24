@@ -5,40 +5,60 @@ from lucid_avatars import face_expr as F
 
 EYE_C = {"left": np.array([0.032, 0.03, 0.05]), "right": np.array([-0.032, 0.03, 0.05])}
 EYE_R = 0.012
+RING = 15  # lid vertices per row: the margin round the opening, then a second row of lid skin, staggered
+
+
+def _lid_point(c, a, half_w, half_h, radius):
+    x, y = half_w * np.cos(a), half_h * np.sin(a)
+    z = np.sqrt(np.maximum(radius ** 2 - x ** 2 - y ** 2, 0.002 ** 2))
+    return c + np.stack([x, y, z], axis=-1)
+
+
+def place_eyes(v, centres, rng):
+    """Puts FLAME-like eyes into v (in place) and returns their faces: per eye a 12 mm eyeball at FLAME's ids and
+    two rows of lid at LAM's eyelid ids, the margin round an open almond (28 x 10 mm) and a second row staggered half
+    a step round it (the case that folds a lid when the margin is guessed from spacing), joined by a strip of faces
+    whose inner edge is the opening. Spare lid ids sit further out, in no face."""
+    faces = []
+    for c, (eyeball, lid) in zip(centres, F.EYES):
+        d = rng.normal(size=(len(eyeball), 3))
+        v[eyeball] = c + EYE_R * d / np.linalg.norm(d, axis=1, keepdims=True)
+        a = 2 * np.pi * np.arange(RING) / RING
+        inner, outer, spare = lid[:RING], lid[RING:2 * RING], lid[2 * RING:]
+        v[inner] = _lid_point(c, a, 0.014, 0.005, 0.0135)
+        v[outer] = _lid_point(c, a + np.pi / RING, 0.017, 0.009, 0.0145)
+        v[spare] = _lid_point(c, np.linspace(0.3, 2.8, len(spare)), 0.021, 0.013, 0.0155)
+        for k in range(RING):
+            k1 = (k + 1) % RING
+            faces += [[inner[k], inner[k1], outer[k]], [inner[k1], outer[k1], outer[k]]]
+    return np.array(faces)
 
 
 def _toy_flame(seed=0):
-    """FLAME-like: 5023 vertices, eyeballs at FLAME's ids on 12 mm spheres, eyelids at LAM's eyelid ids on an open
-    almond (28 x 10 mm) just outside the eyeball, the rest a face that keeps clear of the eyes."""
+    """FLAME-like: 5023 vertices and the eye faces (place_eyes); the rest of the face keeps 3 cm clear of the eyes."""
     rng = np.random.default_rng(seed)
     v = rng.uniform([-0.09, -0.12, -0.08], [0.09, 0.12, 0.1], size=(F.FLAME_VERTS, 3))
     for c in EYE_C.values():
         near = np.linalg.norm(v - c, axis=1) < 0.03
         v[near] += (v[near] - c) / np.linalg.norm(v[near] - c, axis=1, keepdims=True) * 0.03
-    for side, (eyeball, lid) in zip(("left", "right"), F.EYES):
-        c = EYE_C[side]
-        d = rng.normal(size=(len(eyeball), 3))
-        v[eyeball] = c + EYE_R * d / np.linalg.norm(d, axis=1, keepdims=True)
-        a = np.linspace(0, 2 * np.pi, len(lid), endpoint=False)
-        x, y = 0.014 * np.cos(a), 0.005 * np.sin(a)
-        z = np.sqrt(np.maximum(0.0135 ** 2 - x ** 2 - y ** 2, 0.002 ** 2))
-        v[lid] = c + np.stack([x, y, z], axis=1)
-    return v
+    faces = place_eyes(v, EYE_C.values(), rng)
+    return v, faces
 
 
 def _gap(p, side_ids, start):
-    """Upper margin minus lower margin of an eye's lids over the middle of the eye, upper and lower by where each lid
-    vertex was at the start."""
-    _, lid = side_ids
-    c = np.mean(start[side_ids[0]], axis=0)
-    mid = lid[np.abs(start[lid, 0] - c[0]) < 0.006]
+    """Upper margin minus lower margin over the middle of the eye: the margin row (the first RING lid ids), upper and
+    lower by where each vertex was at the start."""
+    eyeball, lid = side_ids
+    c = np.mean(start[eyeball], axis=0)
+    inner = lid[:RING]
+    mid = inner[np.abs(start[inner, 0] - c[0]) < 0.006]
     up, lo = mid[start[mid, 1] > c[1]], mid[start[mid, 1] <= c[1]]
     return p[up, 1].min() - p[lo, 1].max()
 
 
 def test_blink_target_brings_the_lids_together_over_the_eye():
-    v = _toy_flame()
-    t = F.blink_target(v)
+    v, faces = _toy_flame()
+    t = F.blink_target(v, faces)
     for eyeball, lid in F.EYES:
         c = v[eyeball].mean(0)
         up, lo = lid[v[lid, 1] > c[1]], lid[v[lid, 1] <= c[1]]
@@ -47,15 +67,39 @@ def test_blink_target_brings_the_lids_together_over_the_eye():
         moved = v + t
         assert _gap(moved, (eyeball, lid), v) < 0.05 * _gap(v, (eyeball, lid), v)
         # the lids slide over the eye, never into it
-        assert (np.linalg.norm(moved[lid] - c, axis=1) >= np.linalg.norm(v[lid] - c, axis=1).min() - 1e-9).all()
+        assert (np.linalg.norm(moved[lid] - c, axis=1) >= np.linalg.norm(v[lid] - c, axis=1) - 1e-9).all()
     others = np.setdiff1d(np.arange(F.FLAME_VERTS), np.concatenate([lid for _, lid in F.EYES]))
     assert np.abs(t[others]).max() == 0
 
 
+def test_blink_never_folds_the_second_row_of_lid_over_the_margin():
+    v, faces = _toy_flame()
+    moved = v + F.blink_target(v, faces)
+    for eyeball, lid in F.EYES:
+        c = v[eyeball].mean(0)
+        inner, outer = lid[:RING], lid[RING:2 * RING]
+        mu, mo = inner[v[inner, 1] > c[1]], outer[v[outer, 1] > c[1]]
+        order = np.argsort(moved[mu, 0])
+        margin_after = np.interp(moved[mo, 0], moved[mu, 0][order], moved[mu, 1][order])
+        assert (moved[mo, 1] >= margin_after - 1e-4).all()  # the skin above the margin stays above it
+
+
+def test_blink_refuses_lids_it_cannot_shut():
+    v, faces = _toy_flame()
+    eyeball, lid = F.EYES[0]
+    c = v[eyeball].mean(0)
+    flat = v.copy()
+    flat[lid[:RING], 1] = c[1] + 0.004  # the whole margin above the eye's centre: no lower lid to meet
+    with pytest.raises(ValueError, match="lower eyelid"):
+        F.blink_target(flat, faces)
+    with pytest.raises(ValueError, match="no eye opening"):
+        F.blink_target(v, np.array([[0, 1, 2]]))
+
+
 def test_blink_closes_the_eyes_even_when_flames_expressions_cant():
-    v = _toy_flame()
+    v, faces = _toy_flame()
     dirs = np.random.default_rng(1).normal(scale=1e-3, size=(F.FLAME_VERTS, 3, 100))  # nothing like a blink
-    field, report = F.blink_field(v, dirs)
+    field, report = F.blink_field(v, dirs, faces)
     moved = v + field
     for eyes in F.EYES:
         assert _gap(moved, eyes, v) < 0.1 * _gap(v, eyes, v)
@@ -68,19 +112,19 @@ def test_blink_closes_the_eyes_even_when_flames_expressions_cant():
 
 
 def test_blink_needs_no_help_from_a_basis_that_never_moves():
-    v = _toy_flame()
-    field, report = F.blink_field(v, np.zeros((F.FLAME_VERTS, 3, 100)))
+    v, faces = _toy_flame()
+    field, report = F.blink_field(v, np.zeros((F.FLAME_VERTS, 3, 100)), faces)
     assert report["openFraction"] < 0.1 and report["pcaShare"] == 0
     assert np.isfinite(field).all()
     lids = np.concatenate([lid for _, lid in F.EYES])
-    np.testing.assert_allclose(field[lids], F.blink_target(v)[lids])  # the lids alone shut the eyes
+    np.testing.assert_allclose(field[lids], F.blink_target(v, faces)[lids])  # the lids alone shut the eyes
 
 
 def test_blink_uses_flames_own_expressions_when_they_can_close_the_eyes():
-    v = _toy_flame()
+    v, faces = _toy_flame()
     dirs = np.random.default_rng(2).normal(scale=1e-6, size=(F.FLAME_VERTS, 3, 100))
-    dirs[:, :, 37] = 0.5 * F.blink_target(v)
-    field, report = F.blink_field(v, dirs)
+    dirs[:, :, 37] = 0.5 * F.blink_target(v, faces)
+    field, report = F.blink_field(v, dirs, faces)
     assert report["pcaShare"] > 0.9
     assert report["openFraction"] < 0.1
 
@@ -132,8 +176,8 @@ def test_apply_expr_moves_only_the_head_range():
 
 
 def test_head_channels_maps_flame_directions_onto_lams_head():
-    v = _toy_flame()
-    faces = np.array([[i, i + 1, i + 2] for i in range(0, 3900, 3)])
+    v, eye_faces = _toy_flame()
+    faces = np.concatenate([eye_faces, [[0, 1, 2]]])
     # LAM's head: FLAME in another frame (turned, scaled, moved), plus one Gaussian per edge midpoint of two faces
     R0, k, t0 = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], float), 1.3, np.array([0.1, 0.2, 0.3])
     lam = k * v @ R0.T + t0

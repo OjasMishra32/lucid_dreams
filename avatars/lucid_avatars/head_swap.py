@@ -35,7 +35,7 @@ from .gaussian_ply import SH_C0, Gaussians, read_ply, write_ply
 from .idle import IDLE_S, idle_loop
 from .motion import Motion
 from .skinning import SKELETON_FILE, SKIN_FILE, quantize_top4, read_skin_bin, rest_joints, write_skin_bin
-from .smplx_layout import LEFT_HAND, RIGHT_HAND, J
+from .smplx_layout import JOINT_NAMES, LEFT_HAND, RIGHT_HAND, J
 
 FLAME_VERTS = FE.FLAME_VERTS
 HEAD_JOINTS = (J["head"], J["jaw"], J["left_eye"], J["right_eye"])  # what the new head replaces
@@ -43,6 +43,7 @@ SEAM_JOINTS = HEAD_JOINTS + (J["neck"],)  # body Gaussians that fade out at the 
 SEAM_BELOW_JAW_M = 0.03  # the jaw line: this far below the SMPL-X jaw joint (approximate; --seam-offset moves it)
 BAND_M = 0.03  # cross-fade height at the seam
 RING_M = 0.05  # neck ring below the seam whose skin the head is toned to
+TONE_FADE_M = BAND_M  # the tone shift fades out this far above the seam (under the jaw): the face keeps LAM's colours
 MAX_SKELETON_ERR_M = 0.002  # skeleton.json vs this SMPL-X model with the bundle's betas
 MAX_ALIGN_RMS_M = 0.03  # FLAME-to-SMPL-X head fit worse than this means the wrong ids or the wrong mesh
 REALITY_FILE = "avatar/reality.ply"
@@ -242,11 +243,11 @@ def head_skin(points: np.ndarray, rows: np.ndarray, pairs: np.ndarray | None, fl
 
 def living_idle(src: Motion, source: dict | None) -> Motion | None:
     """The 20 s living idle (blinking through face_expr's blink channel) for an avatar whose motion is an idle: it
-    stands in place (root within 5 cm, height within 3 cm) and isn't a digs-perform performance (source names an
-    avatar and a motion). Betas, standing height and finger pose (DiGS's hand mean) come from the source. None when
+    stands in place (root within 5 cm, height within 3 cm) and its source names no motion (digs-perform's move and
+    digs-finetune's clip do; digs-sample's photo avatar doesn't). Betas, standing height and finger pose (DiGS's hand mean) come from the source. None when
     the motion is something to keep."""
     source = source or {}
-    if "avatar" in source and "motion" in source:
+    if "motion" in source:  # digs-perform's move or digs-finetune's own clip: a real motion, never swapped out
         return None
     if np.ptp(src.root_t[:, [0, 2]], axis=0).max() > 0.05 or np.ptp(src.root_t[:, 1]) > 0.03:
         return None
@@ -280,16 +281,28 @@ def lab_to_rgb(lab: np.ndarray) -> np.ndarray:
     return np.clip(c, 0, 1)
 
 
-def match_tone(head_rgb: np.ndarray, head_ring: np.ndarray, body_ring_rgb: np.ndarray) -> np.ndarray:
-    """head_rgb with its Lab mean and spread on the ring (mask) moved to the body ring's, so face and hands agree.
-    The spread ratio is clamped to 0.5..2 so a flat or noisy ring can't blow out the face."""
-    lab = rgb_to_lab(head_rgb)
-    src, ref = lab[head_ring], rgb_to_lab(body_ring_rgb)
+def tone_shift(head_rgb: np.ndarray, head_ring: np.ndarray, body_ring_rgb: np.ndarray) -> np.ndarray | None:
+    """The Lab shift that moves the head's neck ring onto the body's (body mean - head mean), or None when either
+    ring has under 10 Gaussians to measure."""
+    src, ref = rgb_to_lab(np.asarray(head_rgb)[head_ring]), rgb_to_lab(body_ring_rgb)
     if len(src) < 10 or len(ref) < 10:
-        return np.asarray(head_rgb, dtype=np.float64)
-    sd_s, sd_r = src.std(0), ref.std(0)
-    ratio = np.clip(np.where(sd_s > 1e-6, sd_r / np.maximum(sd_s, 1e-6), 1.0), 0.5, 2.0)
-    return lab_to_rgb((lab - src.mean(0)) * ratio + ref.mean(0))
+        return None
+    return ref.mean(0) - src.mean(0)
+
+
+def match_tone(head_rgb: np.ndarray, head_ring: np.ndarray, body_ring_rgb: np.ndarray,
+               weight: np.ndarray | None = None) -> np.ndarray:
+    """head_rgb shifted in Lab so its ring's mean is the body ring's (times weight per Gaussian, default 1), so the
+    neck joins the body's skin. A shift only: scaling the spread too (as this once did) stretched every colour that
+    isn't skin away from the skin mean, and LAM's smooth neck pushed it to its clamp, turning brown eyes blue and lips
+    purple."""
+    head_rgb = np.asarray(head_rgb, dtype=np.float64)
+    shift = tone_shift(head_rgb, head_ring, body_ring_rgb)
+    if shift is None:
+        return head_rgb
+    w = np.ones(len(head_rgb)) if weight is None else np.asarray(weight, dtype=np.float64)
+    moved = lab_to_rgb(rgb_to_lab(head_rgb) + w[:, None] * shift)
+    return np.where(w[:, None] > 0, moved, head_rgb)  # weight 0 leaves LAM's colour exactly as it was
 
 
 # ---------------------------------------------------------------- the bundle
@@ -337,16 +350,25 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
     head = transform_gaussians(head, s, R, t)
     pairs = expr_d = expr_report = None
     if flame_npz is not None:
-        expr_d, pairs, expr_report = FE.head_channels(base, FE.load_flame(flame_npz))
-        expr_d = s * expr_d @ R.T  # LAM's frame -> the avatar's (directions: rotation and scale, no shift)
+        try:
+            expr_d, pairs, expr_report = FE.head_channels(base, FE.load_flame(flame_npz))
+            expr_d = s * expr_d @ R.T  # LAM's frame -> the avatar's (directions: rotation and scale, no shift)
+        except ValueError as e:  # no blink is better than no head: the swap goes on without expr.bin
+            expr_report = {"skipped": str(e)}
 
     seam_y = float(rest[J["jaw"], 1] - SEAM_BELOW_JAW_M + seam_offset)
     dominant = idx[np.arange(len(idx)), np.argmax(q, axis=1)].astype(np.int64)
     ring_b = np.isin(dominant, SEAM_JOINTS) & (body.xyz[:, 1] <= seam_y) & (body.xyz[:, 1] > seam_y - RING_M)
     ring_h = (head.xyz[:, 1] <= seam_y) & (head.xyz[:, 1] > seam_y - RING_M)
-    head = replace(head, f_dc=(match_tone(_rgb(head), ring_h, _rgb(body)[ring_b]) - 0.5) / SH_C0)
+    shift = tone_shift(_rgb(head), ring_h, _rgb(body)[ring_b])
+    fade = np.clip(1 - (head.xyz[:, 1] - seam_y) / TONE_FADE_M, 0, 1)  # full at the seam, none on the face
+    head = replace(head, f_dc=(match_tone(_rgb(head), ring_h, _rgb(body)[ring_b], fade) - 0.5) / SH_C0)
 
     body_k, keep_b, head_k, keep_h = cross_fade(body, dominant, head, seam_y)
+    # what of the old body still shows above the seam, by joint: DiGS hair or face left behind would double the head
+    above = (body_k.xyz[:, 1] > seam_y) & (_alpha(body_k.opacity) > 0.05)
+    names, counts = np.unique(dominant[keep_b][above], return_counts=True)
+    body_above = {JOINT_NAMES[j]: int(c) for j, c in zip(names, counts)}
     h_idx, h_q = head_skin(head_k.xyz, np.flatnonzero(keep_h), pairs, ids, verts, lbs)
 
     # what the photos really saw: the body as its reality.ply says (tinted = imagined); LAM's head from one frontal
@@ -381,12 +403,15 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
 
     report = {"scale": round(s, 6), "alignRmsM": round(rms, 6), "seamY": round(seam_y, 4), "bandM": BAND_M,
               "bodyKept": int(keep_b.sum()), "bodyDropped": int((~keep_b).sum()), "headKept": int(keep_h.sum()),
-              "headPhoto": Path(offset_ply).name.removesuffix("_gs_offset.ply"), "from": dream["id"], "motion": "kept"}
+              "headPhoto": Path(offset_ply).name.removesuffix("_gs_offset.ply"), "from": dream["id"], "motion": "kept",
+              "toneShiftLab": None if shift is None else [round(float(x), 3) for x in shift], "toneFadeM": TONE_FADE_M,
+              "bodyVisibleAboveSeam": body_above}
     avatar = {**av, "reality": REALITY_FILE}
+    if expr_report is not None:
+        report["expr"] = expr_report
     if expr_d is not None:
         FE.write_expr_bin(out / FE.EXPR_FILE, int(keep_b.sum()), expr_d[keep_h])
         avatar.update(expr=FE.EXPR_FILE, exprChannels=list(FE.EXPR_CHANNELS))
-        report["expr"] = expr_report
         living = None if keep_motion else living_idle(Motion.load(src / av["motion"]), dream.get("source"))
         if living is not None:
             living.save(out / av["motion"])

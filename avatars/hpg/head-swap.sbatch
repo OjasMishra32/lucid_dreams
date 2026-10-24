@@ -19,7 +19,10 @@
 # In:  data/avatars/dreams/$AVATAR (digs-sample ID=$NAME), data/avatars/heads/$NAME/{heads,colour} (lam-head),
 #      SMPLX_NEUTRAL.npz and SMPL-X__FLAME_vertex_ids.npy under models/smplx (SMPLX_DIR=... for elsewhere).
 # Out: data/avatars/dreams/$AVATAR-head: the bundle, with preview.mp4 + thumb.jpg of the new face, head_swap.json
-#      (fit, seam, counts, identity) and compare.png (photo | old face | new face, front and 3/4).
+#      (fit, seam, counts, identity, the blink's fit) and compare.png (photo | old face | new face, front and 3/4).
+#      With FLAME (LAM's copy, extracted once to models/flame/flame2023_expr.npz) it also gets avatar/expr.bin
+#      (expressions + this face's blink), the 20 s living idle that blinks, and blink.png (open | shut, eyes zoomed).
+#      KEEP_MOTION=1 keeps the source's motion.json.
 set -euo pipefail
 L=/blue/iruchkin/vishalnaveen/lucid
 NAME=${NAME:?set NAME to the consenting person, e.g. vishal}
@@ -37,6 +40,21 @@ IDS=$(find -L "$SMPLX_DIR" -maxdepth 4 -name 'SMPL-X__FLAME_vertex_ids.npy' | he
 [ -f "$DREAMS/$AVATAR/dream.json" ] || { echo "no avatar bundle at $DREAMS/$AVATAR (digs-sample.sbatch ID=$NAME)"; exit 1; }
 ls "$HEADS"/heads/*_gs_offset.ply >/dev/null || { echo "no LAM head in $HEADS/heads (lam-head.sbatch NAME=$NAME)"; exit 1; }
 
+# 0. FLAME's expressions and eyelids, once: LAM's env reads FLAME's chumpy pickle; the npz never leaves HiPerGator
+FA=$L/repos/LAM/model_zoo/human_parametric_models/flame_assets/flame
+FLAME_NPZ=$L/models/flame/flame2023_expr.npz
+if [ ! -f "$FLAME_NPZ" ] && [ -f "$FA/flame2023.pkl" ]; then
+  mkdir -p "$(dirname "$FLAME_NPZ")"
+  TMP_NPZ=$FLAME_NPZ.tmp.$$.npz  # written whole, then moved: a killed or concurrent job never leaves half a file
+  if PYTHONPATH=$AV $L/envs/lam/bin/python $AV/flame_expr_npz.py "$FA/flame2023.pkl" "$FA/FLAME_masks.pkl" "$TMP_NPZ"
+  then mv -f "$TMP_NPZ" "$FLAME_NPZ"
+  else rm -f "$TMP_NPZ"; echo "[expr] FLAME extract FAILED (see above): this head gets no expr.bin, so no blinks"
+  fi
+fi
+EXPR=()
+if [ -f "$FLAME_NPZ" ]; then EXPR=(--flame-expr "$FLAME_NPZ"); else echo "[expr] no $FLAME_NPZ: no expr.bin, no blinks"; fi
+[ "${KEEP_MOTION:-0}" = 1 ] && EXPR+=(--keep-motion)
+
 # 4DAnyone env: numpy for the swap, gsplat for the renders
 set +u; source $L/code/pipeline/hpg/env.sh; set -u
 export PYTHONPATH=$AV:$PYTHONPATH
@@ -44,7 +62,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 
 # 1. the swap (CPU, numpy): refuses unless consented, writes and validates $AVATAR-head
 python -u -m lucid_avatars head-swap "$DREAMS/$AVATAR" "$HEADS/heads" --person "$NAME" --smplx "$NPZ" \
-  --flame-ids "$IDS" ${PHOTO:+--photo "$PHOTO"} --seam-offset "${SEAM_OFFSET:-0}" --id "$AVATAR-head"
+  --flame-ids "$IDS" ${PHOTO:+--photo "$PHOTO"} --seam-offset "${SEAM_OFFSET:-0}" --id "$AVATAR-head" \
+  ${EXPR[@]+"${EXPR[@]}"}
 
 # 2. the new face on the GPU: turntable, side-by-side with the photo, identity
 mkdir -p $L/models/insightface

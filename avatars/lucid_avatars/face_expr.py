@@ -18,7 +18,7 @@ edge (subdivision_parents finds the edge), moved into LAM's frame and then the a
 The blink. FLAME's expression space was not built to shut eyes, so blink_field asks two things: FLAME's components
 (ridge least squares) give the natural co-motion around the eye, capped so nothing beyond the eye region moves more
 than LEAK_MAX_M, and the eyelids themselves go exactly where blink_target puts them: the upper margin comes down,
-the lower comes up a little, and they meet. The lids slide over the eyeball (distance to its centre kept); the
+the lower comes up a little, and they meet (the margins are FLAME's own eye openings, found in its faces). The lids slide over the eyeball (distance to its centre kept); the
 eyeballs never move. The skin just around the lids follows the lids' correction with a smooth falloff.
 """
 
@@ -48,7 +48,7 @@ RIGHT_EYELID = np.array([2264, 2265, 2266, 2267, 2268, 2269, 2270, 2271, 2272, 2
 EYES = ((LEFT_EYEBALL, LEFT_EYELID), (RIGHT_EYEBALL, RIGHT_EYELID))
 
 UPPER_SHARE = 0.8      # the upper lid travels 80% of the way, the lower 20% (a real blink is mostly the upper lid)
-ENVELOPE_W = 0.04      # x window, as a share of the eye's width, for the lid margins
+CORNER_FADE = 0.25     # eyeball radii: lid skin past the opening's corners stops moving within this (canthi stay put)
 NEAR = 2.5             # eyeball radii from an eye centre: the eye region
 LEAK_MAX_M = 3e-4      # FLAME's co-motion may move nothing outside the eye region more than 0.3 mm
 SPREAD_SIGMA = 0.3     # eyeball radii: how far the lids' correction spreads into the skin around them
@@ -75,27 +75,62 @@ def load_flame(path: str | Path) -> Flame:
 
 # ---------------------------------------------------------------- the blink
 
-def _envelope(x: np.ndarray, y: np.ndarray, w: float, lowest: bool) -> tuple[np.ndarray, np.ndarray]:
-    """A lid's margin as (xs, ys), sorted by x: the vertices with no lower (upper lid) or higher (lower lid) one
-    within w in x. Rows of lid skin above the upper margin are not on it."""
-    keep = [i for i in range(len(x))
-            if not ((np.abs(x - x[i]) <= w) & ((y < y[i]) if lowest else (y > y[i]))).any()]
-    order = np.argsort(x[keep])
-    return x[keep][order], y[keep][order]
+def _opening(v: np.ndarray, faces: np.ndarray, eyeball: np.ndarray, c: np.ndarray, r: float) -> np.ndarray | None:
+    """The eye's opening in the mesh: of the boundary loops (edges of only one face; the eyeball's own faces left
+    out) lying within NEAR eyeball radii of the eye, the one closest round its centre. Its vertices are the lid
+    margins, whatever rows of lid skin lie beyond them."""
+    f = faces[~np.isin(faces, eyeball).any(1)]
+    e, n = np.unique(np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0,
+                     return_counts=True)
+    b = e[n == 1]
+    b = b[(np.linalg.norm(v[b] - c, axis=2) < NEAR * r).all(1)]
+    if not len(b):
+        return None
+    root = {int(i): int(i) for i in np.unique(b)}
+
+    def find(i: int) -> int:
+        while root[i] != i:
+            root[i] = root[root[i]]
+            i = root[i]
+        return i
+
+    for a, z in b:
+        root[find(int(a))] = find(int(z))
+    loops: dict[int, list[int]] = {}
+    for i in root:
+        loops.setdefault(find(i), []).append(i)
+    return np.array(sorted(min(loops.values(), key=lambda ids: np.linalg.norm(v[ids, :2] - c[:2], axis=1).mean())))
 
 
-def _eye(v: np.ndarray, eyeball: np.ndarray, lid: np.ndarray):
-    """(centre, radius, upper lid ids, lower lid ids, margin(x) -> (upper y, lower y)) of one eye."""
+def _sorted_xy(p: np.ndarray, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    order = np.argsort(p[ids, 0])
+    return p[ids, 0][order], p[ids, 1][order]
+
+
+def _eye(v: np.ndarray, eyeball: np.ndarray, lid: np.ndarray, faces: np.ndarray):
+    """(centre, radius, upper lid ids, lower lid ids, margin(x) -> (upper y, lower y), upper margin ids, lower
+    margin ids) of one eye. The margins are the mesh's eye opening (_opening), split at the eyeball's centre height;
+    the lids are the lid list plus that loop. Raises ValueError when there is no opening or either margin is too thin
+    to shut an eye with (under 3 vertices, or spanning under half the opening's width)."""
     c = v[eyeball].mean(0)
     r = float(np.linalg.norm(v[eyeball] - c, axis=1).mean())
-    up, lo = lid[v[lid, 1] > c[1]], lid[v[lid, 1] <= c[1]]
-    w = ENVELOPE_W * float(np.ptp(v[lid, 0]))
-    eu, el = _envelope(v[up, 0], v[up, 1], w, True), _envelope(v[lo, 0], v[lo, 1], w, False)
+    loop = _opening(v, np.asarray(faces), eyeball, c, r)
+    if loop is None:
+        raise ValueError("no eye opening near the eyeball in the mesh's faces")
+    lids = np.union1d(lid, loop)
+    mu, ml = loop[v[loop, 1] > c[1]], loop[v[loop, 1] <= c[1]]
+    width = float(np.ptp(v[np.concatenate([mu, ml]), 0])) if len(mu) + len(ml) else 0.0
+    for name, m in (("upper", mu), ("lower", ml)):
+        if len(m) < 3 or np.ptp(v[m, 0]) < 0.5 * width:
+            raise ValueError(f"the {name} eyelid margin has {len(m)} vertices across "
+                             f"{np.ptp(v[m, 0]) if len(m) else 0:.4f} of a {width:.4f} opening: not a lid to shut")
+    up, lo = lids[v[lids, 1] > c[1]], lids[v[lids, 1] <= c[1]]
+    eu, el = _sorted_xy(v, mu), _sorted_xy(v, ml)
 
     def margins(x):
         return np.interp(x, *eu), np.interp(x, *el)
 
-    return c, r, up, lo, margins
+    return c, r, up, lo, margins, mu, ml
 
 
 def _slide(p: np.ndarray, dy: np.ndarray, c: np.ndarray) -> np.ndarray:
@@ -107,52 +142,52 @@ def _slide(p: np.ndarray, dy: np.ndarray, c: np.ndarray) -> np.ndarray:
     return np.stack([p[:, 0], y, z], 1)
 
 
-def blink_target(v: np.ndarray, eyes=EYES) -> np.ndarray:
+def blink_target(v: np.ndarray, faces: np.ndarray, eyes=EYES) -> np.ndarray:
     """(V, 3) where the eyelids go to shut the eyes; zero everywhere else. At each x across the eye the upper margin
     comes down UPPER_SHARE of the opening and the lower margin up the rest, so they meet; lid skin above (below) the
     margin follows with a taper; the lids slide over the eyeball."""
     v = np.asarray(v, dtype=np.float64)
     t = np.zeros_like(v)
     for eyeball, lid in eyes:
-        c, r, up, lo, margins = _eye(v, eyeball, lid)
+        c, r, up, lo, margins, mu, ml = _eye(v, eyeball, lid, faces)
+        span = v[np.concatenate([mu, ml]), 0]
         for ids, upper in ((up, True), (lo, False)):
             y_u, y_l = margins(v[ids, 0])
             gap = np.maximum(y_u - y_l, 0)
             meet = y_l + (1 - UPPER_SHARE) * gap
             margin = y_u if upper else y_l
             beyond = np.abs(v[ids, 1] - margin)  # how far into the lid skin past the margin
-            taper = np.clip(1 - 0.5 * beyond / r, 0.5, 1)
+            past_corner = np.maximum(np.maximum(span.min() - v[ids, 0], v[ids, 0] - span.max()), 0)
+            taper = np.clip(1 - 0.5 * beyond / r, 0.5, 1) * np.clip(1 - past_corner / (CORNER_FADE * r), 0, 1)
             t[ids] = _slide(v[ids], (meet - margin) * taper, c) - v[ids]
     return t
 
 
-def open_fraction(v: np.ndarray, moved: np.ndarray, eyes=EYES) -> float:
-    """How open the eyes are after `moved`, as a share of before: the margins' gap over the middle 60% of each eye."""
+def open_fraction(v: np.ndarray, moved: np.ndarray, faces: np.ndarray, eyes=EYES) -> float:
+    """How open the eyes are after `moved`, as a share of before: the margins' gap over the middle 60% of each eye
+    (the margin vertices found before moving, wherever they went)."""
     moved = np.asarray(moved, dtype=np.float64)
     before, after = [], []
     for eyeball, lid in eyes:
-        c, _, up, lo, margins = _eye(v, eyeball, lid)  # upper / lower by where the lids started
-        half = 0.3 * float(np.ptp(v[lid, 0]))
+        c, _, _, _, margins, mu, ml = _eye(v, eyeball, lid, faces)
+        half = 0.3 * float(np.ptp(v[np.concatenate([mu, ml]), 0]))
         xs = np.linspace(c[0] - half, c[0] + half, 15)
         u0, l0 = margins(xs)
-        w = ENVELOPE_W * float(np.ptp(v[lid, 0]))
-        eu = _envelope(moved[up, 0], moved[up, 1], w, True)
-        el = _envelope(moved[lo, 0], moved[lo, 1], w, False)
         before.append(np.maximum(u0 - l0, 0).sum())
-        after.append((np.interp(xs, *eu) - np.interp(xs, *el)).sum())
+        after.append((np.interp(xs, *_sorted_xy(moved, mu)) - np.interp(xs, *_sorted_xy(moved, ml))).sum())
     return float(sum(after) / max(sum(before), 1e-12))
 
 
-def blink_field(v: np.ndarray, expr_dirs: np.ndarray, eyes=EYES) -> tuple[np.ndarray, dict]:
+def blink_field(v: np.ndarray, expr_dirs: np.ndarray, faces: np.ndarray, eyes=EYES) -> tuple[np.ndarray, dict]:
     """(V, 3) displacement that shuts the eyes (see the module docstring) and a report: openFraction (0 = shut),
     pcaShare (how much of the lids' motion FLAME's own expressions explain), leakMm (largest move outside the eye
     region, in mm if v is in metres)."""
     v = np.asarray(v, dtype=np.float64)
     D = np.asarray(expr_dirs, dtype=np.float64)
     V, C = len(v), D.shape[2]
-    target = blink_target(v, eyes)
-    geo = [_eye(v, eyeball, lid) for eyeball, lid in eyes]
-    lids = np.concatenate([lid for _, lid in eyes])
+    target = blink_target(v, faces, eyes)
+    geo = [_eye(v, eyeball, lid, faces) for eyeball, lid in eyes]
+    lids = np.concatenate([np.concatenate([g[2], g[3]]) for g in geo])  # the lid lists plus each opening's loop
     balls = np.concatenate([ball for ball, _ in eyes])
     dist = np.min([np.linalg.norm(v - c, axis=1) / r for c, r, *_ in geo], axis=0)  # in eyeball radii
     far = dist > NEAR
@@ -184,7 +219,7 @@ def blink_field(v: np.ndarray, expr_dirs: np.ndarray, eyes=EYES) -> tuple[np.nda
 
     t_l = target[lids]
     share = 1 - ((t_l - pca[lids]) ** 2).sum() / max((t_l ** 2).sum(), 1e-30)
-    report = {"openFraction": round(open_fraction(v, v + field, eyes), 4),
+    report = {"openFraction": round(open_fraction(v, v + field, faces, eyes), 4),
               "pcaShare": round(float(np.clip(share, 0, 1)), 4),
               "leakMm": round(float(np.linalg.norm(field[far], axis=1).max() * 1000) if far.any() else 0.0, 4)}
     return field, report
@@ -232,7 +267,7 @@ def head_channels(base: np.ndarray, flame: Flame) -> tuple[np.ndarray, np.ndarra
     k, R0, t0 = umeyama(flame.v_template, lam)
     rms = float(np.sqrt((((k * flame.v_template @ R0.T + t0) - lam) ** 2).sum(1).mean()))
     person = (lam - t0) @ R0 / k  # this head's own shape, in FLAME's frame
-    blink, blink_report = blink_field(person, flame.expr_dirs)
+    blink, blink_report = blink_field(person, flame.expr_dirs, flame.faces)
     channels = np.concatenate([flame.expr_dirs[:, :, :N_CHANNELS - 1], blink[:, :, None]], axis=2)  # (V, 3, 10)
     pairs, unmatched = subdivision_parents(base, flame.faces, FLAME_VERTS)
     per = 0.5 * (channels[pairs[:, 0]] + channels[pairs[:, 1]])  # (M, 3, 10)

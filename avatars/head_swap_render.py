@@ -1,7 +1,8 @@
 """The GPU half of the head swap: the new bundle's turntable (preview.mp4, thumb.jpg), the side-by-side that says
-whether the face reads as the person (compare.png: photo | old face | new face, front and 3/4), and how much each
+whether the face reads as the person (compare.png: photo | old face | new face, front and 3/4), how much each
 face looks like the photo (InsightFace ArcFace cosine, when InsightFace is installed) in head_swap.json and
-dream.json metrics.identity.
+dream.json metrics.identity, and, when the bundle has avatar/expr.bin, blink.png (the face open and shut through
+expr.bin's blink channel, with the eyes zoomed) so a person checks the blink before anyone sees it.
 
 4DAnyone env (gsplat and lucid.export's renderer), with this folder on PYTHONPATH for lucid_avatars:
   python head_swap_render.py --old dreams/vishal --new dreams/vishal-head --photos heads/vishal/colour --person vishal
@@ -21,6 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from lucid_avatars.bundle import validate_bundle
+from lucid_avatars.face_expr import BLINK, N_CHANNELS, apply_expr, read_expr_bin
 from lucid_avatars.head_swap import consent_errors, dream_id_of
 from lucid_avatars.skinning import SKELETON_FILE
 from lucid_avatars.smplx_layout import J
@@ -33,6 +35,7 @@ FACE_HALF_M = 0.17  # half the height a face view shows: chin to crown with a li
 FACE_ABOVE_HEAD_JOINT_M = 0.07  # SMPL-X's head joint is at the top of the neck; the face's middle is above it
 TURNTABLE_FILL = 1.2  # the body's height times this fills the frame's height
 LABEL_PX = 28
+EYES_BOX = (0.25, 0.35, 0.30)  # top, left, side of the eyes in a face view, as shares of its size
 
 
 def framing(xyz: np.ndarray, opacity_logit: np.ndarray) -> tuple[float, float, tuple[float, float]]:
@@ -72,6 +75,25 @@ def grid(rows: list[list[np.ndarray]], labels: list[str]):
         for c, tile in enumerate(row):
             out.paste(Image.fromarray(tile), (c * w, LABEL_PX + r * h))
     return out
+
+
+def with_expr(g, bundle: Path, dream: dict, expr: np.ndarray):
+    """The rest-pose Gaussians (lucid.gaussians) with one motion frame's expression added from the bundle's expr.bin,
+    exactly as a player adds it (face_expr.apply_expr)."""
+    from dataclasses import replace
+
+    first, d = read_expr_bin(bundle / dream["avatar"]["expr"])
+    return replace(g, means=apply_expr(g.means, first, d, expr).astype(np.float32))
+
+
+def eyes(face: np.ndarray) -> np.ndarray:
+    """The eyes of a face view (face_target's framing), zoomed back to the view's size by repeating pixels: an
+    inspection image, so no smoothing hides what the Gaussians did."""
+    h, w = face.shape[:2]
+    top, left, side = (int(round(f * h)) for f in EYES_BOX)
+    rows = top + np.arange(h) * side // h
+    cols = left + np.arange(w) * side // w
+    return face[rows[:, None], cols[None, :]]
 
 
 def identity_report(embeddings: dict[str, np.ndarray]) -> dict | None:
@@ -198,6 +220,14 @@ def main() -> int:
         views[view] = [render(g, vm, FACE_PX, FACE_PX, bg, a.device) for g in (old, new)]
     grid([[photo, *views["front"]], [photo, *views["3/4"]]],
          ["photo", f"old face ({report['from']})", "new face (LAM head)"]).save(a.new / "compare.png")
+
+    if dream["avatar"].get("expr"):
+        front = orbit_camera(FRONT, face_r, target_y, target_y, face_centre)
+        shut = render(with_expr(new, a.new, dream, np.eye(N_CHANNELS)[BLINK]), front, FACE_PX, FACE_PX, bg, a.device)
+        is_open = views["front"][1]
+        grid([[is_open, shut], [eyes(is_open), eyes(shut)]], ["eyes open", "blink = 1 (expr.bin)"]).save(
+            a.new / "blink.png")
+        print(f"[expr] blink.png written; fit: {report.get('expr', {}).get('blink')}")
 
     embeddings = embed_faces({"photo": photo, "old": views["front"][0], "new": views["front"][1]}, a.insightface_root)
     identity = identity_report(embeddings) if embeddings is not None else None

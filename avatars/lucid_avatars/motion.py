@@ -4,7 +4,8 @@ Conventions (to confirm with the Quest app):
 - root_t and root_q are SMPL-X `transl` and `global_orient`, applied exactly as the SMPL-X model applies them.
 - pose[0] (the pelvis) is always zero; the root rotation lives only in root_q, so nothing is applied twice.
 - pose holds absolute joint rotations, hands included (no hand-mean offset, no PCA).
-- expr (optional, every frame or none) is the 10 SMPL-X expression coefficients, e.g. for blinking.
+- expr (optional, every frame or none) is 10 expression weights, e.g. for blinking: avatar/expr.bin's channels when
+  the bundle has one (face_expr.py), else SMPL-X's expression coefficients (DiGS renders).
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ class Motion:
     root_t: np.ndarray  # (N, 3)
     root_q: np.ndarray  # (N, 4) x, y, z, w
     pose: np.ndarray    # (N, 55, 3) axis-angle
-    expr: np.ndarray | None = None  # (N, 10) SMPL-X expression, optional
+    expr: np.ndarray | None = None  # (N, 10) expression weights (expr.bin channels or SMPL-X), optional
 
     @property
     def num_frames(self) -> int:

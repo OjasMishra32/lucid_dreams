@@ -21,7 +21,8 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | Module | Does |
 | --- | --- |
 | `motion.py` | `motion.json` read/write/validate; DiGS-Avatar packed SMPL-X <-> motion; turning a motion to face the viewer on the floor |
-| `idle.py` | Seamless idle loops so a person never freezes: standing (breathing, weight shift, head sway) and seated at the chess board (forearms on the table, looking at the board) |
+| `idle.py` | Seamless idle loops so a person never freezes: standing (20 s: breathing, weight shift, head sway, eye saccades, blinks) and seated at the chess board (forearms on the table, looking at the board) |
+| `face_expr.py` | Life in a head-swapped face: `avatar/expr.bin` (FLAME's expressions per LAM Gaussian) and a blink fitted to the person's own eyelids |
 | `ik.py` | Closed-form two-bone arm IK (elbow can rest on a table) and head aim on the SMPL-X skeleton |
 | `ball.py` | The basketball's 3D path: pixel box of a 24 cm ball -> GVHMR camera -> GVHMR world (incam + global fits) -> any 4x4 |
 | `ball_props.py` | props.json's basketball for an export: YOLO ball boxes in `views/source.mkv` + GVHMR's MotionResult -> bundle coordinates (4DAnyone env) |
@@ -61,7 +62,7 @@ Order: `pipeline/hpg/setup-digs.sbatch` (once), then `hpg/digs-assets.sbatch` (o
 
 What it does: rembg matte -> 640x896 crop around the person -> NLF SMPL-X fit on the crop (55-degree FOV assumed, principal point centred as DiGS requires) -> DiGS
 reference JSON -> DiGS sampling -> turntable `preview.mp4` + `thumb.jpg` -> the Gaussians DiGS rasterizes for the
-SMPL-X zero pose become `avatar/avatar.ply` -> an 8 s idle loop standing on the floor becomes `avatar/motion.json`.
+SMPL-X zero pose become `avatar/avatar.ply` -> a 20 s idle loop standing on the floor becomes `avatar/motion.json`.
 `avatar.ply` is the SMPL-X zero pose with flat hands; `motion.json` holds the hands in DiGS's relaxed hand mean. It fails loudly (no bundle) if weights didn't load or the
 captured body isn't 0.8-2.4 m tall.
 
@@ -76,7 +77,7 @@ Credits: [DiGS-Avatar](https://github.com/KLMAV-CUC/DiGS-Avatar) (MIT), [NLF](ht
 cd avatars
 uv run --group dev pytest -q                                      # tests
 uv run python -m lucid_avatars validate ../samples/<id>           # check a bundle
-uv run python -m lucid_avatars idle motion.json --seconds 8       # write an idle motion
+uv run python -m lucid_avatars idle motion.json                   # write a 20 s idle motion
 ```
 
 ## Fine-tune on 4DAnyone's views (the research claim)
@@ -137,10 +138,31 @@ and RMS, seam height, Gaussians kept and dropped, identity) and `compare.png` (t
 front and 3/4). Identity is the ArcFace cosine (InsightFace buffalo_l) of each face's front render to the photo, also
 in `metrics.identity`; it's skipped (null) if InsightFace isn't installed in the 4DAnyone env. Check in the log: the
 fit RMS (it refuses over 3 cm), `BUNDLE_OK`, `HEAD_SWAP_OK`; then look at compare.png before the bundle goes in the
-library. LAM's head saw one frontal photo, so its back is marked imagined in reality.ply. Each head Gaussian takes its nearest SMPL-X
-vertex's skinning weights: the head turns and nods but doesn't talk or blink yet (FLAME expressions are a next step).
+library. LAM's head saw one frontal photo, so its back is marked imagined in reality.ply. Each head Gaussian takes the
+skinning weights of its own FLAME vertex's SMPL-X twin (through the vertex ids; an edge midpoint the mean of its two
+ends), so an upper-lip Gaussian never takes the jaw's weights from a lower lip it touches. The neck ring is shifted in
+Lab to the body's skin and the shift fades out over 3 cm above the seam (under the jaw), so the face keeps LAM's
+colours from the close-up (`toneShiftLab` in head_swap.json; scaling the colour spread as well once turned brown eyes blue).
+`bodyVisibleAboveSeam` counts, by joint, what of the old body still shows above the seam: a big number there is
+leftover DiGS hair or face doubling the head.
+
+**Life in the face** (`face_expr.py`, when FLAME is there: the job extracts LAM's FLAME 2023 once to
+`$L/models/flame/flame2023_expr.npz` with `flame_expr_npz.py`, in LAM's env; it never leaves HiPerGator). The bundle
+gets `avatar/expr.bin` (format below) with ten channels per head Gaussian: FLAME's expressions 0-8 (LAM animates its
+heads with FLAME's first ten) and a blink. The blink is fitted to this person's eyelids: FLAME's expressions give the
+natural motion around the eye (capped at 0.3 mm outside the eye region), the eyelid margins meet exactly (the upper
+lid travels 80%, sliding over the eyeball, which never moves). The margins are FLAME's own eye openings, found in its
+faces, so extra rows of lid skin follow them instead of folding over; the eye corners stay put. If FLAME's eyes can't
+be shut that way (no opening, a margin too thin), the swap goes on without expr.bin and says why in
+`expr.skipped`; the extract checks the same thing first. `head_swap.json` `expr.blink` says how well:
+`openFraction` (0 = shut), `pcaShare` (how much FLAME's own expressions explain), `leakMm`. An idle source motion is
+replaced by the 20 s living idle that blinks through it (`motion: "living idle"`; a bundle whose source names a
+motion, `digs-perform`'s move or `digs-finetune`'s own clip, or `KEEP_MOTION=1` keeps it), and `blink.png` shows the face open | shut with the eyes zoomed: look at it before
+anyone sees the bundle.
+
 Locally, without a GPU: `uv run python -m lucid_avatars head-swap dreams/<person> <heads dir> --person <person>
---smplx SMPLX_NEUTRAL.npz --flame-ids SMPL-X__FLAME_vertex_ids.npy` does the swap alone.
+--smplx SMPLX_NEUTRAL.npz --flame-ids SMPL-X__FLAME_vertex_ids.npy [--flame-expr flame2023_expr.npz]` does the swap
+alone.
 
 ## Seated at the chess board
 
@@ -210,6 +232,20 @@ M_j = G_j [I | -rest_j] + [0 | root_t]         x = sum_k (w_k / 255) M_{i_k} x_r
 Rotate each Gaussian's own rotation by the blended M's 3x3 as well; scales stay. Weights come from the SMPL-X
 template: each Gaussian blends its 4 nearest rest vertices' weights by inverse distance, top 4 joints kept.
 
-Optional `expr` (10 SMPL-X expression floats, in every frame or none) carries blinks: `idle_loop(..., blink_expr=v)`
-blinks every few seconds along `v`, the expression that closes this avatar's eyes. DiGS renders it; a skinning-only
-player needs per-Gaussian expression blendshapes to show it, which `skin.bin` doesn't carry, so it can ignore `expr`.
+Optional `expr` (10 floats, in every frame or none) carries the face: blinks, and later speech. Its meaning is the
+bundle's. With `avatar/expr.bin` (head-swapped avatars; `dream.json` names it as `"avatar": {..., "expr":
+"avatar/expr.bin", "exprChannels": [10 names]}`) it weights expr.bin's channels; without, it is SMPL-X's expression
+for DiGS renders, and a skinning-only player ignores it.
+
+`avatar/expr.bin`, little-endian: `uint32 first, uint32 count`, then `count x 10 x 3` float16. For Gaussian `first + i`
+of avatar.ply and channel k, `d[i][k]` is an xyz offset in metres in the rest pose. The head is one contiguous range
+ending at the last Gaussian. Before skinning, for each motion frame:
+
+```
+x_rest' = x_rest + sum_k expr[k] * d[i][k]        (lucid_avatars.face_expr.apply_expr)
+```
+
+then skin `x_rest'` as above. Channels (`exprChannels`): `flame0`..`flame8`, then `blink` (index 9, 1 = shut). A player
+that only wants blinks needs channel 9 alone: `x_rest + expr[9] * d[i][9]`. The 20 s idle's blinks are 150 ms (50 ms
+shut, 100 ms open, one frame fully shut), so interpolate `expr` between frames like the pose. The eye saccades are
+plain joint rotations (`left_eye`, `right_eye`): any skinning player already shows them.
