@@ -7,7 +7,7 @@ off into a dark arena); "Step into the court" on the palm menu eases the video t
 frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk a ring ~1.5 m around
 the frozen pair; "Back to my seat" eases back into the video and the game plays on. Only the freeze has to be 3D (a
 second of 3D motion is a stretch goal). Ojasva's bar: if two players aren't passing by noon, ship Steph alone.
-Updated Sat 6:52 AM.
+Updated Sat 7:02 AM.
 
 ## Asks for Ojasva (newest first)
 
@@ -20,8 +20,13 @@ Updated Sat 6:52 AM.
    `immersive-vr` with `local-floor` (court floor exactly on the real floor, safe to walk), the arena from the
    footage where the camera saw it, darkness beyond the court lights elsewhere. An exception to your passthrough-only
    rule (Sat 3:30 AM) for court mode alone; every other mode stays passthrough. Players lit like the footage's arena.
-7. **Quest 3S budget test (Ian or Ojasva, ~15 min):** a VR version of the test page (immersive video phase, then a
-   3D freeze at 2x250k and 2x400k, walk, hand-off) lands here within ~30 min, with steps; Vishal sends the zip.
+7. **Ready now: the first real Quest 3S number (Ian or Ojasva, ~20 min).** Vishal sends `dropin.zip` (28 MB,
+   throwaway, never commit). Copy `court-quest.html` into `apps/webxr/` and `src/spike6/` into `apps/webxr/src/`;
+   set a roomscale boundary of at least 3.5 x 3.5 m; open `/court-quest.html?a=<replay id>&b=<another replay id>`
+   (your two best replays; only their middle frames load) or plain `/court-quest.html` (synthetic). Press "Enter at
+   0.5x", stand still: five phases run by themselves (immersive 720p60 video, 3D freeze 2x250k, 2x400k, walk round,
+   video-to-3D hand-off), then a results table. Photo it, exit, repeat at 0.75x and 1x (and once `&vw=1920`). Send
+   the photos plus anything odd (tab reload, flicker, Hz), then delete the files. Full steps in its `HOW-TO.md`.
 6. **Yes (Ojasva, 6:05 AM):** 100k playback + a 250k freeze frame; keep `aniso`, `sourceView`, 50-step views.
 5. **Approved (Ojasva, 5:50 AM):** one B200 ~10 min for a **Turbo** views run on one player-only portrait clip.
 1-4. **Done:** GPUs free; ~16 GB lab disk, one run at a time; `apps/webxr/src/court/` + `?mode=court` approved;
