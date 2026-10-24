@@ -12,9 +12,14 @@ import { nextPlace, type Place, Places, startingPlace } from "./places";
 import { loadProps } from "./props";
 import { Basketball, wantsBall } from "./basketball";
 import { Golf, wantsClub } from "./club";
+import { GolfCoach } from "./golf-coach";
 import { Guitar, lessonChords, wantsGuitar } from "./guitar";
+import { laneClock } from "./rhythm";
+import { loadStrums, StrumLane } from "./strum-lane";
 import { setMirrored } from "./mirror";
 import { FollowAlong, loadJoints } from "./follow";
+import { Ghost } from "./ghost";
+import { BeatRing, COUNT_IN, loadBeats } from "./beats";
 import { WorldLock } from "./xr/anchor";
 import { handOccluder, XrButton } from "./xr/hands";
 import { HandMenu, handSides } from "./xr/menu";
@@ -225,6 +230,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   // what you came to do with them (experience.json, written from your intent)
   const experience = (await loadExperience(dream)) ?? fallbackExperience(dream, duration);
   const bodyJoints = await loadJoints(dream); // their joints through the clip (joints.json), for Follow along
+  const beats = await loadBeats(dream); // the clip's beat (beats.json), pulsed on the floor around them
   const steps = (experience?.steps ?? []).map((st) => ({ ...st, end: Math.min(st.end, duration) })).filter((st) => st.end > st.start);
   const lesson = experience?.mode === "teach" && steps.length ? new Lesson(steps) : null;
   // eye contact: someone you're with or playing against looks at you (a teacher looks at the move)
@@ -389,6 +395,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   addEventListener("pagehide", () => coach?.stop());
 
   let lastSaid = "";
+  let ghost: Ghost | null = null; // your ghost: your turn played back beside them (made with the room's hands below)
   const showStep = () => {
     if (!lesson) return;
     if (lesson.i !== askedAbout) {
@@ -402,16 +409,19 @@ export async function renderViewer(root: HTMLElement, id: string) {
     }
     const st = lesson.step;
     $("#step-card").hidden = false;
-    $("#step-count").textContent = lesson.phase === "turn" ? "Your turn" : `Step ${lesson.i + 1} of ${lesson.steps.length}`;
+    const ghostTips = lesson.phase === "ghost" ? ghost?.tipsFor(lesson.i) ?? [] : [];
+    $("#step-count").textContent = lesson.phase === "turn" ? "Your turn" : lesson.phase === "ghost" ? "Your ghost" : `Step ${lesson.i + 1} of ${lesson.steps.length}`;
     $("#step-title").textContent = st.title;
-    $("#step-tip").textContent = st.tip ?? "";
+    $("#step-tip").textContent = ghostTips.length ? ghostTips.join(" · ") : st.tip ?? "";
     $("#step-card").classList.toggle("turn", lesson.phase === "turn");
+    stepCard.ghostTips = ghostTips;
     stepCard.draw(lesson, performance.now());
-    if (lesson.phase === "watch") {
+    if (lesson.phase !== "turn") {
       setSpeed(lesson.speed);
       t = st.start;
     }
-    const line = lesson.phase === "turn" ? "Your turn." : `${st.title}. ${st.tip ?? ""}`;
+    ghost?.onStep(performance.now());
+    const line = lesson.phase === "turn" ? "Your turn." : lesson.phase === "ghost" ? ghost?.line() ?? "" : `${st.title}. ${st.tip ?? ""}`;
     if (line !== lastSaid) {
       // the lesson moved on (Again, or the turn): the device never reads it over the coach, nor into its open mic
       coach?.stop();
@@ -641,6 +651,50 @@ export async function renderViewer(root: HTMLElement, id: string) {
     xrFollow.setOn(true);
     menu.add(xrFollow);
   }
+  // your ghost: your turn recorded (head and hands), then played back beside them on their clock, with where you
+  // were off; Watch my ghost replays the latest, Auto replay plays each one as the turn ends
+  const cardAt = new THREE.Vector3();
+  ghost = lesson && bodyJoints
+    ? new Ghost({ joints: bodyJoints, lesson, hands, sideOf, beats, card: () => (stepCardGroup.visible ? stepCardGroup.getWorldPosition(cardAt) : null), title: experience?.title ?? dream.name })
+    : null;
+  if (ghost && lesson) {
+    const g = ghost;
+    person.add(g.group);
+    g.card.mesh.scale.setScalar(0.66);
+    stepCardGroup.add(g.card.mesh);
+    g.onCard = (on) => {
+      stepCard.mesh.visible = !on;
+      if (follow) follow.label.visible = !on && follow.enabled;
+    };
+    lesson.afterTurn = () => g.endTurn(placeMode, mirrored, person, follow ? follow.best : null);
+    const xrWatch: XrButton = new XrButton("ghost", "Watch my ghost", () => {
+      if (g.watch(person, mirrored)) return;
+      xrWatch.setLabel("No ghost yet");
+      setTimeout(() => xrWatch.setLabel("Watch my ghost"), 1500);
+    });
+    const xrAuto: XrButton = new XrButton("ghost-auto", "Auto replay", () => {
+      g.auto = !g.auto;
+      xrAuto.setOn(g.auto);
+    });
+    xrAuto.setOn(true);
+    menu.add(xrWatch, xrAuto);
+  }
+  // the beat: a quiet ring on the floor round them on each one (a count-in on your turn)
+  const beatRing = beats ? new BeatRing(beats, Math.max(0.45, personRadiusOf(dream) + 0.12), bodyJoints, listener) : null;
+  if (beatRing) person.add(beatRing.group);
+  // golf: his tempo and yours after each swing, tones at his tempo to swing to, his hands' path to the top laid on you
+  const tempo = golf && bodyJoints ? new GolfCoach(scene, golf, bodyJoints, experience, listener) : null;
+  if (tempo) {
+    tempo.panel.position.set(0, follow ? -0.215 : -0.2, 0.001);
+    stepCardGroup.add(tempo.panel);
+    const xrTones: XrButton = new XrButton("tempo-tones", "Tempo tones", () => tempo.setTones(!tempo.tonesOn));
+    tempo.onChange = () => xrTones.setOn(tempo.tonesOn);
+    menu.add(xrTones);
+  }
+  // guitar: the teacher's strums (strums.json) as a lane of arrows above the guitar; your strums judged against them
+  const strums = guitar ? await loadStrums(dream) : null;
+  const lane = guitar && strums ? new StrumLane(scene, guitar, strums, listener) : null;
+  if (lane) guitar!.onStrum = (down) => lane.strum(down, performance.now() / 1000);
   let followStep = -1;
   const personCentre = new THREE.Vector3();
   const personRadius = dream.bounds ? Math.max(0.25, ...[0, 2].flatMap((k) => [Math.abs(dream.bounds!.min[k]), Math.abs(dream.bounds!.max[k])])) : 0.35;
@@ -667,6 +721,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   person.add(caption);
   let captionUntil = 0;
   let placeNextFrame = false;
+  let xrFrames = 0; // frames shown in the room: the headset's pose reaches the camera only once one has rendered
   const xr = new SparkXr({
     renderer,
     mode: "ar",
@@ -682,14 +737,19 @@ export async function renderViewer(root: HTMLElement, id: string) {
     onEnterXr: () => {
       scene.background = null;
       placeNextFrame = true;
+      xrFrames = 0;
       reveal = 0; // they arrive in your room, rather than already standing there
-      stepCardGroup.visible = !!lesson;
+      stepCardGroup.visible = !!lesson || !!tempo;
+      stepCard.mesh.visible = !!lesson;
       caption.visible = true;
       captionUntil = performance.now() + 7000;
       golf?.setActive(true);
       hoopBall?.setActive(true);
       guitar?.setActive(true);
       follow?.setActive(true);
+      tempo?.setActive(true);
+      lane?.setActive(true);
+      ghost?.setActive(true);
     },
     onExitXr: () => {
       coach?.stop(); // leaving the room ends the question: the mic is released
@@ -705,6 +765,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
       hoopBall?.setActive(false);
       guitar?.setActive(false);
       follow?.setActive(false);
+      tempo?.setActive(false);
+      lane?.setActive(false);
+      ghost?.setActive(false);
+      beatRing?.reset();
       person.position.set(0, 0, 0);
       person.rotation.set(0, Math.PI, 0);
       caption.visible = false;
@@ -767,7 +831,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
   resilientLoop(renderer, scene, camera, () => {
     const dt = Math.min(clock.getDelta(), 0.1);
     if (renderer.xr.isPresenting) {
-      if (placeNextFrame) {
+      // (not on the very first frame: the camera is still at the floor's origin then, and the step card went to the floor)
+      if (placeNextFrame && xrFrames++ > 0) {
         releaseLocks();
         hoopLock?.release();
         placeInFrontOfYou();
@@ -779,8 +844,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
       hoopLock?.update();
       occluders.forEach((o) => o());
       renderer.xr.getCamera().getWorldPosition(eyes);
+      menu.locked = lesson?.phase === "turn"; // your turn: both hands are dancing, so the menu stays shut
       const open = menu.update(eyes, performance.now(), dt);
       golf?.update(dt, open);
+      tempo?.update(dt, performance.now(), eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn), placeMode, mirrored);
       hoopBall?.update(dt, open, eyes, flatForward(ahead));
       if (guitar) guitar.update(dt, open, eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn));
       if (follow && lesson) {
@@ -791,6 +858,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
         person.localToWorld(personCentre.set(0, height * 0.55, 0));
         follow.update(dt, t, eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn), placeMode, mirrored, personCentre, lesson.phase === "turn");
       }
+      ghost?.update(dt, t, performance.now(), eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn), person, mirrored);
     }
     const game = !!hoopBall?.driving;
     if (props) props.ballsVisible = !game; // one ball: theirs follows the clip, unless you're passing yours to them
@@ -798,7 +866,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
       t = hoopBall!.clip; // the game shows them waiting, catching and shooting
       if (audio && !audio.paused) audio.pause();
     } else if (lesson) {
-      if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration, avatar ? duration : Math.max(0, (ready() - 1) / dream.fps));
+      // (the whole clip once every frame is in: a last step ending at the clip's end was never reached, and stuck there)
+      if (playing && lesson.phase !== "turn") t = Math.min(t + dt * speed, duration, avatar || ready() >= count ? duration : Math.max(0, (ready() - 1) / dream.fps));
       if (playing) t = lesson.update(t, performance.now());
       if (lesson.phase === "turn") {
         const pct = lesson.turnProgress(performance.now());
@@ -810,6 +879,17 @@ export async function renderViewer(root: HTMLElement, id: string) {
       t = have >= count ? (t + dt * speed) % duration : Math.min(t + dt * speed, Math.max(0, (have - 1) / dream.fps));
     }
     reveal = Math.min(1, reveal + dt / 1.4);
+    // the play-along lane follows the clip's clock as this frame shows it (the lesson's speed, repeats and your turn)
+    if (lane && renderer.xr.isPresenting) {
+      const now = performance.now();
+      lane.update(dt, now, eyes, lesson, t, speed, playing && !game, duration, laneClock(lesson, t, speed, playing && !game, now, duration));
+    }
+    if (beatRing) {
+      // on your turn the clip stands still: the beat carries on at full speed, a second's count-in, then the move
+      const turn = lesson?.phase === "turn";
+      const clock = turn ? lesson!.step.start - COUNT_IN + (performance.now() - (lesson!.turnEnds - lesson!.turnLength)) / 1000 : t;
+      beatRing.update(dt, playing ? clock : NaN, t, turn && clock < lesson!.step.start);
+    }
     if (renderer.xr.isPresenting) {
       const target = !playing || performance.now() < captionUntil ? 1 : 0;
       const m = caption.material as THREE.MeshBasicMaterial;
@@ -839,7 +919,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, hands, setMirror, lesson, props, state: () => ({ playing, mirrored, placeMode, reality: realityBtn.classList.contains("on") }) };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, tempo, lane, hands, setMirror, lesson, props, ghost, beatRing, stepCard, stepCardGroup, xr, state: () => ({ playing, mirrored, placeMode, t, speed, reality: realityBtn.classList.contains("on") }) };
+}
+
+/** How far from their middle the person reaches on the floor (their bounds), at least 25 cm. */
+function personRadiusOf(dream: Dream): number {
+  const b = dream.bounds;
+  return b ? Math.max(0.25, ...[0, 2].flatMap((k) => [Math.abs(b.min[k]), Math.abs(b.max[k])])) : 0.35;
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */

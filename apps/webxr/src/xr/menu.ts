@@ -32,6 +32,8 @@ export class HandMenu {
   readonly group = new THREE.Group();
   readonly buttons: XrButton[] = [];
   open = false;
+  /** While true it stays shut whatever the hands do (your turn in a lesson: both hands are dancing). */
+  locked = false;
   private held = 0; // ms the palm has stayed the other way (opening or closing waits for it)
   private palm = new THREE.Vector3();
   private normal = new THREE.Vector3();
@@ -72,6 +74,11 @@ export class HandMenu {
 
   /** Once a frame while presenting, with your eyes' world position. True while the menu is open. */
   update(head: THREE.Vector3, now: number, dt: number): boolean {
+    if (this.locked) {
+      this.open = this.group.visible = false;
+      this.held = 0;
+      return false;
+    }
     const left = jointsOf(this.hands[handIndex(this.sideOf, "left")]);
     const mc = left["middle-finger-metacarpal"];
     let up = false;
@@ -83,7 +90,9 @@ export class HandMenu {
       this.normal.set(0, -1, 0).applyQuaternion(this.q); // WebXR: a joint's -Y points out of the palm
       this.toHead.copy(head).sub(this.palm);
       const near = this.toHead.length() < 0.75;
-      up = near && this.normal.dot(this.toHead.normalize()) > (this.open ? 0.35 : 0.6);
+      // and below your eyes: arms up over your head in a dance turn the palms down at your face too, without asking
+      const below = this.palm.y < head.y - (this.open ? 0.02 : 0.06);
+      up = near && below && this.normal.dot(this.toHead.normalize()) > (this.open ? 0.35 : 0.6);
     }
     // a moment's hold before it opens or closes, so a hand swinging past never flashes it
     if (up !== this.open) {

@@ -305,6 +305,8 @@ export class Guitar {
   chord: string;
   fingers = false; // play what the left fingertips press instead of the chord
   onChange: () => void = () => {};
+  /** Each strum your right hand plays (down: toward the floor), for the play-along lane (strum-lane.ts). */
+  onStrum: (down: boolean) => void = () => {};
   private built: ReturnType<typeof buildGuitar>;
   private active = false;
   private ready = false;
@@ -567,8 +569,10 @@ export class Guitar {
     else this.vy = 0;
     const side = !inBox ? 0 : p.y > ZONE.mid ? 1 : p.y < -ZONE.mid ? -1 : this.side;
     // a stroke: across the middle from one side to the other, moving that way (jitter's speed points anywhere)
-    if (inBox && this.side !== 0 && side !== 0 && side !== this.side && !jump && !menuOpen && dt > 0 && Math.abs(this.vy) > ZONE.speed && Math.sign(this.vy) === side)
+    if (inBox && this.side !== 0 && side !== 0 && side !== this.side && !jump && !menuOpen && dt > 0 && Math.abs(this.vy) > ZONE.speed && Math.sign(this.vy) === side) {
       this.play([{ k: this.vy < 0 ? 0 : 5, f: 0 }], this.vy, dt, p.x);
+      this.onStrum(this.vy < 0);
+    }
     this.side = side;
     this.prevPick.copy(p);
     this.pickOk = true;

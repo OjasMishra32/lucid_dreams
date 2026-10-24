@@ -410,6 +410,11 @@ export class Golf {
   private sinceHit = 0;
   private ballAlpha = 1;
   private hits = 0;
+  /** For the tempo coach (golf-coach.ts): your hands on the grip this frame (world), whether they were read this frame,
+   * and a callback when the ball is struck. */
+  readonly handsAt = new THREE.Vector3();
+  handsLive = false;
+  onHit: (speed: number) => void = () => {};
   private click: THREE.PositionalAudio | null = null;
   private clickBuf: AudioBuffer | null = null;
   private thudBuf: AudioBuffer | null = null;
@@ -532,6 +537,8 @@ export class Golf {
         if (!grip.held) lefty = false;
       }
     }
+    this.handsLive = !!grip;
+    if (grip) this.handsAt.copy(low ? this.tmp.b.addVectors(grip.center, low.center).multiplyScalar(0.5) : grip.center);
     if (grip) {
       // the hand's centre in the club's own space: the club is placed so that point lands on the hand, whatever the turn
       const at = this.tmp.c;
@@ -699,6 +706,17 @@ export class Golf {
     this.sinceHit = 0;
     this.hits++;
     this.sound(false, ballSpeed);
+    this.onHit(ballSpeed);
+  }
+
+  /** The club is in your hands (shown, not fading out). */
+  get holding(): boolean {
+    return this.mode !== "none" && this.opacity > 0.5;
+  }
+
+  /** Address: the club held still with its head down for a moment (what fits it to your height), and not in the menu. */
+  get atAddress(): boolean {
+    return this.holding && this.addressT > 0.3;
   }
 
   private sound(thud: boolean, speed: number) {

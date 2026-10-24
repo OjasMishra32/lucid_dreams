@@ -39,14 +39,17 @@ export async function loadExperience(dream: Dream): Promise<Experience | null> {
 /**
  * A lesson: each step plays slowed down a couple of times, then they freeze in the step's last pose for your turn
  * (as long as the move takes at full speed, plus a breath), then the next step. After the last step it starts over.
+ * With your ghost (ghost.ts), a turn can be followed by "ghost": the step once more at its speed, you beside them.
  */
 export class Lesson {
   i = 0;
   rep = 0;
-  phase: "watch" | "turn" = "watch";
+  phase: "watch" | "turn" | "ghost" = "watch";
   turnEnds = 0;
   turnLength = 0;
   onChange: () => void = () => {};
+  /** When your turn ends: true plays the step back once with your ghost beside them before the next step. */
+  afterTurn: () => boolean = () => false;
 
   constructor(readonly steps: Step[]) {}
 
@@ -64,11 +67,29 @@ export class Lesson {
     this.onChange();
   }
 
+  /** Step i played back once with your ghost beside them, then on to the step after it. */
+  replay(i: number) {
+    this.i = (i + this.steps.length) % this.steps.length;
+    this.rep = 0;
+    this.phase = "ghost";
+    this.onChange();
+  }
+
   /** Called each frame with the clip time after this frame's advance; returns where playback should be. */
   update(t: number, now: number): number {
     const s = this.step;
     if (this.phase === "turn") {
       if (now < this.turnEnds) return s.end - 0.001; // frozen in the last pose of the move
+      if (this.afterTurn()) {
+        this.phase = "ghost";
+        this.onChange();
+        return this.step.start;
+      }
+      this.go(this.i + 1);
+      return this.step.start;
+    }
+    if (this.phase === "ghost") {
+      if (t < s.end) return t < s.start ? s.start : t;
       this.go(this.i + 1);
       return this.step.start;
     }
@@ -135,6 +156,8 @@ export class StepCard {
   mesh: THREE.Mesh;
   /** The coach's line (what you asked, then its answer), shown in place of the tip while there is one. */
   note: { label: string; text: string } | null = null;
+  /** While your ghost plays: where you were off ("Left hand 18 cm low at the drop"), in place of the tip. */
+  ghostTips: string[] = [];
   private canvas = document.createElement("canvas");
   private tex: THREE.CanvasTexture;
 
@@ -165,11 +188,12 @@ export class StepCard {
     c.stroke();
     const s = lesson.step;
     const turn = lesson.phase === "turn";
+    const ghost = lesson.phase === "ghost";
     // where you are: a dot per step, the current one long
     let x = P;
     lesson.steps.forEach((_, k) => {
       const on = k === lesson.i;
-      c.fillStyle = on ? (turn ? "#0a84ff" : "#f5f5f7") : "rgba(255,255,255,0.28)";
+      c.fillStyle = on ? (turn ? "#0a84ff" : ghost ? "#d9d2ff" : "#f5f5f7") : "rgba(255,255,255,0.28)";
       c.beginPath();
       c.roundRect(x, 104, on ? 64 : 18, 18, 9);
       c.fill();
@@ -177,9 +201,9 @@ export class StepCard {
     });
     c.textAlign = "left";
     c.textBaseline = "alphabetic";
-    c.fillStyle = turn ? "#409cff" : "#a1a1a6";
+    c.fillStyle = turn ? "#409cff" : ghost ? "#d9d2ff" : "#a1a1a6";
     c.font = '600 44px -apple-system, "SF Pro Text", "Inter", sans-serif';
-    c.fillText(turn ? "Your turn" : `Step ${lesson.i + 1} of ${lesson.steps.length}`, x + 16, 124);
+    c.fillText(turn ? "Your turn" : ghost ? "Your ghost, beside them" : `Step ${lesson.i + 1} of ${lesson.steps.length}`, x + 16, 124);
     c.fillStyle = "#f5f5f7";
     c.font = '700 96px -apple-system, "SF Pro Display", "Inter", sans-serif';
     fit(c, s.title, W - 2 * P, 96, 64, '700 %spx -apple-system, "SF Pro Display", "Inter", sans-serif');
@@ -191,6 +215,21 @@ export class StepCard {
       c.fillStyle = "#e5e5ea";
       c.font = '400 52px -apple-system, "SF Pro Text", "Inter", sans-serif';
       wrap(c, this.note.text, P, 428, W - 2 * P, 68, 3);
+    } else if (ghost && this.ghostTips.length) {
+      // one line each, the biggest first, with a mark in the gap lines' amber
+      c.font = '500 52px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      this.ghostTips.slice(0, 3).forEach((line, k) => {
+        c.fillStyle = "#ffc86b";
+        c.beginPath();
+        c.arc(P + 12, 352 + k * 80, 11, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = "#e5e5ea";
+        c.fillText(line, P + 48, 370 + k * 80, W - 2 * P - 48);
+      });
+    } else if (ghost) {
+      c.fillStyle = "#e5e5ea";
+      c.font = '400 56px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      wrap(c, "You were with them all the way through.", P, 368, W - 2 * P, 74, 3);
     } else if (s.tip) {
       c.fillStyle = "#e5e5ea";
       c.font = '400 56px -apple-system, "SF Pro Text", "Inter", sans-serif';

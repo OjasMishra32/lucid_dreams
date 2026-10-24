@@ -17,6 +17,7 @@ import { hashSeed } from "./person";
 import { FloatingNote } from "./room";
 import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
 import { TableSounds } from "./sound";
+import { FamousMoves } from "./famous";
 import { XR_QUALITY } from "../xr/quality";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
@@ -227,7 +228,7 @@ export async function renderChess(root: HTMLElement) {
   const takenPieces = () => {
     const byPlayer: { type: PieceType; color: "w" | "b" }[] = [];
     const byOpponent: { type: PieceType; color: "w" | "b" }[] = [];
-    for (const m of chess.history({ verbose: true })) if (m.captured) (m.color === side ? byPlayer : byOpponent).push({ type: m.captured as PieceType, color: other(m.color) });
+    for (const [i, m] of chess.history({ verbose: true }).entries()) if (m.captured) ((famous.row(i) ?? m.color === side) ? byPlayer : byOpponent).push({ type: m.captured as PieceType, color: other(m.color) });
     return { byPlayer, byOpponent };
   };
   let takenMeshes: { byPlayer: THREE.Object3D[]; byOpponent: THREE.Object3D[] } = { byPlayer: [], byOpponent: [] };
@@ -302,6 +303,7 @@ export async function renderChess(root: HTMLElement) {
   let pulsed = false;
   const clockHint = () => (renderer.xr.isPresenting ? "Tap your clock" : "Tap your clock (click it, or press Space)");
   const updateStatus = () => {
+    if (famous.active) return setStatus(famous.status); // their famous moves (famous.ts)
     const who = strength.legend ? `${strength.legend} (engine, ${strength.elo})` : opponentName ? `${opponentName} (${strength.label})` : strength.label;
     if (reaching) return setStatus(`${who} is moving…`);
     if (clock.flagged) return setStatus(clock.flagged === "near" ? "Out of time. Well played, engine." : "Out of time. You win.");
@@ -398,7 +400,7 @@ export async function renderChess(root: HTMLElement) {
 
   // the opponent moves their own piece: the board keeps the old position until their hand lets go. A capture
   // first goes beside the board; castling is the king, then the rook; then they press their clock.
-  const handMove = (mv: Move, hardness = 0.3): boolean => {
+  const handMove = (mv: Move, hardness = 0.3, then?: () => void): boolean => {
     const obj = meshes.get(mv.from);
     if (!seated || !obj) return false;
     const carry = (o: THREE.Object3D, from: THREE.Vector3, to: THREE.Vector3, role: Carry["role"], soft = false): Carry => ({
@@ -428,9 +430,10 @@ export async function renderChess(root: HTMLElement) {
       () => {
         reaching = false;
         sync(); // the real position, promotions included
+        if (then) return then(); // a famous game playing out: no clock, no end of game
         if (isOver()) afterOpponentMove(false);
       },
-      over
+      over || then
         ? undefined
         : {
             at: () => clock.buttonTop("far"),
@@ -468,6 +471,10 @@ export async function renderChess(root: HTMLElement) {
       mv = null;
     }
     if (!mv) return false;
+    if (famous.active && !famous.accept(mv)) {
+      chess.undo(); // not his move: it slides back
+      return false;
+    }
     putAside(); // still holding your last capture: it goes beside the board first
     const takenOn = mv.flags.includes("e") ? mv.to[0] + mv.from[1] : mv.to;
     // a piece you'd lifted with your other hand: it's yours now if this took it, else it's back on its square
@@ -491,6 +498,7 @@ export async function renderChess(root: HTMLElement) {
         tweens.push({ obj: m, from: m.position.clone(), to: dest, t0: performance.now(), dur: 620, onDone: () => sounds.clack(worldAt(dest), true) });
       }
     }
+    if (famous.active) return true; // his move: the game plays on from here (famous.ts)
     if (isOver()) {
       clock.run(null);
       updateStatus();
@@ -520,6 +528,7 @@ export async function renderChess(root: HTMLElement) {
   };
 
   const newGame = async () => {
+    famous.stop();
     gameId++;
     gameNumber++;
     thinking = false;
@@ -542,10 +551,10 @@ export async function renderChess(root: HTMLElement) {
   // ---------------- picking up pieces (mouse, hands, controllers) ----------------
   // `victim`: one of their pieces you lifted first, to take it with your other hand (or put it back)
   type Hold = { square: Square; obj: THREE.Object3D; offset: THREE.Vector3; victim?: boolean; legal?: Set<string> };
-  const canTouch = (sq: string) => !thinking && !reaching && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === side;
+  const canTouch = (sq: string) => !thinking && !reaching && !famous.locked && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === side;
   // one of theirs that a move of yours can take
   const canLift = (sq: string) =>
-    !thinking && !reaching && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === other(side) &&
+    !thinking && !reaching && !famous.locked && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === other(side) &&
     chess.moves({ verbose: true }).some((m) => m.captured && (m.flags.includes("e") ? m.to[0] + m.from[1] : m.to) === sq);
   const nearestPiece = (worldPoint: THREE.Vector3, lift = false, radius = GRAB_RADIUS): { sq: string; victim: boolean } | null => {
     let best: { sq: string; victim: boolean } | null = null;
@@ -846,7 +855,7 @@ export async function renderChess(root: HTMLElement) {
   });
 
   const undo = () => {
-    if (thinking || reaching) return;
+    if (thinking || reaching || famous.active) return;
     awaitingPress = false;
     gameId++;
     lastEval = null;
@@ -877,6 +886,7 @@ export async function renderChess(root: HTMLElement) {
   const legendButtons = STRENGTHS.filter((st) => st.legend).map(
     (st) =>
       new XrButton(st.id, st.legend!, () => {
+        if (famous.active) return famous.start(st.id); // their famous moves, his games
         if (strength.id === st.id) return;
         selectStrength(st.id);
         void newGame();
@@ -889,6 +899,33 @@ export async function renderChess(root: HTMLElement) {
     strengthButton,
     sideButton,
   );
+  // their famous moves (famous.ts): positions from the legend's real games, and you find his move
+  const famous = new FamousMoves({
+    root, chess, boardGroup, table, meshes, taken, sounds, menu,
+    seated: () => seated,
+    presenting: () => renderer.xr.isPresenting,
+    eye: (out) => (renderer.xr.isPresenting ? renderer.xr.getCamera().getWorldPosition(out) : out.copy(camera.position)),
+    strength: () => strength.id,
+    pick: (id) => selectStrength(id),
+    halt: () => {
+      gameId++;
+      thinking = awaitingPress = false;
+      putAside();
+      clock.reset();
+    },
+    orient: (c) => {
+      side = c;
+      boardGroup.rotation.y = c === "w" ? 0 : Math.PI;
+      root.querySelectorAll<HTMLButtonElement>("#sides button").forEach((x) => x.classList.toggle("on", x.dataset.side === c));
+    },
+    sync: (moving) => sync(moving),
+    handMove: (mv, then) => handMove(mv, 0.2, then),
+    refresh: () => updateStatus(),
+    leave: (id) => {
+      if (id) selectStrength(id);
+      void newGame();
+    },
+  });
 
   // ---------------- XR session ----------------
   let placed = false;
@@ -932,12 +969,13 @@ export async function renderChess(root: HTMLElement) {
     setOpponent([...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
     updateStatus();
   };
-  root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => selectStrength(b.dataset.id!)));
+  root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => (famous.active ? famous.choose(b.dataset.id!) : selectStrength(b.dataset.id!))));
   root.querySelectorAll<HTMLButtonElement>("#sides button").forEach((b) => b.addEventListener("click", () => setSide(b.dataset.side as "w" | "b")));
   $("#new").addEventListener("click", () => void newGame());
   $("#undo").addEventListener("click", () => undo());
   selectStrength(strength.id);
   await newGame();
+  famous.fromUrl();
   // ---------------- loop ----------------
   addEventListener("resize", () => {
     renderer.setSize(innerWidth, innerHeight);
@@ -1104,6 +1142,7 @@ export async function renderChess(root: HTMLElement) {
       const at = opponent ? opponentGroup.localToWorld(new THREE.Vector3(0, 1.45, -0.12)) : table.localToWorld(new THREE.Vector3(0, 0.4, -0.35));
       legendNote.place(at, renderer.xr.isPresenting ? renderer.xr.getCamera().getWorldPosition(new THREE.Vector3()) : camera.position);
     }
+    famous.update();
     for (let k = tweens.length - 1; k >= 0; k--) {
       const tw = tweens[k];
       const u = THREE.MathUtils.clamp((time - tw.t0) / tw.dur, 0, 1);
@@ -1119,7 +1158,7 @@ export async function renderChess(root: HTMLElement) {
   };
   resilientLoop(renderer, scene, camera, frame);
   if (import.meta.env.DEV)
-    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame(), hands, jointsOf, handHold, inHand: () => inHand, sync: () => sync(), awaiting: (on: boolean) => (awaitingPress = on), menu, handle, lock, pressed: () => !awaitingPress };
+    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame(), hands, jointsOf, handHold, inHand: () => inHand, sync: () => sync(), awaiting: (on: boolean) => (awaitingPress = on), menu, handle, lock, pressed: () => !awaitingPress, famous };
 }
 
 function contactShadowTexture(): THREE.Texture {

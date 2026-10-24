@@ -17,11 +17,36 @@ export interface BodyJoints {
   frames: number[][][]; // per bundle frame, per name: [x, y, z] in bundle space (+X their right, front -Z)
 }
 
-type Part = "head" | "left_wrist" | "right_wrist";
-const PARTS: Part[] = ["head", "left_wrist", "right_wrist"];
-const WEIGHT: Record<Part, number> = { head: 0.2, left_wrist: 0.4, right_wrist: 0.4 };
-const SWAP: Record<Part, Part> = { head: "head", left_wrist: "right_wrist", right_wrist: "left_wrist" };
+export type Part = "head" | "left_wrist" | "right_wrist";
+export const PARTS: Part[] = ["head", "left_wrist", "right_wrist"];
+export const WEIGHT: Record<Part, number> = { head: 0.2, left_wrist: 0.4, right_wrist: 0.4 };
+export const SWAP: Record<Part, Part> = { head: "head", left_wrist: "right_wrist", right_wrist: "left_wrist" };
 type Place = "facing" | "beside" | "ahead";
+
+/** How well one of yours matches its target, 0-1: full within 6 cm, nothing past 40 cm (the match score's own rule). */
+export function matchOf(d: number): number {
+  return THREE.MathUtils.clamp(1 - (d - 0.06) / 0.34, 0, 1);
+}
+
+/** Their eye height standing, as tall as they get in the clip (their head joint plus the eyes above it). */
+export function eyeHeightOf(joints: BodyJoints): number {
+  const head = joints.names.indexOf("head");
+  return Math.max(...joints.frames.map((f) => f[head][1])) + 0.07;
+}
+
+/** Their joint `name` at clip time t (bundle space), between frames. */
+export function jointAt(joints: BodyJoints, index: Record<string, number>, name: string, t: number, out: THREE.Vector3): THREE.Vector3 {
+  const fr = joints.frames;
+  const f = THREE.MathUtils.clamp(t * joints.fps, 0, fr.length - 1);
+  const i = Math.floor(f), k = f - i, j = index[name];
+  const a = fr[i][j], b = fr[Math.min(i + 1, fr.length - 1)][j];
+  return out.set(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k);
+}
+
+/** Your head joint (a little below and behind your eyes), from the headset's pose. */
+export function headJointOf(eye: THREE.Vector3, headQ: THREE.Quaternion, out: THREE.Vector3): THREE.Vector3 {
+  return out.set(0, -0.07, 0.06).applyQuaternion(headQ).add(eye);
+}
 
 /** joints.json for this dream, or null when it has none. */
 export async function loadJoints(dream: Dream): Promise<BodyJoints | null> {
@@ -84,8 +109,7 @@ export class FollowAlong {
     private listener?: THREE.AudioListener,
   ) {
     this.idx = Object.fromEntries(joints.names.map((n, i) => [n, i]));
-    const head = this.idx.head;
-    this.theirEye = Math.max(...joints.frames.map((f) => f[head][1])) + 0.07; // standing, as tall as they get in the clip
+    this.theirEye = eyeHeightOf(joints); // standing, as tall as they get in the clip
     const tex = ringTexture();
     for (const p of PARTS) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color: 0x9fd0ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -126,11 +150,7 @@ export class FollowAlong {
 
   /** Their joint at clip time t (bundle space), between frames. */
   private joint(name: string, t: number, out: THREE.Vector3): THREE.Vector3 {
-    const fr = this.joints.frames;
-    const f = THREE.MathUtils.clamp(t * this.joints.fps, 0, fr.length - 1);
-    const i = Math.floor(f), k = f - i, j = this.idx[name];
-    const a = fr[i][j], b = fr[Math.min(i + 1, fr.length - 1)][j];
-    return out.set(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k);
+    return jointAt(this.joints, this.idx, name, t, out);
   }
 
   /**
@@ -185,7 +205,7 @@ export class FollowAlong {
       } else complete = false;
       const d = have ? mine.distanceTo(target) : Infinity;
       if (have) {
-        total += WEIGHT[part] * THREE.MathUtils.clamp(1 - (d - 0.06) / 0.34, 0, 1);
+        total += WEIGHT[part] * matchOf(d);
         weight += WEIGHT[part];
         worst = Math.max(worst, d);
       }
@@ -219,7 +239,7 @@ export class FollowAlong {
   }
 
   private yourHead(eye: THREE.Vector3, headQ: THREE.Quaternion, out: THREE.Vector3): boolean {
-    out.set(0, -0.07, 0.06).applyQuaternion(headQ).add(eye);
+    headJointOf(eye, headQ, out);
     return true;
   }
 
