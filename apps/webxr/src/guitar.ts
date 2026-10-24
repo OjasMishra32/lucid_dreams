@@ -35,7 +35,10 @@ const along = (x: number) => THREE.MathUtils.clamp((x - SADDLE_X) / (NUT_X - SAD
 const stringY = (k: number, x: number) => (2.5 - k) * THREE.MathUtils.lerp(SADDLE_SPAN, NUT_SPAN, along(x)) / 5;
 const stringZ = (x: number) => THREE.MathUtils.lerp(SADDLE_Z, NUT_Z, along(x));
 // where your right hand plays: over the sound hole, from near the bridge to the end of the fretboard
-const STRUM = { x0: -0.13, x1: 0.18, y: 0.045, zBelow: 0.02, zAbove: 0.03 };
+// hand tracking is centimetres off at best, so a strum is read from the hand, not a fingertip on a string: the right
+// hand's knuckles passing through a generous box over the sound hole, across the middle, once per pass
+const ZONE = { x0: -0.16, x1: 0.2, y: 0.09, zBelow: 0.05, zAbove: 0.11, mid: 0.012, speed: 0.4 };
+const KNUCKLES = ["index-finger-phalanx-proximal", "middle-finger-phalanx-proximal", "ring-finger-phalanx-proximal"];
 
 /** Frets for each string, low E to high E; -1 is not played. */
 export const CHORDS: Record<string, number[]> = {
@@ -212,8 +215,8 @@ function buildGuitar(env: THREE.Texture) {
   }
 
   // a soft glow over the strings where you strum, shown as your right hand comes near
-  const glow = new THREE.Mesh(new THREE.PlaneGeometry(STRUM.x1 - STRUM.x0, 2 * STRUM.y), new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
-  glow.position.set((STRUM.x0 + STRUM.x1) / 2, 0, stringZ(0) + 0.0015);
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(ZONE.x1 - ZONE.x0, 2 * ZONE.y), new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glow.position.set((ZONE.x0 + ZONE.x1) / 2, 0, stringZ(0) + 0.0015);
   g.add(glow);
 
   // where the chord's fingers go: small dots on the fretboard
@@ -294,7 +297,6 @@ function pluckBuffer(ctx: BaseAudioContext, hz: number, k: number): AudioBuffer 
 
 type Joints = Record<string, THREE.Object3D>;
 const jointsOf = (h: THREE.Object3D | undefined) => (h as unknown as { joints?: Joints } | undefined)?.joints ?? {};
-const TIPS = ["thumb-tip", "index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"];
 const FRET_TIPS = ["index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"];
 
 export class Guitar {
@@ -307,8 +309,6 @@ export class Guitar {
   private ready = false;
   private torso = new THREE.Vector3(0, 0, -1); // the way your body faces (flat)
   private hold = 0; // 0 = the neck at rest, 1 = the neck in your left hand
-  private prevTips = TIPS.map(() => new THREE.Vector3());
-  private prevOk = TIPS.map(() => false);
   private lastPluck = new Array(6).fill(-1);
   private ring = new Array(6).fill(0); // how hard each string is ringing, for the blur
   private frets: number[] = [0, 0, 0, 0, 0, 0];
@@ -317,7 +317,11 @@ export class Guitar {
   private panner: PannerNode | null = null;
   private voices: ({ src: AudioBufferSourceNode; gain: GainNode } | null)[] = new Array(6).fill(null);
   private cache = new Map<string, AudioBuffer>();
-  private handDir = new THREE.Vector3(-1, 0.3, 0); // where the neck last pointed in your hand
+  private side = 0; // which side of the strings your strumming hand is on (+1 / -1 / 0 not in the box)
+  private prevPick = new THREE.Vector3();
+  private pickOk = false;
+  private vy = 0; // the strumming hand's speed across the strings, smoothed over ~40 ms (frame times jitter)
+  private chordFromHand = false; // your left hand along the neck picks the chord
   private w = {
     pivot: new THREE.Vector3(),
     fwd: new THREE.Vector3(),
@@ -419,13 +423,15 @@ export class Guitar {
     const { pivot, fwd, right, up, target, neck, zAxis, yAxis } = this.w;
     // your torso: the head turns about the top of the spine (a little below and behind your eyes); the body faces where
     // the head has been facing, followed slowly, since you turn your head far more than your body
-    pivot.set(0, -0.1, 0.09).applyQuaternion(headQ).add(eye);
+    // only the head's position counts (looking down at the strings never moves the guitar); the body turns only when
+    // the head has been turned well away (beyond 35 degrees), and then slowly, the way a torso follows a head
     const hf = fwd.set(0, 0, -1).applyQuaternion(headQ).setY(0);
     if (hf.lengthSq() > 1e-4) {
       hf.normalize();
       if (!this.ready) this.torso.copy(hf);
-      else this.torso.lerp(hf, 1 - Math.exp(-dt / 0.5)).normalize();
+      else if (hf.dot(this.torso) < Math.cos(THREE.MathUtils.degToRad(35))) this.torso.lerp(hf, 1 - Math.exp(-dt / 1.2)).normalize();
     }
+    pivot.copy(eye).addScaledVector(this.torso, -0.09).setY(eye.y - 0.1);
     fwd.copy(this.torso);
     right.set(-fwd.z, 0, fwd.x);
     // the sound hole: at your waist, in front of your belly, a touch to the right
@@ -435,25 +441,10 @@ export class Guitar {
 
     // the neck: at rest it rises 20 degrees to your left and comes 18 degrees forward; with your left hand on it, it
     // points at your hand (within what an arm can hold), and the hand can slide along it
+    // the neck holds still at its playing angle (a neck that chases a tracked hand shakes); your left hand along it
+    // chooses the chord instead
     this.restNeck(neck, fwd, right, up);
-    const grip = this.leftGrip(this.w.grip);
-    let follow = false;
-    if (grip && !menuOpen) {
-      const d = grip.sub(this.group.position);
-      const len = d.length();
-      d.divideScalar(len);
-      const el = Math.asin(THREE.MathUtils.clamp(d.dot(up), -1, 1));
-      const az = Math.atan2(d.dot(fwd), -d.dot(right));
-      const deg = THREE.MathUtils.radToDeg;
-      follow = len > 0.22 && len < 0.85 && deg(el) > -45 && deg(el) < 75 && deg(az) > -45 && deg(az) < 85;
-      if (follow) {
-        const e = THREE.MathUtils.clamp(el, THREE.MathUtils.degToRad(-15), THREE.MathUtils.degToRad(55));
-        const a = THREE.MathUtils.clamp(az, THREE.MathUtils.degToRad(5), THREE.MathUtils.degToRad(55)); // never back through you
-        this.handDir.copy(right).multiplyScalar(-Math.cos(e) * Math.cos(a)).addScaledVector(fwd, Math.cos(e) * Math.sin(a)).addScaledVector(up, Math.sin(e));
-      }
-    }
-    this.hold = THREE.MathUtils.clamp(this.hold + (follow ? dt : -dt) / 0.15, 0, 1);
-    neck.lerp(this.handDir, this.hold).normalize();
+    this.hold = 0;
     // the top faces forward, tipped back 12 degrees so you can see the strings
     zAxis.copy(fwd).multiplyScalar(Math.cos(0.21)).addScaledVector(up, Math.sin(0.21));
     zAxis.addScaledVector(neck, -zAxis.dot(neck)).normalize();
@@ -465,6 +456,7 @@ export class Guitar {
     this.ready = true;
 
     if (this.fingers) this.readFrets();
+    else if (!menuOpen) this.chordFromNeck();
     this.showChord();
     this.strum(dt, menuOpen);
     this.ringOut(dt);
@@ -529,42 +521,58 @@ export class Guitar {
 
   // ---------------- your right hand on the strings
 
+  /** Your left hand on the neck picks the lesson's chord by where it is along the neck: the first chord nearest the
+   * headstock, the last nearest the body. Off the neck, the last chord stays. */
+  private chordFromNeck() {
+    if (this.chords.length < 2) return;
+    const grip = this.leftGrip(this.w.grip);
+    if (!grip) return;
+    const p = this.group.worldToLocal(grip);
+    const onNeck = p.x < NUT_X + 0.03 && p.x > JOINT_X - 0.02 && Math.abs(p.y) < 0.08 && p.z > -0.07 && p.z < 0.12;
+    if (!onNeck) return;
+    const u = THREE.MathUtils.clamp((NUT_X - p.x) / (NUT_X - JOINT_X), 0, 0.999);
+    const name = this.chords[Math.floor(u * this.chords.length)];
+    if (name !== this.chord && CHORDS[name]) {
+      this.chord = name;
+      this.chordFromHand = true;
+      this.warm(CHORDS[name]);
+      this.onChange();
+    }
+  }
+
+  /** Your right hand's knuckles through the strum box: crossing the middle of the strings at a modest speed plays a
+   * full strum (down toward the floor, or up), once per pass; a slow pass plays nothing, so resting the hand is quiet. */
   private strum(dt: number, menuOpen: boolean) {
     const j = jointsOf(this.hands[handIndex(this.sideOf, "right")]);
-    const p = this.w.p;
-    let near = Infinity;
-    TIPS.forEach((name, i) => {
-      const tip = j[name];
-      if (!tip?.visible) return void (this.prevOk[i] = false);
-      this.group.worldToLocal(tip.getWorldPosition(p));
-      const zs = stringZ(p.x);
-      const inX = p.x > STRUM.x0 && p.x < STRUM.x1;
-      const dz = p.z - zs;
-      const ok = inX && dz > -STRUM.zBelow && dz < STRUM.zAbove && Math.abs(p.y) < STRUM.y + 0.03;
-      if (inX) near = Math.min(near, Math.max(0, Math.abs(dz) - 0.01, Math.abs(p.y) - STRUM.y));
-      const prev = this.prevTips[i];
-      const jump = prev.distanceTo(p) > 0.12; // tracking that jumps isn't a stroke
-      if (ok && this.prevOk[i] && !menuOpen && dt > 0 && !jump) {
-        const vy = (p.y - prev.y) / dt;
-        // the strings this fingertip passed this frame, in the order it met them
-        const crossed: { k: number; f: number }[] = [];
-        for (let k = 0; k < 6; k++) {
-          const yk = stringY(k, p.x);
-          if ((prev.y - yk) * (p.y - yk) < 0) crossed.push({ k, f: (prev.y - yk) / (prev.y - p.y) });
-        }
-        crossed.sort((a, b) => a.f - b.f);
-        if (crossed.length) this.play(crossed, vy, dt, p.x);
-        else if (prev.z - stringZ(prev.x) > 0.002 && dz <= 0.002 && Math.abs(p.y) < STRUM.y) {
-          // a fingertip pushed straight into the strings: the nearest one
-          const k = THREE.MathUtils.clamp(Math.round(2.5 - (p.y / THREE.MathUtils.lerp(SADDLE_SPAN, NUT_SPAN, along(p.x))) * 5), 0, 5);
-          this.pluck(k, 0, Math.min(1, Math.abs((prev.z - p.z) / dt) / 1.5));
-        }
+    const p = this.w.p.set(0, 0, 0);
+    let seen = 0;
+    for (const name of KNUCKLES) {
+      const k = j[name];
+      if (k?.visible) {
+        p.add(this.group.worldToLocal(k.getWorldPosition(this.w.tmp)));
+        seen++;
       }
-      prev.copy(p);
-      this.prevOk[i] = ok;
-    });
+    }
     const glow = this.built.glow.material as THREE.MeshBasicMaterial;
-    const target = menuOpen ? 0 : 0.22 * THREE.MathUtils.clamp(1 - near / 0.07, 0, 1);
+    if (!seen) {
+      this.pickOk = false;
+      this.side = 0;
+      glow.opacity += (0 - glow.opacity) * Math.min(1, dt * 10);
+      return;
+    }
+    p.divideScalar(seen);
+    const zs = stringZ(p.x);
+    const inBox = p.x > ZONE.x0 && p.x < ZONE.x1 && Math.abs(p.y) < ZONE.y && p.z - zs > -ZONE.zBelow && p.z - zs < ZONE.zAbove;
+    const jump = this.pickOk && this.prevPick.distanceTo(p) > 0.15; // tracking that jumps isn't a stroke
+    if (this.pickOk && !jump && dt > 0) this.vy += ((p.y - this.prevPick.y) / Math.max(dt, 1 / 120) - this.vy) * (1 - Math.exp(-dt / 0.04));
+    else this.vy = 0;
+    const side = !inBox ? 0 : p.y > ZONE.mid ? 1 : p.y < -ZONE.mid ? -1 : this.side;
+    if (inBox && this.side !== 0 && side !== 0 && side !== this.side && !jump && !menuOpen && dt > 0 && Math.abs(this.vy) > ZONE.speed)
+      this.play([{ k: this.vy < 0 ? 0 : 5, f: 0 }], this.vy, dt, p.x);
+    this.side = side;
+    this.prevPick.copy(p);
+    this.pickOk = true;
+    const target = menuOpen || !inBox ? 0 : 0.28;
     glow.opacity += (target - glow.opacity) * Math.min(1, dt * 10);
   }
 
@@ -641,6 +649,6 @@ export class Guitar {
   debug() {
     const r = (v: THREE.Vector3) => v.toArray().map((n) => +n.toFixed(3));
     const neck = new THREE.Vector3(1, 0, 0).transformDirection(this.group.matrixWorld);
-    return { active: this.active, chord: this.fingers ? "fingers" : this.chord, frets: this.currentFrets(), hole: r(this.group.position), neck: r(neck), hold: +this.hold.toFixed(2), plucks: this.plucks, lastStrum: this.lastStrum, audio: this.ctx?.state };
+    return { active: this.active, chord: this.fingers ? "fingers" : this.chord, chordFromHand: this.chordFromHand, frets: this.currentFrets(), hole: r(this.group.position), neck: r(neck), side: this.side, plucks: this.plucks, lastStrum: this.lastStrum, audio: this.ctx?.state };
   }
 }
