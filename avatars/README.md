@@ -15,6 +15,7 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | `idle.py` | Seamless idle loops so a person never freezes: standing (breathing, weight shift, head sway) and seated at the chess board (forearms on the table, looking at the board) |
 | `ik.py` | Closed-form two-bone arm IK (elbow can rest on a table) and head aim on the SMPL-X skeleton |
 | `ball.py` | The basketball's 3D path: pixel box of a 24 cm ball -> GVHMR camera -> GVHMR world (incam + global fits) -> any 4x4 |
+| `ball_props.py` | props.json's basketball for an export: YOLO ball boxes in `views/source.mkv` + GVHMR's MotionResult -> bundle coordinates (4DAnyone env) |
 | `gaussian_ply.py` | Standard 3DGS binary PLY read/write |
 | `bundle.py` | Writes an avatar bundle; validates any bundle against the contract |
 | `digs_io.py` | Photo/NLF/DiGS glue: crop and intrinsics, DiGS reference JSON, rasterizer Gaussians to PLY, sanity checks |
@@ -116,6 +117,16 @@ the camera pose implied by GVHMR's two fits of the same body (`smpl_params_incam
 `gvhmr_motion.rest_pelvis`) -> `world`: pass `[rot | t] @ motion_world_to_canonical_world` for bundle space (the
 export's `placement`). No box, or a box touching the image edge (with `width`/`height`), gives NaN. A hand over the ball
 or motion blur changes its size and so its distance: smooth the distance over time before trusting single frames.
+`smooth=5` does that: each distance becomes a robust line (Theil-Sen) through the seen frames around it, so one cut box is
+ignored and a ball flying away isn't pulled back at the clip's ends.
+
+**In the export:** for a shooting clip, `pipeline/lucid/export.py` calls `ball_props.basketball_object(views, [rot | t], n)`
+and puts `{"kind": "basketball", "radius": 0.12, "track": [...]}` before the hoop in `props.json`. It reads, all from the
+run's `views/`: `source.mkv` (4DAnyone's canonical clip, RGB-identical to GVHMR's input), `gvhmr/` (MotionResult:
+`smpl_params_incam`, `smpl_params_global`, `K_fullimg`, image size; names checked against 4DAnyone's source) and
+`cameras.json` (`motion_world_to_canonical_world`). Boxes: YOLOv8x's COCO "sports ball", most confident per frame.
+J0 comes from GVHMR's own `SMPLX_NEUTRAL.npz` (`pelvis_from_model`, numpy). No GVHMR camera, fewer than 3 seen frames,
+or any error: no ball (logged as `[export] ball skipped`), the export goes on.
 
 ## Showing an avatar in a player that can't skin yet
 

@@ -67,3 +67,53 @@ def test_ball_world_end_to_end():
     assert (np.linalg.norm(got - want, axis=1) < 0.02 * np.linalg.norm(cam_pts, axis=1)).all()
     # one K per frame works the same
     np.testing.assert_allclose(ball_world(np.tile(K, (3, 1, 1)), boxes, incam, glob, J0, world=world), got)
+
+
+def test_pelvis_from_model_is_the_regressed_root_of_the_shaped_body():
+    from lucid_avatars.ball import pelvis_from_model
+
+    rng = np.random.default_rng(3)
+    v_template = rng.normal(size=(6, 3))
+    shapedirs = rng.normal(scale=0.01, size=(6, 3, 300))  # SMPL-X ships more shape components than GVHMR's 10
+    J_regressor = np.zeros((4, 6))
+    J_regressor[0, [1, 4]] = 0.5
+    betas = rng.normal(size=10)
+    shaped = v_template + shapedirs[:, :, :10] @ betas
+    np.testing.assert_allclose(pelvis_from_model(v_template, shapedirs, J_regressor, betas), (shaped[1] + shaped[4]) / 2)
+
+
+def test_smooth_distance_fixes_a_bad_box_and_keeps_directions():
+    from lucid_avatars.ball import smooth_distance
+
+    t = np.linspace(0, 1, 9)
+    pts = np.stack([0.5 * t, -0.2 + t, 3.0 + t], axis=1)
+    noisy = pts.copy()
+    noisy[4] *= 1.3  # a hand over the ball: box too small, so the distance comes out too far
+    noisy[6] = np.nan
+    got = smooth_distance(noisy, window=5)
+    assert np.isnan(got[6]).all()
+    np.testing.assert_allclose(got[4] / np.linalg.norm(got[4]), pts[4] / np.linalg.norm(pts[4]))  # same ray
+    assert abs(np.linalg.norm(got[4]) - np.linalg.norm(pts[4])) < 0.1
+    assert np.linalg.norm(got[[0, 1, 2, 7, 8]] - pts[[0, 1, 2, 7, 8]], axis=1).max() < 0.1
+
+
+def test_track_for_frames_one_entry_per_bundle_frame():
+    from lucid_avatars.ball import track_for_frames
+
+    pts = np.array([[0.12345, 1.0, -0.5], [np.nan] * 3, [1.0, 2.0, 3.0]])
+    assert track_for_frames(pts, 3) == [[0.123, 1.0, -0.5], None, [1.0, 2.0, 3.0]]
+    assert track_for_frames(pts, 5) == [[0.123, 1.0, -0.5], [0.123, 1.0, -0.5], None, [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]
+
+
+def test_ball_world_smooths_distance_when_asked():
+    rng = np.random.default_rng(4)
+    J0 = np.array([0.003, -0.35, 0.012])
+    incam, glob, T = _gvhmr_pair(5, J0, rng)
+    cam_pts = np.array([[0.2, 0.0, 4.0]] * 5)
+    boxes = np.array([sphere_box(K, p, BALL_DIAMETER / 2) for p in cam_pts])
+    boxes[2] = [boxes[2][0] + 3, boxes[2][1] + 3, boxes[2][2] - 3, boxes[2][3] - 3]  # cut by a hand: looks farther
+    want = np.einsum("nab,nb->na", T[:, :3, :3], cam_pts) + T[:, :3, 3]
+    raw = ball_world(K, boxes, incam, glob, J0)
+    smooth = ball_world(K, boxes, incam, glob, J0, smooth=5)
+    assert np.linalg.norm(raw[2] - want[2]) > 0.3
+    assert np.linalg.norm(smooth[2] - want[2]) < 0.05

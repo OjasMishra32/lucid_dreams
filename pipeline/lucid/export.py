@@ -16,6 +16,7 @@ import math
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,9 @@ import numpy as np
 from .gaussians import Gaussians, read_ply, write_ply, write_spz
 
 SH_C0 = 0.28209479177387814
+AVATARS = Path(__file__).resolve().parents[2] / "avatars"  # lucid_avatars: the ball's 3D path (ball_props.py)
+if AVATARS.is_dir() and str(AVATARS) not in sys.path:
+    sys.path.append(str(AVATARS))
 
 
 def parse_args(argv=None):
@@ -85,9 +89,9 @@ def shot_direction(frames: list[Gaussians]) -> np.ndarray | None:
     return d / n if n > 0.03 else None
 
 
-def shot_props(frames: list[Gaussians], words: str, fps: float) -> dict | None:
-    """props.json for a shooting clip: a regulation hoop where the shooter is aiming (AGENTS.md, Props). Added, not
-    seen: the hoop isn't reconstructed, it's placed."""
+def shot_props(frames: list[Gaussians], words: str, fps: float, ball: dict | None = None) -> dict | None:
+    """props.json for a shooting clip: the tracked ball (ball_object), when there is one, and a regulation hoop where
+    the shooter is aiming (AGENTS.md, Props). Added, not seen: the hoop isn't reconstructed, it's placed."""
     if not SHOT.search(words or ""):
         return None
     d = shot_direction(frames)
@@ -95,8 +99,26 @@ def shot_props(frames: list[Gaussians], words: str, fps: float) -> dict | None:
         d = np.array([0.0, 1.0])  # unknown: away from the source camera, which looks along +Z in bundle space
     feet = frames[0].means[:, [0, 2]].mean(0)
     rim = feet + d * RIM_DISTANCE
-    return {"fps": fps, "objects": [{"kind": "hoop", "rim": [round(float(rim[0]), 3), RIM_HEIGHT, round(float(rim[1]), 3)],
-                                     "facing": [round(float(-d[0]), 4), 0.0, round(float(-d[1]), 4)], "added": True}]}
+    hoop = {"kind": "hoop", "rim": [round(float(rim[0]), 3), RIM_HEIGHT, round(float(rim[1]), 3)],
+            "facing": [round(float(-d[0]), 4), 0.0, round(float(-d[1]), 4)], "added": True}
+    return {"fps": fps, "objects": ([ball] if ball else []) + [hoop]}
+
+
+def ball_object(result: Path | None, rot: np.ndarray, t: np.ndarray, n_frames: int) -> dict | None:
+    """The basketball's track in bundle coordinates, from GVHMR's camera and the ball's box in the clip GVHMR ran on
+    (avatars/lucid_avatars/ball_props.py). None when the result has no GVHMR camera or the ball isn't found; any
+    failure is logged and skipped, never the export's."""
+    if result is None:
+        return None
+    M = np.eye(4)
+    M[:3, :3], M[:3, 3] = rot, t
+    try:
+        from lucid_avatars import ball_props
+
+        return ball_props.basketball_object(result, M, n_frames)
+    except Exception as e:  # noqa: BLE001
+        print(f"[export] ball skipped: {type(e).__name__}: {e}")
+        return None
 
 
 def placement(first: Gaussians, result: Path | None) -> tuple[np.ndarray, np.ndarray]:
@@ -341,7 +363,9 @@ def main(argv=None):
                     "seenFraction": round(float(np.mean(seen_fractions)), 3) if seen_fractions else None},
         "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    props = shot_props(placed_frames, f"{a.intent} {a.name}", a.fps)
+    words = f"{a.intent} {a.name}"
+    ball = ball_object(a.result, rot, t, len(placed_frames)) if SHOT.search(words) else None
+    props = shot_props(placed_frames, words, a.fps, ball)
     if props:
         (a.out / "props.json").write_text(json.dumps(props, indent=2))
         dream["props"] = "props.json"

@@ -76,13 +76,49 @@ def camera_to_global(incam: dict, global_: dict, J0) -> np.ndarray:
     return T
 
 
+def smooth_distance(cam, window: int = 5) -> np.ndarray:
+    """(N, 3) camera-space centres with each distance replaced by a robust line through the seen frames within
+    `window` around it (Theil-Sen: median slope, median offset), so one bad box is ignored and a ball flying away
+    isn't pulled back at the clip's ends. The directions, which a hand or blur barely moves, stay. NaN stays NaN."""
+    cam = np.asarray(cam, dtype=np.float64)
+    dist = np.linalg.norm(cam, axis=1)
+    out = np.full_like(cam, np.nan)
+    h = window // 2
+    for i in np.flatnonzero(np.isfinite(dist)):
+        j = np.arange(max(0, i - h), min(len(dist), i + h + 1))
+        j = j[np.isfinite(dist[j])]
+        a, b = np.triu_indices(len(j), 1)
+        slope = np.median((dist[j[b]] - dist[j[a]]) / (j[b] - j[a])) if len(a) else 0.0
+        out[i] = cam[i] * (np.median(dist[j] - slope * (j - i)) / dist[i])
+    return out
+
+
+def pelvis_from_model(v_template, shapedirs, J_regressor, betas) -> np.ndarray:
+    """J0, the rest pelvis SMPL-X turns the body about, for these betas from the model file's own arrays
+    (SMPLX_NEUTRAL.npz: v_template (V, 3), shapedirs (V, 3, B), J_regressor (J, V)); numpy only, no GPU."""
+    betas = np.asarray(betas, dtype=np.float64).reshape(-1)
+    shaped = np.asarray(v_template, dtype=np.float64) + np.asarray(shapedirs, dtype=np.float64)[:, :, : len(betas)] @ betas
+    return np.asarray(J_regressor, dtype=np.float64)[0] @ shaped
+
+
+def track_for_frames(points, n_frames: int) -> list:
+    """props.json `track`: one entry per bundle frame (nearest source frame in time, both spanning the clip),
+    [x, y, z] to the millimetre or None where the ball isn't known."""
+    points = np.asarray(points, dtype=np.float64)
+    src = np.rint(np.arange(n_frames) * (len(points) - 1) / max(n_frames - 1, 1)).astype(int)
+    return [[round(float(v), 3) for v in points[i]] if np.isfinite(points[i]).all() else None for i in src]
+
+
 def ball_world(K, boxes, incam: dict, global_: dict, J0, world=None, diameter: float = BALL_DIAMETER,
-               width: int | None = None, height: int | None = None) -> np.ndarray:
+               width: int | None = None, height: int | None = None, smooth: int = 0) -> np.ndarray:
     """(N, 3) ball centres in GVHMR's world moved by `world` (4x4, default none); NaN where there's no usable box.
 
-    Frame i of boxes, K (if per frame), incam and global_ must be the same video frame.
+    Frame i of boxes, K (if per frame), incam and global_ must be the same video frame. smooth > 1 takes each
+    distance as the median over that many frames (smooth_distance) before leaving the camera.
     """
     cam = ball_in_camera(K, boxes, diameter, width, height)
+    if smooth > 1:
+        cam = smooth_distance(cam, smooth)
     T = camera_to_global(incam, global_, J0)
     if world is not None:
         T = np.asarray(world, dtype=np.float64) @ T
