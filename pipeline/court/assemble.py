@@ -967,6 +967,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
             f_real = (cfg.get("source") or {}).get("freezeSource", video["freezeSource"])
             k1F = calib.k1[int(np.argmin(np.abs(np.asarray(calib.src) - f_real)))]
         ball = ball_piece(w, cfg, S, players, camF, splats_by_id, k1F)
+        silhouette_piece(w, cfg, players, camF, k1F)
         seat_cfg = {**SEAT, **(cfg.get("seat") or {})}
         pair = np.mean([p["_"]["contact"] for p in players], 0)
         pair_centre = [round(float(pair[0]), 3), 0.0, round(float(pair[1]), 3)]
@@ -1296,6 +1297,90 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
     return errs, pending, info
 
 
+def render_splats(cam: geo.Cam, bodies: list, min_alpha: float = 0.5, max_r: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """A plain look at Gaussians through a camera, to check by eye: each solid one (alpha >= min_alpha) is a flat disc
+    of its base colour at its centre's pixel, two of its largest standard deviations wide (at most max_r pixels), and
+    the nearest wins each pixel. Returns (rgb 0-1, per pixel the index into `bodies`, -1 where none)."""
+    h, w = cam.h, cam.w
+    zbuf = np.full(h * w, np.inf)
+    groups = []
+    for i, s in enumerate(bodies):
+        keep = s.alpha >= min_alpha
+        u, v, z = cam.project(s.pos[keep].astype(float))
+        ok = (z > 1e-6) & (u > -max_r) & (u < w + max_r) & (v > -max_r) & (v < h + max_r)
+        r = np.clip(np.rint(2 * cam.f * np.exp(s.scales[keep][ok].astype(float)).max(1) / z[ok]), 0, max_r).astype(int)
+        groups.append((i, np.rint(u[ok]).astype(int), np.rint(v[ok]).astype(int), z[ok], r, s.rgb[keep][ok]))
+
+    def discs():
+        for i, u, v, z, r, rgb in groups:
+            for rad in np.unique(r):
+                sel = r == rad
+                for dy in range(-rad, rad + 1):
+                    for dx in range(-rad, rad + 1):
+                        if dx * dx + dy * dy > rad * rad + rad:
+                            continue
+                        x, y = u[sel] + dx, v[sel] + dy
+                        on = (x >= 0) & (x < w) & (y >= 0) & (y < h)
+                        yield i, (y[on] * w + x[on]), z[sel][on], rgb[sel][on]
+
+    for _, pix, z, _ in discs():
+        np.minimum.at(zbuf, pix, z)
+    out = np.zeros((h * w, 3))
+    ids = np.full(h * w, -1)
+    for i, pix, z, rgb in discs():
+        win = z <= zbuf[pix]
+        out[pix[win]] = rgb[win]
+        ids[pix[win]] = i
+    return out.reshape(h, w, 3), ids.reshape(h, w)
+
+
+def undistort_image(img: np.ndarray, cam: geo.Cam, k1: float) -> np.ndarray:
+    """A raw frame (or mask) resampled onto the pinhole grid of `cam` (its size): the calibration's lens puts the
+    pinhole pixel's normalised point xn at xn (1 + k1 |xn|^2)."""
+    import cv2
+
+    if k1 == 0:
+        return img.copy()
+    u, v = np.meshgrid(np.arange(cam.w, dtype=np.float32), np.arange(cam.h, dtype=np.float32))
+    xn, yn = (u - cam.cx) / cam.f, (v - cam.cy) / cam.f
+    d = 1 + k1 * (xn * xn + yn * yn)
+    return cv2.remap(img, (cam.cx + cam.f * xn * d).astype(np.float32), (cam.cy + cam.f * yn * d).astype(np.float32),
+                     cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def silhouette_iou(ids: np.ndarray, i: int, mask: np.ndarray) -> float:
+    """Intersection over union of body i's pixels in a render (render_splats' ids) and a mask."""
+    r = ids == i
+    union = int((r | mask).sum())
+    return float((r & mask).sum()) / union if union else 0.0
+
+
+def silhouette_piece(w: Writer, cfg: dict, players: list, camF: geo.Cam, k1F: float, width: int = 960) -> dict:
+    """Each player's splats seen from camera F against its own mask at F (players[].maskF in the config: a
+    segmentation of the raw source frame, undistorted here with F's k1): the silhouette IoU, a placement check by
+    numbers (P8 asks the same of the real render)."""
+    import cv2
+
+    masks = {p["id"]: cfg_player(cfg, p["id"]).get("maskF") for p in players}
+    if not any(masks.values()):
+        return {}
+    cam = camF.scaled(width)
+    _, ids = render_splats(cam, [sp.read_ply(w.root / p["splats"]) for p in players])
+    got = {}
+    for i, p in enumerate(players):
+        if not masks[p["id"]]:
+            continue
+        m = cv2.imread(str(expand(masks[p["id"]])), cv2.IMREAD_GRAYSCALE)
+        if m is None:
+            w.notes.append(f"player {p['id']}: its mask at F ({masks[p['id']]}) can't be read: no silhouette check")
+            continue
+        m = undistort_image(m, camF.scaled(m.shape[1]), k1F)
+        m = cv2.resize(m, (cam.w, cam.h), interpolation=cv2.INTER_AREA) >= 128
+        got[p["id"]] = w.pieces[f"player:{p['id']}"]["silhouetteIoU"] = round(silhouette_iou(ids, i, m), 3)
+    w.notes.append("silhouette IoU at F, splats vs the mask: " + ", ".join(f"{k} {v}" for k, v in got.items()))
+    return got
+
+
 def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None = None) -> list[Path]:
     """Small JPEGs of the assembled show to look at by eye: the live region at the middle of pass 1 (the watch), the
     middle of the first ease, its last frame (F), the make (the first show frame nearest makeSource), the first show
@@ -1325,7 +1410,42 @@ def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None 
         made.append(dst)
     dst = out_dir / "freeze-png.jpg"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(bundle / v["freeze"]), "-vf", f"scale={width}:-2", "-q:v", "3", str(dst)], check=True)
-    return made + [dst]
+    return made + [dst] + splats_at_f(bundle, out_dir, picks["at-F"])
+
+
+def splats_at_f(bundle: Path, out_dir: Path, n: int, width: int = 1280) -> list[Path]:
+    """The freeze's splats seen from camera F under the picture at F (freeze.png): the picture with the splats over it
+    at half strength, and the picture with each body's outline (players cyan, magenta; extras yellow; the ball
+    orange). Show frame n is F's (for the names)."""
+    import cv2
+
+    court = json.loads((bundle / "court.json").read_text())
+    v, fz = court["video"], court["freeze"]
+    frames = json.loads((bundle / v["frames"]).read_text())
+    cam = frame_camera(court["camera"], frames, v).scaled(width)
+    files = [p["splats"] for p in fz["players"]] + [o["file"] for o in fz.get("others", []) if str(o.get("file") or "").endswith(".ply")]
+    rgb, ids = render_splats(cam, [sp.read_ply(bundle / f) for f in files])
+    pic = cv2.resize(cv2.imread(str(bundle / v["freeze"]), cv2.IMREAD_COLOR), (cam.w, cam.h), interpolation=cv2.INTER_AREA)
+    under = pic.astype(np.float64)
+    on = ids >= 0
+    under[on] = 0.5 * under[on] + 0.5 * 255 * rgb[on][:, ::-1]
+    outline = pic.copy()
+    colours = [(255, 255, 0), (255, 0, 255)] + [(0, 255, 255)] * len(files)  # BGR
+    for i in range(len(files)):
+        m = (ids == i).astype(np.uint8)
+        edge = cv2.dilate(m - cv2.erode(m, np.ones((3, 3), np.uint8)), np.ones((2, 2), np.uint8)) > 0
+        outline[edge] = colours[i]
+    b = fz.get("ball")
+    if b:
+        u, vv, z = cam.project(np.asarray(b["centre"], float))
+        if z > 0:
+            cv2.circle(outline, (int(round(float(u))), int(round(float(vv)))), max(1, int(round(cam.f * b["radius"] / float(z)))), (0, 140, 255), 2)
+    made = []
+    for name, img in (("under", under), ("outline", outline)):
+        dst = out_dir / f"at-F-splats-{name}-show{n:04d}.jpg"
+        cv2.imwrite(str(dst), np.clip(img, 0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 88])
+        made.append(dst)
+    return made
 
 
 def report(bundle: Path) -> str:

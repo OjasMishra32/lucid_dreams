@@ -16,7 +16,7 @@ import numpy as np
 
 cv2.setNumThreads(2)  # a shared Mac
 
-from assemble_geom import Cam
+from assemble_geom import Cam  # noqa: E402
 
 
 @dataclass

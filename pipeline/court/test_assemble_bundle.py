@@ -176,6 +176,33 @@ class Bundle(unittest.TestCase):
         m = min(range(len(frames)), key=lambda i: (abs(frames[i]["src"] - court["video"]["makeSource"]), i))
         self.assertIn(f"make-show{m:04d}.jpg", names)
         self.assertTrue(all(p.stat().st_size > 1000 for p in made))
+        n = court["video"]["segments"]["eases"][0]["frames"][1]
+        self.assertIn(f"at-F-splats-under-show{n:04d}.jpg", names)
+        self.assertIn(f"at-F-splats-outline-show{n:04d}.jpg", names)
+
+    def test_a_mask_at_f_gives_each_players_silhouette_iou(self):
+        """A player's mask at F (raw source pixels) against its splats seen from camera F: its own silhouette scores
+        high, the same mask moved half a body away scores low."""
+        import cv2
+
+        court = json.loads((self.out / "court.json").read_text())
+        frames = json.loads((self.out / court["video"]["frames"]).read_text())
+        camF = A.frame_camera(court["camera"], frames, court["video"])
+        bodies = [sp.read_ply(self.out / p["splats"]) for p in court["freeze"]["players"]]
+        _, ids = A.render_splats(camF.scaled(1280), bodies)
+        own = np.where(ids == 0, 255, 0).astype(np.uint8)
+        cv2.imwrite(str(self.tmp / "mask-a.png"), cv2.resize(own, (camF.w, camF.h), interpolation=cv2.INTER_NEAREST))
+        x = np.nonzero(own.any(0))[0]
+        moved = np.roll(own, (x.max() - x.min()) // 2, axis=1)
+        cv2.imwrite(str(self.tmp / "mask-b.png"), cv2.resize(moved, (camF.w, camF.h), interpolation=cv2.INTER_NEAREST))
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "maskF": str(self.tmp / "mask-a.png")}, {**cfg["players"][1], "maskF": str(self.tmp / "mask-b.png")}]
+        code, out = self.assemble_with("masks", players=players)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertGreater(asm["pieces"]["player:a"]["silhouetteIoU"], 0.85)
+        self.assertLess(asm["pieces"]["player:b"]["silhouetteIoU"], 0.3)
+        self.assertTrue(any(n.startswith("silhouette IoU at F") for n in asm["notes"]), asm["notes"])
 
     def staged_show(self, name: str) -> tuple[Path, dict]:
         S = json.loads((STANDIN / "court.json").read_text())

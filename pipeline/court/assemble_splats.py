@@ -20,7 +20,7 @@ import numpy as np
 
 cv2.setNumThreads(2)  # a shared Mac
 
-from assemble_geom import Cam, Similarity, contact_points, matrix_to_quat
+from assemble_geom import Cam, Similarity, contact_points, matrix_to_quat  # noqa: E402
 
 C0 = 0.28209479177387814
 BLUE = np.array([0.0, 0.44, 0.89])  # the export's tint for what no camera saw (lucid/export.py `tinted`)
