@@ -19,7 +19,9 @@ export default function DreamCard({ dream }: { dream: Dream }) {
       onMouseLeave={() => video.current?.pause()}
     >
       <div className="thumb">
-        {dream.kind === "avatar" && <span className="badge">Avatar</span>}
+        {(dream.kind === "avatar" || dream.private) && (
+          <span className="badge">{[dream.kind === "avatar" && "Avatar", dream.private && "Private"].filter(Boolean).join(" · ")}</span>
+        )}
         {thumb && <img src={thumb} alt="" loading="lazy" />}
         {preview && (
           <video

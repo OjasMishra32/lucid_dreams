@@ -195,6 +195,15 @@ img, video { display: block; max-width: 100%; }
 .segmented button:hover { color: var(--text); }
 .segmented button.on { background: rgba(255, 255, 255, 0.18); color: var(--text); }
 
+/* a private dream's numbers, folded away until asked for */
+.quiet-details { margin-top: 56px; }
+.quiet-details summary { display: inline-block; cursor: pointer; font-size: 15px; color: var(--muted); list-style: none; transition: color 0.2s ease; }
+.quiet-details summary::-webkit-details-marker { display: none; }
+.quiet-details summary::after { content: " \203A"; }
+.quiet-details summary:hover { color: var(--text); }
+.quiet-details[open] summary::after { content: ""; }
+.quiet-details > h2:first-of-type { margin-top: 28px; }
+
 /* ---------- the plan (experience.json) ---------- */
 .plan { margin-top: 56px; }
 .plan-eyebrow { font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 4px; }

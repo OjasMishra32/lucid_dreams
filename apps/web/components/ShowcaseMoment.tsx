@@ -17,7 +17,7 @@ export interface MomentDream {
  * One showcase moment: the dream's 360 preview, big and quiet, beside its sentence. The preview only plays while it's
  * on screen, so five of them never fight for the laptop. Opens the viewer, or the chess table for the legends.
  */
-export default function ShowcaseMoment({ n, moment, dream }: { n: number; moment: Moment; dream: MomentDream | null }) {
+export default function ShowcaseMoment({ n, moment, dream, kept = false }: { n: number; moment: Moment; dream: MomentDream | null; kept?: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -43,7 +43,13 @@ export default function ShowcaseMoment({ n, moment, dream }: { n: number; moment
   ) : (
     <span className="moment-empty">
       <b className="num">{n}</b>
-      <span>{strength ? "The board is ready. Their avatar is still being made." : "Not in the library yet."}</span>
+      <span>
+        {kept
+          ? "Private. Shown only with her family’s permission."
+          : strength
+            ? "The board is ready. A teammate sits here once their avatar is made."
+            : "Not in the library yet."}
+      </span>
     </span>
   );
 
@@ -68,7 +74,7 @@ export default function ShowcaseMoment({ n, moment, dream }: { n: number; moment
           {query ? (
             <ViewerLink query={query} className="btn">{dream || !strength ? moment.action : "Play chess"}</ViewerLink>
           ) : (
-            <span className="moment-wait">Ready once it&apos;s made</span>
+            <span className="moment-wait">{kept ? "Private to the family" : "Ready once it’s made"}</span>
           )}
           {dream && <Link href={`/library/${encodeURIComponent(dream.id)}`} className="more">The dream</Link>}
         </div>

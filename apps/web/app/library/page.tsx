@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
 import DreamCard from "@/components/DreamCard";
 import JobTile from "@/components/JobTile";
 import { activeJobs, tend } from "@/lib/bridge";
 import { listDreams, listReady } from "@/lib/bridge/dreams";
+import { onThisMac } from "@/lib/bridge/http";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Library" };
@@ -12,7 +14,7 @@ export default async function Library() {
   const jobs = await activeJobs(); // first: a job that just finished turns into a dream here
   const all = listDreams();
   tend(all);
-  const dreams = listReady(all);
+  const dreams = listReady(all, { withPrivate: onThisMac(await headers()) }); // a family's dream: on this Mac only
 
   return (
     <div className="wrap">

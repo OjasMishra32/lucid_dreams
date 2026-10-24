@@ -84,10 +84,13 @@ export function heldIds(): Set<string> {
   }
 }
 
-/** What players and pages list: whole bundles only, never one still being copied back or held back. */
-export function listReady(dreams: Dream[] = listDreams()): Dream[] {
+/**
+ * What players and pages list: whole bundles only, never one still being copied back or held back. Private dreams (a
+ * family's, `"private": true` in dream.json) only where asked for: the players, and the library on this Mac itself.
+ */
+export function listReady(dreams: Dream[] = listDreams(), opts: { withPrivate?: boolean } = {}): Dream[] {
   const held = heldIds();
-  return dreams.filter((d) => !held.has(d.id) && !fetching(d.id) && bundleComplete(d));
+  return dreams.filter((d) => !held.has(d.id) && (opts.withPrivate || d.private !== true) && !fetching(d.id) && bundleComplete(d));
 }
 
 /** The dream a page should lead with: newest real person with a 360 preview (test bundles last). */

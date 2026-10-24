@@ -23,7 +23,7 @@ const TYPES: Record<string, string> = {
  */
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
-  if (path.length === 1 && path[0] === "index.json") return json(listReady());
+  if (path.length === 1 && path[0] === "index.json") return json(listReady(undefined, { withPrivate: true })); // for players
 
   const file = resolve(DREAMS_DIR, ...path);
   if (!file.startsWith(DREAMS_DIR + sep) || !existsSync(file) || !statSync(file).isFile()) {

@@ -41,3 +41,16 @@ export function viewerOrigin(h: Headers): string {
   if (set) return set.replace(/\/$/, "");
   return `https://${new URL(publicOrigin(h)).hostname}:5180`;
 }
+
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[?::1\]?|::ffff:127(\.\d{1,3}){3})$/i;
+
+/**
+ * Whether the page is being viewed on this Mac itself rather than from another device on the Wi-Fi: the Host it was
+ * asked for, and the address Next recorded for the request. Casual privacy for a family's dream, not a lock: a client
+ * on the network that fakes both headers gets past it.
+ */
+export function onThisMac(h: Headers): boolean {
+  const host = (h.get("host") ?? "").replace(/:\d+$/, "");
+  const from = (h.get("x-forwarded-for") ?? "").split(",").map((a) => a.trim()).filter(Boolean);
+  return LOOPBACK.test(host) && from.every((a) => LOOPBACK.test(a));
+}

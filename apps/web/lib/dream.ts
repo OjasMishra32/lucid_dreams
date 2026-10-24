@@ -36,6 +36,7 @@ export interface Dream {
   intent?: string | null; // what the user wants to do with this person ("teach me this strum")
   experience?: string | null; // "experience.json": the plan written from the intent (see Experience below)
   captions?: string | null; // "captions.vtt": WebVTT of what the person says, on the clip's own clock
+  private?: boolean; // a family's dream: never in the kiosk, the showcase or a share link; the library shows it on this Mac only
   createdAt?: string;
 }
 

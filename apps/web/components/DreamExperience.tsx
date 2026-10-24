@@ -32,7 +32,7 @@ export default function DreamExperience({
   kind: "replay" | "avatar";
   name: string;
   durationS: number;
-  shareUrl: string;
+  shareUrl: string | null; // null: a private dream has no share link
   initial: ExperienceState;
 }) {
   const [s, setS] = useState<ExperienceState>(initial);
@@ -105,7 +105,7 @@ export default function DreamExperience({
             {kind === "avatar" && <ViewerLink query={chess} className="btn secondary">Play chess with them</ViewerLink>}
           </>
         )}
-        <ShareButton title={name} url={shareUrl} />
+        {shareUrl && <ShareButton title={name} url={shareUrl} />}
       </div>
 
       {s.state === "working" && (

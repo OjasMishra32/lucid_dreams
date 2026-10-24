@@ -33,21 +33,21 @@ export const MOMENTS: Moment[] = [
     credit: "Clip supplied for this non-commercial demo. Not affiliated.",
   },
   {
-    title: "Chess with the legends",
-    line: "Seated across a real-size board on your table, moving their own pieces, with a clock at your side.",
+    title: "Chess at a legend’s level",
+    line: "A teammate across a real-size board on your table, moving their own pieces, with the engine playing at a world champion’s peak.",
     intent: "Play chess with me",
     where: "Your table",
-    ids: ["bobby-fischer", "magnus-carlsen"],
+    ids: ["vishal-head", "vishal"], // a consenting teammate's avatar; no legend's likeness is used anywhere
     action: "Play chess with them",
-    chess: { "bobby-fischer": "fischer", "magnus-carlsen": "carlsen" },
+    chess: { "vishal-head": "fischer", vishal: "fischer" },
   },
   {
     title: "Someone you’ve lost",
     line: "From a family photo or home video, someone you miss, simply sitting with you.",
     intent: "I just want to sit with her",
     where: "Your living room",
-    ids: [],
-    sentence: "\\bsit with (her|him)\\b", // the family moment's id isn't known; its sentence is (demo/showcase.md)
+    ids: ["ian-grandma"], // private unless her family agrees to showing; a private dream is never shown here
+    sentence: "\\bsit with (her|him)\\b",
     action: "Bring them into your room",
     credit: "Shown with the family’s written consent.",
   },

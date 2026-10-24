@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import ShowcaseMoment, { type MomentDream } from "@/components/ShowcaseMoment";
-import { listReady } from "@/lib/bridge/dreams";
+import { listDreams, listReady } from "@/lib/bridge/dreams";
 import { intentOf } from "@/lib/bridge/experience";
 import { dreamFile } from "@/lib/dream";
 import { MOMENTS, SHOWCASE_IDS } from "@/lib/showcase";
@@ -12,7 +12,9 @@ export const metadata: Metadata = {
 };
 
 export default function Showcase() {
-  const ready = new Map(listReady().map((d) => [d.id, d]));
+  const all = listDreams();
+  const ready = new Map(listReady(all).map((d) => [d.id, d])); // never a private dream: those are a family's
+  const privateIds = new Set(all.filter((d) => d.private).map((d) => d.id));
   return (
     <>
       <header className="hero showcase-head">
@@ -43,7 +45,8 @@ export default function Showcase() {
                 poster: d.thumb ? dreamFile(d.id, d.thumb) : null,
               }
             : null;
-          return <ShowcaseMoment key={m.title} n={i + 1} moment={m} dream={dream} />;
+          const kept = !dream && m.ids.some((id) => privateIds.has(id));
+          return <ShowcaseMoment key={m.title} n={i + 1} moment={m} dream={dream} kept={kept} />;
         })}
       </div>
     </>
