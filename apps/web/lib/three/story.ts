@@ -37,7 +37,10 @@ const smooth = (a: number, b: number, x: number) => {
 };
 const lerp = THREE.MathUtils.lerp;
 
-/** Shader inputs for one splat mesh: a scan band (shown between lo and hi, with a soft bright line at its edges), size. */
+/**
+ * Shader inputs for one splat mesh: a scan band (shown between lo and hi, with a soft bright line at its edges), size,
+ * and the exploded view (every Gaussian pushed out from her centre, each by its own share of `explode` metres).
+ */
 function makeUniforms() {
   return {
     lo: dyno.dynoFloat(-1),
@@ -45,6 +48,7 @@ function makeUniforms() {
     edge: dyno.dynoFloat(0.06),
     glow: dyno.dynoFloat(0.9),
     size: dyno.dynoFloat(1),
+    explode: dyno.dynoFloat(0),
   };
 }
 type Uniforms = ReturnType<typeof makeUniforms>;
@@ -52,7 +56,7 @@ type Uniforms = ReturnType<typeof makeUniforms>;
 function modifier(u: Uniforms) {
   return dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const d = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, lo: "float", hi: "float", edge: "float", glow: "float", size: "float" },
+      inTypes: { gsplat: dyno.Gsplat, lo: "float", hi: "float", edge: "float", glow: "float", size: "float", explode: "float" },
       outTypes: { gsplat: dyno.Gsplat },
       statements: ({ inputs: i, outputs: o }) =>
         dyno.unindentLines(`
@@ -68,10 +72,15 @@ function modifier(u: Uniforms) {
           vec3 col = ${o.gsplat}.rgba.rgb;
           col = mix(col, vec3(0.75, 0.9, 1.0), rim * ${i.glow});
           ${o.gsplat}.rgba.rgb = col;
+          vec3 c = ${i.gsplat}.center;
+          float h = fract(sin(dot(c, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+          vec3 out_ = c - vec3(0.0, 0.9, 0.0);
+          out_ = out_ / max(length(out_), 0.05);
+          ${o.gsplat}.center = c + out_ * ${i.explode} * (0.25 + 0.75 * h * h);
         `),
     });
-    const { lo, hi, edge, glow, size } = u;
-    return { gsplat: d.apply({ gsplat, lo, hi, edge, glow, size }).gsplat };
+    const { lo, hi, edge, glow, size, explode } = u;
+    return { gsplat: d.apply({ gsplat, lo, hi, edge, glow, size, explode }).gsplat };
   });
 }
 
@@ -347,11 +356,11 @@ export async function mountStory(host: HTMLElement, input: StoryInput, hooks: St
     const portrait = w / Math.max(1, h) < 0.9;
     const phone = w < 760;
 
-    // beats: 0 the product shot · 1 not a video · 2 the cameras · 3 seen and imagined · 4 life size
-    const toClose = smooth(0.12, 0.22, p);
-    const toRig = smooth(0.3, 0.4, p);
-    const toReal = smooth(0.56, 0.64, p);
-    const toLife = smooth(0.78, 0.88, p);
+    // beats: 0 the product shot · 1 not a video · 2 what she's made of · 3 the cameras · 4 seen and imagined · 5 life size
+    const toClose = smooth(0.08, 0.16, p);
+    const toRig = smooth(0.42, 0.5, p);
+    const toReal = smooth(0.64, 0.7, p);
+    const toLife = smooth(0.84, 0.9, p);
     const zoomOut = portrait ? 1.3 : 1;
     const hero = K([0, 0.98, 4.6 * (portrait ? 1.55 : 1)], [0, 0.9, 0]); // (her arm out: a phone needs more room)
     const close = K([0.25, 0.95, 5.9 * zoomOut], [0, 0.86, 0]);
@@ -386,20 +395,23 @@ export async function mountStory(host: HTMLElement, input: StoryInput, hooks: St
       dragV *= Math.exp(-dt * 3.5);
     }
     const sway = still ? 0 : Math.sin(time * 0.42) * 0.42 * (1 - toClose);
-    const turn = Math.PI * 2 * smooth(0.14, 0.32, p) * (1 - toRig); // all the way round, once, as you scroll
+    const turn = Math.PI * 2 * smooth(0.12, 0.28, p) * (1 - toRig); // all the way round, once, as you scroll
     const spinRig = still ? 0 : time * 0.16 * toRig * (1 - toReal);
-    const turnReal = Math.PI * smooth(0.6, 0.72, p) * (1 - smooth(0.74, 0.8, p));
+    const turnReal = Math.PI * smooth(0.68, 0.78, p) * (1 - smooth(0.8, 0.86, p));
     yaw = sway + turn + spinRig + turnReal + drag;
     person.rotation.y = Math.PI + yaw;
 
     // the scan in: up from the floor on arrival; dissolved to bare Gaussians in beat 1; scanned to blue and back
     const intro = still ? 1 : smooth(0, 2.4, time);
     const H = height + 0.12;
-    uMain.size.value = 1;
+    // the exploded view: she comes apart into her Gaussians, small and spread, then back together
+    const apart = smooth(0.3, 0.37, p) * (1 - smooth(0.4, 0.46, p));
+    uMain.explode.value = (still ? 0.5 : 0.62) * apart;
+    uMain.size.value = lerp(1, 0.3, apart);
     uMain.glow.value = 0.35;
-    const scan = smooth(0.6, 0.7, p) * (1 - smooth(0.74, 0.8, p)); // 0 her colours, 1 the Reality check
+    const scan = smooth(0.68, 0.76, p) * (1 - smooth(0.8, 0.86, p)); // 0 her colours, 1 the Reality check
     if (scan > 0.001) wantReality();
-    if (p > 0.48) wantReality();
+    if (p > 0.56) wantReality();
     const line = lerp(-0.1, H, scan);
     if (real) {
       uMain.lo.value = line;
@@ -418,12 +430,12 @@ export async function mountStory(host: HTMLElement, input: StoryInput, hooks: St
 
     // her shadow, the rig and the ring it stands on
     (ground.shadow.material as THREE.MeshBasicMaterial).opacity = intro * (1 - toRig * (1 - toReal) * 0.6);
-    const rigK = smooth(0.32, 0.5, p);
-    const rigOut = smooth(0.54, 0.6, p);
+    const rigK = smooth(0.45, 0.6, p);
+    const rigOut = smooth(0.63, 0.68, p);
     rig.mat.opacity = rigK > 0 ? 0.7 * (1 - rigOut) : 0;
     rig.lines.visible = rig.mat.opacity > 0.01;
     ground.ringMat.opacity = 0.22 * rigK * (1 - rigOut);
-    const home = rig.lines.visible ? rig.update(still ? (rigK > 0 ? 1 : 0) : rigK, smooth(0.47, 0.54, p), spinRig * 0.5, heads) : 0;
+    const home = rig.lines.visible ? rig.update(still ? (rigK > 0 ? 1 : 0) : rigK, smooth(0.56, 0.62, p), spinRig * 0.5, heads) : 0;
 
     hooks.hud({ yaw: THREE.MathUtils.euclideanModulo(THREE.MathUtils.radToDeg(yaw), 360), fps, cams: home, scan });
     renderer.render(scene, camera);

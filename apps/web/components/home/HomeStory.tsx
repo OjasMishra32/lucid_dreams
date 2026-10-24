@@ -10,11 +10,12 @@ import type { RigCamera } from "@/lib/three/story";
 // DOM, never by re-rendering.
 
 const BEATS: [number, number][] = [
-  [0, 0.12],
-  [0.15, 0.31],
-  [0.33, 0.56],
-  [0.58, 0.79],
-  [0.82, 1.01],
+  [0, 0.08],
+  [0.1, 0.27],
+  [0.29, 0.44],
+  [0.46, 0.65],
+  [0.67, 0.84],
+  [0.86, 1.01],
 ];
 
 export interface HomeStoryProps {
@@ -32,6 +33,7 @@ export default function HomeStory(p: HomeStoryProps) {
   const stage = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">(p.frame ? "loading" : "failed");
   const [height, setHeight] = useState<number | null>(null);
+  const [count, setCount] = useState<number | null>(null);
   const seen = p.seen != null ? Math.round(p.seen * 100) : null;
 
   useEffect(() => {
@@ -54,6 +56,7 @@ export default function HomeStory(p: HomeStoryProps) {
           ready: (info) => {
             if (gone) return;
             setHeight(info.height);
+            setCount(info.count);
             setState("ready");
           },
           failed: () => !gone && setState("failed"),
@@ -65,7 +68,7 @@ export default function HomeStory(p: HomeStoryProps) {
               stage.current?.setAttribute("data-beat", String(b));
             }
             // light grey to black as the product shot gives way to the story
-            const k = Math.min(1, Math.max(0, (pr - 0.09) / 0.07));
+            const k = Math.min(1, Math.max(0, (pr - 0.05) / 0.06));
             const s = Math.round(k * 100) / 100;
             if (s !== shade) {
               shade = s;
@@ -108,16 +111,21 @@ export default function HomeStory(p: HomeStoryProps) {
           <h2>A real person, rebuilt in 3D from one clip.</h2>
         </div>
         <div className="story-beat beat-2">
+          <p className="eyebrow-x">What she&rsquo;s made of</p>
+          <h2>{count ? `${count.toLocaleString("en-US")} Gaussians in this frame.` : "Hundreds of thousands of Gaussians."}</h2>
+          <p className="story-sub">Tiny translucent blobs of colour, each one placed by a GPU to match every view of her. No mesh, no texture.</p>
+        </div>
+        <div className="story-beat beat-3">
           <p className="eyebrow-x">4DAnyone</p>
           <h2>{p.views ?? 48} cameras that were never there.</h2>
           <p className="story-sub">From one phone video, a dome of cameras she never stood in front of. Every frame, every angle.</p>
         </div>
-        <div className="story-beat beat-3">
+        <div className="story-beat beat-4">
           <p className="eyebrow-x">Reality check</p>
           <h2>See exactly what was imagined.</h2>
           <p className="story-sub">{seen != null ? `The camera saw ${seen}% of her. ` : ""}Everything it never saw turns blue, whenever you ask.</p>
         </div>
-        <div className="story-beat beat-4">
+        <div className="story-beat beat-5">
           <p className="eyebrow-x">Life size</p>
           <h2>{height ? `${height.toFixed(2)} metres tall.` : "Real size."} On your floor.</h2>
           <p className="story-sub">In Meta Quest 3S passthrough, with nothing but your hands.</p>

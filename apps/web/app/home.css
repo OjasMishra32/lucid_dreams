@@ -31,7 +31,7 @@
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .nav.nav-light { background: #fafafc; } }
 
 /* ---------------------------------------------------------------- the opening */
-.story { position: relative; height: 520vh; margin-top: calc(-1 * var(--nav-h)); }
+.story { position: relative; height: 640vh; margin-top: calc(-1 * var(--nav-h)); }
 .story-stage {
   --dark: 0;
   position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden;
@@ -66,8 +66,8 @@
 }
 .story-beat h2 { font-size: 56px; line-height: 1.07; letter-spacing: -0.005em; margin: 0; }
 .story-sub { font-size: 21px; line-height: 1.38; color: #86868b; margin: 16px auto 0; max-width: 600px; font-weight: 600; }
-.story-stage[data-beat="1"] .beat-1, .story-stage[data-beat="2"] .beat-2,
-.story-stage[data-beat="3"] .beat-3, .story-stage[data-beat="4"] .beat-4 { opacity: 1; transform: translate(-50%, 0); }
+.story-stage[data-beat="1"] .beat-1, .story-stage[data-beat="2"] .beat-2, .story-stage[data-beat="3"] .beat-3,
+.story-stage[data-beat="4"] .beat-4, .story-stage[data-beat="5"] .beat-5 { opacity: 1; transform: translate(-50%, 0); }
 @media (prefers-reduced-motion: reduce) {
   .story-hero > div:first-child, .story-buttons { animation: none; }
   .story-beat, .story-hero { transition: opacity 0.2s; }
@@ -77,20 +77,23 @@
 .intro { background: var(--paper); color: var(--ink); padding: 180px var(--gutter) 160px; text-align: center; }
 .intro p { font-size: 40px; line-height: 1.1; letter-spacing: 0; font-weight: 600; margin: 0 auto; max-width: 840px; }
 .intro p + p { margin-top: 1em; }
-.intro span { color: var(--ink-2); }
+.words span { color: color-mix(in srgb, var(--ink) calc(clamp(0, calc((var(--p, 1) * 2.6 - 0.45 - var(--i)) * 9), 1) * 100%), #d2d2d7); }
 
 /* ---------------------------------------------------------------- the scenes */
 .scenes { background: var(--paper); }
 .group { color: var(--ink); }
 .banner { position: relative; height: min(92vh, 920px); min-height: 560px; background: #000; overflow: hidden; }
-.banner-media { position: absolute; inset: 0; }
+.banner-media { position: absolute; inset: 0; transform: scale(calc(1.14 - 0.14 * clamp(0, calc(var(--p, 0.5) * 2.2), 1))); transform-origin: 50% 100%; }
 .banner-media video, .banner-media img {
   position: absolute; left: 50%; bottom: 0; height: 80%; width: auto; max-width: none; transform: translateX(-50%);
   /* the render's own frame melts into the page's black */
   -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 10%);
   -webkit-mask-composite: source-in; mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 10%); mask-composite: intersect;
 }
-.banner-copy { position: absolute; left: 0; right: 0; top: 72px; text-align: center; color: #f5f5f7; padding: 0 22px; }
+.banner-copy {
+  position: absolute; left: 0; right: 0; top: 72px; text-align: center; color: #f5f5f7; padding: 0 22px;
+  opacity: clamp(0, calc(var(--p, 0.5) * 5 - 0.5), 1); transform: translateY(calc((1 - clamp(0, calc(var(--p, 0.5) * 3), 1)) * 48px));
+}
 .banner-copy h2 { font-size: 64px; line-height: 1.06; letter-spacing: -0.009em; margin: 0; }
 .group-head { text-align: center; padding: 140px 22px 0; }
 .group-head h2 { font-size: 56px; line-height: 1.07; letter-spacing: -0.005em; margin: 0; }
@@ -128,19 +131,41 @@
 .single-copy p { font-size: 17px; line-height: 1.47; color: var(--ink-2); max-width: 420px; }
 .group-relive .group-body, .group-talk .group-body { padding-top: 56px; }
 
-/* ---------------------------------------------------------------- how it works */
-.how { background: var(--paper-2); color: var(--ink); padding: 140px var(--gutter) 130px; }
-.how-tiles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.75fr); gap: 20px; margin-top: 64px; }
-.tile { margin: 0; background: var(--paper); border-radius: 28px; overflow: hidden; display: flex; flex-direction: column; }
-.tile-media { position: relative; aspect-ratio: 4 / 5; background: #e8e8ed; }
-.tile-wide .tile-media { aspect-ratio: auto; flex: 1; min-height: 240px; }
-.tile-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.tile figcaption { padding: 28px 32px 34px; font-size: 17px; line-height: 1.47; color: var(--ink-2); }
-.tile figcaption b { color: var(--ink); font-weight: 600; }
-.stats { list-style: none; margin: 80px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; text-align: center; }
-.stats b { display: block; font-size: 56px; line-height: 1.07; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); font-variant-numeric: tabular-nums; }
+/* ---------------------------------------------------------------- how it works: one video becomes 48 */
+.pipe-story { position: relative; height: 340vh; background: var(--paper-2); color: var(--ink); }
+.pipe-sticky { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }
+.pipe-sticky .section-head { position: absolute; left: 0; right: 0; top: calc(var(--nav-h) + 8vh); padding: 0 22px; }
+.pipe-stage {
+  --W: min(1120px, 92vw);
+  --wall: clamp(0, calc((var(--p) - 0.3) * 6), 1);
+  position: absolute; left: 50%; top: 54%; width: var(--W); transform: translate(-50%, -50%);
+}
+.pipe-wall {
+  position: relative; width: 100%; aspect-ratio: 1920 / 654; border-radius: 18px; overflow: hidden; background: #e8e8ed;
+  opacity: var(--wall); transform: scale(calc(0.9 + 0.1 * var(--wall)));
+}
+.pipe-wall video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pipe-cells { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(16, 1fr); grid-template-rows: repeat(3, 1fr); }
+/* each of the 48 views uncovers in turn, column by column (the rig's rings stacked): its own --s */
+.pipe-cells i { background: rgba(245, 245, 247, calc(1 - clamp(0, calc((var(--p) - var(--s)) * 16), 1))); box-shadow: inset 0 0 0 1.5px var(--paper-2); }
+.pipe-input {
+  --q: clamp(0, calc((var(--p) - 0.1) * 3.6), 1);
+  position: absolute; left: 50%; top: 50%; height: min(60vh, 620px); aspect-ratio: 9 / 16; border-radius: 28px; overflow: hidden;
+  background: #e8e8ed; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.12);
+  transform: translate(calc(-50% - var(--q) * 34vw), -50%) scale(calc(1 - 0.62 * var(--q)));
+  opacity: calc(1 - clamp(0, calc((var(--p) - 0.36) * 9), 1));
+}
+.pipe-input video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pipe-cap { position: absolute; left: 50%; bottom: 8vh; width: min(560px, calc(100vw - 44px)); transform: translateX(-50%); margin: 0; text-align: center; font-size: 21px; line-height: 1.38; color: var(--ink-2); font-weight: 600; }
+.pipe-cap b { color: var(--ink); }
+.cap-1 { opacity: calc(1 - clamp(0, calc((var(--p) - 0.26) * 10), 1)); }
+.cap-2 { opacity: clamp(0, calc((var(--p) - 0.44) * 8), 1); }
+
+.how { background: var(--paper-2); color: var(--ink); padding: 40px var(--gutter) 140px; }
+.stats { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; text-align: center; }
+.stats b { display: block; font-size: 64px; line-height: 1.05; font-weight: 600; letter-spacing: -0.009em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .stats span { display: block; font-size: 17px; line-height: 1.35; color: var(--ink-2); margin-top: 8px; }
-.how-foot { text-align: center; margin: 56px 0 0; }
+.how-foot { text-align: center; margin: 64px 0 0; }
 
 /* ---------------------------------------------------------------- measured */
 .truth-section { background: #000; color: #f5f5f7; padding: 140px var(--gutter) 130px; }
@@ -172,6 +197,11 @@
 /* ---------------------------------------------------------------- the close */
 .closer-x { background: var(--paper-2); color: var(--ink); text-align: center; padding: 160px 22px 170px; }
 .closer-x h2 { font-size: 64px; line-height: 1.06; letter-spacing: -0.009em; margin: 0 auto; max-width: 780px; }
+.closer-glow {
+  background: linear-gradient(100deg, var(--ink) 0%, var(--ink) 38%, #0071e3 50%, #6e3fd8 56%, var(--ink) 68%, var(--ink) 100%);
+  background-size: 320% 100%; background-position: calc(100% - var(--p, 1) * 130%) 0;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 .closer-buttons { display: flex; justify-content: center; gap: 14px; margin-top: 36px; flex-wrap: wrap; }
 
 /* ---------------------------------------------------------------- smaller screens */
@@ -200,12 +230,25 @@
   .single { grid-template-columns: 1fr; gap: 28px; }
   .single-copy h3 { font-size: 28px; }
   .how, .truth-section, .built { padding: 96px 22px 90px; }
-  .how-tiles { grid-template-columns: 1fr; margin-top: 40px; }
-  .tile-wide .tile-media { aspect-ratio: 16 / 9; min-height: 0; flex: none; }
-  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 40px; margin-top: 56px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 40px; }
   .stats b { font-size: 40px; }
   .measured { font-size: 14px; }
   .measured thead th:nth-child(5), .measured tbody td:nth-child(5) { display: none; }
   .built-grid { grid-template-columns: 1fr; gap: 40px; margin-top: 48px; }
   .closer-x { padding: 110px 22px 120px; }
+}
+
+/* ---------------------------------------------------------------- things rising in as they arrive */
+.motion .reveal:not(.in) { opacity: 0; transform: translateY(36px); }
+.reveal { transition: opacity 0.9s cubic-bezier(0.25, 0.1, 0.25, 1), transform 1.1s cubic-bezier(0.25, 0.1, 0.25, 1); }
+.stats li:nth-child(2), .built-grid li:nth-child(3n + 2) { transition-delay: 0.08s; }
+.stats li:nth-child(3), .built-grid li:nth-child(3n) { transition-delay: 0.16s; }
+.stats li:nth-child(4) { transition-delay: 0.24s; }
+@media (max-width: 734px) {
+  .pipe-story { height: 300vh; }
+  .pipe-stage { --W: 94vw; top: 50%; }
+  .pipe-input { height: 46vh; transform: translate(calc(-50% - var(--q) * 30vw), -50%) scale(calc(1 - 0.6 * var(--q))); }
+  .pipe-cap { font-size: 17px; bottom: 7vh; }
+  .how { padding: 20px 22px 90px; }
+  .stats b { font-size: 40px; }
 }

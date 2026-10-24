@@ -124,7 +124,7 @@ export default function SceneGallery({ groups, cards }: { groups: GroupCopy[]; c
         return (
           <section key={g.key} className={`group group-${g.key}`} aria-labelledby={`g-${g.key}`}>
             {g.banner ? (
-              <div className="banner">
+              <div className="banner" data-scrub="pass">
                 <Media className="banner-media" video={g.banner.video} image={g.banner.image} />
                 <div className="banner-copy">
                   <p className="eyebrow-x">{g.eyebrow}</p>
@@ -132,14 +132,14 @@ export default function SceneGallery({ groups, cards }: { groups: GroupCopy[]; c
                 </div>
               </div>
             ) : (
-              <header className="group-head">
+              <header className="group-head reveal">
                 <p className="eyebrow-x">{g.eyebrow}</p>
                 <h2 id={`g-${g.key}`}>{g.headline}</h2>
               </header>
             )}
             <div className="group-body">
-              <p className="group-intro">{g.intro}</p>
-              {list.length > 1 ? <Gallery cards={list} /> : <Single s={list[0]} />}
+              <p className="group-intro reveal">{g.intro}</p>
+              <div className="reveal">{list.length > 1 ? <Gallery cards={list} /> : <Single s={list[0]} />}</div>
             </div>
           </section>
         );
