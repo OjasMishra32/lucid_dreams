@@ -134,6 +134,37 @@ class Bundle(unittest.TestCase):
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("behind camera F" in e for e in errs), errs)
 
+    def test_a_staged_show_without_its_plates_gets_the_assemblys_own(self):
+        """The bake's first stage: the streams, frames, cards and freeze.png, but no clean plate or stands mask named.
+        It is taken whole, the two plates are made here, and the bundle still validates."""
+        S = json.loads((STANDIN / "court.json").read_text())
+        show = self.tmp / "show"
+        shutil.copytree(STANDIN / "video", show / "video")
+        video = json.loads(json.dumps(S["video"]))
+        for k in ("freezeClean", "standsMask", "inpaintMask"):
+            video.pop(k, None)
+            (show / "video" / Path(S["video"].get(k, "x/none")).name).unlink(missing_ok=True)
+        cam = S["camera"]
+        (show / "video.json").write_text(json.dumps({"video": video, "camera": {"centre": cam["centre"], "sourceFps": cam["sourceFps"],
+                                                                                 "captureFps": cam["captureFps"], "slow": cam["slow"]}}))
+        old = 1_700_000_000
+        for p in [show / "video.json", *(show / "video").iterdir()]:
+            os.utime(p, (old, old))  # written long ago: complete
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        cfg.update({"show": str(show), "out": str(self.tmp / "bundle2" / "court-side")})
+        (self.tmp / "assemble2.json").write_text(json.dumps(cfg))
+        self.assertEqual(A.main(["--config", str(self.tmp / "assemble2.json")]), 0)
+        out = Path(cfg["out"])
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(asm["pieces"]["show"]["source"], "real")
+        self.assertEqual(asm["pieces"]["show:standsMask"]["source"], "stand-in")
+        errs, pending, _ = A.validate(out, A.WEBXR)
+        self.assertEqual(errs, [])
+        self.assertTrue(any("show:freezeClean" in p for p in pending))
+        made = A.check_frames(out, self.tmp / "frames")
+        self.assertEqual([p.name.split("-show")[0] for p in made[:3]], ["watch", "mid-ease", "at-F"])
+        self.assertTrue(all(p.stat().st_size > 1000 for p in made))
+
     def copy_bad(self, name: str) -> Path:
         bad = self.tmp / name
         shutil.copytree(self.out, bad)

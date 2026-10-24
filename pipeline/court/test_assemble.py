@@ -293,6 +293,18 @@ class Paths(unittest.TestCase):
             A.guard_out(Path(d) / "court-side")  # outside every checkout: fine
 
 
+class StandsMask(unittest.TestCase):
+    def test_floor_is_black_and_the_rest_white(self):
+        import assemble as A
+
+        cam = look(np.array([-16.0, 0.8, 2.5]), [6.0, 1.0, 1.5], w=3840, h=2160, f=6000.0)
+        m = A.stands_mask(cam, 384, 216)
+        self.assertEqual(m.shape, (216, 384))
+        u, v, _ = cam.scaled(384).project(np.array([[6.0, 0.0, 1.5], [6.0, 4.0, 1.5]]))
+        self.assertEqual(m[int(round(v[0])), int(round(u[0]))], 0)    # a point on the floor
+        self.assertEqual(m[int(round(v[1])), int(round(u[1]))], 255)  # 4 m up: the arena
+
+
 class BallMask(unittest.TestCase):
     def test_the_ball_pixel_is_its_mask_centroid_in_source_pixels(self):
         import tempfile

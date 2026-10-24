@@ -85,6 +85,8 @@ def rnd(v, d=4):
     return [round(float(x), d) for x in v]
 
 
+# the images under the show that the assembly can stand in for while the bake hasn't made them
+PLATE_KEYS = ("freezeClean", "standsMask", "inpaintMask")
 # every field format.ts declares as a bundle path (a string under one of these keys, anywhere in court.json)
 PATH_KEYS = {"floor", "floorSeen", "file", "frames", "cards", "freeze", "freezeClean", "standsMask", "inpaintMask", "element",
              "splats", "reality", "proxy", "image", "bed"}
@@ -137,6 +139,7 @@ class Writer:
         self.root = root
         self.pieces: dict[str, dict] = {}
         self.notes: list[str] = []
+        self.deferred: list[str] = []  # show images to make once camera F is known
 
     def piece(self, name: str, real: bool, detail: str, **extra) -> None:
         self.pieces[name] = {"source": "real" if real else "stand-in", "detail": detail, **extra}
@@ -185,18 +188,31 @@ def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTra
         # a staged show is taken whole or not at all: every file it names present, and none still being written
         vid = manifest["video"] if "video" in manifest else manifest
         now = dt.datetime.now().timestamp()
-        missing = [rel for rel in bundle_paths(vid) if not staged(d, rel).is_file() or staged(d, rel).stat().st_size == 0]
-        fresh = [rel for rel in bundle_paths(vid) if rel not in missing and now - staged(d, rel).stat().st_mtime < 60]
+        plates = {vid[k] for k in PLATE_KEYS if isinstance(vid.get(k), str)}  # these the assembly can stand in for
+        missing = [rel for rel in bundle_paths(vid) if rel not in plates and (not staged(d, rel).is_file() or staged(d, rel).stat().st_size == 0)]
+        fresh = [rel for rel in bundle_paths(vid) if rel not in missing and staged(d, rel).is_file() and now - staged(d, rel).stat().st_mtime < 60]
         if missing or fresh:
             w.notes.append(f"the staged show at {d} isn't complete yet ({'missing ' + ', '.join(missing) if missing else ''}"
                            f"{'; ' if missing and fresh else ''}{'still being written: ' + ', '.join(fresh) if fresh else ''}): the stand-in's is used")
             d, manifest = None, None
     real = d is not None
     if real:
-        video = manifest["video"] if "video" in manifest else manifest
+        video = json.loads(json.dumps(manifest["video"] if "video" in manifest else manifest))
         timing = manifest.get("camera", {})
+        w.deferred = []
+        own = {"freezeClean": "video/freeze-clean.png", "standsMask": "video/stands-mask.png"}
+        for k, rel in own.items():  # format.ts needs these two: name them even if the bake doesn't yet
+            video.setdefault(k, rel)
+        for k in PLATE_KEYS:  # a plate the bake hasn't made yet: the assembly's own (after camera F is known), or none
+            rel = video.get(k)
+            if isinstance(rel, str) and not staged(d, rel).is_file():
+                if k == "inpaintMask":
+                    del video[k]
+                else:
+                    w.deferred.append(k)
         for rel in bundle_paths(video):
-            w.copy(staged(d, rel), rel)
+            if not any(video.get(k) == rel for k in w.deferred):
+                w.copy(staged(d, rel), rel)
         frames = json.loads(staged(d, video["frames"]).read_text())
         w.piece("show", True, str(d))
         own = all("q" in fr and "f" in fr for fr in frames)
@@ -288,6 +304,36 @@ def floor_from_mosaic(img: np.ndarray, count: np.ndarray, hole: np.ndarray | Non
     hardwood = (np.median(rgb[seen], 0) / 255.0) if seen.any() else np.array([0.71, 0.52, 0.33])
     floor = np.where(seen[..., None], rgb, np.round(hardwood * 255)).astype(np.uint8)
     return floor, seen, [round(float(h), 3) for h in hardwood]
+
+
+def stands_mask(cam: geo.Cam, width: int, height: int, margin: float = 0.5) -> np.ndarray:
+    """White where camera F's ray doesn't land on the court floor (within `margin` of its lines): the stands, the
+    crowd, the baseline rows and the arena above; black on the floor (players stand on it, so they stay black)."""
+    c = cam.scaled(width)
+    u, v = np.meshgrid(np.arange(width, dtype=float), np.arange(height, dtype=float))
+    d = c.rays(u.ravel(), v.ravel())
+    t = np.where(d[:, 1] < -1e-9, -c.C[1] / np.where(d[:, 1] < -1e-9, d[:, 1], -1.0), np.inf)
+    X = c.C + np.where(np.isfinite(t), t, 0.0)[:, None] * d
+    floor = np.isfinite(t) & (np.abs(X[:, 0]) <= LENGTH / 2 + margin) & (np.abs(X[:, 2]) <= WIDTH / 2 + margin)
+    return np.where(floor, 0, 255).astype(np.uint8).reshape(height, width)
+
+
+def fill_plates(w: Writer, video: dict, camF: geo.Cam) -> None:
+    """The show images the bake hasn't made yet, so the bundle stays whole: the clean plate is frame F itself (the
+    players not yet painted out), the stands mask comes from camera F and the court."""
+    import cv2
+
+    if not w.deferred:
+        return
+    fz = cv2.imread(str(w.root / video["freeze"]), cv2.IMREAD_UNCHANGED)
+    H, W = fz.shape[:2]
+    for k in w.deferred:
+        if k == "freezeClean":
+            w.copy(w.root / video["freeze"], video[k])
+            w.piece("show:freezeClean", False, "frame F itself: the clean plate isn't baked yet (the players are still in it)")
+        elif k == "standsMask":
+            sp.write_png(w.path(video[k]), stands_mask(camF, W, H))
+            w.piece("show:standsMask", False, "from camera F and the court: everything off the floor (the bake's mask isn't made yet)")
 
 
 def court_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
@@ -783,6 +829,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         camera = camera_block(cfg, S, timing, calib, real_show)
         camF = frame_camera(camera, frames, video)
         camF_standin = standin_camera_f(S, standin)
+        fill_plates(w, video, camF)
         court = court_piece(w, cfg, standin, S)
         slots = cfg.get("players") or [{} for _ in S["freeze"]["players"]]
         players = [place_player(w, slot, i % len(S["freeze"]["players"]), standin, S, camF, camF_standin) for i, slot in enumerate(slots)]
@@ -1069,6 +1116,27 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
     return errs, pending, info
 
 
+def check_frames(bundle: Path, out_dir: Path, width: int = 768) -> list[Path]:
+    """Small JPEGs of the assembled show to look at by eye: the live region at the middle of pass 1 (the watch), the
+    middle of the first ease, its last frame (F), and freeze.png. Decoded by ffmpeg from the bundle's own stream."""
+    court = json.loads((bundle / "court.json").read_text())
+    v = court["video"]
+    seg = v["segments"]
+    e0 = seg["eases"][0]["frames"]
+    picks = {"watch": (seg["pass1"][0] + seg["pass1"][1]) // 2, "mid-ease": (e0[0] + e0[1]) // 2, "at-F": e0[1]}
+    x, y, rw, rh = v["regions"]["live"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    made = []
+    for name, n in picks.items():
+        dst = out_dir / f"{name}-show{n:04d}.jpg"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(bundle / v["file"]), "-vf",
+                        f"select=eq(n\\,{n}),crop={rw}:{rh}:{x}:{y},scale={width}:-2", "-frames:v", "1", "-q:v", "3", str(dst)], check=True)
+        made.append(dst)
+    dst = out_dir / "freeze-png.jpg"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(bundle / v["freeze"]), "-vf", f"scale={width}:-2", "-q:v", "3", str(dst)], check=True)
+    return made + [dst]
+
+
 def report(bundle: Path) -> str:
     asm = json.loads((bundle / "assembly.json").read_text())
     court = json.loads((bundle / "court.json").read_text())
@@ -1096,11 +1164,16 @@ def main(argv=None) -> int:
     ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
     ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
     ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
+    ap.add_argument("--check-frames", default=None, help="write small JPEGs of the assembled show (watch, mid-ease, F) to this folder")
     a = ap.parse_args(argv)
     cfg = json.loads(expand(a.config).read_text())
     if not (a.out or cfg.get("out")):
         ap.error("no bundle folder: give --out or the config's `out`")
     out = expand(a.out or cfg["out"])
+    if a.check_frames:
+        for p in check_frames(out, expand(a.check_frames)):
+            print(f"FRAME {p}")
+        return 0
     if a.make_stands:
         made = make_stands(cfg)
         print(f"STANDS {expand(cfg['stands']['proxyFile'])}: {json.dumps(made['report'])}")
