@@ -252,19 +252,19 @@ class Bundle(unittest.TestCase):
         ex = self.tmp / "extras-c"
         shutil.copytree(self.tmp / "extras", ex)
         m = json.loads((ex / "x-one" / "extra.json").read_text())
-        m["pose"] = {"camera": "C", "frame": 600}
+        m["pose"] = {"camera": "C", "frame": 7}
         (ex / "x-one" / "extra.json").write_text(json.dumps(m))
         placed = sp.read_ply(self.out / "others" / "x-one" / "freeze.ply")
         foot = np.median(placed.pos[placed.alpha > 0.5], 0)
         camC = A.look_from([0.0, 11.0, 31.0], foot, 2400.0, 960, 540)
         calib = {"image_size": [960, 540], "C": camC.C.tolist(),
-                 "frames": [{"file": "000600.jpg", "C": camC.C.tolist(), "R": camC.R.T.tolist(), "f": camC.f, "k1": 0.0}]}
+                 "frames": [{"file": "000007.jpg", "C": camC.C.tolist(), "R": camC.R.T.tolist(), "f": camC.f, "k1": 0.0}]}
         (self.tmp / "calib-c.json").write_text(json.dumps(calib))
         frames = self.tmp / "c-frames"
         frames.mkdir(exist_ok=True)
         graded = col.recolour(placed, np.diag([0.7, 1.0, 1.25]), np.zeros(3))
         rgb, al = sp.render(graded, camC)
-        cv2.imwrite(str(frames / "000600.jpg"), (np.clip(rgb, 0, 1)[..., ::-1] * 255).round().astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 100])
+        cv2.imwrite(str(frames / "000007.jpg"), (np.clip(rgb, 0, 1)[..., ::-1] * 255).round().astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 100])
         cams = {"C": str(self.tmp / "calib-c.json"), "CFrames": str(frames)}
         # without the extra's own mask in C's frame, whoever stands in front of it would count: measured only
         code, out = self.assemble_with("colour-extra-nomask", extras=str(ex), colorMatch=True, cameras=cams)
@@ -275,8 +275,8 @@ class Bundle(unittest.TestCase):
         self.assertNotIn("after", rep)
         self.assertTrue(any("x-one" in n and "measured only" in n for n in asm["notes"]), asm["notes"])
         # with it (extra.json maskC, C's raw frame): fitted
-        cv2.imwrite(str(ex / "x-one" / "mask-c600.png"), np.where(al > 0.5, 255, 0).astype(np.uint8))
-        m["maskC"] = "mask-c600.png"
+        cv2.imwrite(str(ex / "x-one" / "mask-c.png"), np.where(al > 0.5, 255, 0).astype(np.uint8))
+        m["maskC"] = "mask-c.png"
         (ex / "x-one" / "extra.json").write_text(json.dumps(m))
         code, out = self.assemble_with("colour-extra", extras=str(ex), colorMatch=True, cameras=cams)
         self.assertEqual(code, 0)
