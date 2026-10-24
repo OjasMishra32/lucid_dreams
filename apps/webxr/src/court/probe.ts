@@ -5,8 +5,11 @@
 //   default framebuffer), logged as alpha min/mean, mean luma and a 16 x 9 luma thumbnail; full frames on request
 //   (save(name) hands RGBA to window.__courtSave, which the runner writes as a PNG);
 // - `?probe=timing`: no read-back; CPU ms per frame and GPU ms per renderer.render, per phase (stats.ts);
-// - window.__court: the test API (state, seatHere, press, stepping).
+// - window.__court: the test API (state, seatHere, press, stepping);
+// - every captured frame carries the view it was drawn from (court space), so the e2e can render the stand-in's true
+//   scene from exactly there (scripts/court/standin.mjs truthAt) and measure in degrees (P8, P43).
 // Integrator, T0.
+import * as THREE from "three";
 import type { ClockState } from "./clock";
 import type { FrameStats } from "./stats";
 import type { Phase } from "./types";
@@ -24,23 +27,49 @@ export interface ProbeFrame {
   speed: number;
   /** The show frame actually on the video texture (-1 none). */
   onScreen: number;
+  /** The phase machine's clocks (court.ts): arrival's still time and lights-up (-1 not started), seconds from F, See my room (0-1). */
+  still: number;
+  lightsUp: number;
+  tF: number;
+  roomP: number;
   /** capture only: read-back alpha (0-255) min and mean, mean luma (0-255), 16 x 9 luma grid (row-major, top first). */
   alphaMin?: number;
   alphaMean?: number;
   luma?: number;
   thumb?: number[];
+  /** capture only: the first view's camera in court space. */
+  view?: ProbeView;
   /** timing only: CPU ms of the frame's work. */
   cpuMs?: number;
 }
 
+/**
+ * The view a frame was drawn from, as a pinhole camera in court space: OpenCV axes (x right, y down, z forward), q the
+ * world-from-camera rotation [x, y, z, w], pixels with (0, 0) the centre of the top-left pixel of the view's viewport
+ * (the read-back frame's region `viewport`: x, y from its top-left, w, h). standin.mjs's truthAt() takes it as is.
+ */
+export interface ProbeView {
+  width: number;
+  height: number;
+  fx: number;
+  fy: number;
+  cx: number;
+  cy: number;
+  centre: [number, number, number];
+  q: [number, number, number, number];
+  viewport: [number, number, number, number];
+}
+
 /** What court.ts gives the probe. */
 export interface ProbeHooks {
-  snapshot(): { phase: Phase; setup: boolean; clock: ClockState; onScreen: number; [k: string]: unknown };
+  snapshot(): { phase: Phase; setup: boolean; clock: ClockState; onScreen: number; still: number; lightsUp: number; tF: number; roomP: number; [k: string]: unknown };
   seatHere(): void;
   press(action: UiAction): void;
   modules: Record<string, boolean>;
   /** The frame log, once the bundle (and so the display rate) is known. */
   stats(): FrameStats | null;
+  /** The first XR view of the frame just rendered (viewOf), null when not presenting. */
+  view(): ProbeView | null;
 }
 
 /** window.__court */
@@ -59,8 +88,8 @@ export interface CourtTestApi {
   frames(n: number): Promise<ProbeFrame[]>;
   /** Steps until the phase is `phase` (or `max` frames); the logs on the way, the last one in that phase. */
   until(phase: Phase, max: number): Promise<ProbeFrame[]>;
-  /** Read back the next rendered frame in full and hand it to window.__courtSave(name, w, h, base64 RGBA, top row first); a no-op when timing. */
-  save(name: string): Promise<void>;
+  /** Read back the next rendered frame in full and hand it to window.__courtSave(name, w, h, base64 RGBA, top row first); resolves with that frame's log (null when timing: a no-op). */
+  save(name: string): Promise<ProbeFrame | null>;
   /** The timing pass's per-phase summary (timing mode). */
   timing(): ReturnType<FrameStats["report"]> | null;
 }
@@ -77,7 +106,7 @@ export class Probe {
   readonly api: CourtTestApi;
   private n = 0;
   private waiters: ((f: ProbeFrame) => void)[] = [];
-  private saves: { name: string; done: () => void }[] = [];
+  private saves: { name: string; done: (f: ProbeFrame) => void }[] = [];
   private buf: Uint8Array | null = null;
   private readonly hooks: ProbeHooks;
 
@@ -109,7 +138,7 @@ export class Probe {
         return out;
       },
       // timing mode never reads back, so a save there is a no-op (it would never resolve)
-      save: (name) => (this.mode === "timing" ? Promise.resolve() : new Promise((done) => this.saves.push({ name, done }))),
+      save: (name) => (this.mode === "timing" ? Promise.resolve(null) : new Promise((done) => this.saves.push({ name, done }))),
       timing: () => hooks.stats()?.report() ?? null,
     };
     this.api = api;
@@ -124,7 +153,10 @@ export class Probe {
   /** Right after renderer.render, inside the XR frame: read back (capture), log, wake the waiters. */
   afterRender(gl: WebGL2RenderingContext, cpuMs: number): void {
     const s = this.hooks.snapshot();
-    const f: ProbeFrame = { n: this.n++, phase: s.phase, setup: s.setup, frame: s.clock.frame, segment: s.clock.segment, speed: s.clock.speed, onScreen: s.onScreen };
+    const f: ProbeFrame = {
+      n: this.n++, phase: s.phase, setup: s.setup, frame: s.clock.frame, segment: s.clock.segment, speed: s.clock.speed, onScreen: s.onScreen,
+      still: s.still, lightsUp: s.lightsUp, tF: s.tF, roomP: s.roomP,
+    };
     if (this.mode === "timing") f.cpuMs = Number(cpuMs.toFixed(3));
     else {
       const w = gl.drawingBufferWidth;
@@ -156,12 +188,14 @@ export class Probe {
       f.alphaMean = Number((aSum / (w * h)).toFixed(2));
       f.luma = Number((lSum / (w * h)).toFixed(2));
       f.thumb = thumb.map((v, k) => Math.round(v / Math.max(1, count[k])));
-      if (this.saves.length) this.flushSaves(px, w, h);
+      const view = this.hooks.view();
+      if (view) f.view = view;
+      if (this.saves.length) this.flushSaves(px, w, h, f);
     }
     this.waiters.splice(0).forEach((resolve) => resolve(f));
   }
 
-  private flushSaves(px: Uint8Array, w: number, h: number): void {
+  private flushSaves(px: Uint8Array, w: number, h: number, f: ProbeFrame): void {
     const flipped = new Uint8Array(w * h * 4);
     for (let y = 0; y < h; y++) flipped.set(px.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
     let bin = "";
@@ -169,11 +203,43 @@ export class Probe {
     const b64 = btoa(bin);
     for (const s of this.saves.splice(0)) {
       const send = window.__courtSave;
-      if (send) void send(s.name, w, h, b64).then(s.done, s.done);
+      const done = () => s.done(f);
+      if (send) void send(s.name, w, h, b64).then(done, done);
       else {
         this.api.errors.push(`save(${s.name}): no window.__courtSave (run under scripts/court/e2e.mjs)`);
-        s.done();
+        done();
       }
     }
   }
+}
+
+// three's camera looks down -z with y up; OpenCV's looks down +z with y down: a half turn about x
+const TO_OPENCV = new THREE.Quaternion(1, 0, 0, 0);
+const courtFromEye = new THREE.Matrix4();
+const centre = new THREE.Vector3();
+const turn = new THREE.Quaternion();
+const scale = new THREE.Vector3();
+
+/**
+ * `eye` (an XR view's camera, matrices as last rendered) as a pinhole camera in the court space of `world` (the world
+ * group). The canvas is `bufferHeight` tall (readPixels rows run bottom up; the viewport is given top-down).
+ */
+export function viewOf(eye: THREE.Camera, world: THREE.Object3D, bufferWidth: number, bufferHeight: number): ProbeView {
+  courtFromEye.copy(world.matrixWorld).invert().multiply(eye.matrixWorld);
+  courtFromEye.decompose(centre, turn, scale);
+  turn.multiply(TO_OPENCV);
+  const vp = eye.viewport ?? new THREE.Vector4(0, 0, bufferWidth, bufferHeight);
+  const [w, h] = [vp.z, vp.w];
+  const e = eye.projectionMatrix.elements; // column-major: e[8], e[9] are the off-centre terms
+  return {
+    width: w,
+    height: h,
+    fx: (e[0] * w) / 2,
+    fy: (e[5] * h) / 2,
+    cx: (w / 2) * (1 - e[8]) - 0.5,
+    cy: (h / 2) * (1 + e[9]) - 0.5,
+    centre: [centre.x, centre.y, centre.z],
+    q: [turn.x, turn.y, turn.z, turn.w],
+    viewport: [vp.x, bufferHeight - vp.y - vp.w, w, h],
+  };
 }

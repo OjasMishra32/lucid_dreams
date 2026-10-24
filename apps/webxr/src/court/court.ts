@@ -22,7 +22,7 @@ import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
 import { BUILT as LIGHT_BUILT, LightField } from "./lightfield";
-import { Probe } from "./probe";
+import { Probe, viewOf } from "./probe";
 import { BUILT as PROXIES_BUILT, Proxies } from "./proxies";
 import { BUILT as SEAT_BUILT, Seat } from "./seat";
 import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
@@ -108,6 +108,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     ? new Probe(params.get("probe"), {
         snapshot: () => ({
           phase, setup, still: Number(still.toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
+          world: { position: [...seat.world.position], yaw: seat.world.yaw }, head: { room: [...head.room], court: [...head.court] },
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
         }),
@@ -115,6 +116,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         press: (action) => actions.get(action)?.(),
         modules,
         stats: () => stats,
+        view: () => {
+          if (!renderer.xr.isPresenting) return null;
+          const xrCamera = renderer.xr.getCamera();
+          return viewOf(xrCamera.cameras[0] ?? xrCamera, world, gl.drawingBufferWidth, gl.drawingBufferHeight);
+        },
       })
     : null;
 

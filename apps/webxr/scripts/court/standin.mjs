@@ -749,6 +749,25 @@ export function render(cam, tau, opts = {}) {
   return { rgb, kind };
 }
 
+/** Real time tau (seconds from F) of a source frame (frames.json `src`; fractional for in-betweens). */
+export function tauOf(src) {
+  return (src - F_SRC) / CAPTURE;
+}
+
+/**
+ * The stand-in's true scene at source frame `src`, seen from `view` (a captured frame's view: probe.ts ProbeView,
+ * court space, OpenCV axes): what a perfect watch would show in that frame, people and rim included. `{ rgb, kind }`
+ * at the view's size; kind per pixel: 10 + i for person i of court.json's order (shooter, defender, trailer), 6 the
+ * ball, else the background. The e2e's ground truth for P43 and P8 (layers, handoff).
+ */
+export function truthAt(view, src, opts = {}) {
+  if (Math.abs(view.fx - view.fy) > 1e-3 * view.fx) throw new Error(`truthAt: square pixels only (fx ${view.fx}, fy ${view.fy})`);
+  const cam = { width: view.width, height: view.height, f: view.fx, cx: view.cx, cy: view.cy, centre: view.centre, q: view.q };
+  return render(cam, tauOf(src), opts);
+}
+
+export const TRUTH_KIND = { ball: KIND.ball, person: KIND.person };
+
 /** Ray (origin C, unit d) against a precomputed capsule; the distance, or -1. (Inigo Quilez's capsule intersection.) */
 function rayCapsule(d, k) {
   const bard = k.ba[0] * d[0] + k.ba[1] * d[1] + k.ba[2] * d[2];

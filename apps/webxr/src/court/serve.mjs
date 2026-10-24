@@ -1,15 +1,18 @@
-// The Court Side demo server (3.1, P36): the vite build and the court bundle, on 127.0.0.1 only (the Quest reaches it
-// over USB with `adb reverse tcp:<port> tcp:<port>`), never through a tunnel. Plain JS so tsc and the vite build leave
-// it alone. Owned by the integrator.
+// The Court Side demo server (3.1, P36): the page and the court bundle, on 127.0.0.1 only (the Quest reaches it over USB
+// with `adb reverse tcp:<port> tcp:<port>`), never through a tunnel. Plain JS so tsc and the vite build leave it alone.
+// Owned by the integrator.
 //   npm --prefix apps/webxr run build
 //   node apps/webxr/src/court/serve.mjs --bundle <bundle folder, outside the repo> [--port 5185] [--dist apps/webxr/dist]
-// Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/)
+//   node apps/webxr/src/court/serve.mjs --dev --bundle <folder> [--standin] [--port 0]
+// Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/), or with --dev apps/webxr's vite dev
+//                       server as middleware (plain http, HMR on this port; the only way to get IWER's ?emulate, which
+//                       loads in dev only: the e2e runs through this)
 //          /bundle/...  the bundle folder (court.json beside it); CORS only for pages on localhost / 127.0.0.1, so the
 //                       dev page and the e2e runner can read a real bundle without vite ever serving it
 //          /court-sw.js the Service Worker (sw.js), scoped to /
 // Refuses: any Host but 127.0.0.1 or localhost (DNS rebinding); a bundle inside this checkout or the main one (vite and
 // the tunnel serve apps/webxr/ and dreams/; only the synthetic stand-in may be served from there, with --standin); and
-// any path (symlinks included) that leaves its folder.
+// any path (symlinks included) that leaves its folder. `--port 0` takes a free port; the first line printed names it.
 import { execFileSync } from "node:child_process";
 import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import { createServer } from "node:http";
@@ -17,14 +20,16 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO = resolve(HERE, "../../../..");
+const WEBXR = resolve(HERE, "../..");
+const REPO = resolve(WEBXR, "../..");
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const expand = (p) => (p.startsWith("~/") ? join(process.env.HOME ?? "", p.slice(2)) : p);
 
+const DEV = args.includes("--dev");
 const bundleArg = opt("--bundle", null);
 if (!bundleArg) {
-  console.error("usage: node apps/webxr/src/court/serve.mjs --bundle <folder with court.json> [--port 5185] [--dist <vite build>]");
+  console.error("usage: node apps/webxr/src/court/serve.mjs [--dev] --bundle <folder with court.json> [--standin] [--port 5185] [--dist <vite build>]");
   process.exit(2);
 }
 const bundlePath = resolve(expand(bundleArg));
@@ -33,8 +38,8 @@ if (!existsSync(join(bundlePath, "court.json"))) {
   process.exit(2);
 }
 const BUNDLE = realpathSync(bundlePath);
-const DIST_ARG = resolve(expand(opt("--dist", resolve(HERE, "../../dist"))));
-const PORT = Number(opt("--port", 5185)); // 5180 is vite, 5190 apps/site
+const DIST_ARG = resolve(expand(opt("--dist", join(WEBXR, "dist"))));
+const PORT = Number(opt("--port", 5185)); // 5180 is vite, 5190 apps/site; 0 = any free port
 const SW = join(HERE, "sw.js");
 // this checkout, and the main checkout when this is a worktree (where vite and the tunnel usually run)
 const checkouts = [realpathSync(REPO)];
@@ -49,11 +54,11 @@ if (!args.includes("--standin") && checkouts.some((root) => within(BUNDLE, root)
   console.error(`refusing ${BUNDLE}: it is inside a checkout that vite and the tunnel serve; keep the court bundle outside the repo (P36). The synthetic stand-in may pass --standin.`);
   process.exit(2);
 }
-if (!existsSync(join(DIST_ARG, "index.html"))) {
+if (!DEV && !existsSync(join(DIST_ARG, "index.html"))) {
   console.error(`no build in ${DIST_ARG}: run npm --prefix apps/webxr run build first`);
   process.exit(2);
 }
-const DIST = realpathSync(DIST_ARG);
+const DIST = DEV ? null : realpathSync(DIST_ARG);
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
@@ -61,7 +66,7 @@ const TYPES = {
   ".wasm": "application/wasm", ".m4a": "audio/mp4", ".mp4": "video/mp4", ".h264": "video/h264", ".glb": "model/gltf-binary",
   ".ply": "application/octet-stream", ".spz": "application/octet-stream",
 };
-const LOCAL_HOST = new RegExp(`^(127\\.0\\.0\\.1|localhost)(:${PORT})?$`);
+let LOCAL_HOST = null; // set once listening (the real port, when --port 0)
 const LOCAL_ORIGIN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 /** The real file a URL path names inside root (a real path), or null if it, or a symlink on the way, leaves root. */
@@ -74,12 +79,21 @@ function inside(root, urlPath) {
   }
 }
 
-const server = createServer((req, res) => {
+const server = createServer();
+let vite = null;
+if (DEV) {
+  process.env.LUCID_HTTP = "1"; // vite.config.ts: no self-signed certificate, this server is plain http
+  const { createServer: createVite } = await import("vite");
+  // HMR's socket rides on this server (same host and port; vite checks the Host and its token on the upgrade itself)
+  vite = await createVite({ root: WEBXR, configFile: join(WEBXR, "vite.config.ts"), appType: "spa", logLevel: "warn", server: { middlewareMode: true, ws: { server } } });
+}
+
+server.on("request", (req, res) => {
   const deny = (code) => {
     res.statusCode = code;
     res.end();
   };
-  if (!LOCAL_HOST.test(req.headers.host ?? "")) return deny(403);
+  if (!LOCAL_HOST?.test(req.headers.host ?? "")) return deny(403);
   if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") return deny(405);
   let path;
   try {
@@ -99,7 +113,8 @@ const server = createServer((req, res) => {
       res.setHeader("Vary", "Origin");
     }
     if (req.method === "OPTIONS") return deny(204);
-  } else file = inside(DIST, path === "/" ? "/index.html" : path);
+  } else if (vite) return vite.middlewares(req, res, () => deny(404));
+  else file = inside(DIST, path === "/" ? "/index.html" : path);
   if (!file) return deny(404);
   let st;
   try {
@@ -118,6 +133,14 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Court Side on http://127.0.0.1:${PORT}/?mode=court&bundle=/bundle/ (bundle ${BUNDLE})`);
-  console.log(`Quest over USB: adb reverse tcp:${PORT} tcp:${PORT}, then open that URL in the Quest browser`);
+  const port = server.address().port;
+  LOCAL_HOST = new RegExp(`^(127\\.0\\.0\\.1|localhost)(:${port})?$`);
+  console.log(`Court Side on http://127.0.0.1:${port}/?mode=court&bundle=/bundle/${DEV ? "&emulate" : ""} (bundle ${BUNDLE}${DEV ? ", vite dev" : ""})`);
+  console.log(`Quest over USB: adb reverse tcp:${port} tcp:${port}, then open that URL in the Quest browser`);
 });
+const stop = () => {
+  server.close();
+  void (vite ? vite.close() : Promise.resolve()).finally(() => process.exit(0));
+};
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
