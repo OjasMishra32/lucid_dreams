@@ -79,6 +79,13 @@ class Gate2Sheet(unittest.TestCase):
         import cv2
         self.assertEqual(cv2.imread(str(out)).shape[0], 3 * (64 + 4))  # seed1-mgpu's rows only
 
+    def test_the_freeze_p42_goes_on_its_peek(self):
+        rec = self.run / "recon-views-default-r0-300k"
+        self.assertEqual(g2.p42_text(rec, None), "")  # no report, no peek of the real frame: nothing to say
+        (rec / "p42.json").write_text(json.dumps({"pass": False, "iouFinal": 0.9123}))
+        self.assertEqual(g2.p42_text(rec, None), "P42 FAIL iou 0.9123")
+        self.assertEqual(len(g2.rows_for(self.run, 64, None)), 3)
+
     def test_no_k_anywhere_is_one_labelled_tile(self):
         bare = Path(self.tmp.name) / "court-y"
         bare.mkdir()

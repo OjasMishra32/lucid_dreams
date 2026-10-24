@@ -1,7 +1,7 @@
-"""Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 (and any other views fetched)
-at the freeze frame K (the whole fetched ring in two rows: the Janus / doubled-figure gate looks at every view), and,
-when a freeze has been trained, its peeks (the real frame | render, then the views' ground truth | render) and its
-bundle's orbit preview every 45 degrees (180 = the back of the head).
+"""Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 (and any other views
+fetched) at the freeze frame K (the whole fetched ring in two rows: the Janus / doubled-figure gate looks at every
+view), and, when a freeze has been trained, its peeks (the real frame | render with its P42, then the views' ground
+truth | render) and its bundle's orbit preview every 45 degrees (180 = the back of the head).
 
     python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] <run dir>...
 
@@ -60,14 +60,29 @@ def frame_at(video: Path, n: int) -> np.ndarray | None:
     return img
 
 
-def tile(img: np.ndarray | None, h: int, label: str) -> np.ndarray:
+def tile(img: np.ndarray | None, h: int, label: str, sub: str = "") -> np.ndarray:
     if img is None:
         t = np.full((h, h * 9 // 16, 3), GREY, np.uint8)
         label += " (missing)"
     else:
         t = cv2.resize(img, (max(1, round(img.shape[1] * h / img.shape[0])), h), interpolation=cv2.INTER_AREA)
     cv2.putText(t, label, (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+    if sub:
+        cv2.putText(t, sub, (6, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
     return t
+
+
+def p42_text(rec: Path, clips: Path | None) -> str:
+    """The freeze's P42 (court_p42.py): its p42.json, else measured now from its peek of the real frame."""
+    if (rec / "p42.json").exists():
+        r = json.loads((rec / "p42.json").read_text())
+    elif any(rec.glob("recon-*.json")) and any(rec.glob("peek-source-*.jpg")):
+        from court_p42 import check
+
+        r = check(rec, clips)
+    else:
+        return ""
+    return f"P42 {'PASS' if r.get('pass') else 'FAIL'} iou {r.get('iouFinal')}"
 
 
 def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
@@ -86,7 +101,8 @@ def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
         peeks = [rec / f"peek-source-{k:06d}.jpg", rec / f"peek-{k:06d}.jpg"]
         if any(p.exists() for p in peeks):
             imgs = [cv2.imread(str(p)) if p.exists() else None for p in peeks]
-            out.append(np.hstack([tile(imgs[0], h, f"{rec.name} real | render"), tile(imgs[1], h, "views gt | render")]))
+            out.append(np.hstack([tile(imgs[0], h, f"{rec.name} real | render", p42_text(rec, clips)),
+                                  tile(imgs[1], h, "views gt | render")]))
     for b in sorted(run.glob("bundle-*/preview.mp4")):
         out.append(orbit_row(b, h))
     return out
