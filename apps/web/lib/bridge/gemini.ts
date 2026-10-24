@@ -24,33 +24,71 @@ export interface Plan {
   durationS: number; // the clip's length in the bundle: step times land in [0, durationS]
   video?: { path: string; offsetS: number; orbit: boolean }; // the clip window (orbit: preview.mp4, a 3D render)
   photo?: { path: string; mime: string }; // an avatar's one photo
+  /** Tests of the sentence alone (scripts/check-intents.ts): nothing is shown, but a replay still counts as moving. */
+  intentOnly?: boolean;
 }
 
+// The rules below are the brief's (team/raami.md) and the contract's (AGENTS.md, Experience), written out so the
+// model has no room to guess; tests/intents.json holds forty sentences that check them.
 const SYSTEM = `You plan what happens when a person, rebuilt life size in 3D from a video or a photo, stands in \
-someone's room. Every plan is one of four modes: teach (a lesson: the move in steps, each slowed down and repeated, \
-then the learner's turn), companion (they're simply there with you), watch (plain playback), play (a game of chess \
-with them).
-Never identify, name or guess who the person is, even if they seem famous, and never speak as them. Tips are read \
-aloud by the device in a neutral voice, so write them to the learner as "you": one short sentence each. Describe only \
-what is visible.`;
+someone's room. The user's sentence decides the plan; the picture shows what the person does.
+
+Mode, from what the user wants to do with them:
+- teach: learn or practise what the person does ("teach me", "show me how", "help me learn", "break it down", \
+"coach me"). The move in 2 to 6 steps, each slowed down and repeated, then the learner's turn. Only when they can \
+perform it.
+- watch: see them do it at full speed, with no lesson ("let me watch", "I want to see", "show me doing it", "play \
+it back", "play this piece for me", "follow along with"). "Play" there means playback or music, never a game.
+- companion: be with them, not a performance ("be with me", "sit with her", "keep me company", "I miss him", "stay \
+with me", "I want to hear her voice"). What the user does meanwhile (cooking dinner) doesn't make it a lesson.
+- play: a game of chess with them, the only game there is ("a game", "a match", "beat me" all mean chess, and so \
+does "teach me chess"). Only for an avatar built from a photo, who can sit across the board.
+
+Place, where they stand:
+- facing (1.8 m in front, facing you): companions, chess, watching, and lessons done with the hands at a table or \
+counter (cooking, knife work, baking, origami, knitting, drawing, card tricks).
+- beside (at your side, facing your way, so you copy them from the same side): lessons on an instrument (piano, \
+guitar, violin, cello, drums), and any lesson where the user says "next to me" or "beside me".
+- ahead (1.5 m ahead, facing away, like a teacher at the front of a class): lessons in a whole-body move (sport form \
+such as a jump shot, a serve or a swing; dance; boxing; a workout; yoga), and watching when the user wants to follow \
+along or move with them.
+
+Environment, a 360-degree place around them instead of the room, only when the activity clearly has a home: an \
+instrument, singing or any music -> concert-hall; basketball -> court (it is a basketball court, nothing else); \
+boxing or kickboxing -> ring; a gym workout, weights or calisthenics -> gym; dance, ballet or yoga -> studio; the \
+user asks for the mountains -> mountains. Companions and chess stay in the user's room: room, unless they name one \
+of these places. Anything else (cooking, crafts, tennis, golf, skateboarding, a toast, a home video): leave it out.
+
+Objects: the things that matter for the activity, at most 4, each a lowercase singular noun in plain words: what \
+they hold, play or use. ["basketball", "hoop"] for a shot, ["piano", "bench"] at a piano, ["guitar"] for a strum, \
+["pan"] for an omelette, ["chessboard"] for chess. Never body parts, clothes, people or the place itself; none for \
+a companion, or for a dance or workout without equipment.
+
+Never identify, name or guess who the person is, even if they seem famous, and never speak as them (a legend named \
+in the sentence is only a chess strength). Tips are read aloud by the device in a neutral voice, so write them to \
+the learner as "you": one short sentence each. Describe only what is visible.`;
 
 const SCHEMA = {
   type: "object",
   properties: {
-    mode: { type: "string", enum: ["teach", "companion", "watch", "play"] },
+    mode: {
+      type: "string",
+      enum: ["teach", "companion", "watch", "play"],
+      description: "teach: learn the move in steps; watch: see it done, no lesson; companion: be with them; play: chess (avatars only).",
+    },
     title: { type: "string", description: "Short and warm, at most 6 words, e.g. 'Down, down-up: a first strum'." },
     summary: { type: "string", description: "One sentence on what they're doing, under 20 words." },
-    category: { type: "string", description: "The activity, 1 or 2 words, e.g. 'Guitar', 'Basketball', 'Salsa'." },
+    category: { type: "string", description: "The activity, 1 or 2 words, e.g. 'Guitar', 'Basketball', 'Salsa', 'Chess'." },
     place: {
       type: "string",
       enum: ["facing", "beside", "ahead"],
       description:
-        "ahead: moves you follow (dance, sport form, exercise); facing: things you watch hands do (guitar, cooking) and companions; beside: side by side, e.g. 'sit next to me' at a piano.",
+        "facing: companions, chess, watching, and hands-on lessons at a table (cooking, crafts). beside: instrument lessons, or a lesson 'next to me'. ahead: whole-body lessons (sport form, dance, boxing, workouts, yoga) and following along.",
     },
     steps: {
       type: "array",
       maxItems: 6,
-      description: "teach only: 2 to 6 steps covering the move in order.",
+      description: "teach only, and then always 2 to 6 steps covering the move in order, inside the clip.",
       items: {
         type: "object",
         properties: {
@@ -67,25 +105,32 @@ const SCHEMA = {
     environment: {
       type: "string",
       enum: [...ENVIRONMENTS],
-      description: "Only when the activity clearly has a home: piano or music -> concert-hall, basketball -> court, boxing -> ring, workout -> gym, dance -> studio. Otherwise leave it out.",
+      description:
+        "Only when the activity clearly has a home: an instrument or music -> concert-hall, basketball -> court, boxing -> ring, a workout -> gym, dance or yoga -> studio, the mountains when asked. Companions and chess: room. Otherwise leave it out.",
     },
     objects: {
       type: "array",
       maxItems: 4,
-      items: { type: "string", description: "One lowercase noun, e.g. 'basketball', 'hoop', 'guitar', 'piano', 'bench'." },
-      description: "The objects that matter for what the user wants to do, e.g. ['basketball', 'hoop'] for a jump shot, ['piano', 'bench'] for a piano lesson. Empty when none.",
+      items: { type: "string", description: "One lowercase singular noun in plain words, e.g. 'basketball', 'hoop', 'guitar', 'pan'. No body parts, clothes or places." },
+      description: "What matters for the activity, e.g. ['basketball', 'hoop'] for a jump shot, ['piano', 'bench'] for a piano lesson, ['chessboard'] for chess. Empty when nothing does.",
     },
     strength: {
       type: "string",
       enum: [...STRENGTHS],
-      description: "play only: from the sentence ('like Carlsen' is carlsen), else club.",
+      description: "play only: carlsen or fischer when the sentence names them; gm for a grandmaster; master; expert; max for full strength; club for casual, easy, or when nothing is said.",
     },
   },
   required: ["mode", "title", "summary", "place"],
 };
 
-/** Ask Gemini for the plan and hold it to the contract. Everything it was shown is deleted from Google afterwards. */
-export async function writeExperience(p: Plan): Promise<Omit<Experience, "createdAt">> {
+/**
+ * Ask Gemini for the plan and hold it to the contract. Everything it was shown is deleted from Google afterwards.
+ * `debug.raw` sees the model's own JSON before clean(), so the intent tests can tell the prompt's work from the rules'.
+ */
+export async function writeExperience(
+  p: Plan,
+  debug: { raw?: (json: Record<string, unknown>) => void } = {},
+): Promise<Omit<Experience, "createdAt">> {
   const files: GeminiFile[] = [];
   try {
     const d = p.durationS.toFixed(2);
@@ -114,11 +159,17 @@ export async function writeExperience(p: Plan): Promise<Omit<Experience, "create
         : `The video is the ${d} seconds the person was rebuilt from. Time 0 is its first frame; step times run from 0 to ${d}.`
       : p.photo
         ? `The photo is all there is of this person: they can't perform a move, so the mode is companion, watch or play, with no steps.`
-        : `There is no picture to look at: plan from the sentence alone. They can't perform a move, so no steps.`;
+        : p.intentOnly && p.kind === "replay"
+          ? `The ${d}-second video they were rebuilt from isn't attached: plan from the sentence alone, and split a lesson evenly across 0 to ${d} seconds.`
+          : `There is no picture to look at: plan from the sentence alone. They can't perform a move, so no steps.`;
+    const who =
+      p.kind === "avatar"
+        ? "They are an avatar built from a photo: they can keep the user company, be watched, or sit across a chess board."
+        : "They are a replay of a video: they do exactly what the video shows, and can't play chess.";
     const want = p.intent
       ? `What the user wants to do with this person: "${p.intent}".`
       : `The user didn't say what they want: choose teach if the clip shows a move someone could learn, otherwise watch.`;
-    parts.push({ text: `The user calls this dream "${p.name}". ${want}\n${media}` });
+    parts.push({ text: `The user calls this dream "${p.name}". ${want}\n${who}\n${media}` });
 
     const { text, model } = await firstModel(MODELS, (model) =>
       retry(2, () =>
@@ -134,7 +185,9 @@ export async function writeExperience(p: Plan): Promise<Omit<Experience, "create
         }),
       ).then((r) => ({ text: r.text ?? "", model })),
     );
-    return { ...clean(JSON.parse(text), p), source, model };
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    debug.raw?.(raw);
+    return { ...clean(raw, p), source, model };
   } finally {
     for (const f of files) ai().files.delete({ name: f.name! }).catch(() => {}); // don't leave people's clips on Google's side
   }
@@ -182,12 +235,119 @@ async function firstModel<T>(models: string[], call: (model: string) => Promise<
   throw last ?? new Error("no Gemini model configured");
 }
 
-/** Hold whatever the model returned to the contract: modes, places, steps inside the clip, sane speeds and repeats. */
-function clean(raw: Record<string, unknown>, p: Plan): Omit<Experience, "createdAt" | "source" | "model"> {
+// The rules clean() applies on its own, where the sentence leaves no doubt. Words are matched on the user's sentence
+// plus the model's own one-word category ("Piano"), lowercased, on word boundaries. Kept narrow on purpose: "box"
+// (origami), "jumper" (knitting), "salsa" (cooking) and "keyboard" (typing) are not activities here.
+type Place = Experience["place"];
+
+const INSTRUMENT =
+  /\b(piano|pianist|guitars?|guitarist|strum\w*|ukulele|uke|violins?|violinist|fiddle|viola|cello|cellist|double bass|bass guitar|harp|flute|clarinet|saxophone|sax|trumpet|trombone|drums|drummer|drumming|banjo|mandolin|accordion|harmonica)\b/;
+const BASKETBALL = /\b(basketball|jump ?shots?|free throws?|lay-?ups?|dunk\w*|dribbl\w*|crossovers?|three-pointers?|hoops)\b/;
+
+/** An activity the brief decides for: where its lesson stands, and its home (none: leave the environment out). */
+const ACTIVITIES: { words: RegExp; lesson: Place; home: Environment | null }[] = [
+  { words: INSTRUMENT, lesson: "beside", home: "concert-hall" },
+  { words: BASKETBALL, lesson: "ahead", home: "court" },
+  { words: /\b(boxing|boxer|shadowbox\w*|kickbox\w*|jabs?|uppercuts?|sparring|muay thai)\b/, lesson: "ahead", home: "ring" },
+  {
+    words: /\b(workouts?|work out|gym|weightlifting|weights|squats?|deadlifts?|bench press|push-?ups?|pull-?ups?|burpees?|lunges?|kettlebells?|dumbbells?|crossfit|hiit|calisthenics)\b/,
+    lesson: "ahead",
+    home: "gym",
+  },
+  { words: /\b(danc\w*|ballet|ballerina|salsa (?:steps?|basic|turns?)|tango|waltz|hip-?hop|breakdanc\w*|choreograph\w*|yoga|pilates|zumba)\b/, lesson: "ahead", home: "studio" },
+  {
+    words: /\b(tennis|golf|baseball|softball|soccer|volleyball|cricket|hockey|lacrosse|skateboard\w*|karate|taekwondo|tai chi|kung fu|martial arts)\b/,
+    lesson: "ahead",
+    home: null,
+  },
+  {
+    words: /\b(cook\w*|bak(?:e|es|ing)|chop\w*|dic(?:e|ing)|slic(?:e|ing)|knead\w*|omelett?es?|pancakes?|recipe|knit\w*|crochet\w*|sew\w*|origami|fold\w*|sketch\w*|drawing|paint\w*|calligraphy|pottery|whittl\w*|card tricks?|magic tricks?|braid\w*)\b/,
+    lesson: "facing",
+    home: null,
+  },
+];
+const NAMED_PLACES: [RegExp, Environment][] = [
+  [/\b(mountains?|alps|hik(?:e|es|ing))\b/, "mountains"],
+  [/\b(my (?:own )?(?:living ?room|room|house|home|kitchen|bedroom|backyard|garden|driveway)|at home)\b/, "room"],
+];
+const NEXT_TO = /\b(next to me|beside me|by my side|at my side|side by side)\b/; // a lesson copied from the same side
+const FOLLOW = /\b(follow(?:ing)? along|along with (?:him|her|them)|dance along|keep up with|do it with (?:him|her|them)|move with (?:him|her|them))\b/;
+const CHESS = /\bchess\w*/;
+const STRENGTH_WORDS: [RegExp, Strength][] = [
+  [/\bcarlsen\b/, "carlsen"],
+  [/\bfischer\b/, "fischer"],
+  [/\b(grandmaster|gm)\b/, "gm"],
+  [/\bmaster\b/, "master"],
+  [/\bexpert\b/, "expert"],
+  [/\b(full strength|strongest|maximum|max strength|as hard as|hardest|no mercy|everything you've got|all you've got)\b/, "max"],
+  [/\b(easy|casual|casually|beginners?|gentle|gently|friendly|club)\b/, "club"],
+];
+
+/** The noun a named instrument puts in the plan's objects ("strum" names none: guitar or ukulele). */
+const INSTRUMENT_NOUN: [RegExp, string[]][] = [
+  [/\b(piano|pianist)\b/, ["piano", "bench"]],
+  [/\b(guitars?|guitarist|bass guitar)\b/, ["guitar"]],
+  [/\b(ukulele|uke)\b/, ["ukulele"]],
+  [/\b(violins?|violinist|fiddle)\b/, ["violin"]],
+  [/\bviola\b/, ["viola"]],
+  [/\b(cello|cellist)\b/, ["cello"]],
+  [/\b(drums|drummer|drumming)\b/, ["drum kit"]],
+  [/\b(harp|flute|clarinet|saxophone|trumpet|trombone|banjo|mandolin|accordion|harmonica)\b/, []], // filled from the match
+];
+const SHOOTING = /\b(shots?|shoot\w*|free throws?|lay-?ups?|dunk\w*|three-pointers?|hoops?)\b/; // a basketball move that needs the hoop
+
+/** Plain names for what the model may call the same thing. */
+const SAME: Record<string, string> = {
+  "basketball hoop": "hoop", "basketball net": "hoop", "basketball ring": "hoop", "basketball ball": "basketball",
+  "piano bench": "bench", "piano stool": "bench", "grand piano": "piano", "upright piano": "piano",
+  "chess board": "chessboard", "chess set": "chessboard", "chess pieces": "chessboard",
+  "frying pan": "pan", skillet: "pan", "non-stick pan": "pan", "chef knife": "knife", "kitchen knife": "knife", "chefs knife": "knife",
+  "acoustic guitar": "guitar", "electric guitar": "guitar", drums: "drum kit", "drum set": "drum kit",
+  "origami paper": "paper", "tennis racquet": "tennis racket", racquet: "racket", knives: "knife",
+};
+const PLURAL_KEEP = new Set(["chess", "glasses", "scissors", "tongs", "pants", "shorts", "goggles", "headphones", "canvas", "dice", "lens", "pliers", "tennis"]);
+const NOT_OBJECTS = new Set([
+  "hand", "arm", "foot", "feet", "leg", "finger", "wrist", "elbow", "knee", "hip", "head", "face", "body", "shoulder",
+  "person", "man", "woman", "teacher", "player", "people", "shirt", "shoe", "clothes", "room", "floor", "stage",
+  "court", "studio", "gym", "ring", "concert hall", "mountain",
+]);
+
+/** One object as a lowercase singular noun in plain words, or "" when it isn't one. */
+function noun(v: unknown): string {
+  if (typeof v !== "string") return "";
+  let n = v.toLowerCase().replace(/[’']/g, "").replace(/\s+/g, " ").trim().replace(/^(an?|the|some|pair of) /, "");
+  n = SAME[n] ?? n;
+  const words = n.split(" ");
+  const last = words[words.length - 1];
+  if (!n.includes(" of ") && !PLURAL_KEEP.has(last)) {
+    if (/(sh|ch|x|ss|z)es$/.test(last)) words[words.length - 1] = last.slice(0, -2);
+    else if (/[^s]s$/.test(last) && !/(us|is|ies)$/.test(last) && last.length > 3) words[words.length - 1] = last.slice(0, -1);
+    n = SAME[words.join(" ")] ?? words.join(" ");
+  }
+  return /^[a-z][a-z -]{1,30}$/.test(n) && !NOT_OBJECTS.has(n) ? n : "";
+}
+
+/**
+ * Hold whatever the model returned to the contract (modes, places, steps inside the clip, sane speeds and repeats),
+ * then apply the rules the sentence leaves no doubt about:
+ * - chess needs an avatar across the board; an avatar asked for chess plays it, facing you, with a chessboard, at the
+ *   strength the sentence names (else the model's, else club);
+ * - companions face you and stay in your room unless a place is named;
+ * - a lesson "next to me" is beside you; otherwise a lesson whose activity is plain from the words stands where the
+ *   brief says (instruments beside, whole-body moves ahead, hands-on work facing);
+ * - watching to follow along puts them ahead of you;
+ * - a named place (the mountains, your own room) wins; an activity with a home fills a missing environment;
+ * - objects are lowercase singular nouns, with a named instrument and a basketball (plus the hoop for a shot) first.
+ * Exported for tests/plan.test.ts.
+ */
+export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience, "createdAt" | "source" | "model"> {
+  const raw: Record<string, unknown> = input && typeof input === "object" ? input : {};
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   const D = Math.max(p.durationS, 0.1);
   let mode = (["teach", "companion", "watch", "play"].includes(str(raw.mode)) ? str(raw.mode) : "watch") as ExperienceMode;
-  const place = (["facing", "beside", "ahead"].includes(str(raw.place)) ? str(raw.place) : "facing") as Experience["place"];
+  let place = (["facing", "beside", "ahead"].includes(str(raw.place)) ? str(raw.place) : "facing") as Place;
+  const said = (p.intent ?? "").toLowerCase();
+  const text = `${said} ${str(raw.category).toLowerCase()}`;
 
   let steps = (Array.isArray(raw.steps) ? raw.steps : [])
     .map((s: Record<string, unknown>) => {
@@ -210,12 +370,41 @@ function clean(raw: Record<string, unknown>, p: Plan): Omit<Experience, "created
   for (let i = 0; i + 1 < steps.length; i++) steps[i].end = Math.min(steps[i].end, steps[i + 1].start); // no overlaps
   steps = steps.filter((s) => s.end - s.start >= 0.2);
 
-  const still = !p.video; // a photo, or nothing: they can't perform a move
+  // a photo, or nothing to look at: they can't perform a move (a sentence-only test of a replay still moves)
+  const still = !p.video && !(p.intentOnly && p.kind === "replay");
+  if (p.kind === "avatar" && CHESS.test(said)) mode = "play"; // chess is the one thing an avatar asked for it can do
   if (mode === "teach" && (still || steps.length < 2)) mode = still ? "companion" : "watch";
   if (mode === "play" && p.kind !== "avatar") mode = "watch"; // chess needs a rigged avatar across the board
-  const strength = (STRENGTHS as readonly string[]).includes(str(raw.strength)) ? (str(raw.strength) as Strength) : "club";
-  const environment = (ENVIRONMENTS as readonly string[]).includes(str(raw.environment)) ? (str(raw.environment) as Environment) : undefined;
-  const objects = [...new Set((Array.isArray(raw.objects) ? raw.objects : []).map((o) => str(o).toLowerCase()).filter((o) => /^[a-z][a-z -]{1,30}$/.test(o)))].slice(0, 4);
+
+  const activities = ACTIVITIES.filter((a) => a.words.test(text));
+  const agreed = <T,>(pick: (a: (typeof ACTIVITIES)[number]) => T): T | undefined => {
+    const values = [...new Set(activities.map(pick))];
+    return values.length === 1 ? values[0] : undefined; // several activities that disagree: leave it to the model
+  };
+  if (mode === "play" || mode === "companion") place = "facing";
+  else if (mode === "teach") place = NEXT_TO.test(said) ? "beside" : (agreed((a) => a.lesson) ?? place);
+  else if (FOLLOW.test(said)) place = "ahead";
+
+  let environment = (ENVIRONMENTS as readonly string[]).includes(str(raw.environment)) ? (str(raw.environment) as Environment) : undefined;
+  const named = NAMED_PLACES.find(([re]) => re.test(said))?.[1];
+  if (named) environment = named;
+  else if (!environment && (mode === "play" || mode === "companion")) environment = "room";
+  else if (!environment) environment = agreed((a) => a.home) ?? undefined;
+
+  const objects: string[] = [];
+  if (mode === "play") objects.push("chessboard");
+  if (mode === "teach" || mode === "watch") {
+    for (const [re, nouns] of INSTRUMENT_NOUN) {
+      const m = re.exec(text);
+      if (m) objects.push(...(nouns.length ? nouns : [m[1]]));
+    }
+    if (BASKETBALL.test(text)) objects.push("basketball", ...(SHOOTING.test(text) ? ["hoop"] : []));
+  }
+  objects.push(...(Array.isArray(raw.objects) ? raw.objects : []).map(noun).filter(Boolean));
+
+  const fromSentence = STRENGTH_WORDS.find(([re]) => re.test(said))?.[1];
+  const strength = fromSentence ?? ((STRENGTHS as readonly string[]).includes(str(raw.strength)) ? (str(raw.strength) as Strength) : "club");
+  const things = [...new Set(objects)].slice(0, 4);
 
   return {
     intent: p.intent,
@@ -226,7 +415,7 @@ function clean(raw: Record<string, unknown>, p: Plan): Omit<Experience, "created
     ...(mode === "teach" ? { steps } : {}),
     ...(mode === "play" ? { play: { game: "chess" as const, strength } } : {}),
     ...(environment ? { environment } : {}),
-    ...(objects.length ? { objects } : {}),
+    ...(things.length ? { objects: things } : {}),
     category: str(raw.category) || undefined,
     durationS: p.durationS,
   };
