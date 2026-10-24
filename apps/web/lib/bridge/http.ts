@@ -31,3 +31,13 @@ export function publicOrigin(h: Headers): string {
     .find((i) => i && i.family === "IPv4" && !i.internal)?.address;
   return `${proto}://${lan ?? name}${port ? `:${port}` : ""}`;
 }
+
+/**
+ * The WebXR viewer (apps/webxr, https on :5180) as another device on the Wi-Fi reaches it: the Quest types this. Same
+ * host as publicOrigin, so it's this Mac's Wi-Fi address even when the page itself is open on localhost.
+ */
+export function viewerOrigin(h: Headers): string {
+  const set = process.env.NEXT_PUBLIC_VIEWER_URL;
+  if (set) return set.replace(/\/$/, "");
+  return `https://${new URL(publicOrigin(h)).hostname}:5180`;
+}

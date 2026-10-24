@@ -39,7 +39,7 @@ export default function ShareButton({ title, url }: { title: string; url: string
   );
 }
 
-async function copy(text: string): Promise<boolean> {
+export async function copy(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);

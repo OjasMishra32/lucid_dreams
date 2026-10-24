@@ -1,0 +1,73 @@
+// The five demo moments (demo/showcase.md): what judges see first on the laptop, at /showcase and on the kiosk.
+// Each lists the dreams that can play it, best first; the first one that's ready in the library is shown.
+
+export interface Moment {
+  title: string;
+  line: string; // what happens, one sentence
+  intent: string; // the sentence said to them (a dream's own intent wins when it has one)
+  where: string;
+  ids: string[];
+  sentence?: string; // else any dream whose intent matches this (a regex, any case)
+  action: string; // the button, once a dream is ready
+  chess?: Record<string, string>; // opens the chess table instead: avatar id -> engine strength (AGENTS.md, play)
+  credit?: string; // source and licence, shown small
+}
+
+export const MOMENTS: Moment[] = [
+  {
+    title: "Piano lesson, side by side",
+    line: "A piano teacher sits at your side and plays the piece in steps, slowed down, with your turn after each.",
+    intent: "Sit next to me and teach me this piece",
+    where: "Your room, or a concert hall",
+    ids: ["piano-han"],
+    action: "Start the lesson",
+    credit: "Jason Han, piano teacher. Wikimedia Commons, CC BY-SA 4.0.",
+  },
+  {
+    title: "LeBron in your driveway",
+    line: "His jump shot, life size, with the real ball in his hands and a regulation hoop where he aims.",
+    intent: "Teach me this jump shot",
+    where: "Your room, or a court",
+    ids: ["lebron-jumper"],
+    action: "Start the lesson",
+    credit: "Clip supplied for this non-commercial demo. Not affiliated.",
+  },
+  {
+    title: "Chess with the legends",
+    line: "Seated across a real-size board on your table, moving their own pieces, with a clock at your side.",
+    intent: "Play chess with me",
+    where: "Your table",
+    ids: ["bobby-fischer", "magnus-carlsen"],
+    action: "Play chess with them",
+    chess: { "bobby-fischer": "fischer", "magnus-carlsen": "carlsen" },
+  },
+  {
+    title: "Someone you’ve lost",
+    line: "From a family photo or home video, someone you miss, simply sitting with you.",
+    intent: "I just want to sit with her",
+    where: "Your living room",
+    ids: [],
+    sentence: "\\bsit with (her|him)\\b", // the family moment's id isn't known; its sentence is (demo/showcase.md)
+    action: "Bring them into your room",
+    credit: "Shown with the family’s written consent.",
+  },
+  {
+    title: "You, perfected",
+    line: "Your own body, from one photo, doing his shot.",
+    intent: "Show me doing it",
+    where: "A court",
+    ids: ["vishal-jumper"],
+    action: "See yourself do it",
+  },
+];
+
+const LEGEND: Record<string, string> = { fischer: "Fischer", carlsen: "Carlsen" };
+
+/** The label every chess legend carries (AGENTS.md, Consent): an engine rating, never the person. */
+export function chessLabel(strength: string): string {
+  const who = LEGEND[strength];
+  return who ? `Stockfish at ${who}’s peak rating. Not affiliated.` : "A real chess engine. Not affiliated with any player.";
+}
+
+/** Every showcase dream id, in moment order: the kiosk leads with these. */
+export const SHOWCASE_IDS = MOMENTS.flatMap((m) => m.ids);

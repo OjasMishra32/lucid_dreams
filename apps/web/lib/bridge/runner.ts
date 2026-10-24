@@ -132,6 +132,12 @@ export async function runnerStatus(id: string): Promise<JobStatus | null> {
   return remote;
 }
 
+/** What HiPerGator says about a run, and nothing else (no fetch): for listing runs this bridge didn't start. */
+export function remoteStatus(id: string): Promise<JobStatus | null> {
+  if (!isRunId(id)) return Promise.resolve(null);
+  return cachedStatus(id).catch(() => null);
+}
+
 function cachedStatus(id: string): Promise<JobStatus> {
   const hit = state.status.get(id);
   if (hit && Date.now() - hit.at < STATUS_TTL_MS) return hit.value;

@@ -11,6 +11,7 @@ export default function Nav() {
     <nav className="nav">
       <div className="nav-inner">
         <Link href="/" className="wordmark">Lucid Dreams</Link>
+        <Link href="/showcase" className={`${on("/showcase")} nav-showcase`}>Showcase</Link>
         <Link href="/library" className={on("/library")}>Library</Link>
         <ViewerLink query="mode=chess" className="nav-link nav-chess">Chess</ViewerLink>
         <Link href="/new" className="btn btn-sm">Make a dream</Link>

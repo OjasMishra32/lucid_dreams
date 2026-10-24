@@ -14,12 +14,16 @@ npm --prefix apps/web run dev          # http://<mac>:5170, open from any laptop
 npm --prefix apps/web run demo
 ```
 
+On the demo table: `/showcase` is the five moments from `demo/showcase.md`, each opening the viewer (or the chess table
+for the legends); `/kiosk` cycles the best dreams full screen, 8 s each (F for full screen, arrow keys to step). Every
+dream page has its Places (the viewer with `?place=`) and an "Open on Quest" address to type in the headset's browser.
+
 ## Modes
 
 | `BRIDGE_MODE` | What happens |
 | --- | --- |
 | `mock` (default) | Jobs walk through the real stages and messages in about a minute (`MOCK_SECONDS`). A finished job becomes a dream that links the sample bundle's files (`LUCID_SAMPLE_DREAM`, default `synthetic-test`) under the job's id and name. |
-| `runner` | Real jobs on HiPerGator through `pipeline/runner/lucid_runner.py` (Ojasva's Mac only). The upload streams to disk, `submit` runs in the background, `status` is polled (cached 4 s), and when a run is done the bridge calls `fetch` once and reports `done` after the bundle is in `dreams/<id>/`. Runs the autopilot started answer too. |
+| `runner` | Real jobs on HiPerGator through `pipeline/runner/lucid_runner.py` (Ojasva's Mac only). The upload streams to disk, `submit` runs in the background, `status` is polled (cached 4 s), and when a run is done the bridge calls `fetch` once and reports `done` after the bundle is in `dreams/<id>/`. Runs the autopilot started answer too, and the library's "In progress" lists every unfinished run in `dreams/.runs.json` (submitted by hand or by the autopilot) with its live status. |
 
 Bundles live in `<repo>/dreams/` (git-ignored), shared with the runner and the WebXR viewer. For mock mode on your
 own laptop, start from the committed sample: `cp -R samples/synthetic-test dreams/`.

@@ -4,9 +4,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import DreamStage from "@/components/DreamStage";
 import DreamExperience from "@/components/DreamExperience";
+import PlacesRow from "@/components/PlacesRow";
+import QuestUrl from "@/components/QuestUrl";
 import { readDream } from "@/lib/bridge/dreams";
 import { ensureExperience } from "@/lib/bridge/experience";
-import { publicOrigin } from "@/lib/bridge/http";
+import { publicOrigin, viewerOrigin } from "@/lib/bridge/http";
 import { dreamFile, formatCount, heightM, type Dream } from "@/lib/dream";
 import { formatDate, seenPercent } from "@/lib/format";
 
@@ -35,7 +37,9 @@ export default async function DreamPage({ params }: Props) {
   if (!d) notFound();
 
   const experience = ensureExperience(d.id);
-  const shareUrl = `${publicOrigin(await headers())}/library/${encodeURIComponent(d.id)}`;
+  const h = await headers();
+  const shareUrl = `${publicOrigin(h)}/library/${encodeURIComponent(d.id)}`;
+  const questUrl = `${viewerOrigin(h)}/?dream=${encodeURIComponent(d.id)}`;
   const seen = seenPercent(d);
   const facts = basics(d);
   const fidelity = metrics(d);
@@ -58,6 +62,8 @@ export default async function DreamPage({ params }: Props) {
           <h1 className="page-title">{d.name}</h1>
           {d.createdAt && <p className="detail-date">Made {formatDate(d.createdAt)}</p>}
           <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl} initial={experience} />
+          <PlacesRow id={d.id} planned={experience.state === "ready" ? experience.experience.environment : null} />
+          <QuestUrl url={questUrl} />
 
           {facts.length > 0 && (
             <>

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import JobProgress from "@/components/JobProgress";
 import { jobStatus } from "@/lib/bridge";
 import { readDream } from "@/lib/bridge/dreams";
+import { runName } from "@/lib/bridge/runs";
 import { getJob } from "@/lib/bridge/store";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,6 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   if (!status) notFound();
   const job = getJob(id);
   const dream = readDream(id);
-  const name = job?.name ?? dream?.name ?? id;
+  const name = job?.name ?? dream?.name ?? runName(id);
   return <JobProgress id={id} name={name} kind={job?.kind ?? dream?.kind ?? "replay"} initial={status} />;
 }

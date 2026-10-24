@@ -32,8 +32,8 @@ export default async function Library() {
         <section>
           <h2 className="row-title">In progress</h2>
           <div className="in-progress">
-            {jobs.map(({ job, status }) => (
-              <JobTile key={job.id} id={job.id} name={job.name} initial={status} />
+            {jobs.map(({ id, name, status }) => (
+              <JobTile key={id} id={id} name={name} initial={status} />
             ))}
           </div>
         </section>
