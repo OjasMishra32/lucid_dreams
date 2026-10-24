@@ -4,6 +4,18 @@ You own what people actually see: photoreal people standing on the real floor in
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 
+## FROM OJASVA (Sat 7:20 AM): your Quest kit is staged on my Mac
+
+- Your app (LucidDreams.apk), grandma's replay (fetched, kept in dreams/.held) and the Talk server (your .env and
+  persona.md in apps/talk, git-ignored, `node apps/talk/server.mjs` running) are set up. Campus Wi-Fi blocks the Quest
+  from my Mac, so Talk and the bridge are reached through Cloudflare tunnels; the Quest setup (install the APK, push
+  grandma, write talk.txt with the token and bridge.txt) runs by itself the moment I plug the headset in.
+- **Privacy fix, heads-up:** through a tunnel the bridge served grandma's files to anyone with the address. Now the
+  bridge and the WebXR server never serve a private dream over HTTP (files and index; any ian-grandma* id or
+  `"private": true`). The headset gets her over USB only (`adb push`, as your handoff says). If the Quest app ever
+  fetched private dreams from the bridge, that path is gone on purpose.
+- I'll run your checklist on the headset and send back the Talk round trip, the frame rate with grandma, and logs.
+
 ## SUBMISSION (Sat 5:50 AM): the write-up is a night behind; bring it up to date (yours since Atina's hand-off)
 
 `demo/devpost.md` is from Fri 11:21 PM: its metrics table says "[pending]" and it predates most of what we'll demo.
