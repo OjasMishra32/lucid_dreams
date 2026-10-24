@@ -518,7 +518,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       .catch(() => {});
   // ---------------- Talk: say something, they answer in their own cloned voice (talk.ts) ----------------
   // Only someone who agreed to it and whose talk may go through this server (the relay in vite.config.ts says so).
-  const talkWho = avatar ? (dream.talk?.who ?? (/^vishal(-|$)/.test(dream.id) ? "vishal" : null)) : null;
+  const talkWho = dream.talk?.who ?? (avatar && /^vishal(-|$)/.test(dream.id) ? "vishal" : null); // a replay talks too (no jaw)
   // their mouth: under the jaw joint of their rig, standing (an avatar's bounds are its T-pose, hair included)
   const jawRest = avatar?.skeleton.rest[22];
   const mouthY = avatar && jawRest ? jawRest[1] + avatar.motion.frames[0].root_t[1] - 0.05 : dream.bounds ? dream.bounds.max[1] - 0.13 : 1.6;

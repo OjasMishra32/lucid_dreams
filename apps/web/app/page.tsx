@@ -54,7 +54,7 @@ export default function Home() {
       key: "talk",
       eyebrow: "Company",
       headline: "Someone real, answering you.",
-      intro: "He stands in your room and looks at you. Ask him anything, and he answers in his own voice, cloned with his permission. Every reply is labelled as AI.",
+      intro: "Someone you love, or a friend, in the room with you. Speak to them and they answer in their own voice, cloned with their permission. Every reply is labelled as AI.",
       banner: card("vishal")?.video ? { video: card("vishal")!.video } : null,
     },
   ];

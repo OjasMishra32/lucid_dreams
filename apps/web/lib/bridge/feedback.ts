@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { isPrivate, type Dream, type Experience, type Feedback, type FeedbackState } from "../dream";
+import { isFamily, isPrivate, type Dream, type Experience, type Feedback, type FeedbackState } from "../dream";
 import { DATA_DIR, heldIds, readDream } from "./dreams";
 import { GEMINI_ON, ensureExperience, teacherVideo, trim } from "./experience";
 import { cachedFeedback, latestFeedback, saveFeedback } from "./feedbackStore";
@@ -61,7 +61,7 @@ try {
  */
 export function whyNot(d: Dream | null, e: Experience | null, id = d?.id ?? ""): { status: number; message: string } | null {
   if (!d || heldIds().has(d.id) || heldIds().has(id)) return { status: 404, message: "There's no such dream." };
-  if (isPrivate(d) || isPrivate({ id })) return { status: 403, message: "Attempts aren't checked for a private dream: nothing of a family's goes to Gemini." };
+  if (isPrivate(d) || isFamily(id)) return { status: 403, message: "Attempts aren't checked for a private dream: nothing of a family's goes to Gemini." };
   if (d.kind !== "replay") return { status: 400, message: "Watch me try needs a lesson from a video." };
   if (!GEMINI_ON) return { status: 503, message: "Watch me try is off: this Mac has no Gemini key." };
   if (!e || e.mode !== "teach" || !e.steps?.length) return { status: 409, message: "There's no lesson to compare with yet." };

@@ -5,7 +5,7 @@ import type { Skeleton } from "./avatar";
 // again to send. Their reply comes back in their own cloned voice (apps/talk), from where their mouth is, the words
 // beside them labelled AI voice, and their jaw moves with the reply's loudness. The viewer's own server relays it
 // (vite.config.ts, /talk/<who>): it adds the Talk server's token, so no key or token reaches the page, and it only lets
-// through people whose talk may leave the Mac (never a family's: grandma's is the Quest app's, over USB). A reply with
+// through people whose consent covers their talk leaving the Mac (Vishal; Ian's grandma, with her family's agreement). A reply with
 // no voice yet (not cloned) shows the words alone; it's never read in anyone else's voice.
 
 export type TalkState = "idle" | "listening" | "thinking" | "speaking";

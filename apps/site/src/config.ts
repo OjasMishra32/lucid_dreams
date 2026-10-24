@@ -39,6 +39,6 @@ export const BRIDGE_URLS: string[] = (import.meta.env.VITE_BRIDGE_URL as string 
 export const HERO_DREAM = "dance-01";
 
 /** Never on the public site: public figures (their footage and photos are for the live demo only) and family dreams. */
-export const NOT_ON_SITE = /^(lebron|bobby|magnus|juice-wrld|ian-grandma)/;
+export const NOT_ON_SITE = /^(lebron|bobby|magnus|juice-wrld)/;
 
 export const REPO_URL = "https://github.com/OjasMishra32/lucid_dreams";

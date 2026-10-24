@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isPrivate, type Dream, type RankedCandidate, type Realism, type RealismState, type RealismView } from "../dream";
+import { isFamily, isPrivate, type Dream, type RankedCandidate, type Realism, type RealismState, type RealismView } from "../dream";
 import { DATA_DIR, DREAMS_DIR, listDreams, readDream } from "./dreams";
 import { GEMINI_ON, cleanPhoto, clipOf, photoOf, trim } from "./experience";
 import { fetching } from "./fetches";
@@ -52,7 +52,7 @@ function sourceOf(d: Dream, depth = 0): Source | null {
 
 /** Real, public dreams with a render and something to compare it with. Never a family's private dream. */
 function checkable(d: Dream): boolean {
-  if (isPrivate(d) || d.id.startsWith("synthetic") || getJob(d.id)?.mode === "mock") return false;
+  if (isPrivate(d) || isFamily(d.id) || d.id.startsWith("synthetic") || getJob(d.id)?.mode === "mock") return false;
   if (!d.preview || !existsSync(join(DREAMS_DIR, d.id, d.preview))) return false;
   return sourceOf(d) !== null;
 }

@@ -212,11 +212,16 @@ export const STAGE_LABELS: Record<Stage, string> = {
 
 /**
  * A family's dream, shown only on the bridge Mac and never shared: dream.json's `"private": true`, or any of Ian's
- * grandma's runs (any id starting ian-grandma: ian-grandma, ian-grandma-avatar, ian-grandma-avatar-head, ...) before theirs
- * carries the field.
+ * grandma's runs (any id starting ian-grandma) unless its dream.json says `"private": false` (the family agreed to her
+ * being shown: Ojasva, Sat Oct 24).
  */
-export function isPrivate(d: { id: string; private?: boolean }): boolean {
-  return d.private === true || /^ian-grandma/i.test(d.id);
+export function isPrivate(d: { id: string; private?: boolean | null }): boolean {
+  return d.private === true || (isFamily(d.id) && d.private !== false);
+}
+
+/** A family's own (any of Ian's grandma's runs): shown or not, their clip and photos never go to Gemini. */
+export function isFamily(id: string): boolean {
+  return /^ian-grandma/i.test(id);
 }
 
 export function dreamFile(id: string, file: string): string {

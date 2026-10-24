@@ -26,11 +26,11 @@ function dreams(): Plugin {
   };
 }
 
-// Talk with them (apps/talk on :5175, src/talk.ts) for the people whose talk may go through this server, which a
-// tunnel makes public: the Talk server's token is added here from apps/talk/.env, so it never reaches a page. Never a
-// family's: grandma's talk is the Quest app's, over USB.
+// Talk with them (apps/talk on :5175, src/talk.ts) for the people whose consent covers talk going through this server,
+// which a tunnel makes public: the Talk server's token is added here from apps/talk/.env, so it never reaches a page.
+// Vishal (his own word) and Ian's grandma (her family agreed to her being shown and heard: Ojasva, Sat Oct 24).
 const TALK = process.env.LUCID_TALK ?? "http://localhost:5175";
-const TALK_HERE = new Set(["vishal"]);
+const TALK_HERE = new Set(["vishal", "grandma"]);
 const talkToken = () => {
   // beside this app in the repo; the headset's stable build is a copy of apps/webxr alone, whose dreams/ links back
   // into the repo, so look there too
@@ -133,11 +133,18 @@ function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any,
         }
         const file = resolve(DREAMS, "." + path);
         if (!file.startsWith(DREAMS) || !existsSync(file) || statSync(file).isDirectory()) return next();
-        // a private dream (a family's: any ian-grandma* id, or "private": true) is never served from here, not even by a
-        // direct link: this server is reachable through a tunnel; the Quest app plays it from the headset's own storage
+        // a private dream ("private": true, or a family's ian-grandma* run not marked "private": false) is never served
+        // from here, not even by a direct link: this server is reachable through a tunnel; the Quest app plays it from
+        // the headset's own storage
         const id = path.split("/").filter(Boolean)[0] ?? "";
         const meta = join(DREAMS, id, "dream.json");
-        if (/^ian-grandma/.test(id) || (existsSync(meta) && JSON.parse(readFileSync(meta, "utf8")).private === true)) {
+        let flag: unknown = null;
+        try {
+          flag = existsSync(meta) ? JSON.parse(readFileSync(meta, "utf8")).private : null;
+        } catch {
+          flag = true;
+        }
+        if (flag === true || (/^ian-grandma/i.test(id) && flag !== false)) {
           res.statusCode = 404;
           res.end();
           return;

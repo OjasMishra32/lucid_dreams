@@ -22,16 +22,17 @@ const TYPES: Record<string, string> = {
  * GET /dreams/<id>/... : the bundle's files, static. Honours Range so previews seek on Safari and the Quest, and big
  * frame files can resume. /dreams/index.json mirrors the WebXR viewer's index, so it can point ?base= here too.
  */
-/** A family's dream: any ian-grandma* run, or one whose dream.json says "private": true. */
+/** A family's dream: one whose dream.json says "private": true, or an ian-grandma* run not marked "private": false. */
 function privateId(id: string): boolean {
   const meta = resolve(DREAMS_DIR, id, "dream.json");
-  let flagged = false;
+  let flag: boolean | null = null;
   try {
-    flagged = existsSync(meta) && JSON.parse(readFileSync(meta, "utf8")).private === true;
+    const v = existsSync(meta) ? JSON.parse(readFileSync(meta, "utf8")).private : null;
+    flag = typeof v === "boolean" ? v : null;
   } catch {
-    flagged = false;
+    flag = true; // unreadable: assume the worst
   }
-  return isPrivate({ id, private: flagged });
+  return isPrivate({ id, private: flag });
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
