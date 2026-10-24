@@ -6,6 +6,51 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## DO THIS NOW (Fri 9:15 PM): your list, in order
+
+This is your current list. Everything further down is earlier context.
+
+**1. Connect Ojasva's Mac to HiPerGator (blocks everything; about 2 minutes).**
+Your login on your own laptop doesn't run anything: every job, sync and fetch goes through the shared connection on
+Ojasva's Mac, and it's still down. From anywhere:
+- Put an SSH key on GitHub: `ssh-keygen -t ed25519` (if you have none), then paste `~/.ssh/id_ed25519.pub` at
+  github.com/settings/keys. A watcher on Ojasva's Mac notices it within 30 seconds and opens a login-only session.
+- Ojasva texts you one line, `ssh <session>@uptermd.upterm.dev`. Run it in your terminal, type your HiPerGator
+  password and approve Duo. It closes by itself. Only your GitHub key can join, and you get nothing but that login.
+- If you're at the table instead, just type your password into the login waiting in his Terminal.
+
+**2. Then it runs by itself (nothing to do, just know the order):**
+`after-reconnect.sh` installs SMPL-X and submits `digs-assets` -> the autopilot submits both jump-shot replays ->
+when a replay finishes and `ASSETS_OK` is in `$L/jobs/lucid-digs-assets-*.log`, it submits `digs-finetune` for it.
+
+**3. Your head-to-toe photo, tonight.** It becomes the `vishal` avatar: the chess opponent, the "you, perfected"
+subject and the first avatar in the demo. Full body with feet in frame, arms slightly away from the body, plain
+background, even light, phone at chest height about 3 m away. AirDrop it to Ojasva's Mac; he submits
+`digs-sample` with `ID=vishal`. Then check `vishal.work/ref_check.png` (photo vs re-render should overlap) and
+`thumb.jpg` (must show your front; if it shows your back, apply the 180-degree turn in `avatar.ply`).
+
+**4. When the fine-tune table lands** (`$L/data/avatars/finetune/jump-shot/dreams/jump-shot-tuned.work/results.md`):
+if fine-tuned doesn't beat one-photo on the held-out views, fix it before anything else (steps, lr, which views).
+Then copy the numbers and `compare.png` into a Results section in `avatars/README.md`. This is our research claim.
+
+**5. "You, perfected":** after 3 and the first replay, Ojasva runs
+`digs-perform.sbatch AVATAR=$L/data/avatars/dreams/vishal.work/code.pt RUN_ID=jump-shot ID=vishal-jumper`.
+Check that the feet stay on the floor through the jump.
+
+**6. Code while the GPUs work (no HiPerGator needed):**
+- a. **Seated idle** in `lucid_avatars/idle.py`: the breathing and blinking loop, but sitting (hips on a 0.45 m chair,
+  forearms on a 0.75 m table, looking down at a board in front). The chess opponent sits in it.
+- b. **Reach-and-place** in `lucid_avatars/reach.py`, with a test: the right hand reaches a board square (5 cm
+  squares, board centre at the origin, your side at -Z), "picks", carries to another square, places, and returns
+  to the seated idle in about 1.2 s. Numpy IK on the arm chain is fine. The chess mode plays it whenever the
+  engine moves.
+- c. **Hands and face pass:** a short extra optimisation on 2x face and hand crops, so close-ups hold up.
+- d. **Family-photo person:** one old photo -> avatar + blinking idle, with the honest seen % (you already ship
+  `seenFraction`).
+
+What you don't need to do: bake for the WebXR viewer (it skins your bundles live now, matching `skinning.py` to
+1e-6), or any public-figure avatars. Chess legends stay engine ratings, and opponents are consenting teammates only.
+
 ## Your big chunk
 
 | Piece | Done means |
