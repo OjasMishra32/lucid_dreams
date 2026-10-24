@@ -658,7 +658,8 @@ export class SeatedOpponent {
    * The start of a game: once they've settled, they rise a little and hold their right hand out across the table to
    * yours. Hold yours out to it (palm sideways, fingers together) and they take it, shake two or three times while
    * looking at you, let go and sit back; leave them hanging and after 4 s they take it back with a small nod. A move
-   * of theirs waits for it (play() holds it till then); a move of yours ends it.
+   * of theirs waits for it (play() holds it till then); a move of yours ends it. With no tracked hand (a laptop, a
+   * headset without hand tracking) there's no offer: a short nod, and the game goes on at once.
    */
   greetPlayer(delay = 1.6) {
     const g = this.greet;
@@ -1846,6 +1847,15 @@ export class SeatedOpponent {
     if (g.phase === "none") return;
     if (g.phase === "wait") {
       if (Number.isNaN(g.at)) g.at = this.now + g.delay;
+      // no tracked hand to shake with (a laptop, or a headset without hand tracking): a short nod at the time, and
+      // on with the game (a first move of theirs that's waiting goes at once)
+      const you = ctx.hand !== undefined ? ctx.hand : this.playerHand();
+      if (!you && (this.now >= g.at || g.deferred)) {
+        this.nodAt = this.now;
+        g.phase = "back";
+        g.lift = 0;
+        return;
+      }
       if (this.now < g.at || h.segs.length || this.hands[0].segs.length) return;
       g.phase = "offer";
       g.lift = GREET_RISE;

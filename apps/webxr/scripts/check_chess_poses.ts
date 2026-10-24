@@ -7,7 +7,8 @@
 //   2. every transition between the poses it can be given;
 //   3. a reach sweep: a piece picked up on each of the 64 squares and carried, then the clock pressed (as black, and
 //      as white unless --quick);
-//   4. the handshake at the start of a game: shaken, left hanging, and a pinch held up to their hand (never a shake);
+//   4. the handshake at the start of a game: shaken, left hanging, a pinch held up to their hand (never a shake), and no
+//      tracked hand at all (no offer: a nod and on with the game);
 //   5. whole games (random legal moves for both sides, the opponent as black and as white), with captures beside the
 //      board, castling, the clock, the king tipped over, and the handshake.
 // Every frame the arms are posed through the avatar's own skinning and tested two ways:
@@ -1046,18 +1047,21 @@ function runAvatar(id: string): Result {
 
   // ---- 4. the handshake at the start of a game: shaken (your hand comes to his and shakes), left hanging, and a pinch
   // held up to his hand (which must not count)
-  for (const how of ["shaken", "left hanging", "pinch"] as const) {
+  for (const how of ["shaken", "left hanging", "pinch", "no hands"] as const) {
     if (!ONLY.has("handshake")) break;
     const scn = new Table(new FakeAvatar(bundle), "w", 30);
     const SS = scn.seated as unknown as Record<string, any>;
     let came = -1;
     let his = v3();
+    // a tracked hand of yours resting on your side of the table (not held out)
+    const resting = () => ({ palm: scn.table.localToWorld(v3(0.15, 0.03, 0.32)), normal: v3(0, 1, 0), ok: false });
     const yours = (t: number) => {
-      if (how === "left hanging") return null;
+      if (how === "no hands") return null;
+      if (how === "left hanging") return resting();
       const phase = SS.greet.phase as string;
-      if (phase === "back" || phase === "none") return null; // your hand's gone again
-      if (phase !== "offer" && phase !== "shake") return null;
-      if (came < 0 && SS.hands[1].segs[0]?.kind !== "offer") return null; // (you hold yours out once his is out)
+      if (phase === "back" || phase === "none") return resting(); // your hand's back down
+      if (phase !== "offer" && phase !== "shake") return resting();
+      if (came < 0 && SS.hands[1].segs[0]?.kind !== "offer") return resting(); // (you hold yours out once his is out)
       if (came < 0) [came, his] = [t, (SS.hands[1].world as THREE.Vector3).clone()]; // (and go to where it is)
       const k = Math.min(1, (t - came) / 0.7);
       // coming in from your side, palm toward his; then your own up-and-down
@@ -1077,7 +1081,9 @@ function runAvatar(id: string): Result {
     run(1.5);
     lab = `handshake ${how}: done`;
     const shook = phases.has("shake");
-    res.handshake.push(`${how}: ${[...phases].join(" -> ")}${(how === "shaken") === shook ? "" : " (WRONG)"}`);
+    const offered = phases.has("offer");
+    const right = (how === "shaken") === shook && (how === "no hands") !== offered;
+    res.handshake.push(`${how}: ${[...phases].join(" -> ")}${right ? "" : " (WRONG)"}`);
   }
 
   // ---- 5. whole games
