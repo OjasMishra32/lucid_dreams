@@ -52,3 +52,27 @@ session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and ha
   `conda activate /blue/iruchkin/vishalnaveen/lucid/envs/digs`, in an interactive GPU session on hpg-rtx6000 or hpg-b200.
 - 4DAnyone's per-frame SMPL-X motion for every real run will be in `runs/<id>/views/gvhmr/` (motion.json + motion.safetensors).
 
+## Next chunk (added after your avatar pushes: the one-photo pipeline, idle loop and validator are great)
+
+**Ojasva runs your jobs the moment SMPL-X lands:** `digs-assets.sbatch` once, then `digs-sample.sbatch` per photo.
+Put a consented, head-to-toe photo of a teammate at `$L/data/avatars/inputs/sample.jpg` (your login works for that).
+
+1. **The research piece: fine-tune on 4DAnyone's views.** Every real replay run leaves, in `runs/<id>/views/`:
+   `cameras.json` (24-48 OpenCV cameras in 4DAnyone's world: metric, +Y up, subject faces +Z), `videos/NN.mp4`
+   (704x1280, 121 frames), and `gvhmr/motion.json` + `motion.safetensors` (per-frame SMPL-X, `smpl_params_global`).
+   Start from the one-photo DiGS avatar, pose it with the GVHMR SMPL-X for frame t, render into those cameras, and
+   optimize the Gaussians (colours, offsets, scales) against the generated views, with the person cut out by alpha.
+   Hold out 4 views. **Report PSNR / SSIM / LPIPS on held-out views before vs after.** That table is our research claim.
+2. **"You, perfected":** play the GVHMR motion from any replay run (e.g. a Steph clip) on a teammate's avatar.
+   Export it as `avatar/motion.json` in a new bundle (`kind: "avatar"`).
+3. **Your open questions, answered:**
+   - Motion conventions: accepted as you proposed (root only in `root_q`/`root_t`, pelvis zero, absolute joint rotations).
+   - Skinning: ship `avatar/skin.bin` (per Gaussian, same order as `avatar.ply`: 4 x uint8 joint index + 4 x uint8
+     weight summing to 255) and `avatar/skeleton.json` (rest joint positions + parents, SMPL-X order). The WebXR
+     viewer can drive this with Spark 2.4's `SplatSkinning`; Ian reads the same files in Unity. Add both to
+     `dream.json` under `avatar` and tell Ian.
+   - Blinking: yes, add an optional `expr` (10 floats per frame) to `motion.json`; players that don't know it ignore it.
+4. **Front check:** your note says `thumb.jpg` should show the front. After the first sample run, if it shows the
+   back, apply the 180-degree turn in `avatar.ply` so every player gets the front facing the viewer (contract: front
+   faces -Z).
+

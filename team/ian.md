@@ -45,3 +45,10 @@ moving smoothly at full frame rate. Read `AGENTS.md` first.
    biggest thing that makes a person read as standing on the floor rather than floating.
 5. The WebXR viewer in `apps/webxr` already does placement 1.8 m in front, facing you, on `local-floor`: use it as the
    reference for how placement should feel.
+
+## Heads-up from Vishal's side (avatars)
+
+Avatar bundles (`kind: "avatar"`) will carry `avatar/avatar.ply` (SMPL-X rest pose), `avatar/motion.json`,
+`avatar/skin.bin` (per Gaussian: 4 joint indices + 4 weights as uint8) and `avatar/skeleton.json` (rest joints +
+parents). Plan an avatar player that skins Gaussians on the GPU (linear blend skinning of positions and rotations).
+
