@@ -93,7 +93,9 @@ export class SkinnedAvatar {
     });
     const [mesh, skin, skeleton, motion] = await Promise.all([
       (async () => {
-        const m = new SplatMesh({ url: dreamUrl(dream.id, file ?? a.file) });
+        // the bundle's version in the URL: an avatar updated in place never plays from a stale cache
+        const version = encodeURIComponent(dream.updatedAt ?? dream.createdAt ?? "");
+        const m = new SplatMesh({ url: `${dreamUrl(dream.id, file ?? a.file)}?v=${version}` });
         await m.initialized;
         return m;
       })(),

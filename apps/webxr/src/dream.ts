@@ -17,6 +17,8 @@ export interface Dream {
   captions?: string | null; // WebVTT of what the person says, in the clip's own time
   intent?: string | null; // what the user wants to do with this person ("teach me this strum")
   experience?: string | null; // experience.json: the plan written from the intent
+  createdAt?: string;
+  updatedAt?: string; // set when a bundle is changed in place (recoloured, re-exported)
   props?: string | null; // props.json: the objects around the person (a ball and its track, a hoop)
   preview: string | null;
   thumb: string | null;
