@@ -210,6 +210,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     : null;
   headset?.start();
   await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
+  // ?splats=<n> (dev only): at most n splats per body, the most important first, to find the frame budget live (splatcap.ts)
+  if (import.meta.env.DEV && params.has("splats"))
+    await import("./splatcap").then((m) => console.info("Court Side ?splats:", m.capSplats(scene, Number(params.get("splats"))))).catch((e: unknown) => console.error("Court Side ?splats:", e));
 
   // ---------------- the machine ----------------
   const head: Head = { room: [0, 1.15, 0], court: [0, 1.15, 0], yaw: 0, quaternion: [0, 0, 0, 1] };
