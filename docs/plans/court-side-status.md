@@ -3,7 +3,7 @@
 **Court Side replaces Ghost Coach for Vishal. Ghost Coach is paused.** One clip only: **Steph's three over LeBron,
 2018 Finals, main side camera** (Vishal, 5:45 AM). The play runs about 5 s in real time, slows smoothly to a freeze
 at Steph's release with LeBron contesting, you walk about 1 m around them, then it plays on or replays; never a cut.
-Ojasva's bar: if two players can't pass by noon, ship one player on the court. Updated Sat 5:50 AM.
+Ojasva's bar: if two players can't pass by noon, ship one player on the court. Updated Sat 6:05 AM.
 
 ## Asks for Ojasva (newest first)
 
@@ -19,7 +19,7 @@ Ojasva's bar: if two players can't pass by noon, ship one player on the court. U
 
 ## Now
 
-Waiting for the clip file. Spike S5 (walkable spot in desktop emulation) is on its second pass.
+Waiting for the clip file. Desktop spikes S4 and S5 are done; S1-S3 start when the clip lands.
 
 ## Verdict so far
 
@@ -39,8 +39,11 @@ Waiting for the clip file. Spike S5 (walkable spot in desktop emulation) is on i
 - 5:47 AM, **S4 PASS (desktop):** two overlapping 150k-splat people x 60 frames + 225k freeze each + ball + 4K court
   + 4K backdrop + 3 cut-outs in one Spark scene: 300k visible in playback, 450k frozen, 590 MB resident, 91 MB
   textures, 10 ms median frame on a laptop. Quest fps not measured yet.
-- 5:45 AM, **S5 partial:** passthrough session, local-floor, anchor, palm menu (pause, play, slow-mo) and inert
-  gestures all work in emulation. The 0.6 m walk was wrong (it passes through the players); retrying at 1.1 m.
+- 6:05 AM, **S5 PASS except one field-of-view rule (desktop emulation):** passthrough session on local-floor, the court
+  pinned by a WebXR anchor (0 mm drift over a full 17-pose walk), palm menu pause / play / slow-mo / courtside spot
+  (moves 1.9 m), bare pinches and grabs change nothing. Walkable ring: about 1.5 m from the pair's midpoint (about
+  1 m clear of each body); a tighter ring walks into them. From 3 of 17 spots LeBron is too close to fit whole in
+  the Quest's view, so you look up at him, as in real life.
 - Spark sorts both players together; the Quest app sorts each person separately (wrong when they overlap).
 - Clip measurement tool ready (frames, cuts, camera motion, player height, sharpness, overlap, ball, feet).
 
