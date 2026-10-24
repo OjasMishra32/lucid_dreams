@@ -25,6 +25,12 @@ const BALL_TEED = TEE_TOP + BALL_R - 0.0015;
 const TOP_HAND = 0.05; // the top hand's centre sits this far below the butt end
 const LOW_HAND = 0.14; // and the lower hand's this far
 const MAX_BALL_SPEED = 30; // m/s, about 67 mph: a real 7-iron launches near 50 m/s, a room doesn't need that
+// hand tracking is never as precise as a real grip, so the club helps: it fits your height, stops at your floor, the ball
+// comes to it, and a hit only needs the head to pass near the ball
+const FIT = { min: 0.85, max: 1.3 }; // the club's length, fitted at address so its head just meets your floor
+const HIT = { across: 0.1, up: 0.14, speed: 1.0 }; // how near the head must pass (m, sideways and up/down), how fast (m/s)
+const LAUNCH = THREE.MathUtils.degToRad(22); // a 7-iron's launch angle
+const ASSIST = 0.5; // how much the ball's line leans from your swing toward the target line
 const OFFSET = 0.003; // the leading edge sits a little behind the shaft line, an iron's offset
 const HEEL_X = 0.012; // head frame: the shaft line meets the ground at x = 0, the heel end of the blade is here
 
@@ -232,7 +238,8 @@ function buildClub(env: THREE.Texture, fade: THREE.Material[]) {
     shaft.push([r, y - 0.0015], [r + 0.00045, y + 0.0015]);
   });
   shaft.push([0.0074, -G + 0.004]);
-  club.add(new THREE.Mesh(lathe(shaft, 24), chrome));
+  const shaftMesh = new THREE.Mesh(lathe(shaft, 24), chrome);
+  club.add(shaftMesh);
 
   // ferrule and hosel on the shaft line
   const ferrule = new THREE.Mesh(new THREE.CylinderGeometry(0.0062, 0.0066, 0.014, 24), black);
@@ -259,7 +266,19 @@ function buildClub(env: THREE.Texture, fade: THREE.Material[]) {
     g.rotation.x = -CLUB.loft;
     head.add(g);
   }
-  return { club, head };
+  return { club, head, shaft: shaftMesh, ferrule, hosel };
+}
+
+/** The club at another length (fitted to you, or shortened to stop at the floor): only the shaft stretches; the grip,
+ * the hosel and the head keep their real size. */
+function setClubLength(parts: { shaft: THREE.Mesh; ferrule: THREE.Mesh; hosel: THREE.Mesh; head: THREE.Group }, L: number) {
+  const top = -CLUB.grip + 0.004; // where the shaft meets the grip
+  const k = (top - (-L + 0.078)) / (top - (-CLUB.length + 0.078));
+  parts.shaft.scale.y = k;
+  parts.shaft.position.y = top * (1 - k);
+  parts.ferrule.position.y = -L + 0.071;
+  parts.hosel.position.y = -L + 0.037;
+  parts.head.position.y = -L;
 }
 
 // ---------------------------------------------------------------- hands
@@ -304,8 +323,8 @@ class HandGrip {
     };
     const rest = (curl("middle-finger") + curl("ring-finger") + curl("pinky-finger")) / 3;
     const index = curl("index-finger"); // a trail hand's index lies along the grip, half curled
-    if (!this.closed) this.closed = rest < 0.7 && index < 0.85;
-    else if (rest > 0.8 || index > 0.93) this.closed = false;
+    if (!this.closed) this.closed = rest < 0.8 && index < 0.9; // hand tracking rarely sees a tight fist: close earlier
+    else if (rest > 0.88 || index > 0.96) this.closed = false;
     if (!this.closed) this.held = false;
 
     const mcp = (f: string) => p[`${f}-phalanx-proximal`];
@@ -358,11 +377,19 @@ export class Golf {
   /** The tee and the ball, on your floor: anchor this (WorldLock) after place(). Floor is y = 0 in its own space. */
   readonly range = new THREE.Group();
   private head: THREE.Group;
+  private parts: Parameters<typeof setClubLength>[0];
+  private fit = CLUB.length; // the length fitted to you
+  private addressT = 0; // seconds the club has been held still, head down (address)
+  private lastButt = new THREE.Vector3();
+  private teeSpot = new THREE.Group(); // the tee and its shadow: they move to where you address
+  private follow = 0; // seconds the head has rested near the ball
+  private ready: THREE.Mesh; // a soft ring under the ball while you're addressing it
   private fade: THREE.Material[] = [];
   private ballFade: THREE.Material[] = [];
   private grips = [new HandGrip(), new HandGrip()];
   private opacity = 0;
   private shown = false; // the club had a real pose last frame (a held or faded pose doesn't swing)
+  private liveFrames = 0; // frames in a row the club has been in your hands (a club that just appeared doesn't hit)
   private lostFor = 0;
   private mode: "none" | "one" | "two" = "none";
   private lefty = false;
@@ -397,6 +424,7 @@ export class Golf {
     const built = buildClub(env, this.fade);
     this.club = built.club;
     this.head = built.head;
+    this.parts = built;
     this.club.visible = false;
     scene.add(this.club);
 
@@ -406,7 +434,12 @@ export class Golf {
       new THREE.MeshStandardMaterial({ color: 0xf3f1ec, roughness: 0.55, envMap: env, envMapIntensity: 0.8, transparent: true }),
     );
     this.ballFade.push(tee.material as THREE.Material);
-    this.range.add(tee, softShadow(0.03, 0.35));
+    this.teeSpot.add(tee, softShadow(0.03, 0.35));
+    this.range.add(this.teeSpot);
+    this.ready = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.062, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+    this.ready.rotation.x = -Math.PI / 2;
+    this.ready.position.y = 0.0015;
+    this.range.add(this.ready);
     const dimples = dimpleTexture();
     this.ball = new THREE.Mesh(
       new THREE.SphereGeometry(BALL_R, 40, 28),
@@ -431,6 +464,7 @@ export class Golf {
   place(head: THREE.Vector3, forward: THREE.Vector3) {
     this.range.position.set(head.x + forward.x * 0.55, 0, head.z + forward.z * 0.55);
     this.range.rotation.set(0, Math.atan2(forward.x, forward.z), 0);
+    this.teeSpot.position.set(0, 0, 0);
     this.tee();
   }
 
@@ -458,7 +492,7 @@ export class Golf {
     this.v.set(0, 0, 0);
     this.spin = 0;
     this.stateT = 0;
-    this.ball.position.set(0, BALL_TEED, 0);
+    this.ball.position.set(this.teeSpot.position.x, BALL_TEED, this.teeSpot.position.z);
     this.ball.quaternion.identity();
     this.placeShadow();
   }
@@ -526,6 +560,7 @@ export class Golf {
       if (lefty !== this.lefty) this.head.scale.x = lefty ? -1 : 1; // a left-handed golfer gets a left-handed club
       this.lefty = lefty;
       this.club.position.copy(grip.center).sub(at.applyQuaternion(this.club.quaternion));
+      this.fitToFloor(dt);
       this.club.updateMatrixWorld(true);
       if (low)
         for (const h of [grip, low]) {
@@ -548,43 +583,84 @@ export class Golf {
     // the face through the ball: points along the face, this frame and last, in the range's own space
     const live = !!grip && this.opacity > 0.5;
     this.spots.forEach((s, k) => this.range.worldToLocal(this.head.localToWorld(this.cur[k].copy(s))));
-    if (live && this.shown) this.contact(dt);
+    this.liveFrames = live ? this.liveFrames + 1 : 0;
+    if (live && this.shown && this.liveFrames > 3) this.contact(dt);
     this.prev.forEach((p, k) => p.copy(this.cur[k]));
     this.shown = live;
   }
 
+  /** The club fits you and stops at your floor. Held still with its head down (address), its length eases toward the
+   * reach from your hands to the floor along the shaft; whenever the head would go under the floor the shaft is that
+   * much shorter, so it rests on the floor instead of passing through it. */
+  private fitToFloor(dt: number) {
+    const down = this.tmp.z.set(0, -1, 0).applyQuaternion(this.club.quaternion); // butt to head, world
+    const butt = this.club.position;
+    const moved = this.lastButt.distanceTo(butt) / Math.max(dt, 1e-3);
+    this.lastButt.copy(butt);
+    const reach = down.y < -0.2 ? butt.y / -down.y : Infinity; // butt to the floor along the shaft
+    if (down.y < -0.5 && moved < 0.35 && reach < FIT.max + 0.4) this.addressT += dt;
+    else this.addressT = 0;
+    if (this.addressT > 0.4) this.fit += (THREE.MathUtils.clamp(reach, FIT.min, FIT.max) - this.fit) * Math.min(1, dt * 2.5);
+    setClubLength(this.parts, Math.max(0.3, Math.min(this.fit, reach - 0.004)));
+  }
+
+  /** At address the ball comes to the club: rest the head near it a moment and it slides in front of the face. */
+  private toAddress(dt: number) {
+    const h = this.cur[1];
+    const ball = this.ball.position;
+    const speed = h.distanceTo(this.prev[1]) / Math.max(dt, 1e-3);
+    const near = Math.hypot(h.x - ball.x, h.z - ball.z) < 0.7 && h.y < 0.16;
+    this.follow = near && speed < 0.3 ? this.follow + dt : 0;
+    const mat = this.ready.material as THREE.MeshBasicMaterial;
+    mat.opacity += ((this.follow > 0.15 ? 0.55 : 0) - mat.opacity) * Math.min(1, dt * 8);
+    this.ready.position.set(ball.x, 0.0015, ball.z);
+    if (this.follow < 0.5) return;
+    // in front of the face, on the floor line under the head
+    const n = this.faceNormal(this.tmp.c);
+    n.y = 0;
+    if (n.lengthSq() < 1e-6) return;
+    n.normalize();
+    const want = this.tmp.a.set(h.x, 0, h.z).addScaledVector(n, BALL_R + 0.012);
+    const k = Math.min(1, dt * 6);
+    this.teeSpot.position.lerp(want.setY(0), k);
+    ball.x = this.teeSpot.position.x;
+    ball.z = this.teeSpot.position.z;
+  }
+
+  /** The face's lofted normal, in the range's space. */
+  private faceNormal(out: THREE.Vector3) {
+    out.set(0, Math.sin(CLUB.loft), Math.cos(CLUB.loft)).transformDirection(this.head.matrixWorld);
+    return out.transformDirection(this.tmp.m.copy(this.range.matrixWorld).invert());
+  }
+
   private contact(dt: number) {
     if (this.state !== "teed" && this.state !== "resting") return;
+    if (this.state === "teed") this.toAddress(dt);
     const c = this.ball.position;
     const { a, b } = this.tmp;
-    let best = Infinity;
-    let hit = -1;
-    for (let k = 0; k < this.cur.length; k++) {
-      const p0 = this.prev[k], p1 = this.cur[k];
-      if (p0.distanceTo(p1) > 1.2) return; // a jump (tracking came back somewhere else), not a swing
-      a.subVectors(p1, p0);
-      const len2 = a.lengthSq();
-      const s = len2 > 1e-10 ? THREE.MathUtils.clamp(b.subVectors(c, p0).dot(a) / len2, 0, 1) : 0;
-      const d = b.copy(p0).addScaledVector(a, s).distanceTo(c);
-      if (d < best) {
-        best = d;
-        hit = k;
-      }
-    }
-    if (hit < 0 || best > BALL_R + 0.016) return;
-    const vClub = a.subVectors(this.cur[hit], this.prev[hit]).divideScalar(Math.max(dt, 1 / 120));
+    // the head's path this frame (the middle of the face), and where it came nearest the ball
+    const p0 = this.prev[1], p1 = this.cur[1];
+    if (p0.distanceTo(p1) > 0.5) return; // a jump (tracking came back somewhere else), not a swing
+    a.subVectors(p1, p0);
+    const len2 = a.lengthSq();
+    const s = len2 > 1e-10 ? THREE.MathUtils.clamp(b.subVectors(c, p0).dot(a) / len2, 0, 1) : 0;
+    b.copy(p0).addScaledVector(a, s);
+    if (Math.hypot(b.x - c.x, b.z - c.z) > HIT.across || Math.abs(b.y - c.y) > HIT.up) return;
+    const vClub = a.divideScalar(Math.max(dt, 1 / 120));
     const speed = vClub.length();
-    if (speed < 0.7) return; // resting the club behind it at address isn't a shot
-    // the face's normal (lofted) in the range's space
-    const n = this.tmp.c.set(0, Math.sin(CLUB.loft), Math.cos(CLUB.loft)).transformDirection(this.head.matrixWorld);
-    n.transformDirection(this.tmp.m.copy(this.range.matrixWorld).invert());
-    const dir = b.copy(vClub).normalize();
-    if (dir.dot(n) < 0.05) return; // the back of the club, or moving away from it
-    const smash = 1.3 * Math.max(0.25, dir.dot(n)); // a glancing blow gives less
-    const ballSpeed = Math.min(MAX_BALL_SPEED, speed * smash);
-    // an iron launches mostly where the face points, a little along the swing
-    this.v.copy(n).multiplyScalar(0.66).addScaledVector(dir, 0.34).normalize().multiplyScalar(ballSpeed);
-    if (this.v.y < 0) this.v.y *= -0.3; // a top: it skips off the floor
+    if (speed < HIT.speed) return; // resting the club behind it at address isn't a shot
+    // only the swing through, the way the face looks (the takeaway goes back past it, never hits it)
+    const face = this.faceNormal(this.tmp.c).setY(0);
+    const flat = this.tmp.y.set(vClub.x, 0, vClub.z);
+    if (face.lengthSq() > 1e-6 && flat.lengthSq() > 1e-6 && flat.dot(face) / Math.sqrt(face.lengthSq() * flat.lengthSq()) < 0.2) return;
+    // the line: along your swing, leaned toward the target line (the range's x axis), at an iron's launch angle
+    if (flat.lengthSq() < 1e-6) flat.copy(face);
+    flat.normalize();
+    const target = this.tmp.x.set(Math.sign(flat.x) || 1, 0, 0);
+    flat.lerp(target, ASSIST).normalize();
+    const ballSpeed = THREE.MathUtils.clamp(speed * 1.35, 3, MAX_BALL_SPEED);
+    this.v.copy(flat).multiplyScalar(Math.cos(LAUNCH)).setY(Math.sin(LAUNCH)).multiplyScalar(ballSpeed);
+    this.follow = 0;
     this.spin = Math.min(1, ballSpeed / 20) * (0.55 + Math.sin(CLUB.loft)); // backspin from the loft
     this.state = "flying";
     this.stateT = 0;
