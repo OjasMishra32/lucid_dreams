@@ -66,6 +66,23 @@ export interface Experience {
   source?: "clip" | "preview" | "photo" | "intent"; // what Gemini looked at
   model?: string;
   createdAt?: string;
+  feedback?: Feedback; // a lesson's latest "watch me try" notes; its fix is also the last step ("Your fix")
+}
+
+/** One "watch me try" note: the moment in your try, the same moment in the lesson (bundle clip time), and the fix. */
+export interface FeedbackNote {
+  attemptS: number;
+  teacherS: number;
+  note: string; // second person, one short sentence: "Your elbow flares out; keep it under the ball."
+}
+
+/** experience.json's "feedback": Gemini's notes on the learner's latest try, the main fix first. */
+export interface Feedback {
+  createdAt: string;
+  notes: FeedbackNote[];
+  good?: string; // one thing the try already does like the lesson
+  attempt?: string; // the try they're about (the web app's id for it)
+  step?: number; // index of the "Your fix" step in steps
 }
 
 export type ExperienceState =

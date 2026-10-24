@@ -4,11 +4,11 @@ import { ENVIRONMENTS, STRENGTHS, type Environment, type Experience, type Experi
 
 // Gemini, the brain of the main goal: one sentence of intent plus the person's clip (or photo) in, experience.json out.
 // Models are tried in order, so a renamed or unavailable model never takes the step down.
-const MODELS = (process.env.GEMINI_MODEL ?? "gemini-3.8-flash,gemini-3.6-flash,gemini-3-flash-preview").split(",");
-const FPS = 15; // frames per second Gemini sees: enough for a jump shot's release (the default is 1)
+export const MODELS = (process.env.GEMINI_MODEL ?? "gemini-3.8-flash,gemini-3.6-flash,gemini-3-flash-preview").split(",");
+export const FPS = 15; // frames per second Gemini sees: enough for a jump shot's release (the default is 1)
 
 let client: GoogleGenAI | null = null;
-function ai(): GoogleGenAI {
+export function ai(): GoogleGenAI {
   client ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   return client;
 }
@@ -138,7 +138,7 @@ export async function writeExperience(p: Plan): Promise<Omit<Experience, "create
 }
 
 /** Upload and wait until Gemini can read it. It joins `keep` as soon as it exists, so it's always deleted. */
-async function upload(path: string, mimeType: string, keep: GeminiFile[]): Promise<GeminiFile> {
+export async function upload(path: string, mimeType: string, keep: GeminiFile[]): Promise<GeminiFile> {
   let file = await ai().files.upload({ file: path, config: { mimeType } });
   keep.push(file);
   const until = Date.now() + 180_000;
@@ -152,7 +152,7 @@ async function upload(path: string, mimeType: string, keep: GeminiFile[]): Promi
   return file;
 }
 
-async function retry<T>(attempts: number, call: () => Promise<T>): Promise<T> {
+export async function retry<T>(attempts: number, call: () => Promise<T>): Promise<T> {
   for (let i = 1; ; i++) {
     try {
       return await call();
@@ -165,7 +165,7 @@ async function retry<T>(attempts: number, call: () => Promise<T>): Promise<T> {
 }
 
 /** Try each model in turn; move on only when a model is missing or unavailable, not when the request itself is bad. */
-async function firstModel<T>(models: string[], call: (model: string) => Promise<T>): Promise<T> {
+export async function firstModel<T>(models: string[], call: (model: string) => Promise<T>): Promise<T> {
   let last: unknown;
   for (const model of models.map((m) => m.trim()).filter(Boolean)) {
     try {
