@@ -65,9 +65,10 @@ def unique_frames(lo: int, hi: int, mod: int, phase: int) -> list[int]:
     return [n for n in range(lo, hi + 1) if n % mod != phase]
 
 
-def window(ref: int, stride: int, k: int, n: int = FRAMES, mod: int = 4, phase: int = 3,
+def window(ref: int, stride: int, k: int, n: int, mod: int, phase: int,
            valid: tuple[int, int] | None = None) -> list[int]:
-    """n unique frames, every stride-th one on the unique grid, with `ref` at index k."""
+    """n unique frames, every stride-th one on the unique grid, with `ref` at index k (the replay repeats every
+    frame with n % mod == phase; the private config says which)."""
     if ref % mod == phase:
         raise ValueError(f"frame {ref} is a repeat")
     if not 0 <= k < n or stride < 1:

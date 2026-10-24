@@ -72,7 +72,7 @@ def tiny(path: Path, w: int, h: int):
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
 
 
-def make_data(root: Path, rid: str, k: int = 118, focal: float = 1234.5, turbo: bool = True, skip=(), extras=(),
+def make_data(root: Path, rid: str, k: int = 60, focal: float = 1234.5, turbo: bool = True, skip=(), extras=(),
               **job_over) -> Path:
     d = root / rid
     (d / "masks").mkdir(parents=True)
@@ -139,10 +139,10 @@ class Job(unittest.TestCase):
         out = self.L / "runs" / self.id
         for v in ("raw-default", "raw-agree", "up-default", "up-agree"):
             self.assertTrue((out / f"bundle-{v}-r0-300k" / "dream.json").exists(), v)
-            self.assertTrue((out / f"recon-{v}-r0-300k" / "frames" / "000118.ply").exists(), v)
-            self.assertTrue((out / f"recon-metrics-{v}-r0" / "recon-000118-000119.json").exists(), v)
+            self.assertTrue((out / f"recon-{v}-r0-300k" / "frames" / "000060.ply").exists(), v)
+            self.assertTrue((out / f"recon-metrics-{v}-r0" / "recon-000060-000061.json").exists(), v)
             used = json.loads((out / f"recon-{v}-r0-300k" / "used.json").read_text())
-            self.assertEqual((used["K"], used["FOCAL"], used["gpu"]), (118, 2000.5, "NVIDIA B200"))
+            self.assertEqual((used["K"], used["FOCAL"], used["gpu"]), (60, 2000.5, "NVIDIA B200"))
         self.assertFalse((out / "recon-metrics-raw-default-r0" / "frames").exists())
         self.assertEqual(sorted(x.name for x in (out / "views" / "videos").iterdir()),
                          [f"{v:02d}.mp4" for v in range(0, 16, 2)])  # the ring every 45 degrees: the back too
@@ -233,11 +233,11 @@ class Job(unittest.TestCase):
             got[out] = [(Path(e["video"]).stem, e["weight"], e["offset"]) for e in xs]
         self.assertEqual(got, {
             "recon-raw-default-r0-300k": [],
-            "recon-metrics-raw-default-r0": [("X1", 0.0, -118), ("X2", 0.0, -118)],
-            "recon-raw-default-r1-300k": [("X1", 1.0, -118)],
-            "recon-metrics-raw-default-r1": [("X1", 1.0, -118), ("X2", 0.0, -118)],
-            "recon-raw-default-r2-300k": [("X1", 1.0, -118), ("X2", 0.7, -118)],
-            "recon-metrics-raw-default-r2": [("X1", 1.0, -118), ("X2", 0.7, -118)]})
+            "recon-metrics-raw-default-r0": [("X1", 0.0, -60), ("X2", 0.0, -60)],
+            "recon-raw-default-r1-300k": [("X1", 1.0, -60)],
+            "recon-metrics-raw-default-r1": [("X1", 1.0, -60), ("X2", 0.0, -60)],
+            "recon-raw-default-r2-300k": [("X1", 1.0, -60), ("X2", 0.7, -60)],
+            "recon-metrics-raw-default-r2": [("X1", 1.0, -60), ("X2", 0.7, -60)]})
         out = self.L / "runs" / self.id
         self.assertTrue((out / "recon-metrics-raw-default-r1.extra.json").exists())
         rep = subprocess.run(["python3", str(HERE / "court_grid_report.py"), "--rank", str(out)], capture_output=True,
@@ -309,7 +309,7 @@ class Submit(unittest.TestCase):
 
     def test_missing_file_submits_nothing(self):
         a = make_data(self.root, "court-turbo-main-s2")
-        b = make_data(self.root, "court-def-s1", k=117, skip=("source-4k.mkv",))
+        b = make_data(self.root, "court-def-s1", k=59, skip=("source-4k.mkv",))
         rc, out = dryrun(a, b)
         self.assertNotEqual(rc, 0)
         self.assertIn("missing", out)
@@ -390,11 +390,11 @@ class Submit(unittest.TestCase):
         self.assertEqual(calls(out), [])
 
     def test_mask_at_k_must_be_there(self):
-        d = make_data(self.root, "court-def-s1", k=117)
-        (d / "court-run.json").write_text(json.dumps({"id": "court-def-s1", "K": 118, "FOCAL": 1.0}, indent=1))
+        d = make_data(self.root, "court-def-s1", k=59)
+        (d / "court-run.json").write_text(json.dumps({"id": "court-def-s1", "K": 60, "FOCAL": 1.0}, indent=1))
         rc, out = dryrun(d)
         self.assertNotEqual(rc, 0)
-        self.assertIn("masks/000118.png", out)
+        self.assertIn("masks/000060.png", out)
 
     def test_slow_quota_output_is_read_to_the_end(self):
         rc, out = dryrun(make_data(self.root, "court-main-s2"), QUOTA_SLOW="1")

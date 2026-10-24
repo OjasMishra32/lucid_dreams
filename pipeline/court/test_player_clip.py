@@ -39,33 +39,33 @@ def synth_calib(frames, f=400.0, k1=0.0, moving=True):
 
 class Window(unittest.TestCase):
     def test_unique_grid_skips_repeats(self):
-        self.assertEqual(pc.unique_frames(96, 105, 4, 3), [96, 97, 98, 100, 101, 102, 104, 105])
+        self.assertEqual(pc.unique_frames(96, 105, 5, 2), [96, 98, 99, 100, 101, 103, 104, 105])
 
     def test_stride_two_window_puts_ref_at_k(self):
-        w = pc.window(1000, stride=2, k=118, n=121, mod=4, phase=3)
+        w = pc.window(1000, stride=2, k=60, n=121, mod=5, phase=2)
         self.assertEqual(len(w), 121)
-        self.assertEqual(w[118], 1000)
-        self.assertEqual((w[0], w[-1]), (685, 1005))
-        self.assertTrue(all(n % 4 != 3 for n in w))
-        u = pc.unique_frames(w[0], w[-1], 4, 3)
+        self.assertEqual(w[60], 1000)
+        self.assertEqual((w[0], w[-1]), (850, 1150))  # 120 unique frames each way: 150 raw frames, 30 repeats
+        self.assertTrue(all(n % 5 != 2 for n in w))
+        u = pc.unique_frames(w[0], w[-1], 5, 2)
         self.assertEqual(w, u[::2])  # even spacing on the unique grid
 
     def test_stride_one_window(self):
-        w = pc.window(1000, stride=1, k=117, n=121, mod=4, phase=3)
-        self.assertEqual((w[0], w[117], w[-1]), (844, 1000, 1004))
+        w = pc.window(1000, stride=1, k=59, n=121, mod=5, phase=2)
+        self.assertEqual((w[0], w[59], w[-1]), (926, 1000, 1076))
         self.assertEqual(len(set(w)), 121)
 
     def test_window_ending_at_ref(self):
-        w = pc.window(1000, stride=2, k=120, n=121, mod=4, phase=3)
+        w = pc.window(1000, stride=2, k=120, n=121, mod=5, phase=2)
         self.assertEqual(w[-1], 1000)
 
     def test_ref_on_a_repeat_is_refused(self):
         with self.assertRaises(ValueError):
-            pc.window(1003, stride=1, k=117, n=121, mod=4, phase=3)
+            pc.window(1002, stride=1, k=59, n=121, mod=5, phase=2)
 
     def test_window_outside_the_repeat_range_is_refused(self):
         with self.assertRaises(ValueError):
-            pc.window(1000, stride=2, k=118, n=121, mod=4, phase=3, valid=(900, 1100))
+            pc.window(1000, stride=2, k=60, n=121, mod=5, phase=2, valid=(900, 1100))
 
 
 class StillCamera(unittest.TestCase):
@@ -268,12 +268,12 @@ class EndToEnd(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
-        n_frames = 230
+        n_frames = 290
         rng = np.random.default_rng(0)
         bgimg = rng.integers(0, 255, (H, W, 3), np.uint8)
         frames = []
         for n in range(n_frames):
-            src = n - 1 if n % 4 == 3 else n  # 4k+3 repeats 4k+2
+            src = n - 1 if n % 5 == 2 else n  # 5k+2 repeats 5k+1
             img = np.roll(bgimg, src // 3, axis=1).copy()
             img[10:80, 60 + src % 9:72 + src % 9] = (250, 250 - src % 100, 250 - src // 100)  # back player, unique per frame
             img[30:90, 70 + src % 5:80 + src % 5] = (20, 20, 20)  # front player
@@ -291,7 +291,7 @@ class EndToEnd(unittest.TestCase):
             (root / "masks" / who).mkdir(parents=True)
         import cv2
         for n in range(n_frames):
-            src = n - 1 if n % 4 == 3 else n
+            src = n - 1 if n % 5 == 2 else n
             m = np.zeros((H, W), np.uint8)
             m[10:80, 60 + src % 9:72 + src % 9] = 255
             front = np.zeros((H, W), np.uint8)
@@ -300,11 +300,11 @@ class EndToEnd(unittest.TestCase):
             cv2.imwrite(str(root / "masks" / "back" / f"{n:06d}.png"), m)
             cv2.imwrite(str(root / "masks" / "front" / f"{n:06d}.png"), front)
         cfg = {"video": str(video), "calib": str(root / "calib.json"), "masks": str(root / "masks"),
-               "out": str(root / "out"), "ref": 200, "repeat": [4, 3], "repeat_range": [0, n_frames - 1],
+               "out": str(root / "out"), "ref": 200, "repeat": [5, 2], "repeat_range": [0, n_frames - 1],
                "crop": [50, 90], "margin": 2, "bg": [128, 128, 128],
                "extras": [{"name": "X150", "video": str(video), "calib": str(root / "calib.json"), "frame": 150,
                            "masks": str(root / "masks"), "weight": 0.7}]}
-        cfg["sets"] = {"back-s1": {"player": "back", "front": ["front"], "stride": 1, "k": 117}}
+        cfg["sets"] = {"back-s1": {"player": "back", "front": ["front"], "stride": 1, "k": 59}}
         cfg["runs"] = {"court-test-back-s1": {"set": "back-s1", "turbo": True}}
         cfg.update(cls.extra)
         (root / "cfg.json").write_text(json.dumps(cfg))
@@ -351,8 +351,8 @@ class EndToEnd(unittest.TestCase):
         job = json.loads((self.run_dir / "job.json").read_text())
         ref = self.cfg["ref"]
         self.assertEqual(run["id"], "court-test-back-s1")
-        self.assertEqual(run["K"], 117)
-        self.assertEqual(run["frames"][117], ref)
+        self.assertEqual(run["K"], 59)
+        self.assertEqual(run["frames"][59], ref)
         self.assertEqual(len(run["frames"]), 121)
         f_ref = synth_calib([ref], moving=False)["frames"][0]["f"]
         self.assertAlmostEqual(run["FOCAL"], round(f_ref, 1))
