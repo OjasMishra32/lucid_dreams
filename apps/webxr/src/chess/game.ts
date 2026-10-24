@@ -270,6 +270,7 @@ export async function renderChess(root: HTMLElement) {
     c.addEventListener("selectstart", () => (ctrlDown[i] = true));
     c.addEventListener("selectend", () => (ctrlDown[i] = false));
   });
+  const occluders = hands.map((h) => handOccluder(h, scene));
   const tip = new THREE.Vector3();
   const thumb = new THREE.Vector3();
   const pinchPoint = (i: number): { point: THREE.Vector3; down: boolean } | null => {
@@ -289,7 +290,8 @@ export async function renderChess(root: HTMLElement) {
   };
 
   // long pinch on empty space re-places the board right there (pinch your real table)
-  const longPinch = [0, 0];
+  const longPinchSince = [0, 0];
+  const LONG_PINCH_MS = 900;
   const placeBoardAt = (p: THREE.Vector3) => {
     const cam = renderer.xr.getCamera();
     const head = cam.getWorldPosition(new THREE.Vector3());
@@ -344,7 +346,10 @@ export async function renderChess(root: HTMLElement) {
     selectStrength(STRENGTHS[(i + 1) % STRENGTHS.length].id);
     void newGame();
   });
-  addButton("move", "Move board", 0.175, () => (movingBoard = true));
+  addButton("move", "Move board", 0.175, () => {
+    movingBoard = true;
+    setStatus("Pinch where the board should go");
+  });
   xrButtons.forEach((b) => (b.mesh.visible = false));
   let movingBoard = false;
 
@@ -408,31 +413,33 @@ export async function renderChess(root: HTMLElement) {
         placeBoardAt(new THREE.Vector3(head.x + fwd.x * 0.5, Math.min(1.0, Math.max(0.62, head.y - 0.5)), head.z + fwd.z * 0.5));
         placed = true;
       }
+      occluders.forEach((o) => o());
+      const tips = [0, 1].map((i) => {
+        const t = (hands[i] as unknown as { joints: Record<string, THREE.Object3D> }).joints?.["index-finger-tip"];
+        return t && t.visible ? t.getWorldPosition(new THREE.Vector3()) : null;
+      });
+      for (const b of xrButtons) b.touch(tips, time);
       for (const i of [0, 1]) {
-        const joints = (hands[i] as unknown as { joints: Record<string, THREE.Object3D> }).joints;
-        const fingertip = joints?.["index-finger-tip"];
-        if (fingertip) {
-          const w = fingertip.getWorldPosition(new THREE.Vector3());
-          for (const b of xrButtons) b.touch(w, time);
-        }
         const p = pinchPoint(i);
         if (!p) continue;
         if (movingBoard && p.down) {
           placeBoardAt(p.point); // pinch your real table: the board lands there
           movingBoard = false;
+          updateStatus();
           continue;
         }
         const held = handHold[i];
         if (p.down && !held) {
           const sq = nearestPiece(p.point);
           if (sq) handHold[i] = grab(sq, p.point);
-          else if ((longPinch[i] += 1) > 70) {
+          else if (!longPinchSince[i]) longPinchSince[i] = time;
+          else if (time - longPinchSince[i] > LONG_PINCH_MS) {
             placeBoardAt(p.point); // about a second of pinching empty air: the board moves there
-            longPinch[i] = 0;
+            longPinchSince[i] = 0;
           }
         } else if (p.down && held) moveHeld(held, p.point);
         else {
-          longPinch[i] = 0;
+          longPinchSince[i] = 0;
           if (held) {
             release(held);
             handHold[i] = null;
@@ -466,6 +473,64 @@ function contactShadowTexture(): THREE.Texture {
 }
 
 
+const FINGER_CHAINS = [
+  ["wrist", "thumb-metacarpal", "thumb-phalanx-proximal", "thumb-phalanx-distal", "thumb-tip"],
+  ...["index-finger", "middle-finger", "ring-finger", "pinky-finger"].map((f) =>
+    ["wrist", `${f}-metacarpal`, `${f}-phalanx-proximal`, `${f}-phalanx-intermediate`, `${f}-phalanx-distal`, `${f}-tip`]),
+];
+
+/**
+ * Invisible, depth-only stand-ins for a tracked hand (a capsule per finger bone), drawn before everything else, so
+ * your real fingers in passthrough stay in front of a piece you reach behind. Returns the per-frame update.
+ */
+function handOccluder(hand: THREE.Object3D, scene: THREE.Scene): () => void {
+  const mat = new THREE.MeshBasicMaterial({ colorWrite: false });
+  const unitBone = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true);
+  const unitJoint = new THREE.SphereGeometry(1, 10, 8);
+  const group = new THREE.Group();
+  scene.add(group);
+  const bones = FINGER_CHAINS.flatMap((c) => c.slice(1).map((name, k) => [c[k], name] as const));
+  const boneMeshes = bones.map(() => new THREE.Mesh(unitBone, mat));
+  const jointNames = [...new Set(FINGER_CHAINS.flat())];
+  const jointMeshes = jointNames.map(() => new THREE.Mesh(unitJoint, mat));
+  [...boneMeshes, ...jointMeshes].forEach((m) => {
+    m.renderOrder = -1;
+    group.add(m);
+  });
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  const radius = (j: THREE.Object3D) => Math.max(0.006, (j as unknown as { jointRadius?: number }).jointRadius ?? 0.008);
+  return () => {
+    const joints = (hand as unknown as { joints: Record<string, THREE.Object3D> }).joints ?? {};
+    const tracked = joints.wrist?.visible === true;
+    group.visible = tracked;
+    if (!tracked) return;
+    jointNames.forEach((n, k) => {
+      const j = joints[n];
+      const m = jointMeshes[k];
+      m.visible = !!j?.visible;
+      if (!m.visible) return;
+      j.getWorldPosition(m.position);
+      m.scale.setScalar(radius(j));
+    });
+    bones.forEach(([from, to], k) => {
+      const ja = joints[from];
+      const jb = joints[to];
+      const m = boneMeshes[k];
+      m.visible = !!(ja?.visible && jb?.visible);
+      if (!m.visible) return;
+      ja.getWorldPosition(a);
+      jb.getWorldPosition(b);
+      const len = a.distanceTo(b);
+      const r = Math.min(radius(ja), radius(jb));
+      m.position.copy(a).add(b).multiplyScalar(0.5);
+      m.quaternion.setFromUnitVectors(up, b.sub(a).normalize());
+      m.scale.set(r, len, r);
+    });
+  };
+}
+
 /** A soft, glassy button floating over the table. Pressed by pushing an index fingertip through it. */
 class XrButton {
   mesh: THREE.Mesh;
@@ -473,6 +538,7 @@ class XrButton {
   private tex: THREE.CanvasTexture;
   private pressedUntil = 0;
   private cooldownUntil = 0;
+  private wasInside = [false, false];
   private local = new THREE.Vector3();
   constructor(
     public id: string,
@@ -504,18 +570,24 @@ class XrButton {
     c.fillText(this.label, 256, 84);
     this.tex.needsUpdate = true;
   }
-  /** Fingertip in world space; fires once when it pushes through the face, then cools down. */
-  touch(fingertip: THREE.Vector3, now: number) {
+  /** Both index fingertips in world space (null when not tracked). Fires once each time a tip pushes into the face. */
+  touch(fingertips: (THREE.Vector3 | null)[], now: number) {
     if (!this.mesh.visible) return;
-    this.local.copy(fingertip);
-    this.mesh.worldToLocal(this.local);
-    const inside = Math.abs(this.local.x) < 0.045 && Math.abs(this.local.y) < 0.014 && this.local.z < 0.004 && this.local.z > -0.02;
-    if (inside && now > this.cooldownUntil) {
-      this.cooldownUntil = now + 700;
-      this.pressedUntil = now + 180;
-      this.draw(true);
-      this.onPress();
-    }
+    fingertips.forEach((tip, h) => {
+      let inside = false;
+      if (tip) {
+        this.local.copy(tip);
+        this.mesh.worldToLocal(this.local);
+        inside = Math.abs(this.local.x) < 0.045 && Math.abs(this.local.y) < 0.014 && this.local.z < 0.004 && this.local.z > -0.02;
+      }
+      if (inside && !this.wasInside[h] && now > this.cooldownUntil) {
+        this.cooldownUntil = now + 300;
+        this.pressedUntil = now + 180;
+        this.draw(true);
+        this.onPress();
+      }
+      this.wasInside[h] = inside;
+    });
     if (this.pressedUntil && now > this.pressedUntil) {
       this.pressedUntil = 0;
       this.draw(false);
