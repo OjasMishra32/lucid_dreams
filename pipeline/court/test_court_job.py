@@ -314,6 +314,24 @@ class Submit(unittest.TestCase):
         rc, out = dryrun(make_data(self.root, "court-def-s2"), NGPU="2")
         self.assertIn("--gres=gpu:2 ", calls(out)[0])
 
+    def test_another_account(self):
+        rc, out = dryrun(make_data(self.root, "court-main-s2"), NO_PYTHON="1")
+        self.assertNotIn("--account", calls(out)[0])  # the script's own #SBATCH lines rule by default
+        rc, out = dryrun(make_data(self.root, "court-def-s2"), ACCOUNT="acct2", QOS="qos2-b", PARTITION="hpg-b200",
+                         NO_PYTHON="1")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(" --account=acct2 --qos=qos2-b --partition=hpg-b200 ", calls(out)[0])
+        self.assertIn("account acct2, qos qos2-b", out)
+        rc, out = dryrun(make_data(self.root, "court-x-s2"), ACCOUNT="a b")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("PREFLIGHT FAIL: ACCOUNT", out)
+
+    def test_the_jobs_stack_must_be_readable_from_this_login(self):
+        rc, out = dryrun(make_data(self.root, "court-main-s2"), STACK="0")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("PREFLIGHT FAIL: this login can't read the 4DAnyone stack", out)
+        self.assertEqual(calls(out), [])
+
     def test_same_id_twice(self):
         a = make_data(self.root, "court-main-s2")
         rc, out = dryrun(a, a)
@@ -394,6 +412,38 @@ class GridCheck(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn(f"EXISTS {self.L}/data/court/court-b-r2", out)
         self.assertNotIn("CHECK OK", out)
+
+
+class GridDry(unittest.TestCase):
+    """court-grid.sh DRY=1 prints what it would run (no ssh): the HiPerGator login, /blue base and Slurm account."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runs = Path(self.tmp.name) / "runs"
+        make_data(self.runs, "court-a-r2")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def grid(self, **env):
+        p = subprocess.run(["bash", str(HERE / "court-grid.sh"), str(self.runs), "court-a-r2"], capture_output=True,
+                           text=True, env={**os.environ, "DRY": "1", **env})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return [x for x in p.stdout.splitlines() if x.startswith("+ ")]
+
+    def test_defaults(self):
+        lines = self.grid()
+        self.assertTrue(all(" hpg " in x or "hpg:/blue/iruchkin/vishalnaveen/lucid/" in x for x in lines), lines)
+        self.assertNotIn("ACCOUNT", lines[-1])
+
+    def test_another_login_base_and_account(self):
+        lines = self.grid(HOST="hpg2", COURT_HPG_L="/blue/grp2/user2/lucid", ACCOUNT="grp2", QOS="grp2-b")
+        self.assertFalse([x for x in lines if "iruchkin" in x or " hpg " in x or "hpg:" in x], lines)
+        self.assertIn("hpg2:/blue/grp2/user2/lucid/data/court/court-a-r2/", lines[-2])
+        self.assertIn("ACCOUNT=grp2", lines[-1])
+        self.assertIn("QOS=grp2-b", lines[-1])
+        self.assertIn("L=/blue/grp2/user2/lucid", lines[-1])
+        self.assertIn("bash /blue/grp2/user2/lucid/code/pipeline/court/court-job-submit.sh court-a-r2", lines[-1])
 
 
 if __name__ == "__main__":

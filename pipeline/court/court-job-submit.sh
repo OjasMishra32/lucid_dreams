@@ -7,6 +7,8 @@
 # SEEDS=N: N jobs per id, 4DAnyone seeds 1..N, results in $L/runs/<id>/seed<k>/; or TAG=<name>
 # (e.g. winner) for one more job per id into $L/runs/<id>/<name>/. Env passed to the jobs: VARIANTS, REALS, CAPS,
 # METRICS, ITERS, FACE, SEED, SEED_FLAG; NGPU (GPUs per job, default 4), MEM and TIME (sbatch overrides); DRY=1.
+# Another allocation: ACCOUNT, QOS, PARTITION override the job script's own #SBATCH lines; L (its /blue base, holding
+# code/, data/ and runs/ and what env.sh points at) reaches the jobs too.
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 source "$(dirname "$0")/court-lib.sh"
@@ -21,6 +23,9 @@ else
   [[ -z ${SEED:-} || $SEED =~ ^[0-9]+$ ]] || fail "SEED=$SEED"
   TAGS=("${TAG:-}"); SEEDV=("${SEED:-}")
 fi
+for v in ACCOUNT QOS PARTITION; do
+  [[ -z ${!v:-} || ${!v} =~ ^[A-Za-z0-9_.,-]+$ ]] || fail "$v='${!v}'"
+done
 seen=" "
 for id in "$@"; do
   [[ $id =~ ^court-[a-z0-9][a-z0-9-]*$ ]] || fail "id '$id'"
@@ -38,10 +43,16 @@ for id in "$@"; do
     test -e "$m" && fail "$id${t:+ ($t)} was submitted before ($(cat "$m")); use a new id or TAG"
   done
 done
+# the jobs source env.sh, which names the 4DAnyone stack's own /blue base: this login must be able to read it
+E=${ENV_SH:-$L/code/pipeline/hpg/env.sh}
+SL=$(sed -n 's/^export L=//p' "$E" 2>/dev/null | sed -n 1p)
+test -r "$E" && test -x "$SL/envs/4danyone/bin/python" && test -r "$SL/repos/4DAnyone/inference.py" \
+  || fail "this login can't read the 4DAnyone stack ($E -> ${SL:-?}/envs/4danyone, repos/4DAnyone)"
 FREE=$(group_free_gb)
 (( ${FREE:-0} >= ${MIN_GB:-2} )) || fail "group quota has ${FREE:-?} GB free, need ${MIN_GB:-2} for the results"
 echo "OK: $# run(s) x ${#TAGS[@]} job(s) = $(( $# * ${#TAGS[@]} )) job(s) of ${NGPU:-4} GPU(s), ${FREE} GB free on /blue;" \
-  "variants ${VARIANTS:-raw:default raw:agree}, real views ${REALS:-0 1 2}"
+  "variants ${VARIANTS:-raw:default raw:agree}, real views ${REALS:-0 1 2}" \
+  "${ACCOUNT:+; account $ACCOUNT}${QOS:+, qos $QOS}${PARTITION:+, partition $PARTITION}"
 [ "${DRY:-0}" = 1 ] && { echo "DRY: nothing submitted"; exit 0; }
 for id in "$@"; do
   for i in "${!TAGS[@]}"; do
@@ -49,6 +60,7 @@ for id in "$@"; do
     mkdir -p "$out/logs"
     cd "$out/logs"
     J=$(sbatch --parsable --gres=gpu:${NGPU:-4} ${MEM:+--mem=$MEM} ${TIME:+--time=$TIME} \
+      ${ACCOUNT:+--account=$ACCOUNT} ${QOS:+--qos=$QOS} ${PARTITION:+--partition=$PARTITION} \
       --export=ALL,ID=$id,TAG=$t,SEED=${SEEDV[i]} "$C/court-job.sbatch")
     echo "job=$J $(date '+%F %T')" > "$out/logs/submitted"
     echo "SUBMITTED $id${t:+ $t} job=$J (log: $out/logs/court-job-$J.log)"

@@ -9,10 +9,12 @@
 #      checks and submits nothing; DRY=1 only prints what would run, without connecting;
 #      HOST (hpg); VARIANTS, REALS, CAPS, METRICS, ITERS, FACE, NGPU, MEM, TIME, MIN_GB, SEEDS, SEED, SEED_FLAG and
 #      TAG, MIN_SCRATCH_GB, KEEP_MB are passed to the HPG side.
+#      Another allocation or login: ACCOUNT, QOS, PARTITION (sbatch overrides) and COURT_HPG_L (that login's /blue base:
+#      uploads go there and the jobs read code, env.sh, data and write runs there), with HOST its ssh host.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 RUNS=$(cd "${1:?usage: court-grid.sh <runs dir> [id...]}" && pwd); shift
-HOST=${HOST:-hpg}; L=${COURT_HPG_L:-/blue/iruchkin/vishalnaveen/lucid}  # the override is for the tests
+HOST=${HOST:-hpg}; L=${COURT_HPG_L:-/blue/iruchkin/vishalnaveen/lucid}
 if (( $# )); then IDS=("$@"); else
   IDS=($(cd "$RUNS" && ls -d court-* | python3 -c 'import sys
 ids = sys.stdin.read().split()
@@ -25,9 +27,11 @@ for id in "${IDS[@]}"; do
   done
 done
 PASS=""
-for v in VARIANTS REALS CAPS METRICS ITERS FACE NGPU MEM TIME MIN_GB SEEDS SEED SEED_FLAG TAG MIN_SCRATCH_GB KEEP_MB; do
+for v in VARIANTS REALS CAPS METRICS ITERS FACE NGPU MEM TIME MIN_GB SEEDS SEED SEED_FLAG TAG MIN_SCRATCH_GB KEEP_MB \
+         ACCOUNT QOS PARTITION; do
   [ -n "${!v:-}" ] && PASS="$PASS $v=$(printf %q "${!v}")"
 done
+[ -n "${COURT_HPG_L:-}" ] && PASS="$PASS L=$(printf %q "$L")"
 [ "${PLAN:-0}" = 1 ] && PASS="$PASS DRY=1"
 SSH="ssh -o ControlMaster=no -o BatchMode=yes"
 REMOTE="env$PASS bash $L/code/pipeline/court/court-job-submit.sh ${IDS[*]}"
