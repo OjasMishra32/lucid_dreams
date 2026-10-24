@@ -41,7 +41,7 @@ export type BundlePath = string;
 
 /** The honesty label, word for word (P22). The bundle must carry exactly this text. */
 export const LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.";
-/** The id a ball's card uses in cards.json (every other card is a person). */
+/** The id the ball's card uses in cards.json (kind "ball"; every other card is a person). */
 export const BALL_CARD = "ball";
 
 /** court.json. */
@@ -156,8 +156,15 @@ export interface ShowVideoInfo {
 export interface ShowFallbacks {
   /** `?show=small`: the same show frame for frame (same frames.json, cards.json, segments and cutoff), smaller. */
   small?: { file: BundlePath; codec: string; width: number; height: number };
-  /** `?hz=90`: a separate bake at 90 Hz display times, so it has its own frames.json, cards.json, segments and cutoff. */
-  hz90?: { file: BundlePath; codec: string; width: number; height: number; displayHz: number; frames: BundlePath; cards: BundlePath; segments: ShowSegments; cutoff: number };
+  /**
+   * `?hz=90`: a separate bake at 90 Hz display times, so it has its own frames.json, cards.json, segments and cutoff,
+   * and may have its own pass-2 speed (at 90 Hz, 0.75x keeps every pass-2 frame real); without one it plays at
+   * video.pass2Speed.
+   */
+  hz90?: {
+    file: BundlePath; codec: string; width: number; height: number; displayHz: number; frames: BundlePath; cards: BundlePath;
+    segments: ShowSegments; cutoff: number; pass2Speed?: number;
+  };
   /** `?video=element`: pass 1 as an MP4 for a <video> element (only if WebCodecs fails on the headset). */
   element?: BundlePath;
 }
@@ -201,17 +208,20 @@ export interface ShowCards {
 }
 
 /**
- * A layered card for one show frame: a person in the lit region (or the ball, id BALL_CARD), stood upright at their
- * floor point and cut by their matte, so nobody shows twice through a gap and nobody tears at an edge (P43).
+ * A layered card for one show frame: a person in the lit region (or the ball), stood at their anchor and cut by their
+ * matte, so nobody shows twice through a gap and nobody tears at an edge (P43). Resolution-free: the box is in source
+ * pixels and the tile is 0-1, so a smaller copy of the stream (fallbacks.small) uses the same cards.json.
  */
 export interface ShowCard {
-  /** The person's id (a freeze.players or freeze.others id when they are built in 3D; any other id otherwise), or "ball". */
+  /** The person's id (a freeze.players or freeze.others id when they are built in 3D; any other id otherwise), BALL_CARD for the ball. */
   id: string;
-  /** The floor point under them (under the ball for the ball's card), court space, y = 0: the card stands here. */
-  foot: Vec3;
-  /** Their box in the live region, live-region pixels [x0, y0, x1, y1]. */
+  /** What the card holds. */
+  kind: "person" | "ball";
+  /** The card's anchor, court space: a person's foot point on the floor (y = 0), or the ball's centre. */
+  at: Vec3;
+  /** The matte's box in the source frame, pixel edges [x0, y0, x1, y1] (camera.width x camera.height, 0 at the top-left edge). */
   box: Box;
-  /** Their matte's tile in the matte atlas, mattes-region pixels [x0, y0, x1, y1]; the box is scaled into it. */
+  /** The matte in the atlas, [u0, v0, u1, v1] 0-1 inside the mattes region from its top left; the box maps linearly onto it. Tiles keep >= 4 px apart. */
   tile: Box;
   /** Front-to-back order in this frame: 0 is nearest the camera; each card has its own. */
   order: number;
@@ -536,6 +546,7 @@ export function validateCourt(json: unknown): string[] {
         streamFields(c, o, "video.fallbacks.hz90");
         sameShape(c, o, size, "video.fallbacks.hz90");
         if (c.has(o, "displayHz", "video.fallbacks.hz90.displayHz")) c.num(o.displayHz, "video.fallbacks.hz90.displayHz", { gt: 0 });
+        if (o.pass2Speed !== undefined) c.num(o.pass2Speed, "video.fallbacks.hz90.pass2Speed", { gt: 0, lt: 1 });
         for (const k of ["frames", "cards"]) if (c.has(o, k, `video.fallbacks.hz90.${k}`)) c.file(o[k], `video.fallbacks.hz90.${k}`);
         if (c.has(o, "segments", "video.fallbacks.hz90.segments")) segments(c, o.segments, o.cutoff, "video.fallbacks.hz90", o.displayHz);
       }
@@ -865,7 +876,7 @@ export function validateCards(json: unknown, court: Court, frames: readonly Show
     c.fail("cards.json", `expected one entry per show frame (${frames.length}, as frames.json)`, Array.isArray(json) ? json.length : json);
     return c.errors;
   }
-  const { live, mattes } = court.video.regions;
+  const { width, height } = court.camera;
   json.forEach((entry, i) => {
     const at = `cards.json[${i}]`;
     if (!c.obj(entry, at) || !c.has(entry, "cards", `${at}.cards`) || !c.list(entry.cards, `${at}.cards`)) return;
@@ -879,13 +890,17 @@ export function validateCards(json: unknown, court: Court, frames: readonly Show
         if (ids.has(card.id)) c.fail(`${cp}.id`, "expected one card per person per frame", card.id);
         ids.add(card.id);
       }
-      if (c.has(card, "foot", `${cp}.foot`) && c.vec3(card.foot, `${cp}.foot`) && Math.abs(card.foot[1]) > 0.01)
-        c.fail(`${cp}.foot`, "expected a point on the floor (y = 0)", card.foot);
-      if (c.has(card, "box", `${cp}.box`)) c.box(card.box, `${cp}.box`, live[2], live[3], "live region");
-      if (c.has(card, "tile", `${cp}.tile`) && c.box(card.tile, `${cp}.tile`, mattes[2], mattes[3], "matte atlas")) {
+      const kindOk = c.has(card, "kind", `${cp}.kind`) && c.oneOf(card.kind, ["person", "ball"] as const, `${cp}.kind`, '"person" or "ball"');
+      if (c.has(card, "at", `${cp}.at`) && c.vec3(card.at, `${cp}.at`) && kindOk && card.kind === "person" && Math.abs(card.at[1]) > 0.02)
+        c.fail(`${cp}.at`, "expected a person's foot point on the floor (y = 0)", card.at);
+      if (c.has(card, "box", `${cp}.box`)) c.box(card.box, `${cp}.box`, width, height, "source frame");
+      if (c.has(card, "tile", `${cp}.tile`) && c.nums(card.tile, 4, `${cp}.tile`, "a tile [u0, v0, u1, v1] 0-1 in the matte atlas")) {
         const t = card.tile as Box;
-        if (tiles.some((o) => t[0] < o[2] && o[0] < t[2] && t[1] < o[3] && o[1] < t[3])) c.fail(`${cp}.tile`, "expected a tile no other card in this frame uses", t);
-        tiles.push(t);
+        if (!(t[0] < t[2] && t[1] < t[3]) || t.some((u) => u < 0 || u > 1)) c.fail(`${cp}.tile`, "expected [u0, v0, u1, v1] inside 0-1 with u0 < u1 and v0 < v1", t);
+        else {
+          if (tiles.some((o) => t[0] < o[2] && o[0] < t[2] && t[1] < o[3] && o[1] < t[3])) c.fail(`${cp}.tile`, "expected a tile no other card in this frame uses", t);
+          tiles.push(t);
+        }
       }
       if (c.has(card, "order", `${cp}.order`) && c.num(card.order, `${cp}.order`, { min: 0, int: true })) {
         if (orders.has(card.order)) c.fail(`${cp}.order`, "expected an order no other card in this frame has", card.order);
@@ -934,9 +949,10 @@ export type StreamFallback = "small" | "hz90";
 
 /**
  * The court with a pre-built stream swapped into `video`, so every module reads one view of the show: the small copy
- * changes only the file, codec and size (its regions are the main ones scaled by width); the 90 Hz bake also brings
- * its display rate, frames.json, cards.json, segments and cutoff. Null returns the court as it is. Throws when the
- * bundle has no such stream.
+ * changes only the file, codec and size (its regions are the main ones scaled by width; cards.json is
+ * resolution-free, so it stays); the 90 Hz bake also brings its display rate, frames.json, cards.json, segments,
+ * cutoff and its pass-2 speed when it has one. Null returns the court as it is. Throws when the bundle has no such
+ * stream.
  */
 export function chooseStream(court: Court, fallback: StreamFallback | null): Court {
   if (!fallback) return court;
@@ -948,7 +964,7 @@ export function chooseStream(court: Court, fallback: StreamFallback | null): Cou
   const video: ShowVideoInfo = { ...court.video, file: fb.file, codec: fb.codec, width: fb.width, height: fb.height, regions: { live: scale(live), plate: scale(plate), mattes: scale(mattes) } };
   if (fallback === "hz90") {
     const hz = court.video.fallbacks.hz90!;
-    Object.assign(video, { displayHz: hz.displayHz, frames: hz.frames, cards: hz.cards, segments: hz.segments, cutoff: hz.cutoff });
+    Object.assign(video, { displayHz: hz.displayHz, frames: hz.frames, cards: hz.cards, segments: hz.segments, cutoff: hz.cutoff, pass2Speed: hz.pass2Speed ?? court.video.pass2Speed });
   }
   return { ...court, video };
 }

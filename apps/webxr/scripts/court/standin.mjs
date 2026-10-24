@@ -52,6 +52,7 @@ const SMALL = { width: 1280, height: 1800 };
 /** The matte atlas: one 384 x 432 slot per card id (the ball's only from the release to the make). */
 const SLOTS = { shooter: 0, defender: 1, trailer: 2, [BALL_CARD]: 3 };
 const SLOT_W = 384;
+const TILE_INSET = 2; // px between a tile and its slot's edge: >= 4 px between tiles
 
 // ---------------- the scene (court space, made up) ----------------
 const PC = [6.0, 0, 1.0]; // the pair's centre on the floor
@@ -266,26 +267,32 @@ function boxOf(cam, caps) {
   return clip[0] < clip[2] && clip[1] < clip[3] ? clip : null;
 }
 
-/** The cards of one show frame: every person whose box is in the live region, and the ball from the release to the make. */
+/**
+ * The cards of one show frame (format.ts ShowCard): every person whose box is in the frame, and the ball from the
+ * release to the make. Boxes in source pixel edges; each matte's tile (0-1 in the atlas) in its own slot, 2 px inside
+ * it, so tiles keep >= 4 px apart and mip sampling never bleeds one matte into the next.
+ */
 export function cardsAt(show) {
-  const cam = scaled(srcCam(show), STREAM.live[2]);
+  const cam = srcCam(show);
   const sc = sceneAt(show.tau);
   const list = [];
   for (const person of sc.people) {
     const box = boxOf(cam, person.caps);
-    if (box) list.push({ id: person.id, foot: [round(person.foot[0], 4), 0, round(person.foot[2], 4)], box, depth: dot(sub(person.foot, CAM_C), FWD) });
+    if (box) list.push({ id: person.id, kind: "person", at: [round(person.foot[0], 4), 0, round(person.foot[2], 4)], box, depth: dot(sub(person.foot, CAM_C), FWD) });
   }
   if (show.tau >= RELEASE_TAU && show.tau <= MAKE_TAU) {
     const box = boxOf(cam, [{ a: sc.ball, b: sc.ball, r: BALL_R }]);
-    if (box) list.push({ id: BALL_CARD, foot: [round(sc.ball[0], 4), 0, round(sc.ball[2], 4)], box, depth: dot(sub(sc.ball, CAM_C), FWD) });
+    if (box) list.push({ id: BALL_CARD, kind: "ball", at: sc.ball.map((x) => round(x, 4)), box, depth: dot(sub(sc.ball, CAM_C), FWD) });
   }
   list.sort((a, b) => a.depth - b.depth);
-  return list.map(({ id, foot, box }, order) => {
-    // the box scaled into its slot of the atlas, aspect kept
-    const s = Math.min(SLOT_W / (box[2] - box[0]), STREAM.mattes[3] / (box[3] - box[1]));
-    const x0 = SLOTS[id] * SLOT_W;
-    const tile = [x0, 0, x0 + Math.max(1, Math.round((box[2] - box[0]) * s)), Math.max(1, Math.round((box[3] - box[1]) * s))];
-    return { id, foot, box, tile, order };
+  const [, , mw, mh] = STREAM.mattes;
+  const [iw, ih] = [SLOT_W - 2 * TILE_INSET, mh - 2 * TILE_INSET];
+  return list.map(({ id, kind, at, box }, order) => {
+    // the box scaled into its slot, aspect kept
+    const s = Math.min(iw / (box[2] - box[0]), ih / (box[3] - box[1]));
+    const x0 = SLOTS[id] * SLOT_W + TILE_INSET;
+    const px = [x0, TILE_INSET, x0 + Math.max(1, Math.round((box[2] - box[0]) * s)), TILE_INSET + Math.max(1, Math.round((box[3] - box[1]) * s))];
+    return { id, kind, at, box, tile: [px[0] / mw, px[1] / mh, px[2] / mw, px[3] / mh].map((u) => round(u, 7)), order };
   });
 }
 
@@ -953,19 +960,21 @@ export function stackedFrame(show, cards, rw, rh) {
   out.set(resize(live.rgb, rw, rh, lw, lh), (STREAM.live[1] * STREAM.width + STREAM.live[0]) * 3);
   out.set(resize(plate.rgb, rw, rh, lw, lh), (STREAM.plate[1] * STREAM.width + STREAM.plate[0]) * 3);
   const ids = sceneAt(show.tau).people.map((p) => p.id);
+  const [, , mw, mh] = STREAM.mattes;
+  const toRender = rw / SRC.width; // source pixel edges -> render pixels
   for (const card of cards) {
-    const want = card.id === BALL_CARD ? KIND.ball : KIND.person + ids.indexOf(card.id);
-    const [tx0, ty0, tx1, ty1] = card.tile;
+    const want = card.kind === "ball" ? KIND.ball : KIND.person + ids.indexOf(card.id);
+    const [tx0, ty0, tx1, ty1] = [card.tile[0] * mw, card.tile[1] * mh, card.tile[2] * mw, card.tile[3] * mh].map(Math.round);
     const [bx0, by0, bx1, by1] = card.box;
     for (let ty = ty0; ty < ty1; ty++)
       for (let tx = tx0; tx < tx1; tx++) {
         let hits = 0;
-        // 2 x 2 samples per atlas pixel, through the box into the render
+        // 2 x 2 samples per atlas pixel, through the box (mapped linearly onto the tile) into the render
         for (const [ox, oy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
           const bx = bx0 + ((tx - tx0 + ox) / (tx1 - tx0)) * (bx1 - bx0);
           const by = by0 + ((ty - ty0 + oy) / (ty1 - ty0)) * (by1 - by0);
-          const rx = Math.min(rw - 1, Math.floor((bx * rw) / lw));
-          const ry = Math.min(rh - 1, Math.floor((by * rh) / lh));
+          const rx = Math.min(rw - 1, Math.floor(bx * toRender));
+          const ry = Math.min(rh - 1, Math.floor(by * toRender));
           if (live.kind[ry * rw + rx] === want) hits++;
         }
         const v = Math.round((hits / 4) * 255);

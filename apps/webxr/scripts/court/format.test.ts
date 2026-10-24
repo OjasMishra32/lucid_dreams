@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { easeTau } from "../../src/court/clock.ts";
 import { BALL_CARD, CourtFormatError, LABEL, chooseStream, loadCourt, validateCards, validateCourt, validateFrames } from "../../src/court/format.ts";
 import { FIXTURE, standinBundle } from "./standin.mjs";
 
@@ -27,9 +28,33 @@ test("the stand-in has a gap between the pair and a third person in the lit regi
   const { court, cards } = fresh();
   const atF = cards[court.video.segments.eases[0].frames[1]].cards as Json[];
   assert.deepEqual(atF.map((c) => c.id).sort(), ["defender", "shooter", "trailer"]);
-  const [s, d] = ["shooter", "defender"].map((id) => atF.find((c) => c.id === id)!.foot);
+  const [s, d] = ["shooter", "defender"].map((id) => atF.find((c) => c.id === id)!.at);
   assert.ok(Math.hypot(s[0] - d[0], s[2] - d[2]) > 0.75, "the pair's feet are far enough apart for a gap");
-  assert.ok(cards.some((f) => (f.cards as Json[]).some((c) => c.id === BALL_CARD)), "the ball has a card somewhere");
+  const ball = cards.flatMap((f) => f.cards as Json[]).filter((c) => c.kind === "ball");
+  assert.ok(ball.length > 0 && ball.every((c) => c.id === BALL_CARD), "the ball has a card (kind ball, id ball) somewhere");
+  assert.ok(ball.some((c) => c.at[1] > 1), "the ball's card stands at the ball's centre, in the air");
+});
+
+test("cards.json is resolution-free: boxes in source pixel edges, tiles 0-1 in the atlas with >= 4 px gutters", () => {
+  const { court, cards } = fresh();
+  const [, , mw, mh] = court.video.regions.mattes;
+  for (const { cards: list } of cards)
+    for (const c of list as Json[]) {
+      assert.ok(c.box[0] >= 0 && c.box[2] <= court.camera.width && c.box[1] >= 0 && c.box[3] <= court.camera.height, `box ${c.box} in the source frame`);
+      assert.ok(c.tile.every((u: number) => u >= 0 && u <= 1), `tile ${c.tile} in 0-1`);
+      assert.equal(c.kind === "ball", c.id === BALL_CARD);
+    }
+  // >= 4 px between any two tiles of a frame, and >= 2 px from the atlas's edges
+  for (const { cards: list } of cards) {
+    const px = (list as Json[]).map((c) => [c.tile[0] * mw, c.tile[1] * mh, c.tile[2] * mw, c.tile[3] * mh]);
+    for (const t of px) assert.ok(t[0] >= 2 - 0.01 && t[1] >= 2 - 0.01 && t[2] <= mw - 2 + 0.01 && t[3] <= mh - 2 + 0.01, `tile ${t} keeps 2 px from the edge`);
+    for (let i = 0; i < px.length; i++)
+      for (let j = i + 1; j < px.length; j++) {
+        const [a, b] = [px[i], px[j]];
+        const gap = Math.max(b[0] - a[2], a[0] - b[2], b[1] - a[3], a[1] - b[3]);
+        assert.ok(gap >= 4 - 0.01, `tiles ${a} and ${b} are ${gap} px apart`);
+      }
+  }
 });
 
 test("they still validate after a JSON round trip", () => {
@@ -278,6 +303,30 @@ test("chooseStream: the 90 Hz bake brings its own display rate, frames.json, seg
   assert.equal(c.video.cutoff, court.video.fallbacks.hz90.cutoff);
 });
 
+test("chooseStream: the 90 Hz bake may bring its own pass-2 speed; without it, the top-level one", () => {
+  const { court } = withHz90();
+  const inherit = chooseStream(court as never, "hz90");
+  assert.equal(inherit.video.pass2Speed, court.video.pass2Speed);
+  court.video.fallbacks.hz90.pass2Speed = 0.75; // at 90 Hz every pass-2 frame is a real one at 0.75x
+  assert.deepEqual(validateCourt(court), []);
+  const own = chooseStream(court as never, "hz90").video;
+  assert.equal(own.pass2Speed, 0.75);
+  // the clock's pass-2 timing follows the chosen stream: an ease of n frames covers 0.75 n / 90 / 2 s of real time
+  const n = 108;
+  assert.ok(Math.abs(-easeTau(0, n, own.displayHz, own.pass2Speed) - (0.75 * n) / 90 / 2) < 1e-12);
+  assert.equal(chooseStream(court as never, "small").video.pass2Speed, court.video.pass2Speed, "the small copy keeps the main speed");
+  court.video.fallbacks.hz90.pass2Speed = 1.2;
+  assert.ok(validateCourt(court).some((e) => /^video\.fallbacks\.hz90\.pass2Speed: /.test(e)));
+});
+
+test("loadCourt with ?show=small loads the stand-in: its cards hold for the smaller copy unchanged", async () => {
+  const { court, frames, cards } = fresh();
+  const { fetcher } = fakeFetch({ "http://h/b/court.json": court, "http://h/b/video/frames.json": frames, "http://h/b/video/cards.json": cards });
+  const bundle = await loadCourt("http://h/b/court.json", { fetcher, fallback: "small" });
+  assert.equal(bundle.court.video.width, 1280);
+  assert.deepEqual(bundle.cards, cards);
+});
+
 test("chooseStream: a fallback the bundle doesn't have is a clear error", () => {
   assert.throws(() => chooseStream(fresh().court as never, "hz90"), /no 90 Hz bake \(video\.fallbacks\.hz90\)/);
 });
@@ -294,13 +343,22 @@ test("loadCourt with ?hz=90 fetches and validates the 90 Hz frames.json", async 
 
 const BROKEN_CARDS: [string, (k: Json[]) => void, RegExp][] = [
   ["one entry short", (k) => k.pop(), /^cards\.json: expected one entry per show frame/],
-  ["a person twice in a frame", (k) => k[10].cards.push({ ...k[10].cards[0], tile: [1200, 0, 1210, 10], order: 9 }), /^cards\.json\[10\]\.cards\[\d\]\.id: .*one card per person/],
-  ["a foot off the floor", (k) => (k[3].cards[0].foot[1] = 0.5), /^cards\.json\[3\]\.cards\[0\]\.foot: .*floor/],
-  ["a box outside the live region", (k) => (k[4].cards[0].box = [10, 10, 1600, 200]), /^cards\.json\[4\]\.cards\[0\]\.box: .*inside the live region/],
-  ["a tile outside the atlas", (k) => (k[5].cards[0].tile = [0, 0, 100, 500]), /^cards\.json\[5\]\.cards\[0\]\.tile: .*inside the matte atlas/],
+  ["a person twice in a frame", (k) => k[10].cards.push({ ...k[10].cards[0], tile: [0.97, 0.01, 0.99, 0.05], order: 9 }), /^cards\.json\[10\]\.cards\[\d\]\.id: .*one card per person/],
+  ["an unknown kind", (k) => (k[2].cards[0].kind = "ref"), /^cards\.json\[2\]\.cards\[0\]\.kind: .*person.*ball/],
+  ["a person off the floor", (k) => (k[3].cards[0].at[1] = 0.5), /^cards\.json\[3\]\.cards\[0\]\.at: .*floor/],
+  ["a box outside the source frame", (k) => (k[4].cards[0].box = [10, 10, 4000, 200]), /^cards\.json\[4\]\.cards\[0\]\.box: .*inside the source frame \(3840 x 2160\)/],
+  ["a tile outside 0-1", (k) => (k[5].cards[0].tile = [0, 0, 0.1, 1.2]), /^cards\.json\[5\]\.cards\[0\]\.tile: .*0-1/],
   ["two cards sharing a tile", (k) => (k[6].cards[1].tile = k[6].cards[0].tile), /^cards\.json\[6\]\.cards\[1\]\.tile: .*no other card/],
   ["two cards with one order", (k) => (k[7].cards[1].order = k[7].cards[0].order), /^cards\.json\[7\]\.cards\[1\]\.order: .*no other card/],
 ];
+
+test("cards.json: the ball's card may stand in the air (its centre), a person's may not", () => {
+  const { court, frames, cards } = fresh();
+  const i = cards.findIndex((f) => (f.cards as Json[]).some((c) => c.kind === "ball"));
+  const ball = (cards[i].cards as Json[]).find((c) => c.kind === "ball")!;
+  ball.at = [ball.at[0], 2.5, ball.at[2]];
+  assert.deepEqual(validateCards(cards, court as never, frames as never), []);
+});
 
 for (const [what, breakIt, why] of BROKEN_CARDS) {
   test(`cards.json: ${what} is named`, () => {

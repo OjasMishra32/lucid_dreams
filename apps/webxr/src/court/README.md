@@ -93,10 +93,13 @@ Where it lives: the real bundle outside the repo, never under `dreams/` (vite an
   `[x, y, width, height]`): `live` (what the camera filmed, at the source's aspect), `plate` (the same frame with
   every person replaced from a fixed-centre pan mosaic, the live region's size) and `mattes` (the matte atlas: each
   card's matte, white = the person, in its own tile). A fallback stream keeps the layout, scaled by its width.
-- **Cards** (`video/cards.json`, one entry per show frame): every person in the lit region gets a card standing at
-  their `foot` (court space, y = 0), cut from the live region by `box` and matted by `tile` (both `[x0, y0, x1, y1]` in
-  their region's pixels), drawn front to back by `order`; the ball gets the card `"ball"` from the release to the make.
-  The plate is what shows between and behind the cards, so nobody shows twice through a gap (P43).
+- **Cards** (`video/cards.json`, one entry per show frame): every person in the lit region gets a card (`kind:
+  "person"`) standing at their foot point `at` (court space, y = 0), cut from the frame by `box` (source pixel edges
+  `[x0, y0, x1, y1]`, `camera.width` x `camera.height`) and matted by `tile` (`[u0, v0, u1, v1]`, 0-1 inside the mattes
+  region from its top left; the box maps linearly onto it; tiles keep >= 4 px apart), drawn front to back by `order`.
+  The ball gets the card `{ id: "ball", kind: "ball" }` from the release to the make, anchored at its centre. Cards
+  are resolution-free, so the small copy uses the same file. The plate is what shows between and behind the cards, so
+  nobody shows twice through a gap (P43).
 - **Paths** are relative to court.json's folder: no leading slash, no `..`, no URL. **Unknown fields are ignored**, so
   the format can grow.
 
@@ -109,7 +112,7 @@ video/show.h264          the whole show at displayHz: raw H.264 Annex B, avc1.64
 video/show-small.h264    fallbacks.small (the same frames, smaller); fallbacks.hz90 has its own stream, frames.json and
                          cards.json; fallbacks.element is pass 1 as an MP4 for a <video> element
 video/frames.json        per show frame: { src, interp, q, f }
-video/cards.json         per show frame: { cards: [{ id, foot, box, tile, order }] }
+video/cards.json         per show frame: { cards: [{ id, kind, at, box, tile, order }] }
 video/freeze.png         frame F; freeze-clean.png (F's plate); stands-mask.png; inpaint-mask.png (optional)
 players/<id>/freeze.ply  the freeze Gaussians (3DGS PLY, SH1, court space); reality.ply (same order, unseen in blue)
 players/<id>/proxy.glb   the splat-depth proxy (depth mesh of the splats from camera F); shadow.png, reflection.png
@@ -181,7 +184,9 @@ audio/bed.m4a            the crowd bed (looped, -23 LUFS); swell.m4a (one-shot);
 ease's last frame is F (`src == freezeSource`, `interp: false`).
 
 `video/cards.json` (one entry per show frame):
-`[{ "cards": [{ "id": "shooter", "foot": [5.99, 0, 0.51], "box": [543, 193, 741, 827], "tile": [0, 0, 135, 432], "order": 0 }, ...] }, ...]`.
+`[..., { "cards": [{ "id": "shooter", "kind": "person", "at": [5.9926, 0, 0.5113], "box": [1710, 1065, 2149, 2160], "tile": [0.0013021, 0.0046296, 0.1132813, 0.9953704], "order": 0 },`
+`{ "id": "ball", "kind": "ball", "at": [7.4916, 3.4324, 0.5161], "box": [1283, 50, 1453, 221], "tile": [0.7513021, 0.0046296, 0.9986979, 0.8888889], "order": 2 }, ...] }, ...]`
+(the stand-in's show frame 500).
 
 The stand-in's people at F: the shooter and the defender with ~0.5 m of clear floor between their bodies (the
 defender's arm reaches across the gap), and a third person trailing behind and to the left: the layered watch must
@@ -195,16 +200,18 @@ source's aspect; a fallback's shape the main stream's; `pass2Speed` in (0, 1); t
 penumbra >= 1.5 m; segments ordered, non-overlapping, eases inside pass 2 in order of start, each ease's `seconds`
 within one frame of its frame count; `cutoff` inside pass 2 and no later than the last ease start; `seat.distance`
 inside `distanceRange`; `pairCentre` on the floor; unique ids across players and others, none of them `"ball"`;
+`fallbacks.hz90.pass2Speed`, when given, in (0, 1);
 `ball.erase` names a real player; a relief only below 15 deg (`maxRayAngle`, P16); at least 4 crowd sources (P31);
 `video.makeSource` present when a one-shot is cued on the make. frames.json: long enough for every segment, unit
 quaternions, whole `src` for real frames, every ease ending on F. cards.json: one entry per show frame, ids unique
-per frame, each order and tile once per frame, every box inside the live region, every tile inside the atlas, every
-foot on the floor.
+per frame, each order once per frame, tiles not overlapping, `kind` "person" or "ball", every box inside the source
+frame, every tile inside 0-1, every person's `at` on the floor.
 
 ### Changes from the plan's sketch (4.2, 4.3)
 
 - `video.fallbacks.small`, `.hz90`, `.element` are objects (or a path for `element`), not paths: the 90 Hz bake has
-  its own frames.json, cards.json, segments and cutoff; `chooseStream` swaps one in.
+  its own frames.json, cards.json, segments, cutoff and optionally `pass2Speed` (0.75 keeps every pass-2 frame real at
+  90 Hz); `chooseStream` swaps one in.
 - `video.pass2Speed` is in the bundle (the bake's choice, not a constant in code); `video.makeSource` (when the make
   one-shot fires) and `video.inpaintMask` (the Reality check's inpainted plate) are optional.
 - `seat` keeps only Decision W's watch seat and `clear`: the walking layout is derived (`seatmath.ts`, 3.4).
