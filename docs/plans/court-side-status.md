@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 9:51 AM. Vishal is up; the planning session keeps building.
+Updated Sat 10:02 AM. Vishal is up and runs HiPerGator himself now (his account).
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -121,15 +121,14 @@ private, outside the repo.
 
 ## Now
 
-- **The plan is done and committed on branch `court-side`** (`docs/plans/court-side.md`), after four break-it
-  reviews; one independent review and a Grok pass are running, then their must-fixes go in.
-- **The build has started on `court-side`:** the interfaces, the stand-in bundle and the test harness come first
-  (`apps/webxr/src/court/`, tests in `apps/webxr/scripts/court/` as you approved), then parallel streams.
-- **Hand-off direction:** "House Lights" is prototyped (no measured pops; the dark hides the seam between the
-  footage and the drawn court); the other two finish shortly; the pick is logged here with the reason.
-- **Your Quest test (ask 7):** the new page goes on branch `court-side-q0` (code only; a script makes the test
-  videos), steps in its HOW-TO.
-- Calibration of both low angles, SAM 2.1 masks (Vishal's PC) running.
+- **Build running on `court-side`:** interfaces frozen and pushed (107 unit tests, build, stand-in bundle and an
+  emulator run all green); four streams build in parallel worktrees (core, video + hand-off, world + light,
+  sound), each reviewed before it's merged into `court-side`. The redacted plan is on the branch.
+- **GPU:** Vishal is logged in and submits. The group quota has ~13 GB free, so every job now runs inside one node's
+  local scratch and copies back only small results (nothing on /blue is deleted). First: the other-players
+  prototype (Edwards), then Luka and Gobert's views at Turbo and full quality together, then the freeze A/B grid
+  (default vs `--source-agree`, as you suggested).
+- Waiting on: the two players' masks (landing now), the backboard-square scan that pins the camera's depth.
 
 ## Verdict so far
 
