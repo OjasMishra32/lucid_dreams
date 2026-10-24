@@ -18,7 +18,8 @@ from pathlib import Path
 a = sys.argv[1:]
 def rec():
     with open(os.environ["STUB_LOG"], "a") as fh:
-        fh.write(json.dumps({"args": a, "cuda": os.environ.get("CUDA_VISIBLE_DEVICES")}) + "\n")
+        fh.write(json.dumps({"args": a, "cuda": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                             "nccl_ib": os.environ.get("NCCL_IB_DISABLE")}) + "\n")
 def opt(name):
     return a[a.index(name) + 1]
 if a[:2] == ["-m", "lucid.prep_clip"]:
@@ -163,6 +164,7 @@ class Job(unittest.TestCase):
         views = next(c for c in self.calls if c["args"][0].endswith("inference.py"))
         self.assertNotIn("--enable_turbo=False", views["args"])
         self.assertIsNone(views["cuda"])  # every GPU the job holds (an idle allocated GPU gets the job killed)
+        self.assertEqual(views["nccl_ib"], "1")  # NCCL over RoCE bonds fails on some nodes: sockets instead
         self.assertEqual(list(self.scratch.iterdir()), [])  # its scratch is gone
         self.assertEqual(sorted(x.name for x in self.L.iterdir()), ["code", "data", "envs", "repos", "runs"])
         self.assertIn("raw-default-r0  300k", subprocess.run(["python3", str(HERE / "court_grid_report.py"), str(out)],
