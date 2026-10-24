@@ -8,10 +8,17 @@ camera stood; "Step into the court" eases it to a stop and **that one frame beco
 hand-off, then the world opens up); you stand and walk in around the frozen moment, **every player on court a solid
 3D person** (Vishal, 7:00 AM); "Back to my seat" eases back into the video. Ojasva's bar: if the two main players
 aren't passing by noon, ship the main player alone.
-Updated Sat 7:27 AM.
+Updated Sat 7:43 AM.
 
 ## Asks for Ojasva (newest first)
 
+11. **Where Court Side's clip tools live?** Hand-tuned calibration, masks and assembly scripts for this one clip:
+    `pipeline/court/` (code only, no clip data), or outside the repo? Your call.
+10. **`sourceView` for Court Side runs (needs a small patch in your lane):** (a) take our SAM 2.1 player mask
+    instead of BiRefNet, with the other player's pixels ignored in the loss (`source_view.py:67-70` only reads
+    BiRefNet today); (b) take our known focal length for the crop instead of solving it (a long broadcast lens);
+    (c) bonus: a second real camera (the play's other angle) as another real view of the freeze frame, so Luka's
+    front is real, not invented. Yes / no / which?
 9. **GPU ask, new shape (supersedes the 100k playback part of 6):** (a) the two main players: 50-step views on
    each 121-frame clip, then reconstruction of **only the freeze frame**, cold, as dense as the Quest holds (250-300k)
    with more iterations: ~30-45 min of one B200 each. (b) **The other players on court** (up to 8): each its own
@@ -36,12 +43,16 @@ Updated Sat 7:27 AM.
 
 ## Now
 
-**Clip recommended (7:27 AM): Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals G2**
-(Mavericks' all-angles upload, 2160p60): a low sideline camera with both players huge and isolated at the release,
-plus two more low angles and four high angles of the same moment. Backups: Curry's record three (2021, 1080p60),
-Lillard over George (2019, 1080p60). Giannis's block: no public copy above 720p. Waiting on Vishal's OK to fetch
-~60 s of sections for gate 1 (fixed camera, real vs AI slow-mo, sizes). Quest test page (ask 7) ready. Prototypes,
-calibration and the video-to-3D hand-off spike in progress; reflections and shadows proven on desktop.
+**Clip decided (Vishal, 7:34 AM): Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
+Game 2**, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60), Vishal's
+pick at 6:15. Fetched (private, outside the repo): that angle 5:55-6:25, the release angle 4:45-5:05, the
+broadcast 0:00-0:15. **Gate 1 on it: 7/9, a pass in substance:** players ~900 px tall at 1080p (bar 600), both head
+to toe, zero overlap, feet visible, sharp; real high-speed slow motion (3 unique frames in every 4, no interpolation
+dips: ~45 unique fps at ~4-5x slow, ~180-220 fps capture), no cut through the release (the camera tilts up to
+follow the ball); the two misses are expected (the camera pans: calibration undoes it; the ball detector misses).
+Freeze candidates: 6:15.7 (Gobert's reach, players huge) and 6:16.6 (the release, ball up, basket in frame); both
+will be reconstructed and picked in the headset. The camera mostly sees Luka's back: ask 10(c) would make his
+front real. Planning hands off to a fresh session now; build on branch `court-side` after an independent review.
 
 ## Verdict so far
 
