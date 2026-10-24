@@ -121,13 +121,16 @@ export function buildRacket(colors: RacketColors, env?: THREE.Texture): THREE.Gr
 
 type Joints = Record<string, THREE.Object3D>;
 const NEEDED = ["wrist", "middle-finger-metacarpal", "index-finger-phalanx-proximal", "middle-finger-phalanx-proximal", "pinky-finger-phalanx-proximal"];
-const GRIP_ANGLE = THREE.MathUtils.degToRad(38); // the shaft leaves the hand between thumb and index, this far off the hand's line
+const GRIP_ANGLE = THREE.MathUtils.degToRad(38);
+const CARRY = 0.09; // seconds a racket lost to tracking carries on along its swing // the shaft leaves the hand between thumb and index, this far off the hand's line
 
 /**
  * Your racket follows the stable joints of your right hand (the wrist and the knuckles, never the fingertips), the way an
  * eastern forehand grip holds it: the strings parallel to your palm, the handle across it from the heel of the hand
  * out past the index knuckle. No fist is needed: whenever the hand is tracked, the racket is in it. Its turn is
- * smoothed a little (less the faster it turns, so a swing never lags); its position never is.
+ * smoothed a little (less the faster it turns, so a swing never lags); its position never is. A fast swing often
+ * loses tracking for a few frames right at contact: the racket carries on along the swing it was making (its last
+ * speed and turn, easing off) instead of freezing there, so the ball meets a moving racket, not a dead one.
  */
 export class HandRacket {
   readonly obj: THREE.Group;
@@ -145,6 +148,11 @@ export class HandRacket {
   private jq = new THREE.Quaternion();
   private m = new THREE.Matrix4();
   private mats: THREE.Material[] = [];
+  private vel = new THREE.Vector3(); // the racket's speed (world, m/s) and turn (axis * rad/s) over the last frames
+  private spin = new THREE.Vector3();
+  private prevP = new THREE.Vector3();
+  private prevQ = new THREE.Quaternion();
+  private dq = new THREE.Quaternion();
 
   constructor(scene: THREE.Object3D, env?: THREE.Texture) {
     this.obj = buildRacket({ frame: 0x283447, grip: "#f1f1ec", wrap: "#cfd2d0" }, env);
@@ -186,9 +194,32 @@ export class HandRacket {
       const centre = this.x.copy(W).lerp(M, 0.5).addScaledVector(this.n, 0.024);
       const u = this.u.set(0, 1, 0).applyQuaternion(this.obj.quaternion);
       this.obj.position.copy(centre).addScaledVector(u, -RACKET.gripY);
+      // how it's moving (a step after a lost stretch says nothing: tracking just came back)
+      if (this.hasPose && this.lost === 0 && dt > 1e-4) {
+        this.vel.lerp(this.f.copy(this.obj.position).sub(this.prevP).divideScalar(dt), 0.6);
+        this.dq.copy(this.obj.quaternion).multiply(this.prevQ.invert());
+        if (this.dq.w < 0) this.dq.set(-this.dq.x, -this.dq.y, -this.dq.z, -this.dq.w);
+        const ang = 2 * Math.acos(Math.min(1, this.dq.w));
+        const s = Math.sqrt(Math.max(1e-12, 1 - this.dq.w * this.dq.w));
+        this.spin.lerp(this.f.set(this.dq.x / s, this.dq.y / s, this.dq.z / s).multiplyScalar(ang > 1e-5 ? ang / dt : 0), 0.6);
+      } else {
+        this.vel.set(0, 0, 0);
+        this.spin.set(0, 0, 0);
+      }
+      this.prevP.copy(this.obj.position);
+      this.prevQ.copy(this.obj.quaternion);
       this.hasPose = true;
       this.lost = 0;
-    } else this.lost += dt;
+    } else {
+      this.lost += dt;
+      // lost mid-swing: on along the swing for a moment, easing off (never more than a short stretch of it)
+      if (this.hasPose && this.lost < CARRY) {
+        const k = Math.exp(-this.lost / 0.06);
+        this.obj.position.addScaledVector(this.vel, dt * k);
+        const w = this.spin.length();
+        if (w > 1e-3) this.obj.quaternion.premultiply(this.dq.setFromAxisAngle(this.f.copy(this.spin).divideScalar(w), w * dt * k));
+      }
+    }
     // a fast swing can lose tracking for a few frames: the racket holds its last pose, then fades
     const want = this.tracked || this.lost < 0.35 ? 1 : 0;
     this.shown = THREE.MathUtils.clamp(this.shown + (want ? dt / 0.1 : -dt / 0.25), 0, 1);

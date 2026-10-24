@@ -3,7 +3,7 @@ import type { SkinnedAvatar } from "../avatar";
 import { Rng } from "../chess/person";
 import { BodyShape } from "../chess/body";
 import { blobShadow, C, inCourt, inServiceBox, WALL_Z } from "./court";
-import { Animator, type Stroke, type StrokeKind } from "./motion";
+import { Animator, type GreetPose, type Stroke, type StrokeKind } from "./motion";
 import { type Ball, type BallEvent, GRAVITY, predict, type Shot, solveLob, solveShot, aimToReach, STEP } from "./physics";
 import { buildRacket, RACKET } from "./racket";
 import { Rig } from "./rig";
@@ -77,6 +77,12 @@ export class Opponent {
   atNet = false;
   lastShot: ShotType | null = null;
   readonly misses: string[] = []; // for checks: balls he couldn't get to
+  /** The handshake at the net before a match (game.ts drives it); null in a match. */
+  greet: GreetPose | null = null;
+  /** What his eyes are on instead of the ball (court), or null. */
+  lookAt: THREE.Vector3 | null = null;
+  /** A walk or a jog instead of his match pace (m/s). */
+  speedCap = Infinity;
   private recover = new THREE.Vector3(0, 0, HOME_Z);
   private split = -1;
   private rng = new Rng(7);
@@ -115,6 +121,11 @@ export class Opponent {
     this.opacity = 0;
     this.root.add(a.mesh);
     this.anim.resetFeet(this.ground);
+  }
+
+  /** The middle of his right palm (court): where a handshake meets. */
+  palm(out: THREE.Vector3) {
+    return this.anim.rig ? this.anim.rig.rightPalm(out).add(this.ground) : out.set(-0.2, 1.0, 0.4).add(this.ground);
   }
 
   /** How tall he stands (m). */
@@ -465,21 +476,23 @@ export class Opponent {
     const dist = to.length();
     const L = this.level;
     // a smooth approach: as fast as he can, slowing to arrive (the last few cm he just settles)
-    const want = dist > 0.02 ? to.multiplyScalar(Math.min(L.speed, Math.sqrt(2 * L.accel * 0.85 * dist)) / dist) : to.set(0, 0, 0);
+    const top = Math.min(L.speed, this.speedCap);
+    const want = dist > 0.02 ? to.multiplyScalar(Math.min(top, Math.sqrt(2 * L.accel * 0.85 * dist)) / dist) : to.set(0, 0, 0);
     const dv = want.sub(this.vel);
     const maxDv = L.accel * dt;
     if (dv.length() > maxDv) dv.setLength(maxDv);
     this.vel.add(dv);
     this.ground.addScaledVector(this.vel, dt);
-    this.ground.z = Math.min(this.ground.z, -0.7);
+    this.ground.z = Math.min(this.ground.z, this.greet ? -0.3 : -0.7); // (at the net only to shake your hand)
     // the stroke: started early enough that its contact lands when the ball does
     if (plan && !this.stroke && t >= plan.tc - this.anim.lead(plan.kind)) this.stroke = { kind: plan.kind, tc: plan.tc, contact: new THREE.Vector3() };
     if (this.stroke) {
       if (this.stroke.kind !== "serve" && plan && plan.tc === this.stroke.tc) this.stroke.contact.copy(plan.contact).sub(this.ground);
       if (t > this.stroke.tc + 1.3) this.stroke = null;
     }
-    this.look.copy(ballLive || this.holdingBall ? ball.p : new THREE.Vector3(0, 1.2, C.halfL));
-    this.anim.update({ t, dt, ground: this.ground, vel: this.vel, stroke: this.stroke, split: this.split, look: this.look, holdingBall: this.holdingBall });
+    if (this.lookAt) this.look.copy(this.lookAt);
+    else this.look.copy(ballLive || this.holdingBall ? ball.p : new THREE.Vector3(0, 1.2, C.halfL));
+    this.anim.update({ t, dt, ground: this.ground, vel: this.vel, stroke: this.stroke, split: this.split, look: this.look, holdingBall: this.holdingBall, greet: this.greet });
     this.root.position.copy(this.ground);
     if (this.avatar) {
       this.avatar.pose(t, (local, rootT) => this.anim.apply(local, rootT));

@@ -4,12 +4,12 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "../avatar";
 import { loadDream } from "../dream";
-import { XrButton } from "../xr/hands";
+import { XrButton, liveJoints, openness } from "../xr/hands";
 import { HandMenu, handIndex, handSides } from "../xr/menu";
 import { WorldLock } from "../xr/anchor";
 import { XR_QUALITY } from "../xr/quality";
 import { hashSeed } from "../chess/person";
-import { C, buildCourt, inCourt, inServiceBox } from "./court";
+import { C, buildCourt, inCourt, inServiceBox, netHeight } from "./court";
 import { type Ball, type BallEvent, BALL_R, STEP, aimToReach, copyBall, newBall, predict, spinFor, stepBall } from "./physics";
 import { BallView } from "./ball";
 import { HandRacket, type Pose, buildRacket, lerpPose, racketPoint, sweep } from "./racket";
@@ -20,10 +20,11 @@ import { FloatText, Scoreboard } from "./board";
 import { CourtSounds, Umpire } from "./sound";
 import { HandsView } from "./hands";
 import { loadClips } from "./motion";
+import { TossHand } from "./toss";
 
 // Tennis on a full-size grass court: you against an AI opponent with a photoreal avatar's body, hands only. Your
-// racket is in your right hand whenever it's tracked; you serve by raising your left hand (the ball floats above your
-// palm) and hitting the toss; the umpire calls the score in the device's voice. The court is pinned to your room where
+// racket is in your right hand whenever it's tracked; you serve by pinching the ball at your left fingertips, lifting
+// and letting go (toss.ts), then hitting the toss; the umpire calls the score in the device's voice. The court is pinned to your room where
 // you start (a WebXR anchor), and since nobody can run 24 m in a living room, rally assist brings his balls to within
 // a step of you and Glide slides the court under you (never faster than 1 m/s) toward the ball's line. On a laptop it's
 // the same match with the keyboard and mouse. The opponent is labelled as an AI with someone's likeness, not affiliated,
@@ -133,6 +134,7 @@ export async function renderTennis(root: HTMLElement) {
   let oppShort = "Opponent";
   let score = new Score(format, youFirst ? 0 : 1, ["You", oppShort]);
   const ball: Ball = newBall();
+  const drawBall: Ball = newBall(); // where the ball is drawn this frame (see the loop)
   let simT = 0;
   let acc = 0;
   let phase: Phase = "idle";
@@ -319,7 +321,7 @@ export async function renderTennis(root: HTMLElement) {
       glideTo(new THREE.Vector3(deuce ? 0.75 : -0.75, 0, C.halfL + 0.35));
       const rp = opponent.receivePosition(deuce, serveNo === 2);
       opponent.placeAt(rp.x, rp.z);
-      setFooter(`${serveNo === 2 ? "Second serve" : "Your serve"}, ${side}. ${renderer.xr.isPresenting ? "Raise your left hand to toss" : "Space to toss, Space to hit"}`);
+      setFooter(`${serveNo === 2 ? "Second serve" : "Your serve"}, ${side}. ${renderer.xr.isPresenting ? "Pinch the ball, lift and let go" : "Space to toss, Space to hit"}`);
     } else {
       phase = "oppServe";
       glideTo(new THREE.Vector3(deuce ? 1.5 : -1.5, 0, C.halfL + (serveNo === 2 ? 0.2 : 0.9)));
@@ -327,7 +329,8 @@ export async function renderTennis(root: HTMLElement) {
       setFooter(`${serveNo === 2 ? "Second serve" : `${oppShort} serving`}, ${side}`);
     }
     ballShown = true;
-    if (server === 0) holdBallInPalm();
+    tossHand.reset();
+    if (server === 0) holdBall();
     else opponent.ballInHand(ball.p);
     note(`serve ${server === 0 ? "you" : "opp"} ${deuce ? "deuce" : "ad"} #${serveNo}`);
     recording = [];
@@ -625,6 +628,9 @@ export async function renderTennis(root: HTMLElement) {
     const pNow = racketPoint(poses[2], hit.local);
     const pBefore = racketPoint(poses[0], hit.local);
     const vR = pNow.sub(pBefore).divideScalar(dts[0] + dts[1]);
+    // a serve is a swing at the toss near or past its top: a ball still rising fast, or one that floats into a racket
+    // held still (yours up in front as you toss), goes on by
+    if (phase === "youToss" && (ball.v.y > 1.5 || vR.length() < 2)) return;
     const n = new THREE.Vector3(0, 0, 1).applyQuaternion(rB.q).multiplyScalar(hit.side);
     const res = racketResponse(ball.v, vR, n, ball.w, hit.offCentre);
     if (!res) return;
@@ -642,44 +648,32 @@ export async function renderTennis(root: HTMLElement) {
     onYouHit(info, shot.v.length());
   };
 
-  // ---------------- your serve: the ball over your left palm, tossed by raising the hand ----------------
-  const palm = new THREE.Vector3();
-  const palmPrev = new THREE.Vector3();
-  const palmVel = new THREE.Vector3();
-  let palmValid = false;
-  const palmN = new THREE.Vector3();
-  const jq = new THREE.Quaternion();
-  const readPalm = (dt: number) => {
+  // ---------------- your serve: pinch the ball at your left fingertips, lift and let go (toss.ts) ----------------
+  const tossHand = new TossHand();
+  const tossJ = { thumb: new THREE.Vector3(), index: new THREE.Vector3(), wrist: new THREE.Vector3(), rest: new THREE.Vector3() };
+  const REST_OFF = new THREE.Vector3(-0.25, -0.55, -0.35); // where the ball waits when your hand isn't seen: low, left
+  /** Your left hand for the toss this frame (court space). Returns the toss the frame the ball leaves it. */
+  const readToss = (dt: number, time: number, menuOpen: boolean) => {
     const L = hands[handIndex(sideOf, "left")] as unknown as THREE.Object3D & { joints?: Record<string, THREE.Object3D> };
-    const mc = L.visible ? L.joints?.["middle-finger-metacarpal"] : undefined; // a lost hand keeps its joints' last state
-    if (!mc?.visible) {
-      palmValid = false;
-      return false;
-    }
-    mc.getWorldPosition(palm);
-    courtGroup.worldToLocal(palm);
-    mc.getWorldQuaternion(jq);
-    palmN.set(0, -1, 0).applyQuaternion(jq);
-    if (palmValid) palmVel.lerp(palm.clone().sub(palmPrev).divideScalar(Math.max(dt, 1 / 200)), 0.5);
-    else palmVel.set(0, 0, 0);
-    palmPrev.copy(palm);
-    palmValid = true;
-    return true;
+    const j = L.visible ? (L.joints ?? {}) : {}; // a lost hand keeps its joints' last state
+    const at = (name: string, out: THREE.Vector3) => (j[name]?.visible ? courtGroup.worldToLocal(j[name].getWorldPosition(out)) : null);
+    tossJ.rest.copy(eyeCourt).add(REST_OFF);
+    return tossHand.update({ t: time / 1000, dt, thumb: at("thumb-tip", tossJ.thumb), index: at("index-finger-tip", tossJ.index), wrist: at("wrist", tossJ.wrist), eyeY: eyeCourt.y, rest: tossJ.rest, canPinch: !menuOpen });
   };
-  const holdBallInPalm = () => {
-    // just above the palm (or in front of you, low, if the hand isn't seen)
-    if (renderer.xr.isPresenting && palmValid) ball.p.copy(palm).add(new THREE.Vector3(0, 0.055, 0));
-    else if (renderer.xr.isPresenting) ball.p.copy(eyeCourt).add(new THREE.Vector3(-0.25, -0.55, -0.35));
+  const holdBall = () => {
+    // at your left fingertips (or where it waits when the hand isn't seen); on a laptop, in front of you
+    if (renderer.xr.isPresenting) ball.p.copy(tossHand.ball);
     else ball.p.set(desk.x - 0.3, 1.1, desk.z - 0.35);
     ball.v.set(0, 0, 0);
   };
-  const toss = (v: THREE.Vector3) => {
+  const toss = (v: THREE.Vector3, tossed = true) => {
     phase = "youToss";
+    ballPrev.copy(ball.p);
     ball.v.copy(v);
     ball.w.set(0, 0, 0);
     ball.rolling = false;
-    note(`toss ${v.y.toFixed(2)}`);
-    opponent.splitStep(simT + 0.6);
+    note(`${tossed ? "toss" : "drop"} ${v.y.toFixed(2)}`);
+    if (tossed) opponent.splitStep(simT + 0.6);
   };
 
   // ---------------- the laptop's swing ----------------
@@ -747,18 +741,23 @@ export async function renderTennis(root: HTMLElement) {
 
   // ---------------- one physics step ----------------
   const b0 = new THREE.Vector3();
+  const ballPrev = new THREE.Vector3(); // the ball one physics step ago: what's drawn is between it and now
   const substep = (f0: number, f1: number) => {
     const held = phase === "youHold" || phase === "idle" || phase === "feed" || (phase === "oppServe" && opponent.holdingBall);
-    if (phase === "youHold") holdBallInPalm();
+    ballPrev.copy(ball.p);
+    if (phase === "youHold") holdBall();
     else if (phase === "oppServe" && opponent.holdingBall) opponent.ballInHand(ball.p);
-    if (!held) {
+    if (held) ballPrev.copy(ball.p);
+    else {
       b0.copy(ball.p);
       stepBall(ball, STEP, onEvent);
       if (renderer.xr.isPresenting) tryRacket(b0, ball.p, f0, f1);
       else deskContact();
-      // a toss you let fall: toss again
+      // a toss you let fall: it's back at your fingertips (fading in there), toss again
       if (phase === "youToss" && ball.p.y < 0.5 && ball.v.y < 0) {
         phase = "youHold";
+        tossHand.reset();
+        ballAlpha = 0;
         note("toss dropped");
       }
     }
@@ -789,23 +788,210 @@ export async function renderTennis(root: HTMLElement) {
     });
   };
   const startReplay = () => {
-    if (!lastRecording.length || replay) return;
+    if (!lastRecording.length || replay || introOn()) return;
     replay = { frames: lastRecording, i: 0, el: 0 };
     setFooter("Replay of the last point");
     flash("Replay");
   };
 
+  // ---------------- the view dipping to black (moving you across the court without sliding you there) ----------------
+  const blackout = new THREE.Mesh(
+    new THREE.SphereGeometry(0.25, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, side: THREE.BackSide, depthTest: false, depthWrite: false }),
+  );
+  blackout.renderOrder = 1000;
+  blackout.visible = false;
+  camera.add(blackout);
+  const fade = { a: 0, to: 0, rate: 1, then: null as (() => void) | null };
+  const fadeTo = (to: number, seconds: number, then?: () => void) => {
+    fade.to = to;
+    fade.rate = 1 / Math.max(0.01, seconds);
+    fade.then = then ?? null;
+  };
+  const stepFade = (dt: number) => {
+    const d = fade.to - fade.a;
+    fade.a += THREE.MathUtils.clamp(d, -fade.rate * dt, fade.rate * dt);
+    (blackout.material as THREE.MeshBasicMaterial).opacity = fade.a;
+    blackout.visible = fade.a > 0.002;
+    if (Math.abs(fade.to - fade.a) < 1e-4 && fade.then) {
+      const fn = fade.then;
+      fade.then = null;
+      fn();
+    }
+  };
+  /** The court moved under you at once so `spot` (court) is where you stand. */
+  const putYouAt = (spot: THREE.Vector3) => {
+    const you = room.worldToLocal(headWorld.clone());
+    courtGroup.position.set(you.x - spot.x, 0, you.z - spot.z);
+    glide.target.copy(courtGroup.position);
+    glide.vel.set(0, 0, 0);
+    glide.betweenPoints = false;
+  };
+
+  // ---------------- before a match: he meets you at the net and shakes your hand ----------------
+  // He walks up to the net, racket held by the throat in his left hand, holds his right hand out across the net and
+  // looks at you. Hold yours out to it (palm sideways, fingers straight: a pinch or a fist never counts) and he takes
+  // it, follows a couple of shakes, lets go with a small nod, brings his racket back into both hands and jogs to his
+  // baseline; the view dips to black and you're behind yours. Leave him hanging and he takes his hand back with a nod.
+  // In the headset only, with his avatar (the racket alone has no hand to shake).
+  const MEET_X = 0.2; // the handshake's line across the net, just off the centre strap
+  const YOU_AT_NET = new THREE.Vector3(MEET_X, 0, 0.62);
+  const HIM_AT_NET = new THREE.Vector3(MEET_X, 0, -0.33); // close enough to shake over the tape with a bent elbow
+  const intro = { stage: "none" as "none" | "walk" | "offer" | "shake" | "letgo" | "back" | "fade", t0: 0, seen: 0, lost: 0, hanging: false };
+  const greet = { w: 0, reach: 0, palm: new THREE.Vector3(), facing: new THREE.Vector3(1, 0, 0), grip: 0.12, pass: 0 };
+  const introLook = new THREE.Vector3();
+  const offerPalm = () => {
+    const k = opponent.height / 1.85;
+    return new THREE.Vector3(MEET_X - 0.03, Math.max(1.06 * k, netHeight(MEET_X) + 0.12), 0);
+  };
+  const introOn = () => intro.stage !== "none";
+  /**
+   * Your right hand read for a handshake (court): its palm, which way the palm faces, and whether it's held out to
+   * shake (palm sideways, fingers out, thumb apart from them: a fist or a pinch never counts; fingers may be apart, as
+   * a relaxed hand's are).
+   */
+  const shakeHand = () => {
+    const j = liveJoints(hands[handIndex(sideOf, "right")]);
+    const at = (n: string) => (j[n]?.visible ? courtGroup.worldToLocal(j[n].getWorldPosition(new THREE.Vector3())) : null);
+    const [w, im, mm, pm, tt, it, pt] = ["wrist", "index-finger-metacarpal", "middle-finger-metacarpal", "pinky-finger-metacarpal", "thumb-tip", "index-finger-tip", "pinky-finger-tip"].map(at);
+    if (!w || !im || !mm || !pm || !tt || !it || !pt) return null;
+    const palm = mm.clone().lerp(w, 0.25);
+    const normal = im.clone().sub(w).cross(pm.clone().sub(w)).normalize();
+    const ok = Math.abs(normal.y) < 0.7 && (openness(j) ?? 0) > 0.62 && tt.distanceTo(it) > 0.03;
+    return { palm, normal, ok };
+  };
+  const startIntro = () => {
+    note("intro");
+    phase = "idle";
+    ballShown = false;
+    machine.visible = false;
+    intro.hanging = false;
+    Object.assign(greet, { w: 1, reach: 0, grip: 0.12, pass: 0 });
+    greet.palm.copy(offerPalm());
+    greet.facing.set(1, 0, 0);
+    opponent.greet = greet;
+    opponent.lookAt = introLook.copy(eyeCourt);
+    const begin = () => {
+      intro.stage = "walk";
+      intro.t0 = intro.seen = performance.now() / 1000;
+      intro.lost = 0;
+      opponent.placeAt(HIM_AT_NET.x, -2.6);
+      opponent.speedCap = 0.85;
+      opponent.moveTo(HIM_AT_NET.x, HIM_AT_NET.z);
+      setFooter(`${oppShort} meets you at the net`);
+    };
+    intro.stage = "walk";
+    if (placed) {
+      // mid-session (a new match): under a dip to black you're at the net, then he walks up
+      fadeTo(1, 0.3, () => {
+        putYouAt(YOU_AT_NET);
+        begin();
+        fadeTo(0, 0.45);
+      });
+    } else begin(); // the session's first frame puts you there (placeCourt)
+  };
+  /** The handshake's done (or skipped): under a dip to black you're behind your baseline and the first point starts. */
+  const endIntro = () => {
+    intro.stage = "fade";
+    fadeTo(1, 0.35, () => {
+      intro.stage = "none";
+      opponent.greet = null;
+      opponent.lookAt = null;
+      opponent.speedCap = Infinity;
+      greet.w = 0;
+      startPoint();
+      // where the point's glide was taking you, at once
+      courtGroup.position.copy(glide.target);
+      glide.vel.set(0, 0, 0);
+      glide.betweenPoints = false;
+      fadeTo(0, 0.45);
+    });
+  };
+  const stepIntro = (dt: number) => {
+    if (!introOn() || intro.stage === "fade") return;
+    const now = performance.now() / 1000;
+    const u = (s: number) => THREE.MathUtils.clamp((now - intro.t0) / s, 0, 1);
+    const to = (stage: typeof intro.stage) => {
+      intro.stage = stage;
+      intro.t0 = now;
+    };
+    introLook.copy(eyeCourt);
+    const you = shakeHand();
+    if (you) intro.seen = now;
+    const mine = opponent.palm(new THREE.Vector3());
+    if (intro.stage === "walk") {
+      if (opponent.ground.distanceTo(HIM_AT_NET) < 0.04 || now - intro.t0 > 4.5) {
+        opponent.vel.set(0, 0, 0);
+        setFooter("Shake his hand: hold out your right hand");
+        to("offer");
+      }
+    } else if (intro.stage === "offer") {
+      greet.reach = u(0.9);
+      greet.palm.copy(offerPalm());
+      if (you?.ok && greet.reach > 0.8 && you.palm.distanceTo(mine) < 0.14) {
+        note("handshake");
+        intro.lost = 0;
+        to("shake");
+      } else if (now - intro.t0 > 7 || now - intro.seen > 2.5) {
+        intro.hanging = true; // left hanging, or no tracked hand to shake with: he takes it back with a nod
+        to("letgo");
+      }
+    } else if (intro.stage === "shake") {
+      greet.grip = 0.12 + 0.43 * u(0.15);
+      if (you && you.palm.distanceTo(mine) < 0.25) {
+        intro.lost = 0;
+        // his palm against yours, from the side it faces his, over the net (wherever your hand goes)
+        const n = you.normal.clone();
+        if (n.dot(mine.clone().sub(you.palm)) < 0) n.negate();
+        const want = you.palm.clone().addScaledVector(n, 0.045);
+        want.y = Math.max(want.y, netHeight(want.x) + 0.07);
+        want.z = THREE.MathUtils.clamp(want.z, -0.2, 0.25);
+        greet.palm.lerp(want, 1 - Math.exp(-dt / 0.05));
+        greet.facing.lerp(n.negate(), 1 - Math.exp(-dt / 0.08)).normalize();
+      } else intro.lost += dt;
+      if (now - intro.t0 > 1.7 || intro.lost > 0.25) to("letgo");
+    } else if (intro.stage === "letgo") {
+      greet.grip = 0.12 + (greet.grip - 0.12) * Math.exp(-dt / 0.08);
+      if (now - intro.t0 > 0.25) {
+        greet.palm.lerp(offerPalm(), 1 - Math.exp(-dt / 0.15));
+        greet.facing.lerp(new THREE.Vector3(1, 0, 0), 1 - Math.exp(-dt / 0.15)).normalize();
+      }
+      greet.reach = 1 - THREE.MathUtils.clamp((now - intro.t0 - 0.3) / 0.8, 0, 1);
+      // a small nod (the eyes dip and come back up)
+      const nod = THREE.MathUtils.clamp((now - intro.t0 - (intro.hanging ? 0.1 : 0.35)) / 0.6, 0, 1);
+      introLook.y -= 0.45 * Math.sin(Math.PI * nod);
+      greet.pass = THREE.MathUtils.clamp((now - intro.t0 - 1.0) / 0.7, 0, 1);
+      if (greet.pass >= 1) {
+        // to his end of the court, jogging
+        const home = server === 1 ? new THREE.Vector3(score.deuce() ? -1.5 : 1.5, 0, -(C.halfL + 0.6)) : opponent.receivePosition(score.deuce(), false);
+        opponent.speedCap = 3.2;
+        opponent.moveTo(home.x, home.z);
+        to("back");
+      }
+    } else if (intro.stage === "back") {
+      greet.w = 1 - u(0.45);
+      if (greet.w < 0.5) opponent.lookAt = null;
+      if (opponent.ground.z < -5.5 || now - intro.t0 > 3.5) endIntro();
+    }
+  };
+
   // ---------------- menus and buttons ----------------
-  const newMatch = () => {
+  /** A new match; withIntro: he meets you at the net first (the headset, a match, his avatar). */
+  const newMatch = (withIntro = false) => {
     score = new Score(format, youFirst ? 0 : 1, ["You", oppShort]);
     practiceStats = { inRow: 0, best: 0 };
     machine.visible = practice;
     toldEnds = false;
     phase = "idle";
+    next = null;
+    later.length = 0;
     opponent.reseed(hashSeed("tennis", Date.now() % 100000));
     opponent.placeAt(0, -(C.halfL + 0.7));
+    server = score.server();
     drawBoard();
     note(`new ${practice ? "practice" : format} ${level.id}`);
+    if (withIntro && renderer.xr.isPresenting && !practice && opponent.anim.rig) return startIntro();
+    if (introOn()) return endIntro(); // a setting changed at the net: straight to the match
     after(0.8, startPoint);
   };
   const levelButton = new XrButton("level", `Level · ${level.label}`, () => {
@@ -821,7 +1007,7 @@ export async function renderTennis(root: HTMLElement) {
   const glideButton = new XrButton("glide", "Glide", () => setGlide(!glideOn));
   const envButton = new XrButton("env", "Your room", () => setRoom(!roomMode));
   menu.add(
-    new XrButton("new", "New match", () => newMatch()),
+    new XrButton("new", "New match", () => newMatch(true)),
     formatButton,
     levelButton,
     firstButton,
@@ -922,9 +1108,15 @@ export async function renderTennis(root: HTMLElement) {
       courtGroup.position.set(0, 0, 0);
       setRoom(false);
       glide.betweenPoints = false;
+      intro.stage = "none";
+      opponent.greet = null;
+      opponent.lookAt = null;
+      opponent.speedCap = Infinity;
+      Object.assign(fade, { a: 0, to: 0, then: null });
+      blackout.visible = false;
       onResize();
     });
-    newMatch();
+    newMatch(true);
   });
 
   const placeCourt = () => {
@@ -938,7 +1130,7 @@ export async function renderTennis(root: HTMLElement) {
     room.updateMatrixWorld(true);
     lock.lock();
     // you're where the point needs you: behind your baseline
-    const spot = phase === "oppServe" ? new THREE.Vector3(deuce ? 1.5 : -1.5, 0, C.halfL + 0.9) : new THREE.Vector3(deuce ? 0.75 : -0.75, 0, C.halfL + 0.35);
+    const spot = introOn() && intro.stage !== "fade" ? YOU_AT_NET : phase === "oppServe" ? new THREE.Vector3(deuce ? 1.5 : -1.5, 0, C.halfL + 0.9) : new THREE.Vector3(deuce ? 0.75 : -0.75, 0, C.halfL + 0.35);
     courtGroup.position.set(-spot.x, 0, -spot.z);
     glide.vel.set(0, 0, 0);
     glide.betweenPoints = false;
@@ -968,13 +1160,16 @@ export async function renderTennis(root: HTMLElement) {
       updatePlayer();
       menuOpen = menu.update(headWorld, time, dt);
       handsView.update();
-      racket.update(hands[handIndex(sideOf, "right")], dt);
+      racket.update(introOn() ? undefined : hands[handIndex(sideOf, "right")], dt); // at the net your right hand is for his
       readRacketPose(dt);
-      readPalm(dt);
-      // the toss: the hand rising fast (or opening as it rises) lets the ball go
-      if (phase === "youHold" && palmValid && !menuOpen && palmVel.y > 1.15 && palm.y > 0.9) {
-        const v = palmVel.clone();
-        toss(new THREE.Vector3(v.x * 0.25, THREE.MathUtils.clamp(v.y * 1.6, 3.6, 5.4), v.z * 0.25 - 0.15));
+      stepIntro(dt);
+      // the toss: the pinched ball let go as the hand lifts (or just let go: it drops, and comes back to your fingers)
+      if (phase === "youHold") {
+        const t = readToss(dt, time, menuOpen);
+        if (t) {
+          ball.p.copy(t.p);
+          toss(t.v, t.tossed);
+        }
       }
       stepGlide(dt);
     } else {
@@ -993,6 +1188,7 @@ export async function renderTennis(root: HTMLElement) {
       updatePlayer();
     }
 
+    stepFade(dt);
     if (paused) {
       opponent.update(0, simT, ball, true); // held still: nothing moves, the pose is re-solved
     } else if (replay) {
@@ -1032,6 +1228,8 @@ export async function renderTennis(root: HTMLElement) {
       }
       for (let i = later.length - 1; i >= 0; i--) if (simT >= later[i].at) later.splice(i, 1)[0].fn();
       opponent.update(dt, simT, ball, phase === "rally" || phase === "serveFlight" || phase === "oppServe" || phase === "youToss" || phase === "practice");
+      // a ball in his hand goes where his hand is this frame (the steps above had last frame's pose)
+      if (phase === "oppServe" && opponent.holdingBall) opponent.ballInHand(ball.p);
       if (phase !== "over" && phase !== "idle") record();
     }
 
@@ -1039,17 +1237,33 @@ export async function renderTennis(root: HTMLElement) {
     const showBall = ballShown && (phase !== "over" || simT < nextAt - 0.5 || next === null) && phase !== "idle" && phase !== "feed";
     if (!replay) ballAlpha = THREE.MathUtils.clamp(ballAlpha + (showBall ? dt / 0.25 : -dt / 0.4), 0, 1);
     ballView.setAlpha(ballAlpha);
-    ballView.update(ball, dt, eyeCourt);
+    // in flight it's drawn between the last two physics steps (240 a second never lines up with the headset's frames:
+    // drawn at the last step it moves unevenly, frame to frame); held, it's drawn where the hand is now
+    const heldNow = phase === "youHold" || (phase === "oppServe" && opponent.holdingBall);
+    if (!replay && !heldNow && ballPrev.distanceToSquared(ball.p) < 0.25) drawBall.p.lerpVectors(ballPrev, ball.p, THREE.MathUtils.clamp(acc / STEP, 0, 1));
+    else drawBall.p.copy(ball.p);
+    drawBall.v.copy(ball.v);
+    drawBall.w.copy(ball.w);
+    ballView.update(drawBall, dt, eyeCourt);
 
     // words: the call over the net, the label over him, the hint in front of you, the scoreboard
     callText.opacity(THREE.MathUtils.clamp((callUntil - simT) / 0.4, 0, 1));
     callText.mesh.visible = simT < callUntil;
     callText.place(tmp.set(0, 2.5, -0.3), eyeCourt);
     label.set(labelText);
-    label.place(tmp.copy(opponent.ground).setY(opponent.height + 0.5), eyeCourt);
-    const hintText = phase === "youHold" ? (xr ? "Your serve: raise your left hand to toss, then hit it" : "Your serve: Space to toss, Space to hit") : "";
+    const near = opponent.ground.distanceTo(playerCourt);
+    label.mesh.scale.setScalar(THREE.MathUtils.clamp(near / 7, 0.16, 1)); // readable over his head across the net too
+    label.place(tmp.copy(opponent.ground).setY(opponent.height + 0.12 + 0.38 * THREE.MathUtils.clamp(near / 7, 0, 1)), eyeCourt);
+    const hintText = intro.stage === "offer" ? "Hold out your right hand to shake his" : phase === "youHold" ? (xr ? "Your serve: pinch the ball, lift your hand and let go, then hit it" : "Your serve: Space to toss, Space to hit") : "";
     hint.set(xr ? hintText : "");
-    hint.place(tmp.set(playerCourt.x - 0.2, Math.max(1.1, eyeCourt.y - 0.45), playerCourt.z - 1.4), eyeCourt);
+    if (introOn()) {
+      // to your left, low: out of his face and of your right hand's way
+      hint.mesh.scale.setScalar(0.55);
+      hint.place(tmp.set(playerCourt.x - 0.5, Math.max(1.0, eyeCourt.y - 0.3), playerCourt.z - 0.6), eyeCourt);
+    } else {
+      hint.mesh.scale.setScalar(1);
+      hint.place(tmp.set(playerCourt.x - 0.2, Math.max(1.1, eyeCourt.y - 0.45), playerCourt.z - 1.4), eyeCourt);
+    }
     drawBoard();
 
     // the laptop's view: behind you, the whole court ahead; your racket at your side, swinging when you swing
@@ -1099,6 +1313,8 @@ export async function renderTennis(root: HTMLElement) {
       },
       view: (p: number[] | null, t?: number[]) => (camView = p ? { p: new THREE.Vector3(...p), t: new THREE.Vector3(...(t ?? [0, 1, 0])) } : null),
       setLevel, setFormat, setAssist, setGlide, setRoom, setFirst, newMatch, startReplay,
+      intro: () => ({ stage: intro.stage, greet: { ...greet, palm: greet.palm.toArray(), facing: greet.facing.toArray() }, you: shakeHand(), his: opponent.palm(new THREE.Vector3()).toArray(), fade: fade.a }),
+      toss: () => ({ pinched: tossHand.pinched, ball: tossHand.ball.toArray() }),
       frame,
       // run the match ahead without drawing (desktop checks): seconds of sim, with an optional per-step hook
       advance: (seconds: number, each?: () => void) => {

@@ -236,8 +236,87 @@ export class Rig {
     const x = u.clone().cross(rp).normalize();
     this.rih.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, u, rp));
     const handLen = R[J.R_MIDDLE1].distanceTo(R[J.R_WRIST]);
+    this.handLen = handLen;
     this.gripOff.copy(rd).multiplyScalar(handLen * 0.8).addScaledVector(rp, 0.03).addScaledVector(u, -RACKET.gripY);
     this.ballOff.copy(ld).multiplyScalar(handLen * 1.25).addScaledVector(lp, 0.04);
+    // the left hand on the racket's throat, in the racket's own frame (as solve() puts it there): its turn, and its
+    // wrist from the racket's butt
+    alignTwo(ld, lp, THROAT_DIR, _x.set(-1, 0, 0), this.throatQ);
+    this.throatW.set(0.035, 0.25, 0).addScaledVector(THROAT_DIR, -0.08 * this.scale);
+  }
+  private readonly handLen: number;
+  private readonly throatQ = new THREE.Quaternion();
+  private readonly throatW = new THREE.Vector3();
+
+  /** The middle of the right palm (F), after a solve: where a handshake meets. */
+  rightPalm(out: THREE.Vector3) {
+    return out.copy(this.handDir[1]).multiplyScalar(this.handLen * 0.45).addScaledVector(this.handPalm[1], 0.018).applyQuaternion(this.G[J.R_WRIST]).add(this.P[J.R_WRIST]);
+  }
+
+  /**
+   * The handshake at the net, over the pose this frame already has. He stands holding the racket by its throat in his
+   * left hand, at his side (a player's way between points); his right hand hangs, or (by g.reach) is held out with
+   * its palm at g.palm (F) turned to g.facing, fingers closed by g.grip. g.pass (0..1) brings the racket back up in
+   * front into both hands, exactly where the pose had it, and g.w fades all of it in and out.
+   */
+  greet(local: THREE.Quaternion[], rootT: THREE.Vector3, g: { w: number; reach: number; palm: THREE.Vector3; facing: THREE.Vector3; grip: number; pass: number }) {
+    const w = clamp(g.w, 0, 1);
+    if (w < 0.001) return;
+    const k = this.scale;
+    const u = smoothstep(clamp(g.pass, 0, 1));
+    // the pose as it was: its racket (in the right hand, the left on its throat), and both wrists
+    _gP.copy(this.racketP);
+    _gQ.copy(this.racketQ);
+    _nRw.copy(this.P[J.R_WRIST]);
+    _nRq.copy(this.G[J.R_WRIST]);
+    _nLw.copy(this.P[J.L_WRIST]);
+    _nLq.copy(this.G[J.L_WRIST]);
+
+    // the left hand: the racket held by the throat beside his left hip, handle down and forward, head up behind
+    // (clear of the leg and the net), on its way back up in front by u (an arc out and up, never through the thigh)
+    _cQ.setFromAxisAngle(_x.set(1, 0, 0), -0.95);
+    _cW.set(0.3, 0.93, -0.02).multiplyScalar(k);
+    _cP.copy(_cW).sub(_v.copy(this.throatW).applyQuaternion(_cQ)); // its butt
+    _rQ.slerpQuaternions(_cQ, _gQ, u);
+    _rP.lerpVectors(_cP, _gP, u).add(_v.set(0.05, 0.1, 0.12).multiplyScalar(Math.sin(Math.PI * u) * k));
+    _gL.copy(_rQ).multiply(this.throatQ);
+    _t2.copy(this.throatW).applyQuaternion(_rQ).add(_rP);
+    _t2.lerpVectors(_nLw, _t2, w);
+    _gL.slerpQuaternions(_nLq, _gL.clone(), w);
+    this.collarFor(0, local, rootT, _t2);
+    _pole3.set(0.5, -0.4, -1).lerp(_v.set(0.85, -1, -0.1), u).normalize();
+    this.arm(0, local, _t2, _gL, _pole3, J.L_COLLAR);
+
+    // the right hand: hanging by his side, or out to yours, fingers forward, palm to yours, thumb up
+    const r = smoothstep(clamp(g.reach, 0, 1));
+    alignTwo(this.handDir[1], this.handPalm[1], _y.set(0, -1, 0.15).normalize(), _z.set(1, 0, 0.1).normalize(), _hQ);
+    _hW.set(-0.23, 0.92, 0.06).multiplyScalar(k);
+    _f.copy(g.facing).setY(g.facing.y * 0.3);
+    if (_f.lengthSq() < 1e-6) _f.set(1, 0, 0);
+    _f.normalize();
+    _d.set(0, 0, 1).addScaledVector(_f, -_f.z).normalize(); // fingers toward you
+    alignTwo(this.handDir[1], this.handPalm[1], _d, _f, _oQ);
+    _oW.copy(g.palm).addScaledVector(_d, -this.handLen * 0.45).addScaledVector(_f, -0.018);
+    _wT.lerpVectors(_hW, _oW, r);
+    _gH.slerpQuaternions(_hQ, _oQ, r);
+    const a = w * (1 - u); // back on the racket's grip as the racket comes back
+    _wT.lerpVectors(_nRw, _wT, a);
+    _gH.slerpQuaternions(_nRq, _gH.clone(), a);
+    this.collarFor(1, local, rootT, _wT);
+    _pole2.set(-0.25, -0.3, -1).lerp(_v.set(-0.7, -1, -0.15), r).normalize();
+    this.arm(1, local, _wT, _gH, _pole2, J.R_COLLAR);
+    for (let i = 0; i < 15; i++) {
+      if (!local[40 + i]) continue;
+      _q3.slerpQuaternions(HANDS.relaxed[1][i], HANDS.fist[1][i], clamp(g.grip, 0, 1));
+      local[40 + i].slerp(_q3, a);
+    }
+    for (let j = 0; j < BODY; j++) this.fk(local, rootT, j);
+
+    // the racket stays in the left hand (it's in the right hand's grip again by the time w fades)
+    _rQ.copy(this.G[J.L_WRIST]).multiply(_q.copy(this.throatQ).invert());
+    _rP.copy(this.P[J.L_WRIST]).sub(_v.copy(this.throatW).applyQuaternion(_rQ));
+    this.racketQ.slerpQuaternions(_gQ, _rQ, w);
+    this.racketP.lerpVectors(_gP, _rP, w);
   }
 
   /** The racket's sweet spot -> the right wrist target and the hand's turn (F). */
@@ -618,4 +697,24 @@ const _c = new THREE.Vector3();
 const _c2 = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _q6v = new THREE.Vector3();
+// the handshake (greet)
+const THROAT_DIR = new THREE.Vector3(0, -0.3, -1).normalize(); // the left hand's fingers round the throat (racket frame)
+const smoothstep = (u: number) => u * u * (3 - 2 * u);
+const _gP = new THREE.Vector3();
+const _gQ = new THREE.Quaternion();
+const _nRw = new THREE.Vector3();
+const _nRq = new THREE.Quaternion();
+const _nLw = new THREE.Vector3();
+const _nLq = new THREE.Quaternion();
+const _cQ = new THREE.Quaternion();
+const _cW = new THREE.Vector3();
+const _cP = new THREE.Vector3();
+const _rQ = new THREE.Quaternion();
+const _rP = new THREE.Vector3();
+const _hQ = new THREE.Quaternion();
+const _hW = new THREE.Vector3();
+const _oQ = new THREE.Quaternion();
+const _oW = new THREE.Vector3();
+const _f = new THREE.Vector3();
+const _d = new THREE.Vector3();
 export { UP };

@@ -23,6 +23,17 @@ export interface Drive {
   split: number; // sim time of his last split-step (or -1)
   look: THREE.Vector3; // court point his eyes are on
   holdingBall: boolean; // a ball in his left hand (before a serve)
+  greet?: GreetPose | null; // the handshake at the net before a match
+}
+
+/** The handshake at the net (game.ts drives it, rig.ts's greet() poses it). */
+export interface GreetPose {
+  w: number; // 0..1: standing tall at the net, racket in the left hand (0: the player he is in a match)
+  reach: number; // 0..1: his right hand out to `palm`
+  palm: THREE.Vector3; // court: where his palm goes
+  facing: THREE.Vector3; // court: which way his palm faces (toward yours)
+  grip: number; // his right fingers closed (0..1)
+  pass: number; // 0..1: the racket back up in front, into both hands
 }
 
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -127,6 +138,8 @@ export const LEAD: Record<StrokeKind, number> = { forehand: 0.95, backhand: 0.95
 /** When the ball leaves his left hand in a serve, seconds from contact. */
 export const TOSS_AT = -0.85;
 /** Stance for each stroke (F, ankles' ground points, for a 0.95 m pelvis), and how the feet turn. */
+// standing at the net for the handshake: feet under the hips, toes a little out
+const STAND = { feet: [v3(0.13, 0, 0.02), v3(-0.13, 0, 0)], yaw: [0.16, -0.16] };
 const STANCE: Record<StrokeKind | "ready", { feet: [THREE.Vector3, THREE.Vector3]; yaw: [number, number] }> = {
   ready: { feet: [v3(0.31, 0, 0.02), v3(-0.31, 0, 0)], yaw: [0.28, -0.28] },
   forehand: { feet: [v3(0.36, 0, 0.12), v3(-0.42, 0, -0.12)], yaw: [-0.1, -0.85] },
@@ -394,6 +407,7 @@ export class Animator {
   private phase = 0;
   private strokeW = 0;
   private speed = 0;
+  private greetW = 0;
   private drive: Drive | null = null;
 
   setRig(rig: Rig | null) {
@@ -540,12 +554,28 @@ export class Animator {
     this.stanceKind = st;
     const S = STANCE[st];
     const turn = this.bodyYaw;
+    // at the net for the handshake: standing tall, feet under the hips, the athletic crouch gone
+    const gw = st === "ready" ? clamp(d.greet?.w ?? 0, 0, 1) : 0;
+    this.greetW = clamp(d.greet?.w ?? 0, 0, 1);
+    if (this.greetW > 0) {
+      const e = smooth(this.greetW);
+      p.hipY += (-0.02 + 0.004 * Math.sin(d.t * 1.7) - p.hipY) * e;
+      p.lean += (0.07 + 0.12 * (d.greet?.reach ?? 0) - p.lean) * e; // leaning in a little to shake
+      // the racket (once it's back in both hands) held up close in front of his chest, not out over the net at you
+      p.S.lerp(_v.set(0.0, 1.28, 0.34).multiplyScalar(k), e);
+      p.R.slerp(racketTurn(_v.set(0.04, 0.88, 0.47), _f.set(1, 0, 0), _q), e);
+      p.turn *= 1 - e;
+      p.hip *= 1 - e;
+      p.side *= 1 - e;
+    }
     const homes = [0, 1].map((i) => {
-      const f = _hv[i].copy(S.feet[i]).multiplyScalar(k);
+      const f = _hv[i].copy(S.feet[i]);
+      if (gw > 0) f.lerp(STAND.feet[i], smooth(gw));
+      f.multiplyScalar(k);
       if (st === "ready") f.applyAxisAngle(_up, turn);
       return f.add(d.ground);
     });
-    const yaw = [S.yaw[0] + (st === "ready" ? turn : 0), S.yaw[1] + (st === "ready" ? turn : 0)];
+    const yaw = [0, 1].map((i) => THREE.MathUtils.lerp(S.yaw[i], STAND.yaw[i], smooth(gw)) + (st === "ready" ? turn : 0));
     // a serve's feet stay where they are from the toss until he lands
     this.feet.update(d.t, homes, yaw, d.vel, speed);
     for (const i of [0, 1]) {
@@ -597,11 +627,17 @@ export class Animator {
     const rig = this.rig;
     if (!rig || !d) return;
     rig.solve(local, rootT, this.params);
-    if (!this.clips.size) {
+    // the handshake at the net goes over whatever the body is doing
+    const greet = () => {
+      const g = d.greet;
+      if (g && g.w > 0.001) {
+        _gp.copy(g.palm).sub(_g.copy(d.ground).setY(0));
+        rig.greet(local, rootT, { w: g.w, reach: g.reach, palm: _gp, facing: g.facing, grip: g.grip, pass: g.pass });
+      }
       this.racketP.copy(rig.racketP);
       this.racketQ.copy(rig.racketQ);
-      return;
-    }
+    };
+    if (!this.clips.size) return greet();
     const dt = d.dt;
     const speed = this.speed;
     const vx = d.vel.x;
@@ -669,7 +705,7 @@ export class Animator {
         layer(smooth(clamp(u / 0.3, 0, 1)) * smooth(clamp((c.duration - u) / 0.4, 0, 1)));
       }
     }
-    const W = 1 - rest;
+    const W = (1 - rest) * (1 - smooth(this.greetW)); // at the net for the handshake he stands as he is, not in a clip
     if (have && W > 0.01) {
       // a split-step's hop rides on top of whatever the legs are doing
       const sp = d.t - d.split;
@@ -682,8 +718,7 @@ export class Animator {
       if (moving > 0.01) rig.carryRacket(local, rootT, Math.min(1, moving), this.loco.run > 0.5 ? Math.atan2(vx, vz) || 0 : 0);
       rig.fixClip(local, rootT); // the footage's arms and our racket kept out of this body
     }
-    this.racketP.copy(rig.racketP);
-    this.racketQ.copy(rig.racketQ);
+    greet();
   }
 
   /** How much of the stroke clip is on now: in over its first moments, out at its end. */
@@ -721,6 +756,7 @@ const _q = new THREE.Quaternion();
 const _sh = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 const _hv = [new THREE.Vector3(), new THREE.Vector3()];
+const _gp = new THREE.Vector3();
 const _stroke = newParams();
 type LocoKind = "ready" | "shuffleLeft" | "shuffleRight" | "run";
 const LOCO: LocoKind[] = ["ready", "shuffleLeft", "shuffleRight", "run"];
