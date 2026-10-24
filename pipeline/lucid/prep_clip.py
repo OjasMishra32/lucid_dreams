@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 MIN_FRAMES = 121
+OUT_FPS = 25  # every replay runs at the 25 fps the job and export assume, so 121 frames are 4.84 s of real time
 TARGET_ASPECT = 9 / 16
 
 
@@ -65,12 +66,14 @@ def main(argv=None):
 
     info = probe(a.clip)
     report: dict = {"input": info, "actions": [], "warnings": []}
-    seconds = MIN_FRAMES / min(info["fps"], 30.0) + 0.5
+    seconds = MIN_FRAMES / OUT_FPS + 0.5
     if info["frames"] < MIN_FRAMES:
         report["warnings"].append(f"only {info['frames']} frames; 4DAnyone needs {MIN_FRAMES} (about 5 s)")
 
     w, h = info["width"], info["height"]
-    vf = []
+    vf = [f"fps={OUT_FPS}"]  # 60 fps footage would otherwise give 4DAnyone only 2 s of motion
+    if abs(info["fps"] - OUT_FPS) > 0.5:
+        report["actions"].append(f"resampled {info['fps']:.0f} fps to {OUT_FPS} fps")
     if w / h > TARGET_ASPECT + 0.01:
         boxes = person_boxes(a.clip, a.start_s, seconds)
         if len(boxes) == 0:

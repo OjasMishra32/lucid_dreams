@@ -54,6 +54,15 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "dream"
 
 
+def remember(run_id: str) -> None:
+    """Every submitted run is listed in <dreams>/.runs.json, so the autopilot fetches it however it was submitted."""
+    path = DEFAULT_DEST / ".runs.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    runs = json.loads(path.read_text()) if path.exists() else []
+    if run_id not in runs:
+        path.write_text(json.dumps(runs + [run_id], indent=1))
+
+
 def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks: int, start_s: float = 0.0,
            kind: str = "replay", intent: str = "", after: str = "") -> dict:
     """clip: a local file, or "hpg:/path" for a clip already on HiPerGator. intent: what you want to do with this
@@ -78,6 +87,7 @@ def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks:
         jid = remote(f"mkdir -p {run}/logs && cd {run}/logs && sbatch --parsable {dep}--export=ALL,RUN={run} "
                      f"{REMOTE}/code/pipeline/hpg/stage-avatar.sbatch").strip()
         remote(f"echo '{{\"avatar\": \"{jid}\"}}' > {run}/slurm.json")
+        remember(run_id)
         return {"id": run_id, "slurm": {"avatar": jid}}
     job = {"id": run_id, "name": name, "kind": "replay", "turbo": turbo, "chunks": chunks,
            "viewsPerLayer": 16, "layerPitches": [-10, 15, 35], "itersFirst": 7000, "itersWarm": 1500,
@@ -85,6 +95,7 @@ def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks:
            "submittedAt": time.time()}
     remote(f"cat > {run}/job.json <<'JSON'\n{json.dumps(job)}\nJSON")
     slurm = json.loads(remote(f"bash {REMOTE}/code/pipeline/hpg/submit.sh {run}").strip().splitlines()[-1])
+    remember(run_id)
     return {"id": run_id, "slurm": slurm}
 
 

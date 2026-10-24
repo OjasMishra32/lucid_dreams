@@ -101,6 +101,9 @@ def main():
                                         intent=intent_for(f))
                     state["submitted"][out["id"]] = {"clip": str(f), "at": time.time()}
                     log(f"submitted {f.name} as {out['id']}")
+            runs_file = runner.DEFAULT_DEST / ".runs.json"  # runs submitted by hand or by other tools
+            for rid in json.loads(runs_file.read_text()) if runs_file.exists() else []:
+                state["submitted"].setdefault(rid, {"clip": "", "at": time.time()})
             for run_id in list(state["submitted"]):
                 if run_id in state["fetched"]:
                     continue
