@@ -91,7 +91,7 @@ def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks:
         return {"id": run_id, "slurm": {"avatar": jid}}
     job = {"id": run_id, "name": name, "kind": "replay", "turbo": turbo, "chunks": chunks,
            "viewsPerLayer": 16, "layerPitches": [-10, 15, 35], "itersFirst": 7000, "itersWarm": 1500,
-           "cap": 300000, "shDegree": 1, "aniso": 0.05, "fps": 25, "frames": 121, "startS": start_s, "intent": intent,
+           "cap": 300000, "shDegree": 1, "aniso": 0.05, "sourceView": True, "fps": 25, "frames": 121, "startS": start_s, "intent": intent,
            "submittedAt": time.time()}
     remote(f"cat > {run}/job.json <<'JSON'\n{json.dumps(job)}\nJSON")
     slurm = json.loads(remote(f"bash {REMOTE}/code/pipeline/hpg/submit.sh {run}").strip().splitlines()[-1])
