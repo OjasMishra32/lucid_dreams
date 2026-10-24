@@ -7,8 +7,8 @@ built; "Status" says what's real tonight. Sources are all freely licensed or our
 | --- | --- | --- | --- | --- | --- |
 | 1 | **Piano lesson, side by side** | Jason Han, piano teacher, at an upright (Wikimedia Commons, CC BY-SA 4.0) | "sit next to me and teach me this piece" | Your room, or the concert hall | Bench and piano, steps slowed down, your turn after each |
 | 2 | **LeBron in your driveway** | LeBron's jump shot (clip supplied for this non-commercial demo, not redistributed) | "teach me this jump shot" | Your room, or the court | The real ball in his hands, a regulation hoop where he aims |
-| 3 | **Chess with the legends** | Bobby Fischer (Nationaal Archief, CC0), Magnus Carlsen (Wikimedia, CC BY-SA 3.0) | "play chess with me" | Your table | Seated across a real-size board, moving their own pieces, a chess clock; Stockfish at their peak rating, labelled |
-| 4 | **Someone you've lost** | A teammate's family photo or home video (written consent) | "I just want to sit with her" | Your living room | Her voice from where she sits, her words as captions |
+| 3 | **Chess at a legend's level** | A consenting teammate's avatar (Vishal), with his real face | "play chess with me" | Your table | Seated across a real-size board, moving their own pieces, a chess clock; Stockfish at Fischer's or Carlsen's peak rating, labelled "Not affiliated". No legend's likeness is used |
+| 4 | **Someone you've lost** | Ian's grandma, from family photos or a home video (written family consent; private unless they agree to showing) | "I just want to sit with her" | Your living room | Her voice from where she sits, her words as captions |
 | 5 | **You, perfected** | Your own photo + LeBron's motion | "show me doing it" | The court | Your body doing his shot |
 
 ## How each one is made

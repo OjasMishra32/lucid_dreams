@@ -6,6 +6,26 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## DECIDED (Sat 2:20 AM): your call stands, and here's what follows from it
+
+Ojasva agreed: **no Fischer or Carlsen likeness anywhere.** The chess opponent is a consenting teammate's
+avatar, and the legends stay only as Stockfish levels ("Stockfish at Fischer's peak rating. Not affiliated.").
+Their LAM heads are stopped and their dreams stay in `dreams/.held`. The chess code is being changed to match.
+Your head swap is now the centre of the demo's realism, on two people:
+
+1. **You, across the chess board.** Your close-ups go in `data/avatars/faces/vishal/` (front-facing, sharp, face
+   filling the frame; 2-3 angles) and your head-to-toe photo in `~/Downloads/lucid-photos/vishal.jpg`. Ojasva runs
+   `lam-head.sbatch NAME=vishal` and `digs-sample ID=vishal`, then your `head-swap.sbatch`. Ship `vishal-head` when
+   your `compare.png` passes.
+2. **Ian's grandma** (the family moment; Ian has the consent and the photos or video; his brief has the steps).
+   Same chain with `NAME=ian-grandma`. Her face matters more than anything else we build, so check it at 1.5 m in
+   the headset with Ian before anyone else sees it. If there's a home video with her voice, your Audio2Expression
+   lips (MORE, item 1) are what make her feel present.
+3. **`SMPL-X__FLAME_vertex_ids.npy`:** Ojasva is downloading it with the SMPL-X login (the "model correspondences"
+   download) into `$L/models/smplx/`. Until it lands, test your alignment on the synthetic head in your tests.
+4. **`head-swap.sbatch`** (your part 2): finish it, with InsightFace identity cosine in `compare.png` and
+   `metrics.identity`.
+
 ## TOP PRIORITY (Sat 1 AM): make them look like actual humans, not mannequins
 
 Ojasva's verdict on the legends: "creepy, uncanny, I want it to look like an actual human". Three causes: the face

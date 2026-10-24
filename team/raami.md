@@ -4,6 +4,19 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## CHANGED (Sat 2:20 AM): no legends' likeness; the family moment is private
+
+- **Chess:** decided with Vishal, no Fischer or Carlsen avatars anywhere. In `/showcase` and on dream pages, moment
+  3 becomes "Chess at a legend's level": a consenting teammate's avatar across the board (Vishal's, once
+  `vishal-head` lands; until then the board alone), labelled "Stockfish at Fischer's peak rating. Not affiliated."
+  Drop `opponent=bobby-fischer` / `magnus-carlsen` from every link. `strength=fischer|carlsen` stays.
+- **The family moment is Ian's grandma** (`ian-grandma`).
+  - Private by default: never in the kiosk, `/showcase`, the public site or any share link unless her family agreed
+    to showing. Add a `"private": true` field in dream.json that the library honours (show it only on the Mac
+    itself).
+  - Her dream page should be the quietest page we have: no metrics panel unless asked, and no "Realism check" on
+    her.
+
 ## TOP PRIORITY (Sat 1 AM): more photos in, the most human result out
 
 Ojasva's verdict on the photo people: "creepy, uncanny". One photo is too little. The face now gets its own model

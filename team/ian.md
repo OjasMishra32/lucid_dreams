@@ -3,6 +3,42 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## FIRST NOW (Sat 2:20 AM): your grandma, the family moment
+
+You're bringing your grandma into the room: demo moment 4, "Someone you've lost" (`demo/showcase.md`), and our
+Best Social Impact entry. It has to be the most real and most careful thing we show. In order:
+
+1. **Consent first, in writing.** Her yes, or the family member's who can give it if she can't. Use
+   `demo/consent.md`; the record stays private (not in git). Agree two things separately: building her for us to
+   see, and showing her to judges or in the video. Her voice is included only if the family says yes to that too.
+2. **What to bring, best first:**
+   - **A home video** of her alone, whole body, camera still, 5+ seconds. It becomes a replay: her real footage, the
+     most real result we can make. If she speaks in it, her own voice comes with it, separated from the room
+     noise, with captions.
+   - **Photos:** one close-up that is front-facing and sharp, with her face filling most of the frame (this makes
+     the face; it's the difference between a person and a mannequin), plus one head-to-toe photo for the body. Two
+     or three close-ups from slightly different angles help. Black-and-white is fine: it's colourised on the photo
+     and labelled colourised.
+3. **Where it goes:**
+   - Video: `~/Downloads/lucid-clips/ian-grandma.mp4` on Ojasva's Mac, with `ian-grandma.txt` holding one line,
+     "I just want to sit with her". The autopilot runs it.
+   - Photos: the head-to-toe one to `~/Downloads/lucid-photos/ian-grandma.jpg` (+ the same `.txt`); close-ups to
+     `$L/data/avatars/faces/ian-grandma/` on HiPerGator.
+   - If you're logged in to HiPerGator yourself, set `L=/blue/iruchkin/vishalnaveen/lucid` and run:
+     - face: `sbatch --export=ALL,NAME=ian-grandma $L/code/avatars/hpg/lam-head.sbatch` (an L4, about 5 min);
+     - body: `sbatch --export=ALL,IMAGE=$L/data/avatars/inputs/ian-grandma.jpg,ID=ian-grandma,NAME="Grandma" $L/code/avatars/hpg/digs-sample.sbatch`;
+     - video: `python3 pipeline/runner/lucid_runner.py submit hpg:<path to the clip> --name "Grandma" --id ian-grandma --intent "I just want to sit with her"`
+       (from the repo on Ojasva's Mac).
+   - Vishal's `head-swap.sbatch` then puts the face on the body, and his idle loop (breathing, blinks) keeps her
+     from looking frozen.
+4. **Private by default:**
+   - `ian-grandma` goes in `dreams/.held` until you've seen it and say it's right.
+   - Never on the public site, the kiosk or `/showcase` unless the family agreed to showing.
+   - Never in git; HiPerGator copies are deleted after the event.
+5. **The moment itself:** `companion` mode, `beside` you on a sofa or chair in your room, her voice from where she
+   sits, captions, no buttons in view. Tune it in the headset until it feels quiet and right. That clip goes in the
+   video.
+
 ## TOP PRIORITY (Sat 1 AM): make them read as real people in the headset
 
 Ojasva's verdict: the people look "creepy, uncanny". Vishal is fixing faces and idle motion at the source; most of
