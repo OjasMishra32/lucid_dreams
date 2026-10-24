@@ -58,6 +58,13 @@ namespace LucidDreams.Tests
                 Done = true;
                 yield break;
             }
+            if (DreamPlaces.Starting(player.Experience?.environment, player.Experience?.intent ?? player.Dream.intent) != null)
+            {
+                yield return PlacesChecks(root);
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
             if (!string.IsNullOrEmpty(player.Dream.props))
             {
                 yield return PropsChecks(root);
@@ -174,6 +181,48 @@ namespace LucidDreams.Tests
 
             Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
             Done = true;
+        }
+
+        // A place around the person: chosen by the plan or the intent, passthrough off once it's in, cycled by fingertip.
+        IEnumerator PlacesChecks(Transform root)
+        {
+            Check(DreamPlaces.Starting("concert-hall", "teach me this jump shot")?.id == "concert-hall"
+                  && DreamPlaces.Starting("room", "teach me this jump shot") == null
+                  && DreamPlaces.Starting(null, "sit with me and teach me this piece on the piano")?.id == "concert-hall"
+                  && DreamPlaces.Starting(null, "I just want to sit with her") == null,
+                "environment wins (room included), then the intent, else your room");
+            var places = FindAnyObjectByType<DreamPlaces>();
+            var occluder = FindAnyObjectByType<HandOccluder>();
+            float until = Time.realtimeSinceStartup + 10f;
+            while (places.Opacity < 1f && Time.realtimeSinceStartup < until) yield return null;
+            yield return Frames(3);
+            Check(places.Current?.id == "court" && places.Opacity >= 1f, $"'{player.Dream.intent}' starts on the court ({places.Name})");
+            Check(!places.PassthroughOn && !occluder.enabled, "once it's in, passthrough and the hand stand-ins are off");
+            player.Pause();
+            player.Seek(5f / player.Dream.fps);
+            yield return Frames(3);
+            Render(Path.Combine(outputDir, "place-court-eye.png"));
+            Render(Path.Combine(outputDir, "place-court-side.png"), root.position + root.right * 3.2f + Vector3.up * 1.4f, root.position + Vector3.up * 0.9f);
+
+            var button = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text.StartsWith("Place:"));
+            Check(button != null && button.label.text == "Place: Court", $"the rail names the place ({button?.label.text})");
+            yield return Push(button);
+            yield return new WaitForSeconds(0.2f);
+            Check(places.Current?.id == "gym" && places.Opacity < 1f, "a push crossfades to the next place");
+            yield return new WaitForSeconds(0.8f);
+            Check(places.Opacity >= 1f && !places.PassthroughOn, "and it settles in");
+            Render(Path.Combine(outputDir, "place-gym-eye.png"));
+            foreach (var expect in new[] { "ring", "studio", "mountains" })
+            {
+                yield return Push(button);
+                Check(places.Current?.id == expect, $"then {expect}");
+            }
+            yield return new WaitForSeconds(0.8f);
+            Render(Path.Combine(outputDir, "place-mountains-eye.png"));
+            yield return Push(button);
+            Check(places.Current == null && places.PassthroughOn, "and back to your room: passthrough comes back first");
+            yield return new WaitForSeconds(0.8f);
+            Check(!places.Visible && occluder.enabled, "the place fades away and your hands stay in front again");
         }
 
         // The ball on its track and a regulation hoop, in the person's space.

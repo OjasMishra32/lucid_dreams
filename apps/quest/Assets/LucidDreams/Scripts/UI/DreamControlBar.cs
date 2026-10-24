@@ -27,6 +27,7 @@ namespace LucidDreams
         public DreamPlacer placer;
         public DreamLibraryPanel library;
         public DreamLibrary dreams;
+        public DreamPlaces places;
 
         [Tooltip("Meters in front of the eyes, and below them.")]
         public float forward = 0.65f, below = 0.65f;
@@ -36,7 +37,7 @@ namespace LucidDreams
         [Tooltip("Seconds the Play button keeps its text label after a dream loads (first use).")]
         public float labelSeconds = 20f;
 
-        FingertipButton play, speed, previous, next, again, reality, bring, browse;
+        FingertipButton play, speed, previous, next, again, reality, bring, browse, place;
         readonly List<FingertipButton> all = new();
         Image playIcon, pauseLeft, pauseRight;
         TMP_Text playLabel, speedHint, elapsed, total;
@@ -78,6 +79,7 @@ namespace LucidDreams
             reality = Button("Reality check", () => popover.Toggle());
             bring = Button("Bring here", () => placer.PlaceInFrontOfViewer());
             browse = Button("Library", () => library?.Toggle());
+            place = Button("Place: Your room", () => places?.Cycle());
 
             track = (RectTransform)GlassUI.Box(panel, "Track", Vector2.zero, new Vector2(100f, 5f), GlassUI.Track, 2.5f).transform;
             fill = (RectTransform)GlassUI.Box(panel, "Played", Vector2.zero, new Vector2(0f, 5f), GlassUI.Text, 2.5f).transform;
@@ -172,7 +174,7 @@ namespace LucidDreams
 
         float ButtonWidth(FingertipButton b) =>
             b == play ? PlaySize : b == speed || b == previous || b == next ? Target
-            : Mathf.Max(Target, b.label.GetPreferredValues(b == reality ? "Reality check" : b.label.text).x + 28f);
+            : Mathf.Max(Target, b.label.GetPreferredValues(b == reality ? "Reality check" : b == place ? "Place: Concert hall" : b.label.text).x + 28f);
 
         void Layout(IReadOnlyList<FingertipButton> visible)
         {
@@ -222,6 +224,7 @@ namespace LucidDreams
             var visible = new List<FingertipButton> { speed, previous, play, next };
             if (lesson != null) visible.Add(again);
             visible.AddRange(new[] { reality, bring });
+            if (places != null) visible.Add(place);
             if (library != null) visible.Add(browse);
             string signature = string.Join(",", visible.Select(b => b.name));
             if (signature != layout)
@@ -254,6 +257,11 @@ namespace LucidDreams
             speed.on = false;
             reality.on = popover.IsOpen;
             browse.on = library != null && library.IsOpen;
+            if (places != null)
+            {
+                place.SetLabel($"Place: {places.Name}");
+                place.on = places.Current != null;
+            }
 
             float t = ready ? player.NormalizedTime : 0f;
             fill.sizeDelta = new Vector2(trackWidth * t, 5f);

@@ -303,3 +303,11 @@ What makes it simple, and what to do the same way in Unity:
   "next person"). Again stays in lessons. All eight controls fit one 0.82 m row; it wraps only if they don't.
 - Checked headless (every HandsCheck run passes with the new controls); not yet seen at headset distance on a Quest.
 
+## Decisions: Places (Ian, Sat early)
+
+- Same places, ids, order and "column straight ahead" as places.ts; the panoramas stay once in apps/webxr and are
+  converted to textures by Set Up Project (Unity can't import WebP), so nothing is duplicated in git.
+- Grounded sphere built like three.js's GroundedSkybox (30 m, floor flattened at 1.6 m below the panorama's camera).
+- Passthrough (ARCameraManager) is off while a place is fully in, saving the camera feed's cost; the hand stand-ins are
+  off too (with passthrough off they would cut holes showing the panorama instead of your hand).
+

@@ -16,6 +16,7 @@ namespace LucidDreams
         public string title;
         public string summary;
         public string place; // facing (default), beside, ahead
+        public string environment; // a place around the person (concert-hall, court, gym, ring, studio, mountains) or "room"
         public List<ExperienceStep> steps = new();
         public ExperiencePlay play;
 

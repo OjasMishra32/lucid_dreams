@@ -14,3 +14,7 @@ Assets/Dreams.meta
 # bundles copied in for testing are large
 Assets/StreamingAssets/
 Assets/StreamingAssets.meta
+# place panoramas, converted from apps/webxr/public/places by Set Up Project
+Assets/LucidDreams/Resources/Places/
+Assets/LucidDreams/Resources/Places.meta
+Assets/LucidDreams/Resources.meta
