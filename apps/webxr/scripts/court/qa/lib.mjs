@@ -1,7 +1,8 @@
 // The pure half of qa/run.mjs: the status model, parsing of the test runners' output, the table and the exit rule.
 // No I/O besides scanBuilt (reads src/court/*.ts); everything else takes plain objects, so lib.test.mjs needs no browser.
-import { readdirSync, readFileSync } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export const PASS = "PASS";
 export const FAIL = "FAIL";
@@ -32,7 +33,55 @@ export function parseE2e(text) {
   const out = [];
   for (const line of String(text).split("\n")) {
     const m = line.match(/^(PASS|FAIL) (\S+): (.+?): (.*)$/);
-    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsOf(m[3]) });
+    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsOf(m[3]), pending: m[1] === "FAIL" && /\bnot (written|built|implemented)( yet)?\b/i.test(m[4]) });
+  }
+  return out;
+}
+
+/** e2e.mjs's "SKIP <scenario>: <why>" (the whole scenario) and "SKIP <scenario> (the rest): <why>" lines. */
+export function parseE2eSkips(text) {
+  const out = [];
+  for (const line of String(text).split("\n")) {
+    const m = line.match(/^SKIP (\S+?)( \(the rest\))?: (.*)$/);
+    if (m) out.push({ scenario: m[1], rest: !!m[2], reason: m[3] });
+  }
+  return out;
+}
+
+/**
+ * What one e2e.mjs child run says about each scenario it was asked for: { name: { exists, ran, notYet?, lines } }.
+ * A scenario e2e skipped is not run (its reason is kept); one that never printed its closing "console clean" line did
+ * not finish (a crash, a kill, a timeout) and FAILs, whatever PASS lines it printed before. A child that died (any exit but 0, 1 or 3,
+ * or "E2E RUN FAILED") leaves its unfinished scenarios FAILed; an exit 1 with no failing check fails every scenario
+ * that did not skip.
+ */
+export function assignE2eRun(names, { stdout = "", stderr = "", code }) {
+  const lines = parseE2e(stdout);
+  const skips = parseE2eSkips(stdout);
+  const oddExit = code === 1 && !lines.some((l) => !l.ok); // exit 1 says a check failed, but none did
+  const reason = `child exit ${code ?? "killed"}${stderr.trim() ? `: ${stderr.trim().split("\n")[0].slice(0, 80)}` : ""}`;
+  const out = {};
+  for (const name of names) {
+    const mine = lines.filter((l) => l.scenario === name);
+    const skipWhole = skips.find((k) => k.scenario === name && !k.rest);
+    if (skipWhole && !mine.length) {
+      out[name] = { exists: true, ran: false, notYet: skipWhole.reason, lines: [] };
+      continue;
+    }
+    const finished = mine.some((l) => /^console clean/.test(l.what));
+    const extra = !finished || oddExit ? [{ scenario: name, ok: false, what: "runs", detail: finished ? `${reason}, no failing check` : `did not finish (${reason})`, tags: [], pending: false }] : [];
+    out[name] = { exists: true, ran: true, lines: [...mine, ...extra] };
+  }
+  return out;
+}
+
+/** The scenario files in scripts/court/scenarios: { name: { owner, needs } }, read by importing each one. */
+export async function discoverScenarios(dir) {
+  const out = {};
+  if (!existsSync(dir)) return out;
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".mjs")).sort()) {
+    const mod = await import(pathToFileURL(join(dir, f)).href);
+    out[basename(f, ".mjs")] = { owner: mod.owner ?? "?", needs: mod.needs ?? [] };
   }
   return out;
 }
@@ -44,6 +93,8 @@ export function scanBuilt(dir) {
     const m = readFileSync(join(dir, f), "utf8").match(/export const BUILT\s*=\s*(true|false)/);
     if (m) built[basename(f, ".ts")] = m[1] === "true";
   }
+  // court.ts reports the light field as `light`; the scenarios' `needs` use that name
+  if ("lightfield" in built) built.light = built.lightfield;
   return built;
 }
 
@@ -57,15 +108,51 @@ export function combine(statuses) {
 
 const short = (s, n = 120) => (String(s).length > n ? `${String(s).slice(0, n - 3)}...` : String(s));
 
-/** Judge a list of tagged result lines for one row. `lines` are { ok, what, detail, tags }. */
-function judgeLines(lines, id, where) {
-  const crash = lines.find((l) => !l.ok && l.tags.length === 0);
-  if (crash) return { status: FAIL, measured: `${where} failed: ${crash.what}: ${short(crash.detail, 80)}` };
+/** "over 326 of 326 frames read back": every frame measured, and at least one. */
+function measuredAll(detail) {
+  const m = String(detail).match(/over (\d+) of (\d+) frames/);
+  return !m || (m[1] === m[2] && Number(m[1]) > 0);
+}
+
+/** The verdict of the tagged lines for one row: FAIL on a real failed check, NOT-YET on a placeholder, else PASS. */
+export function judgeRowLines(lines, id) {
   const mine = lines.filter((l) => l.tags.includes(id));
-  if (!mine.length) return { status: NOT_YET, measured: `no check tagged ${id} in ${where}` };
-  const bad = mine.filter((l) => !l.ok);
-  const detail = (bad.length ? bad : mine).map((l) => l.detail).join("; ");
-  return { status: bad.length ? FAIL : PASS, measured: short(detail) };
+  if (!mine.length) return { status: NOT_YET, measured: `no check tagged ${id}` };
+  const failed = mine.filter((l) => (!l.ok && !l.pending) || (l.ok && !measuredAll(l.detail)));
+  if (failed.length) return { status: FAIL, measured: short(failed.map((l) => (l.ok ? `${l.detail} (not every frame measured)` : l.detail)).join("; ")) };
+  const pending = mine.filter((l) => l.pending);
+  if (pending.length) return { status: NOT_YET, measured: short(pending.map((l) => l.detail).join("; ")) };
+  return { status: PASS, measured: short(mine.map((l) => l.detail).join("; ")) };
+}
+
+/** Judge a scenario's lines for one row: an unfinished or crashed scenario fails; otherwise the row's tagged lines. */
+function judgeLines(lines, id, where) {
+  const crash = lines.find((l) => !l.ok && !l.pending && l.tags.length === 0);
+  if (crash) return { status: FAIL, measured: `${where} failed: ${crash.what}: ${short(crash.detail, 80)}` };
+  const r = judgeRowLines(lines, id);
+  return r.status === NOT_YET && /^no check tagged/.test(r.measured) ? { status: NOT_YET, measured: `${r.measured} in ${where}` } : r;
+}
+
+/**
+ * A fallback flag against its own rows. `runs` is what assignE2eRun returned for the scenarios run with the flag;
+ * `coverage` maps each row to the scenarios that check it (checklist.json). A row is judged only on lines from its own
+ * scenarios: a smoke check of the watch phase is not the room check of all nine phases. PASS only when every row has a
+ * passing tagged check from its own scenario and none failed; a crash or a failed check is FAIL; a row that has no
+ * scenario, or whose scenario didn't run or has no tagged check, holds the flag at NOT-YET (never PASS).
+ */
+export function judgeFallback(rows, runs, coverage = {}) {
+  const crash = Object.values(runs).filter((r) => r.ran).flatMap((r) => r.lines).find((l) => !l.ok && !l.pending && l.tags.length === 0);
+  if (crash) return { status: FAIL, measured: `${crash.scenario}: ${crash.what}: ${short(crash.detail, 80)}` };
+  const per = rows.map((id) => {
+    const names = coverage[id] ?? [];
+    if (!names.length) return { id, status: NOT_YET, measured: "no e2e scenario checks this row yet" };
+    const ran = names.filter((n) => runs[n]?.ran);
+    if (!ran.length) return { id, status: NOT_YET, measured: `${names.join("/")}: ${runs[names[0]]?.notYet ?? "not run"}` };
+    return { id, ...judgeRowLines(ran.flatMap((n) => runs[n].lines), id) };
+  });
+  const status = combine(per.map((p) => p.status));
+  const measured = per.map((p) => (p.status === PASS ? `${p.id} ok` : p.status === FAIL ? `${p.id} FAIL: ${p.measured}` : `${p.id} not yet: ${p.measured}`)).join("; ");
+  return { status, measured: short(measured, 200) };
 }
 
 function stubs(check, ctx) {
@@ -176,4 +263,102 @@ export function validateChecklist(list) {
   }
   for (let i = 1; i <= 44; i++) if (!seen.has(`P${i}`)) problems.push(`missing P${i}`);
   return problems;
+}
+
+/** A unit suite passes only if node --test exited 0 and ran at least one test; any nonzero exit (or kill) is a FAIL. */
+export function suiteStatus(code, results) {
+  const bad = results.filter((t) => !t.ok && !t.skipped).length;
+  const ran = results.filter((t) => !t.skipped).length;
+  if (code !== 0) return { status: FAIL, measured: `exit ${code ?? "killed"}; ${ran - bad} ok, ${bad} failed` };
+  if (!ran) return { status: FAIL, measured: "no tests ran" };
+  return { status: bad ? FAIL : PASS, measured: `${ran - bad} ok, ${bad} failed` };
+}
+
+const COURT_KEYS = ["court", "video", "freeze", "seat", "audio", "camera"];
+
+/**
+ * Did this HTTP response serve something that must stay private: a court bundle file, or a file escaped from the bundle
+ * folder? res = { status, type, body } with the WHOLE body (never truncated, so a large leaked court.json or frames.json
+ * is judged like a small one). Not a leak: anything but a 200, and vite's index.html (--dev answers 200 text/html for
+ * any unknown path). A leak is a 200 whose body is court.json (two or more of its sections), frames.json (an array of
+ * { src, q, f } entries) or carries one of `tokens` (a canary planted in the folder escaped from); with `strict`
+ * (for paths that can only be bundle files) also any other 200 that is not that html shell.
+ */
+export function leaksBundle(res, { tokens = [], strict = false } = {}) {
+  if (!res || res.status !== 200) return false;
+  const body = String(res.body ?? "");
+  if (tokens.some((t) => t && body.includes(t))) return true;
+  try {
+    const j = JSON.parse(body);
+    if (j && typeof j === "object" && !Array.isArray(j) && COURT_KEYS.filter((k) => k in j).length >= 2) return true;
+    if (Array.isArray(j) && j.length && typeof j[0] === "object" && j[0] && ("src" in j[0] || "q" in j[0])) return true;
+  } catch {
+    // not JSON
+  }
+  const shell = /html/i.test(res.type ?? "") || /^\s*<(!doctype|html)/i.test(body.slice(0, 200));
+  return strict && !shell;
+}
+
+/** realpath of a path that may not exist yet: the deepest existing ancestor's on-disk spelling plus the rest. */
+export function realpathLoose(p) {
+  let cur = resolve(p);
+  const rest = [];
+  while (!existsSync(cur) && dirname(cur) !== cur) {
+    rest.unshift(basename(cur));
+    cur = dirname(cur);
+  }
+  return join(realpathSync.native(cur), ...rest);
+}
+
+/** a is b or inside it, or b is inside a, after realpath on both sides (symlinks, and capitals on a case-insensitive disk). */
+export function overlapsReal(a, b) {
+  const x = realpathLoose(a);
+  const y = realpathLoose(b);
+  const within = (c, p) => c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+  return within(x, y) || within(y, x);
+}
+
+/** --bundle takes a folder (what e2e.mjs and serve.mjs take): { dir } (absolute, or null for the stand-in) or { error }. */
+export function parseBundleArg(arg) {
+  if (arg == null) return { dir: null };
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(arg)) return { error: `--bundle takes a folder with court.json (as e2e.mjs and serve.mjs do), not a URL: ${arg}` };
+  return { dir: resolve(arg) };
+}
+
+/** Every checkout of the repo: this one, the main one and every worktree, as real paths. */
+export function checkoutRoots(repo, git) {
+  const roots = new Set([realpathLoose(repo)]);
+  const common = git("rev-parse", "--path-format=absolute", "--git-common-dir");
+  if (common !== "?") roots.add(realpathLoose(dirname(common)));
+  for (const line of git("worktree", "list", "--porcelain").split("\n")) if (line.startsWith("worktree ") && existsSync(line.slice(9))) roots.add(realpathLoose(line.slice(9)));
+  return [...roots];
+}
+
+/** Every child the QA run starts, so none outlives it (a hung scenario, an interrupt, an exit). */
+export class ChildRegistry {
+  constructor() {
+    this.children = new Set();
+  }
+  add(child, { group = false } = {}) {
+    const entry = { child, group };
+    this.children.add(entry);
+    child.once("exit", () => this.children.delete(entry));
+    return child;
+  }
+  killAll() {
+    for (const { child, group } of this.children) {
+      try {
+        process.kill(group ? -child.pid : child.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    this.children.clear();
+  }
+}
+
+/** Reject after ms (and clear the timer either way): nothing waits on a stalled page forever. */
+export function withDeadline(promise, ms, label) {
+  let timer;
+  return Promise.race([promise, new Promise((_, fail) => (timer = setTimeout(() => fail(new Error(`${label} timed out after ${Math.round(ms / 1000)} s`)), ms)))]).finally(() => clearTimeout(timer));
 }

@@ -1044,66 +1044,6 @@
    }
   }
  ],
- "scenarios": {
-  "smoke": {
-   "needs": []
-  },
-  "arrival": {
-   "needs": [
-    "seat",
-    "seatmath",
-    "world"
-   ]
-  },
-  "layers": {
-   "needs": [
-    "video",
-    "proxies"
-   ]
-  },
-  "cadence": {
-   "needs": [
-    "video",
-    "clock"
-   ]
-  },
-  "ease": {
-   "needs": [
-    "clock",
-    "video",
-    "lightfield"
-   ]
-  },
-  "handoff": {
-   "needs": [
-    "handoff",
-    "video",
-    "proxies",
-    "freeze",
-    "world",
-    "lightfield"
-   ]
-  },
-  "room": {
-   "needs": [
-    "world"
-   ]
-  },
-  "controls": {
-   "needs": [
-    "ui",
-    "seat"
-   ]
-  },
-  "walk": {
-   "needs": [
-    "seat",
-    "seatmath",
-    "freeze",
-    "world"
-   ]
-  }
- },
  "fallbacks": [
   {
    "id": "show-small",
@@ -1229,7 +1169,6 @@
    "id": "cap",
    "flag": "cap=",
    "rows": [
-    "P15",
     "P25"
    ],
    "needs": [
@@ -1241,13 +1180,15 @@
     ],
     "pattern": "[\"']cap[\"']"
    },
-   "note": "main pair to the next pre-trained splat cap down (needs a value from the bundle: wired when the flag lands)"
+   "note": "main pair to the next pre-trained splat cap down (needs a value from the bundle: wired when the flag lands)",
+   "headsetRows": [
+    "P15"
+   ]
   },
   {
    "id": "res-0.9",
    "flag": "res=0.9",
    "rows": [
-    "P15",
     "P25",
     "P33"
    ],
@@ -1258,13 +1199,15 @@
     ],
     "pattern": "num\\(\"res\""
    },
-   "note": "eye buffer 0.9"
+   "note": "eye buffer 0.9",
+   "headsetRows": [
+    "P15"
+   ]
   },
   {
    "id": "res-0.8",
    "flag": "res=0.8",
    "rows": [
-    "P15",
     "P25",
     "P33"
    ],
@@ -1275,13 +1218,15 @@
     ],
     "pattern": "num\\(\"res\""
    },
-   "note": "eye buffer 0.8"
+   "note": "eye buffer 0.8",
+   "headsetRows": [
+    "P15"
+   ]
   },
   {
    "id": "fov-0.3",
    "flag": "fov=0.3",
    "rows": [
-    "P15",
     "P25",
     "P33"
    ],
@@ -1292,7 +1237,10 @@
     ],
     "pattern": "num\\(\"fov\""
    },
-   "note": "fixed foveation 0.3"
+   "note": "fixed foveation 0.3",
+   "headsetRows": [
+    "P15"
+   ]
   }
  ]
 }

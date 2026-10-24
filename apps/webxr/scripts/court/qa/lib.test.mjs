@@ -36,7 +36,7 @@ test("parseE2e reads the harness's PASS/FAIL lines with their tags", () => {
   const out = ["PASS smoke: opaque (P33): alpha min 255 over 326 of 326 frames read back", "FAIL room: runs: timed out after 240 s", "noise", "E2E FAIL (1 checks failed)"].join("\n");
   const r = parseE2e(out);
   assert.equal(r.length, 2);
-  assert.deepEqual(r[0], { scenario: "smoke", ok: true, what: "opaque (P33)", detail: "alpha min 255 over 326 of 326 frames read back", tags: ["P33"] });
+  assert.deepEqual(r[0], { scenario: "smoke", ok: true, what: "opaque (P33)", detail: "alpha min 255 over 326 of 326 frames read back", tags: ["P33"], pending: false });
   assert.equal(r[1].ok, false);
   assert.deepEqual(r[1].tags, []);
 });
@@ -210,4 +210,215 @@ test("validateChecklist: every P1-P44 once, with the required fields, no broadca
   const badKind = good.map((r) => (r.id === "P7" ? { ...r, checks: [{ kind: "wat" }] } : r));
   assert.match(validateChecklist({ rows: badKind }).join("\n"), /P7.*kind/);
   assert.ok(mkdirSync); // keep the import used
+});
+
+// ---- round 2: review findings (each test names its finding) ----
+import { ChildRegistry, assignE2eRun, checkoutRoots, discoverScenarios as discover, judgeFallback, judgeRowLines, leaksBundle, overlapsReal, parseBundleArg, parseE2eSkips, realpathLoose, suiteStatus, withDeadline } from "./lib.mjs";
+import { spawn } from "node:child_process";
+import { readdirSync, symlinkSync, realpathSync } from "node:fs";
+import { dirname, relative, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
+import { flagImplemented, runFallback, traversalPaths } from "./scenarios.mjs";
+
+const HERE_DIR = dirname(fileURLToPath(import.meta.url));
+
+test("[1] suiteStatus: a nonzero exit is FAIL even when every parsed test passed", () => {
+  const ok = [{ name: "a", ok: true }, { name: "b", ok: true }];
+  assert.equal(suiteStatus(0, ok).status, "PASS");
+  assert.equal(suiteStatus(1, ok).status, "FAIL");
+  assert.equal(suiteStatus(null, ok).status, "FAIL");
+  assert.match(suiteStatus(1, ok).measured, /exit 1/);
+  assert.equal(suiteStatus(0, []).status, "FAIL");
+  assert.equal(suiteStatus(0, [{ name: "a", ok: true }, { name: "b", ok: false }]).status, "FAIL");
+});
+
+test("[2] discoverScenarios imports the real scenario files and reads each one's needs", async () => {
+  const found = await discover(resolvePath(HERE_DIR, "../scenarios"));
+  const onDisk = readdirSync(resolvePath(HERE_DIR, "../scenarios")).filter((n) => n.endsWith(".mjs")).map((n) => n.replace(/\.mjs$/, "")).sort();
+  assert.deepEqual(Object.keys(found).sort(), onDisk);
+  assert.ok(onDisk.includes("smoke"));
+  for (const v of Object.values(found)) assert.ok(Array.isArray(v.needs));
+  assert.deepEqual(found.smoke.needs, []);
+});
+
+test("[2] scanBuilt: court.ts's `light` is the lightfield file's flag", () => {
+  const dir = mkdtempSync(join(tmpdir(), "qa-built2-"));
+  writeFileSync(join(dir, "lightfield.ts"), "export const BUILT = true;\n");
+  assert.equal(scanBuilt(dir).light, true);
+});
+
+test("[3] parseBundleArg: a folder is accepted and resolved, a URL is refused", () => {
+  assert.deepEqual(parseBundleArg(undefined), { dir: null });
+  assert.equal(parseBundleArg("some/dir").dir, resolvePath("some/dir"));
+  assert.match(parseBundleArg("http://127.0.0.1:5185/bundle/court.json").error, /folder.*not a URL/);
+  assert.match(parseBundleArg("https://x/y").error, /not a URL/);
+});
+
+test("[4] assignE2eRun: a child that died leaves its unfinished scenarios FAILed, whatever PASS lines came first", () => {
+  const stdout = ["PASS smoke: opaque (P33): alpha min 255 over 326 of 326 frames read back", "PASS smoke: console clean (P25): 0 errors, 0 warnings", "PASS layers: a (P43): fine"].join("\n");
+  const r = assignE2eRun(["smoke", "layers"], { stdout, stderr: "boom", code: null });
+  assert.equal(r.smoke.lines.some((l) => !l.ok), false, "smoke finished");
+  assert.equal(r.layers.lines.at(-1).ok, false);
+  assert.match(r.layers.lines.at(-1).detail, /did not finish.*killed/);
+  const row = { id: "P43", threshold: "t", checks: [{ kind: "e2e", scenario: "layers" }] };
+  assert.equal(resolveRow(row, ctx({ e2e: { scenarios: { layers: { exists: true, ...r.layers } } } })).status, "FAIL");
+  const crash = assignE2eRun(["smoke"], { stdout: "", stderr: "E2E RUN FAILED: Error: nope", code: 1 });
+  assert.equal(crash.smoke.lines[0].ok, false);
+});
+
+test("[4] assignE2eRun: finished scenarios keep their lines, skips are not-yet, exit 1 with no failing check fails", () => {
+  const done = ["PASS smoke: x (P33): ok", "FAIL smoke: console clean (P25): 2 errors"].join("\n");
+  const r = assignE2eRun(["smoke"], { stdout: done, code: 1 });
+  assert.equal(r.smoke.ran, true);
+  assert.equal(r.smoke.lines.length, 2);
+  const skipped = assignE2eRun(["layers"], { stdout: "SKIP layers: waiting on video (BUILT false; owner D)", code: 3 });
+  assert.equal(skipped.layers.ran, false);
+  assert.match(skipped.layers.notYet, /waiting on video/);
+  const odd = assignE2eRun(["smoke"], { stdout: "PASS smoke: console clean (P25): ok", code: 1 });
+  assert.equal(odd.smoke.lines.at(-1).ok, false, "exit 1 but nothing failed");
+  assert.equal(parseE2eSkips("SKIP a: b").length, 1);
+});
+
+test("[5] leaksBundle: a large leaked court.json or frames.json is a leak; vite's html shell and a package.json are not", () => {
+  const bigCourt = JSON.stringify({ version: 1, court: { x: 1 }, video: { file: "v" }, pad: "x".repeat(50000) });
+  assert.equal(leaksBundle({ status: 200, type: "application/json", body: bigCourt }), true);
+  assert.equal(leaksBundle({ status: 200, type: "text/html", body: bigCourt }), true, "court keys count whatever the content type");
+  const bigFrames = JSON.stringify(Array.from({ length: 5000 }, (_, i) => ({ src: i, interp: false, q: [0, 0, 0, 1], f: 1 })));
+  assert.ok(bigFrames.length > 4000);
+  assert.equal(leaksBundle({ status: 200, type: "application/json", body: bigFrames }), true);
+  const shell = `<!doctype html><html><head></head><body>${"x".repeat(20000)}</body></html>`;
+  assert.equal(leaksBundle({ status: 200, type: "text/html; charset=utf-8", body: shell }), false);
+  assert.equal(leaksBundle({ status: 200, type: "application/json", body: '{"name":"@lucid/webxr","version":"1.0.0"}' }), false, "version alone is not court.json");
+  assert.equal(leaksBundle({ status: 404, type: "text/plain", body: bigCourt }), false);
+  assert.equal(leaksBundle({ status: 200, type: "text/plain", body: `x ${"y".repeat(9000)} CANARY-1` }, { tokens: ["CANARY-1"] }), true);
+  assert.equal(leaksBundle({ status: 200, type: "application/octet-stream", body: "\u0000\u0000\u0001" }), false);
+  assert.equal(leaksBundle({ status: 200, type: "application/octet-stream", body: "\u0000\u0000\u0001" }, { strict: true }), true, "strict: any 200 that is not the shell is something real");
+  assert.equal(leaksBundle({ status: 200, type: "text/html", body: shell }, { strict: true }), false);
+});
+
+test("[5] traversalPaths climb out of the bundle folder and land on the canary", () => {
+  const bundle = "/r/apps/webxr/scripts/court/out/standin";
+  const canary = "/r/apps/webxr/scripts/court/out/qa-canary-1.txt";
+  const paths = traversalPaths(bundle, canary);
+  assert.equal(paths.length, 4);
+  for (const p of paths) {
+    const decoded = decodeURIComponent(p).slice("/bundle".length);
+    assert.equal(resolvePath(bundle, `.${decoded}`), canary);
+  }
+});
+
+function fb(over = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "qa-fb-"));
+  mkdirSync(join(dir, "src"));
+  writeFileSync(join(dir, "src", "court.ts"), 'if (params.get("hz") === "90") {}\nif (params.get("def") === "body") {}\n');
+  return { root: dir, fb: { id: "x", flag: "hz=90", rows: ["P4", "P6", "P25"], needs: [], detect: { in: ["src/court.ts"], pattern: '"hz"\\)\\s*===\\s*"90"' }, ...over } };
+}
+const SCEN = { smoke: { needs: [] }, cadence: { needs: [] }, ease: { needs: [] } };
+const line = (scenario, what, detail, ok = true) => ({ scenario, ok, what, detail, tags: [what.match(/P\d+/)?.[0]].filter(Boolean), pending: false });
+
+test("[6] runFallback drives the flag's own rows: hz=90 with only smoke's P25 is NOT-YET, never PASS", async () => {
+  const { root, fb: f } = fb();
+  const asked = [];
+  const r = await runFallback(f, {
+    root, built: {}, coverage: { P4: ["cadence"], P6: ["ease"], P25: ["smoke"] }, scenarios: SCEN, standinFallbacks: null,
+    runE2e: async (names, query) => {
+      asked.push({ names, query });
+      return { smoke: { exists: true, ran: true, lines: [line("smoke", "console clean (P25)", "0 errors")] }, cadence: { exists: true, ran: false, notYet: "x", lines: [] }, ease: { exists: true, ran: false, notYet: "x", lines: [] } };
+    },
+  });
+  assert.equal(r.status, "NOT-YET");
+  assert.match(r.measured, /P4 not yet/);
+  assert.match(r.measured, /P6 not yet/);
+  assert.equal(asked[0].query, "hz=90");
+  assert.deepEqual(asked[0].names.sort(), ["cadence", "ease", "smoke"]);
+});
+
+test("[6] runFallback: every row checked and passing is PASS; one failing row is FAIL; def=body's P11 has no e2e check, so NOT-YET", async () => {
+  const { root, fb: f } = fb();
+  const all = async () => ({
+    smoke: { exists: true, ran: true, lines: [line("smoke", "console clean (P25)", "0 errors")] },
+    cadence: { exists: true, ran: true, lines: [line("cadence", "no held frames (P4)", "0 held")] },
+    ease: { exists: true, ran: true, lines: [line("ease", "lands on F (P6)", "0 frames off"), line("ease", "console clean (P25)", "ok")] },
+  });
+  const deps = { root, built: {}, coverage: { P4: ["cadence"], P6: ["ease"], P25: ["smoke"] }, scenarios: SCEN, standinFallbacks: null, runE2e: all };
+  assert.equal((await runFallback(f, deps)).status, "PASS");
+  const failing = async () => ({ ...(await all()), cadence: { exists: true, ran: true, lines: [line("cadence", "no held frames (P4)", "3 held", false)] } });
+  assert.equal((await runFallback(f, { ...deps, runE2e: failing })).status, "FAIL");
+  const body = fb({ flag: "def=body", rows: ["P11", "P25"], detect: { in: ["src/court.ts"], pattern: '"def"\\)\\s*===\\s*"body"' } });
+  const r = await runFallback(body.fb, { root: body.root, built: {}, coverage: { P25: ["smoke"] }, scenarios: SCEN, standinFallbacks: null, runE2e: async () => ({ smoke: { exists: true, ran: true, lines: [line("smoke", "console clean (P25)", "0 errors")] } }) });
+  assert.equal(r.status, "NOT-YET");
+  assert.match(r.measured, /P11 not yet/);
+});
+
+test("[6] runFallback: a flag the code doesn't read, a stub module and a missing stand-in stream are NOT-YET without running e2e", async () => {
+  const { root, fb: f } = fb();
+  const never = async () => assert.fail("e2e must not run");
+  const base = { root, built: {}, coverage: {}, scenarios: SCEN, standinFallbacks: [], runE2e: never };
+  assert.match((await runFallback({ ...f, detect: { in: ["src/court.ts"], pattern: "nothing-like-this" } }, base)).measured, /not read by the code/);
+  assert.match((await runFallback({ ...f, needs: ["video"] }, base)).measured, /stub: video/);
+  assert.match((await runFallback({ ...f, standinStream: "hz90" }, { ...base, built: { video: true } })).measured, /no "hz90" stream/);
+  assert.equal(flagImplemented(root, f.detect), true);
+});
+
+test("[7] overlapsReal: a symlinked --out into a checkout is refused; a sibling and a non-existent child are judged by real path", () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "qa-real-")));
+  const repo = join(base, "repo");
+  mkdirSync(join(repo, "sub"), { recursive: true });
+  mkdirSync(join(base, "elsewhere"));
+  symlinkSync(join(repo, "sub"), join(base, "link"));
+  assert.equal(overlapsReal(join(base, "link"), repo), true);
+  assert.equal(overlapsReal(join(base, "link", "not-made-yet", "x"), repo), true);
+  assert.equal(overlapsReal(join(base, "elsewhere", "out"), repo), false);
+  assert.equal(overlapsReal(base, repo), true, "a folder that contains the checkout is refused too");
+  assert.equal(realpathLoose(join(base, "link", "a", "b")), join(repo, "sub", "a", "b"));
+});
+
+test("[7] overlapsReal: the same folder in other capitals on a case-insensitive disk is the same folder", { skip: process.platform !== "darwin" }, () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "qa-case-")));
+  mkdirSync(join(base, "RepoDir"));
+  assert.equal(overlapsReal(join(base, "repodir", "out"), join(base, "RepoDir")), true);
+});
+
+test("[7] checkoutRoots includes every worktree git lists", () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "qa-wt-")));
+  mkdirSync(join(base, "main", ".git"), { recursive: true });
+  mkdirSync(join(base, "wt1"));
+  mkdirSync(join(base, "wt2"));
+  const git = (...a) => (a[0] === "rev-parse" ? join(base, "main", ".git") : `worktree ${join(base, "main")}\n\nworktree ${join(base, "wt1")}\n\nworktree ${join(base, "wt2")}\nHEAD abc\n`);
+  const roots = checkoutRoots(join(base, "wt1"), git);
+  for (const d of ["main", "wt1", "wt2"]) assert.ok(roots.includes(join(base, d)), d);
+});
+
+test("[8] withDeadline rejects a stalled promise and clears its timer", async () => {
+  const never = new Promise(() => {});
+  await assert.rejects(withDeadline(never, 30, "scenario x"), /scenario x timed out/);
+  assert.equal(await withDeadline(Promise.resolve(7), 1000, "fast"), 7);
+});
+
+test("[8] ChildRegistry.killAll kills a child and its process group", async () => {
+  const reg = new ChildRegistry();
+  const child = reg.add(spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", detached: true }), { group: true });
+  assert.equal(reg.children.size, 1);
+  const exited = new Promise((ok) => child.once("exit", (code, sig) => ok(sig)));
+  reg.killAll();
+  assert.equal(await exited, "SIGKILL");
+  assert.equal(reg.children.size, 0);
+});
+
+test("[9] a capture with no frames, or frames not all measured, never passes", () => {
+  const mk = (detail) => [{ scenario: "smoke", ok: true, what: "opaque (P33)", detail, tags: ["P33"], pending: false }];
+  assert.equal(judgeRowLines(mk("alpha min 255 over 326 of 326 frames read back"), "P33").status, "PASS");
+  assert.equal(judgeRowLines(mk("alpha min 255 over 300 of 326 frames read back"), "P33").status, "FAIL");
+  assert.equal(judgeRowLines(mk("alpha min Infinity over 0 of 0 frames read back"), "P33").status, "FAIL");
+  assert.equal(judgeFallback(["P33"], {}, { P33: ["room"] }).status, "NOT-YET", "nothing ran, so nothing passed");
+  assert.equal(judgeFallback(["P33"], { smoke: { ran: true, lines: mk("alpha min 255 over 10 of 12 frames read back") } }, { P33: ["smoke"] }).status, "FAIL");
+});
+
+test("[6] a row is judged only on its own scenarios: smoke's watch-phase P33 does not stand in for the room check", () => {
+  const smokeOnly = { smoke: { ran: true, lines: [{ scenario: "smoke", ok: true, what: "opaque (P33)", detail: "alpha min 255 over 10 of 10 frames read back", tags: ["P33"], pending: false }] }, room: { ran: false, notYet: "stub: world", lines: [] } };
+  const v = judgeFallback(["P33"], smokeOnly, { P33: ["room"] });
+  assert.equal(v.status, "NOT-YET");
+  assert.match(v.measured, /stub: world/);
+  assert.equal(judgeFallback(["P33"], smokeOnly, { P33: ["smoke"] }).status, "PASS");
+  assert.equal(judgeFallback(["P11"], smokeOnly, {}).status, "NOT-YET");
 });

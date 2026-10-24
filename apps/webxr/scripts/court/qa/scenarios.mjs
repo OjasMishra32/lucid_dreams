@@ -1,29 +1,48 @@
-// The QA-owned scenarios: checks the integrator's e2e.mjs does not run (it fixes the page URL) or that need no page.
-//   never-public  P36: serve.mjs answers only on 127.0.0.1 and refuses a foreign Host; vite does not serve the bundle.
-//   fallbacks     P41: every URL flag of the plan's risk table loads and reaches the watch, opaque, with a clean console.
-// Each returns lines { ok, what, detail, tags } like e2e.mjs prints, or { notYet } when it can't run yet.
+// The QA-owned checks: what the integrator's e2e.mjs does not run, or that need no page.
+//   never-public  P36: serve.mjs (plain and --dev) answers only on 127.0.0.1, refuses a foreign Host and any path out of
+//                 the bundle folder; vite does not serve the bundle.
+//   fallbacks     P41: runFallback drives each URL flag of the plan's risk table through e2e.mjs --query and judges the
+//                 flag's own P-rows.
+// never-public returns lines { ok, what, detail, tags } like e2e.mjs prints.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { networkInterfaces, tmpdir } from "node:os";
-import { join } from "node:path";
-import { freePort, launchBrowser, openCourt, startVite, WEBXR } from "./harness.mjs";
+import { dirname, join, relative } from "node:path";
+import { randomBytes } from "node:crypto";
+import { children, freePort, startVite, WEBXR } from "./harness.mjs";
+import { judgeFallback, leaksBundle, withDeadline } from "./lib.mjs";
 
 const SERVE = join(WEBXR, "src/court/serve.mjs");
 export const STANDIN = join(WEBXR, "scripts/court/out/standin");
 
-/** One HTTP request with full control of Host and path; resolves { status, type, body } or { error }. */
-function get(host, port, path, headers = {}, timeout = 4000) {
+/** One HTTP request with full control of Host and path; resolves { status, type, body } (the whole body) or { error }. */
+function get(host, port, path, headers = {}, timeout = 5000) {
   return new Promise((ok) => {
     const req = request({ host, port, path, headers, timeout }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
-      res.on("end", () => ok({ status: res.statusCode, type: res.headers["content-type"] ?? "", body: Buffer.concat(chunks).toString("utf8", 0, 4000) }));
+      res.on("end", () => ok({ status: res.statusCode, type: res.headers["content-type"] ?? "", body: Buffer.concat(chunks).toString("utf8") }));
+      res.on("error", (e) => ok({ error: e.code ?? e.message }));
     });
     req.on("timeout", () => req.destroy(new Error("timeout")));
     req.on("error", (e) => ok({ error: e.code ?? e.message }));
     req.end();
   });
+}
+
+/**
+ * Paths that climb out of the bundle folder (percent-encoded dots, 1 to 4 levels up: the folder's parent, its parent's
+ * and so on) and come back down to the canary file planted in the stand-in's parent folder.
+ */
+export function traversalPaths(bundleDir, canaryFile) {
+  const out = [];
+  let ancestor = bundleDir;
+  for (let n = 1; n <= 4; n++) {
+    ancestor = dirname(ancestor);
+    out.push(`/bundle/${"%2e%2e/".repeat(n)}${relative(ancestor, canaryFile).split("/").join("/")}`);
+  }
+  return out;
 }
 
 async function serveCheck(extra, label) {
@@ -32,12 +51,12 @@ async function serveCheck(extra, label) {
   const dist = mkdtempSync(join(tmpdir(), "qa-dist-"));
   writeFileSync(join(dist, "index.html"), "<!doctype html><title>qa</title>");
   const port = await freePort();
-  const child = spawn(process.execPath, [SERVE, "--bundle", STANDIN, "--standin", "--dist", dist, "--port", String(port), ...extra], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = children.add(spawn(process.execPath, [SERVE, "--bundle", STANDIN, "--standin", "--dist", dist, "--port", String(port), ...extra], { stdio: ["ignore", "pipe", "pipe"] }));
   let log = "";
   child.stdout.on("data", (d) => (log += d));
   child.stderr.on("data", (d) => (log += d));
   try {
-    const until = Date.now() + 40000;
+    const until = Date.now() + 60000;
     while (Date.now() < until && child.exitCode === null && !log.includes(`127.0.0.1:${port}`)) await new Promise((r) => setTimeout(r, 200));
     if (child.exitCode !== null || !log.includes(`127.0.0.1:${port}`)) {
       add(false, "serve.mjs starts", `did not start: ${log.trim().split("\n")[0]?.slice(0, 120) ?? "no output"}`);
@@ -47,8 +66,22 @@ async function serveCheck(extra, label) {
     add(own.status === 200 && /json/.test(own.type), "serve.mjs serves the bundle on 127.0.0.1", `GET /bundle/court.json -> ${own.status ?? own.error} ${own.type}`);
     const evil = await get("127.0.0.1", port, "/bundle/court.json", { Host: "evil.example" });
     add(evil.status >= 400 && evil.status < 500, "serve.mjs refuses a foreign Host", `Host evil.example -> ${evil.status ?? evil.error}`);
-    const esc = await get("127.0.0.1", port, "/bundle/%2e%2e/%2e%2e/%2e%2e/package.json");
-    add(esc.status !== 200, "serve.mjs refuses a path out of the bundle folder", `traversal -> ${esc.status ?? esc.error}`);
+    // a leak is the canary file's own content (or a bundle file): vite's index.html fallback (200 for any unknown path
+    // in --dev) is the app shell, not a leak
+    const canary = join(dirname(STANDIN), `qa-canary-${randomBytes(6).toString("hex")}.txt`);
+    const token = `QA-CANARY-${randomBytes(12).toString("hex")}`;
+    writeFileSync(canary, token);
+    const paths = traversalPaths(STANDIN, canary);
+    const leaked = [];
+    try {
+      for (const p of paths) {
+        const r = await get("127.0.0.1", port, p);
+        if (leaksBundle(r, { tokens: [token] })) leaked.push(`${p} -> ${r.status} ${r.type.split(";")[0]} ${r.body.length} bytes`);
+      }
+    } finally {
+      rmSync(canary, { force: true });
+    }
+    add(!leaked.length, "serve.mjs does not serve a file outside the bundle folder", leaked.length ? `served: ${leaked[0]}` : `${paths.length} climbing paths to a planted canary: none served it`);
     const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === "IPv4" && !i.internal);
     if (!lan) add(true, "serve.mjs refuses the LAN address", "no LAN interface on this machine (Host check above is the only guard tested)");
     else {
@@ -64,20 +97,11 @@ async function serveCheck(extra, label) {
 async function viteCheck() {
   const { server, port } = await startVite();
   try {
-    const paths = ["/dreams/court-side/court.json", "/dreams/court-side/video/frames.json"];
     const lines = [];
-    for (const p of paths) {
+    for (const p of ["/dreams/court-side/court.json", "/dreams/court-side/video/frames.json", "/dreams/court-side/video/show.h264"]) {
       const r = await get("127.0.0.1", port, p);
-      let leaked = false;
-      if (r.status === 200 && /json/.test(r.type)) {
-        try {
-          const j = JSON.parse(r.body.length < 4000 ? r.body : "null");
-          leaked = !!j && (j.version !== undefined || Array.isArray(j));
-        } catch {
-          leaked = /"video"|"freeze"/.test(r.body);
-        }
-      }
-      lines.push({ ok: !leaked, what: "vite does not serve the court bundle (P36)", detail: `GET ${p} -> ${r.status ?? r.error} ${r.type.split(";")[0]}${r.status === 200 ? " (the app shell, not the bundle)" : ""}`, tags: ["P36"] });
+      const leaked = leaksBundle(r, { strict: true });
+      lines.push({ ok: !leaked, what: "vite does not serve the court bundle (P36)", detail: `GET ${p} -> ${r.status ?? r.error} ${(r.type ?? "").split(";")[0]}${r.status === 200 && !leaked ? " (the app shell, not the bundle)" : ""}`, tags: ["P36"] });
     }
     return lines;
   } finally {
@@ -92,7 +116,7 @@ async function neverPublic() {
   return { lines };
 }
 
-/** The flag is read somewhere in the code: every file under `in`, a file or a folder, matches `pattern`. */
+/** The flag is read somewhere in the code: a file or any .ts of a folder under `detect.in` matches `detect.pattern`. */
 export function flagImplemented(root, detect) {
   const files = [];
   for (const rel of detect.in) {
@@ -105,45 +129,31 @@ export function flagImplemented(root, detect) {
   return files.some((f) => re.test(readFileSync(f, "utf8")));
 }
 
-/** One fallback flag: { status, measured } (PASS, FAIL or NOT-YET). `shared` carries one browser and vite across flags. */
-export async function runFallback(fb, { root, built, bundle, shared }) {
+/**
+ * One fallback flag against its own P-rows (fb.rows): { status, measured }. The rows are driven by the e2e scenarios
+ * that check them (`coverage`: row -> scenario names, from checklist.json), run once with the flag in the URL
+ * (`runE2e(names, query)` -> assignE2eRun's map). PASS only when every row has a passing tagged check; a row no
+ * runnable scenario checks (or whose scenario waits on a stub) leaves the flag NOT-YET, never PASS.
+ *   deps: { root, built, standinFallbacks (stream names the bundle carries, or null to skip), coverage, scenarios, runE2e }
+ */
+export async function runFallback(fb, deps) {
+  const { root, built, standinFallbacks, coverage, scenarios, runE2e } = deps;
   if (!flagImplemented(root, fb.detect)) return { status: "NOT-YET", measured: `?${fb.flag} is not read by the code yet` };
   const missing = (fb.needs ?? []).filter((m) => built[m] !== true);
   if (missing.length) return { status: "NOT-YET", measured: `stub: ${missing.join(", ")}` };
-  if (fb.standinStream && !bundle) {
-    const court = JSON.parse(readFileSync(join(STANDIN, "court.json"), "utf8"));
-    if (!court.video?.fallbacks?.[fb.standinStream]) return { status: "NOT-YET", measured: `the stand-in bundle has no "${fb.standinStream}" stream yet` };
-  }
-  shared.vite ??= await startVite();
-  shared.browser ??= await launchBrowser();
-  let opened;
-  try {
-    opened = await openCourt(shared.browser, shared.vite.port, { flag: fb.flag, bundle });
-    const { page } = opened;
-    await page.evaluate(() => window.__court.nextFrame());
-    await page.evaluate(() => window.__court.seatHere());
-    const toWatch = await page.evaluate(() => window.__court.until("watching", 72 * 8));
-    const last = toWatch[toWatch.length - 1];
-    if (last?.phase !== "watching") return { status: "FAIL", measured: `never reached the watch (stuck in ${last?.phase} after ${toWatch.length} frames)` };
-    const more = await page.evaluate(() => window.__court.frames(72));
-    const all = [...toWatch, ...more].filter((f) => typeof f.alphaMin === "number");
-    const alphaMin = all.length ? Math.min(...all.map((f) => f.alphaMin)) : -1;
-    const errs = [...opened.errors, ...(await page.evaluate(() => window.__court.errors))];
-    const bad = [];
-    if (alphaMin !== 255) bad.push(`alpha min ${alphaMin}`);
-    if (errs.length) bad.push(`${errs.length} console errors: ${errs[0].slice(0, 60)}`);
-    if (opened.warnings.length) bad.push(`${opened.warnings.length} warnings: ${opened.warnings[0].slice(0, 60)}`);
-    return bad.length ? { status: "FAIL", measured: bad.join("; ") } : { status: "PASS", measured: `watch after ${toWatch.length} frames, alpha min 255, 0 errors, 0 warnings` };
-  } catch (e) {
-    return { status: "FAIL", measured: String(e?.message ?? e).split("\n")[0].slice(0, 120) };
-  } finally {
-    await opened?.close().catch(() => {});
-  }
+  if (fb.standinStream && standinFallbacks && !standinFallbacks.includes(fb.standinStream)) return { status: "NOT-YET", measured: `the bundle has no "${fb.standinStream}" stream yet` };
+  const wanted = [...new Set(["smoke", ...fb.rows.flatMap((r) => coverage[r] ?? [])])];
+  const runnable = wanted.filter((n) => scenarios[n] && (scenarios[n].needs ?? []).every((m) => built[m] === true));
+  const runs = await runE2e(runnable, fb.flag);
+  // a scenario that can't run yet says why (its stubs), so the flag's row reads "room: stub: world", not "not run"
+  for (const n of wanted) if (!runs[n]) runs[n] = { exists: !!scenarios[n], ran: false, notYet: scenarios[n] ? `stub: ${(scenarios[n].needs ?? []).filter((m) => built[m] !== true).join(", ")}` : "no scenario file yet", lines: [] };
+  return judgeFallback(fb.rows, runs, coverage);
 }
 
-export async function closeShared(shared) {
-  await shared.browser?.close().catch(() => {});
-  shared.vite?.server.kill();
+/** A QA scenario under a deadline: a stalled one fails instead of hanging the run. */
+export function runQa(name, ms = 300000) {
+  const fns = { "never-public": neverPublic };
+  return withDeadline(fns[name](), ms, `qa ${name}`);
 }
 
-export const QA_SCENARIOS = { "never-public": neverPublic };
+export const QA_SCENARIOS = { "never-public": () => runQa("never-public") };
