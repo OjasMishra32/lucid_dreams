@@ -2,11 +2,15 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Chess, type Move, type Square } from "chess.js";
+import { SparkRenderer } from "@sparkjsdev/spark";
+import { SkinnedAvatar } from "../avatar";
+import { loadDream } from "../dream";
 import { Engine, STRENGTHS, type Strength } from "./engine";
 import { board, localToSquare, pieceGeometries, pieceHeight, pieceMaterials, type PieceType, SQUARE, squareToLocal } from "./pieces";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
-// you at the strength you choose. On a laptop it's the same game with a mouse.
+// you at the strength you choose. On a laptop it's the same game with a mouse. ?opponent=<avatar dream id> stands a
+// rigged avatar across the table, playing its own motion.
 
 const PINCH_ON = 0.018; // meters between thumb and index tips
 const PINCH_OFF = 0.03;
@@ -62,6 +66,42 @@ export async function renderChess(root: HTMLElement) {
   boardGroup.add(pieces);
   const hints = new THREE.Group();
   boardGroup.add(hints);
+
+  // someone across the table: any avatar bundle, standing on the floor on the far side, facing you
+  const opponentId = new URLSearchParams(location.search).get("opponent");
+  let opponent: SkinnedAvatar | null = null;
+  let opponentName = "";
+  let opponentSince = 0;
+  const opponentGroup = new THREE.Group();
+  scene.add(opponentGroup);
+  if (opponentId) {
+    scene.add(new SparkRenderer({ renderer }));
+    loadDream(opponentId)
+      .then(async (d) => {
+        if (!SkinnedAvatar.canSkin(d)) throw new Error(`${d.id} has no rig`);
+        opponent = await SkinnedAvatar.load(d);
+        opponentName = d.name;
+        opponent.mesh.opacity = 0;
+        opponentSince = performance.now();
+        opponentGroup.add(opponent.mesh);
+        // on a laptop, step back so they're in the frame with the board (in the headset you just look up)
+        camera.fov = 50;
+        camera.updateProjectionMatrix();
+        camera.position.set(0, 1.3, 2.0);
+        controls.target.set(0, 1.0, -0.3);
+        controls.update();
+        updateStatus();
+      })
+      .catch((e) => console.warn("No opponent avatar:", e));
+  }
+  const farSide = new THREE.Vector3();
+  const placeOpponent = () => {
+    table.updateMatrixWorld();
+    farSide.set(0, 0, -SQUARE * 4 - 0.38);
+    table.localToWorld(farSide);
+    opponentGroup.position.set(farSide.x, 0, farSide.z); // on the real floor, never scaled
+    opponentGroup.rotation.y = table.rotation.y + Math.PI; // the avatar's front (-Z) turned toward you
+  };
 
   const geom = pieceGeometries();
   const mats = pieceMaterials();
@@ -119,8 +159,9 @@ export async function renderChess(root: HTMLElement) {
   const updateStatus = () => {
     if (chess.isCheckmate()) return setStatus(chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.");
     if (chess.isDraw()) return setStatus("Draw");
-    if (thinking) return setStatus(`${strength.legend ?? strength.label} is thinking…`);
-    setStatus(chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${strength.label} to move`);
+    const who = opponentName ? `${opponentName} (${strength.label})` : strength.legend ?? strength.label;
+    if (thinking) return setStatus(`${who} is thinking…`);
+    setStatus(chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`);
   };
 
   const engineMove = async () => {
@@ -396,7 +437,7 @@ export async function renderChess(root: HTMLElement) {
   });
   selectStrength(strength.id);
   await newGame();
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup };
 
   // ---------------- loop ----------------
   addEventListener("resize", () => {
@@ -447,6 +488,11 @@ export async function renderChess(root: HTMLElement) {
         }
       }
     } else controls.update();
+    if (opponent) {
+      placeOpponent();
+      opponent.pose(time / 1000);
+      opponent.mesh.opacity = Math.min(1, (performance.now() - opponentSince) / 1400); // they arrive, not pop in
+    }
     for (let k = tweens.length - 1; k >= 0; k--) {
       const tw = tweens[k];
       const u = Math.min(1, (time - tw.t0) / tw.dur);
@@ -488,6 +534,7 @@ function handOccluder(hand: THREE.Object3D, scene: THREE.Scene): () => void {
   const unitBone = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true);
   const unitJoint = new THREE.SphereGeometry(1, 10, 8);
   const group = new THREE.Group();
+  group.visible = false; // shown only while the hand is tracked (unit-size stand-ins would hide the board)
   scene.add(group);
   const bones = FINGER_CHAINS.flatMap((c) => c.slice(1).map((name, k) => [c[k], name] as const));
   const boneMeshes = bones.map(() => new THREE.Mesh(unitBone, mat));
