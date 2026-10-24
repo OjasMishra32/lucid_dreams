@@ -21,6 +21,9 @@ Subcommands, in three environments (avatars/hpg/lhmpp-avatar.sbatch runs the fir
                              identity score of each face against the photos
   whites  any numpy env      all-white clothes after lhmpp_cleanup.py: the body's colours back from avatar.raw.ply,
                              then the kit evened to one clean white (see whites())
+  polish  any numpy env      close-range finish: marks off light clothes, a clean headband, even limb skin, a clean
+                             collar-to-jaw band, a tidy hair outline (see polish())
+  audit   envs/lhmpp, GPU    0-315 degrees full body and head, plus tennis-like poses, one sheet per bundle
 
 crops.json (optional, next to the photos): {"<photo>": [x0, y0, x1, y1]} as fractions of the photo, the region that
 holds only this person (no neighbour, no opponent); the matte finds the person inside it.
@@ -444,8 +447,9 @@ def quat_xyzw_to_aa(q) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------------------------------------- render
-def posed_gaussians(bundle: Path, frame: int = 0):
-    """The bundle's avatar posed by its own skin.bin + motion.json frame, as torch tensors on the GPU."""
+def posed_gaussians(bundle: Path, frame: int = 0, pose=None):
+    """The bundle's avatar posed by its own skin.bin + motion.json frame (or `pose`, 55 x 3 axis-angle, with that
+    frame's root), as torch tensors on the GPU."""
     import torch
     from pytorch3d.transforms import matrix_to_quaternion, quaternion_multiply
 
@@ -459,7 +463,7 @@ def posed_gaussians(bundle: Path, frame: int = 0):
     idx, q = S.read_skin_bin(bundle / av["skin"])
     rest = np.asarray(json.loads((bundle / av["skeleton"]).read_text())["rest"])
     m = Motion.load(bundle / av["motion"])
-    M = S.skin_matrices(rest, m.root_q[frame], m.root_t[frame], m.pose[frame])
+    M = S.skin_matrices(rest, m.root_q[frame], m.root_t[frame], m.pose[frame] if pose is None else pose)
     dev = "cuda"
     w = torch.as_tensor(q, dtype=torch.float32, device=dev) / 255
     Mt = torch.as_tensor(M, dtype=torch.float32, device=dev)[torch.as_tensor(idx.astype(np.int64), device=dev)]
@@ -807,6 +811,504 @@ def whites(args) -> None:
     print(f"[whites] {report}")
 
 
+def polish(args) -> None:
+    """Close-range finish for a photo opponent's bundle, after lhmpp_cleanup.py (+ whites for a white kit) and a head
+    model's finish. Colours and opacities change, and the hips' middle is re-skinned to the pelvis; no Gaussian is
+    added, removed or moved, so avatar.raw.ply and uika_head.json stay valid. Each step reports how many Gaussians it touched (polish.json):
+
+      marks   brand marks, side stripes and specks on light clothes (shirt, shorts, socks, shoes, wristbands): a cloth
+              Gaussian much darker than the cloth around it (its --mark-k nearest cloth neighbours) takes their colour;
+              deep inside the shirt and shorts anything dark is the body's inside and takes the cloth's colour
+      midline the hips' front and back middle skinned to the pelvis, so a wide stance doesn't split the cloth
+      band    the headband: a grey or dark Gaussian on it (above the eyes, mostly white around it) takes the white
+      skin    arms and legs: an edge-preserving filter evens blotches and streaks, a Gaussian far darker than the skin
+              around it is lifted to it; hue and tone stay the person's
+      neck    the band from collar to jaw (front and sides), the limbs and the feet: what is neither skin nor clean
+              cloth (hair-coloured patches, grey smears, dark specks on a hem) takes the colour of whichever its
+              neighbours mostly are
+      hair    hair strands that stand off the head's outline fade out (the outline is the head's own, direction by
+              direction), so the silhouette is a tidy hairline instead of loose wisps
+      ring    (--ring) the headband painted all the way round the head
+      hem     the shorts' hem as a clean edge
+      solid   the body's faint Gaussians made more opaque, so a bright room doesn't show through the clothes
+    """
+    from scipy.spatial import cKDTree
+
+    from lucid_avatars import skinning as S
+    from lucid_avatars.gaussian_ply import SH_C0, read_ply, write_ply
+    from lucid_avatars.smplx_layout import J
+
+    b = Path(args.bundle)
+    av = json.loads((b / "dream.json").read_text())["avatar"]
+    g = read_ply(b / av["file"])
+    idx, q = S.read_skin_bin(b / av["skin"])
+    dom = idx[np.arange(len(idx)), np.argmax(q, 1)].astype(int)
+    rest = np.asarray(json.loads((b / av["skeleton"]).read_text())["rest"], dtype=np.float64)
+    xyz = np.asarray(g.xyz, dtype=np.float64)
+    rgb = np.clip(0.5 + SH_C0 * np.asarray(g.f_dc, dtype=np.float64), 0, 1)
+    alpha = 1 / (1 + np.exp(-np.asarray(g.opacity, dtype=np.float64)))
+    W = np.array([0.299, 0.587, 0.114])
+    lum = lambda c: c @ W  # noqa: E731
+    sat = lambda c: c.max(-1) - c.min(-1)  # noqa: E731
+    head_j = [J["head"], J["jaw"], J["left_eye"], J["right_eye"]]
+    head = np.isin(dom, head_j)
+    uika = b / "uika_head.json"
+    if uika.is_file():
+        head[int(json.loads(uika.read_text())["head"]["first"]):] = True
+    seen = alpha > 0.02
+    rep = {}
+
+    # marks: light cloth only (the kit's median is light), never skin (warm, saturated) or the head
+    cloth_j = [J[n] for n in ("pelvis", "spine1", "spine2", "spine3", "left_collar", "right_collar", "left_shoulder",
+                              "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle", "left_foot",
+                              "right_foot", "left_wrist", "right_wrist")]
+    warm = (rgb[:, 0] > rgb[:, 2] + 0.05) & (sat(rgb) > 0.08)
+    # where the clothes cover the body completely, everything is cloth (a gold side stripe, a skin-coloured smear):
+    # the torso below the collar, and the hips and thighs above the shorts' hem (found from how white each height is)
+    ny = rest[J["neck"], 1]
+    torso = seen & ~head & np.isin(dom, [J["spine1"], J["spine2"], J["spine3"]]) & (xyz[:, 1] < ny - 0.03)
+    thigh_j = [J["pelvis"], J["left_hip"], J["right_hip"], J["left_knee"], J["right_knee"]]
+    legs = seen & ~head & np.isin(dom, thigh_j)
+    whiteish = (lum(rgb) > 0.65) & (sat(rgb) < 0.18)
+    hem_y = rest[J["pelvis"], 1]
+    for y in np.arange(rest[J["pelvis"], 1], rest[J["left_knee"], 1], -0.01):
+        sl = legs & (xyz[:, 1] < y) & (xyz[:, 1] >= y - 0.01)
+        if sl.sum() > 30 and whiteish[sl].mean() < 0.5:
+            break
+        hem_y = y - 0.01
+    shorts = legs & (xyz[:, 1] > hem_y + 0.01)
+    forced = torso | shorts
+    cloth = seen & ~head & (np.isin(dom, cloth_j) | forced) & (~(warm & (lum(rgb) < 0.75)) | forced)
+    marks = np.zeros(len(g), bool)
+    if cloth.sum() > args.mark_k * 2 and np.median(lum(rgb[cloth])) > 0.6:
+        ci = np.flatnonzero(cloth)
+        _, nb = cKDTree(xyz[ci]).query(xyz[ci], k=args.mark_k)
+        fc = forced[ci]
+        for _ in range(2):
+            c = rgb[ci]
+            med = np.median(c[nb], axis=1)
+            off = (lum(c) < lum(med) - args.mark_drop) | (fc & (sat(c) > 0.12) & (sat(med) < 0.12))
+            rgb[ci[off]] = med[off]
+            marks[ci[off]] = True
+    # deep in the clothes (the shirt below its V, the shorts above the hem) nothing is skin: anything dark there is
+    # the inside of the body, which shows when a stretch opens the cloth (a wide stance, a lunge), so it is cloth too
+    deep = (torso & (xyz[:, 1] < ny - 0.12)) | shorts
+    if deep.sum() and cloth.sum():
+        di = np.flatnonzero(deep & (lum(rgb) < 0.55))
+        if len(di):
+            ci = np.flatnonzero(cloth & (lum(rgb) >= 0.55))
+            if len(ci):
+                _, nn = cKDTree(xyz[ci]).query(xyz[di], k=8)
+                rgb[di] = np.median(rgb[ci][nn], axis=1)
+                marks[di] = True
+    rep["marks"] = int(marks.sum())
+    rep["hemY"] = round(float(hem_y), 3)
+
+    # the front and back middle of the hips follow the pelvis, not one thigh: skinned to a thigh they split open
+    # down the middle when the legs spread (a split step, a lunge)
+    hips = [J["left_hip"], J["right_hip"]]
+    hip_y = float(rest[hips, 1].mean())
+    mid = seen & ~head & np.isin(dom, hips) & (xyz[:, 1] > hip_y + 0.0) & (np.abs(xyz[:, 0] - rest[J["pelvis"], 0]) < 0.09)
+    if mid.sum():
+        full = np.abs(xyz[mid, 0] - rest[J["pelvis"], 0]) < 0.05
+        mi = np.flatnonzero(mid)
+        w = np.zeros((len(mi), 4), np.int64)
+        j = np.zeros((len(mi), 4), np.int64)
+        j[:, 0] = J["pelvis"]
+        j[:, 1] = dom[mi]
+        w[:, 0] = np.where(full, 255, 153)
+        w[:, 1] = 255 - w[:, 0]
+        idx[mi] = j.astype(idx.dtype)
+        q[mi] = w.astype(q.dtype)
+        S.write_skin_bin(b / av["skin"], idx, q)
+    rep["midline"] = int(mid.sum())
+
+    # headband: grey or dark on white, above the eyes
+    eye_y = 0.5 * (rest[J["left_eye"], 1] + rest[J["right_eye"], 1])
+    hb = seen & head & (xyz[:, 1] > eye_y + 0.015)
+    band = np.zeros(len(g), bool)
+    if hb.sum() > 64:
+        hi = np.flatnonzero(hb)
+        _, nb = cKDTree(xyz[hi]).query(xyz[hi], k=32)
+        c = rgb[hi]
+        # the band is the light, colourless part of the head above the brows (hair is darker and brown, skin warm);
+        # a head model fed photos with bands of several colours often makes it grey
+        white = (lum(c) > 0.45) & (sat(c) < 0.12)
+        frac = white[nb].mean(1)
+        bad = ~white & (sat(c) < 0.12) & (frac > 0.6)
+        wm = np.array([np.median(c[n[white[n]]], axis=0) if white[n].any() else c[i] for i, n in enumerate(nb)])
+        rgb[hi[bad]] = wm[bad]
+        band[hi[bad]] = True
+        # the band itself one clean white (the photos' bands were white, yellow, red: the look is a white band)
+        on = white | bad
+        on &= frac > 0.5
+        target = np.median(c[white], axis=0)
+        target = 0.5 * target + 0.5 * target.mean()  # half the cast out
+        target = np.clip(target / max(lum(target), 1e-3) * 0.86, 0, 1)
+        shade = np.clip(lum(rgb[hi[on]]) / max(float(np.median(lum(c[white]))), 1e-3), 0.85, 1.05)[:, None]
+        rgb[hi[on]] = target * shade
+        band[hi[on]] = True
+    rep["band"] = int(band.sum())
+
+    # ...and a whole band: a ring round the head at that height (lower at the back, as a band sits), painted on the
+    # outermost hair and skin, so it reads from the side and the back too, not only where the photos showed it
+    ring = np.zeros(len(g), bool)
+    if args.ring and hb.sum() > 64:
+        centre = rest[J["head"]] + np.array([0.0, 0.07, -0.01])
+        fb = band & (xyz[:, 2] > centre[2] + 0.04)
+        y_lo = float(np.percentile(xyz[fb, 1], 20)) if fb.sum() > 30 else eye_y + 0.035
+        hd = seen & head & (alpha > 0.1)
+        hi = np.flatnonzero(hd)
+        d = xyz[hi] - centre
+        theta = np.arctan2(d[:, 0], d[:, 2])
+        y0 = y_lo - args.ring_drop * (1 - np.cos(theta)) / 2
+        inb = (xyz[hi, 1] >= y0) & (xyz[hi, 1] <= y0 + args.ring_height)
+        rho = np.hypot(d[:, 0], d[:, 2])
+        bins = np.floor((theta + np.pi) / (2 * np.pi) * 36).astype(int)
+        outer = np.zeros(len(hi), bool)
+        for k in range(36):
+            m = inb & (bins == k)
+            if m.sum() > 5:
+                outer[m] = rho[m] >= np.percentile(rho[m], 30)
+        sel = hi[inb & outer & (xyz[hi, 1] > eye_y + 0.02)]
+        white_c = np.array([0.84, 0.85, 0.87])
+        shade = np.clip(lum(rgb[sel]) / max(float(np.median(lum(rgb[sel]))), 1e-3), 0.9, 1.04)[:, None]
+        rgb[sel] = white_c * shade
+        g.opacity[sel] = np.maximum(g.opacity[sel], 3.0)
+        ring[sel] = True
+        rep["ringYFront"] = round(y_lo, 3)
+    rep["ring"] = int(ring.sum())
+
+    # skin on the limbs
+    limb_j = [J[n] for n in ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist",
+                             "left_hip", "right_hip", "left_knee", "right_knee")]
+    skin = seen & ~head & np.isin(dom, limb_j) & warm & (lum(rgb) < 0.8)
+    if skin.sum() > 64:
+        si = np.flatnonzero(skin)
+        d, nb = cKDTree(xyz[si]).query(xyz[si], k=17)
+        ws = np.exp(-(d ** 2) / (2 * args.skin_sigma_m ** 2))
+        c = rgb[si].copy()
+        for _ in range(args.skin_passes):
+            w = ws * np.exp(-((c[nb] - c[:, None]) ** 2).sum(-1) / (2 * 0.2 ** 2))
+            c = (w[..., None] * c[nb]).sum(1) / w.sum(1, keepdims=True)
+        _, nb2 = cKDTree(xyz[si]).query(xyz[si], k=64)
+        ml = np.median(lum(c)[nb2], axis=1)
+        low = lum(c) < ml - 0.05
+        c[low] *= ((ml[low] - 0.05) / np.maximum(lum(c[low]), 1e-3))[:, None]
+        rgb[si] = np.clip(c, 0, 1)
+    rep["skin"] = int(skin.sum())
+
+    # collar to jaw (front and sides), and the limbs and feet: what is neither skin nor clean cloth (dark specks on a
+    # hem, hair-coloured patches, grey smears) takes the colour of whichever its neighbours mostly are
+    hy = rest[J["head"], 1]
+    nz = rest[J["neck"], 2]
+    limbs_feet = limb_j + [J[n] for n in ("left_ankle", "right_ankle", "left_foot", "right_foot")]
+    in_neck = (xyz[:, 1] > ny - 0.12) & (xyz[:, 1] < hy + 0.005) & (xyz[:, 2] > nz - 0.02)
+    zone = seen & (in_neck | (~head & np.isin(dom, limbs_feet)))
+    neck = np.zeros(len(g), bool)
+    if zone.sum() > 64:
+        zi = np.flatnonzero(zone)
+        _, nb = cKDTree(xyz[zi]).query(xyz[zi], k=48)
+        for _ in range(12):  # a patch fills in from its edges, one layer a pass
+            c = rgb[zi]
+            cool = c[:, 2] > c[:, 0] + 0.02
+            # on the neck a dark brown is hair or dirt, not skin; on the limbs it is tanned skin in shade
+            is_skin = (c[:, 0] > c[:, 2] + 0.06) & (sat(c) > 0.08) & (lum(c) > np.where(in_neck[zi], 0.32, 0.2))
+            is_white = (lum(c) > 0.65) & (sat(c) < 0.16) & ~(cool & (lum(c) < 0.8))
+            good = is_skin | is_white
+            todo = np.flatnonzero(~good)
+            if not len(todo):
+                break
+            changed = 0
+            for i in todo:
+                n = nb[i]
+                ks, kw = n[is_skin[n]], n[is_white[n]]
+                if len(ks) + len(kw) < 4:
+                    continue
+                src = ks if len(ks) >= len(kw) else kw
+                rgb[zi[i]] = np.median(c[src], axis=0)
+                neck[zi[i]] = True
+                changed += 1
+            if not changed:
+                break
+    rep["neck"] = int(neck.sum())
+
+    # the shorts' hem: a clean edge, each Gaussian in the band takes what most of its neighbours are (cloth or skin)
+    hem = np.zeros(len(g), bool)
+    hband = seen & ~head & np.isin(dom, thigh_j) & (np.abs(xyz[:, 1] - hem_y) < 0.03)
+    if hband.sum() > 64:
+        bi = np.flatnonzero(hband)
+        _, nb = cKDTree(xyz[bi]).query(xyz[bi], k=24)
+        c = rgb[bi]
+        w = (lum(c) > 0.6) & (sat(c) < 0.2)
+        share = w[nb].mean(1)
+        flip_w = ~w & (share > 0.65)
+        flip_s = w & (share < 0.35)
+        for i in np.flatnonzero(flip_w | flip_s):
+            n = nb[i]
+            src = n[w[n]] if flip_w[i] else n[~w[n]]
+            rgb[bi[i]] = np.median(c[src], axis=0)
+        hem[bi[flip_w | flip_s]] = True
+    rep["hem"] = int(hem.sum())
+
+    # solid: LHM++ builds cloth from many faint Gaussians that only add up to opaque where enough overlap; through the
+    # thinner spots a bright room shows through the shirt. Each body Gaussian's opacity a becomes 1 - (1 - a)^k.
+    solid = seen & ~head & (alpha < 0.98)
+    if args.solid > 1:
+        a2 = 1 - (1 - alpha[solid]) ** args.solid
+        g.opacity[solid] = np.log(np.clip(a2, 1e-4, 1 - 1e-4) / (1 - np.clip(a2, 1e-4, 1 - 1e-4)))
+    rep["solid"] = int(solid.sum()) if args.solid > 1 else 0
+
+    # hair: strands standing off the outline fade
+    centre = rest[J["head"]] + np.array([0.0, 0.07, -0.01])
+    hair_zone = seen & head & (xyz[:, 1] > rest[J["head"], 1] - 0.02)
+    stray = np.zeros(len(g), bool)
+    if hair_zone.sum() > 200:
+        hi = np.flatnonzero(hair_zone)
+        v = xyz[hi] - centre
+        r = np.linalg.norm(v, axis=1)
+        dirs = v / np.maximum(r, 1e-6)[:, None]
+        _, nb = cKDTree(dirs).query(dirs, k=args.hair_k)
+        ref = np.percentile(r[nb], args.hair_pct, axis=1)
+        out = r > ref + args.hair_margin
+        stray[hi[out]] = True
+        g.opacity[hi[out]] = np.minimum(g.opacity[hi[out]], -7.0)
+    rep["hair"] = int(stray.sum())
+
+    g.f_dc[:] = ((rgb - 0.5) / SH_C0).astype(g.f_dc.dtype)
+    if g.f_rest.shape[1]:
+        g.f_rest[marks | band | neck] = 0
+    write_ply(b / av["file"], g)
+    rep.update(of=int(len(g)), markK=args.mark_k, markDrop=args.mark_drop, skinPasses=args.skin_passes,
+               hairMarginM=args.hair_margin)
+    (b / "polish.json").write_text(json.dumps(rep, indent=1) + "\n")
+    print(f"[polish] {rep}")
+
+
+def tennis_poses(m) -> dict:
+    """A few hand-made poses that stretch the rig the way tennis does (ready crouch, serve, wide forehand reach, lunge,
+    both arms up), from the bundle's own first idle frame: body joints only, hands as the idle holds them."""
+    from lucid_avatars.rotations import aa_to_quat, quat_mul, quat_to_aa
+    from lucid_avatars.smplx_layout import J
+
+    def make(**rots):
+        pose = np.asarray(m.pose[0], dtype=np.float64).copy()
+        for name, aa in rots.items():
+            pose[J[name]] = quat_to_aa(quat_mul(aa_to_quat(np.asarray(aa, float)), aa_to_quat(pose[J[name]])))
+        return pose
+
+    return {
+        "ready": make(left_hip=[-0.6, 0, 0.12], right_hip=[-0.6, 0, -0.12], left_knee=[0.9, 0, 0], right_knee=[0.9, 0, 0],
+                      left_ankle=[-0.3, 0, 0], right_ankle=[-0.3, 0, 0], spine1=[0.35, 0, 0],
+                      left_shoulder=[0, 0.5, 0.5], right_shoulder=[0, -0.5, -0.5], left_elbow=[0, 1.2, 0],
+                      right_elbow=[0, -1.2, 0]),
+        "serve": make(right_shoulder=[0, 0, 2.4], right_elbow=[0, -0.6, 0], left_shoulder=[0, 0, -1.9],
+                      spine2=[-0.2, 0, 0.15], right_hip=[-0.2, 0, 0], left_knee=[0.3, 0, 0]),
+        "forehand": make(spine1=[0, -0.5, 0], spine2=[0, -0.3, 0], right_shoulder=[0, -0.9, -0.3],
+                         right_elbow=[0, -0.4, 0], left_shoulder=[0, 0.6, 0.6], left_hip=[-0.3, 0, 0.35],
+                         right_hip=[0.1, 0, -0.45], left_knee=[0.6, 0, 0]),
+        "lunge": make(left_hip=[-0.9, 0, 0.5], right_hip=[0.2, 0, -0.55], left_knee=[1.3, 0, 0], right_knee=[0.2, 0, 0],
+                      spine1=[0.3, 0, 0], left_shoulder=[0, 0, -0.6], right_shoulder=[0, -0.8, -0.4]),
+        "armsup": make(left_shoulder=[0, 0, -2.4], right_shoulder=[0, 0, 2.4]),
+    }
+
+
+def audit(args) -> None:
+    """A bundle from all round (0-315 degrees every 45, full body and head) and in tennis-like poses (front, side,
+    back), on white: one sheet per bundle, for a look at seams, marks, hair and stretching under the arms and in the
+    crotch."""
+    from PIL import Image, ImageDraw
+
+    from lucid_avatars.motion import Motion
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for spec in args.bundles:
+        label, path = spec.split("=", 1)
+        b = Path(path)
+        gs = posed_gaussians(b)
+        head = gs["head"] + np.array([0.0, 0.07, 0.0])
+        alpha_y = gs["means"][gs["opacities"] > 0.5][:, 1]
+        mid = np.array([0.0, float((alpha_y.max() + alpha_y.min()) / 2), 0.0])
+        angles = list(range(0, 360, 45))
+        rows = [("full", [render(gs, orbit_eye(mid, FULL["distance"], a), mid, (360, 720), FULL["fov"]) for a in angles]),
+                ("head", [render(gs, orbit_eye(head, PORTRAIT["distance"], a), head, (360, 480), PORTRAIT["fov"])
+                          for a in angles])]
+        m = Motion.load(b / json.loads((b / "dream.json").read_text())["avatar"]["motion"])
+        for name, pose in tennis_poses(m).items():
+            gp = posed_gaussians(b, pose=pose)
+            ay = gp["means"][gp["opacities"] > 0.5][:, 1]
+            md = np.array([0.0, float((ay.max() + ay.min()) / 2), 0.0])
+            rows.append((name, [render(gp, orbit_eye(md, FULL["distance"], a), md, (360, 720), FULL["fov"])
+                                for a in (0, 90, 180, 270)]))
+        th = 420
+        strips = []
+        for name, ims in rows:
+            ims = [Image.fromarray(i) for i in ims]
+            h = th if name != "head" else 300
+            ims = [i.resize((round(i.width * h / i.height), h), Image.LANCZOS) for i in ims]
+            s = Image.new("RGB", (sum(i.width for i in ims), h + 18), "white")
+            x = 0
+            for i in ims:
+                s.paste(i, (x, 18))
+                x += i.width
+            ImageDraw.Draw(s).text((4, 3), f"{label}: {name}", fill=(0, 0, 0))
+            strips.append(s)
+        sheet = Image.new("RGB", (max(s.width for s in strips), sum(s.height for s in strips)), "white")
+        y = 0
+        for s in strips:
+            sheet.paste(s, (0, y))
+            y += s.height
+        sheet.save(out / f"audit-{label}.jpg", quality=88)
+        print(f"AUDIT {out / f'audit-{label}.jpg'}")
+
+
+def likeness(args) -> None:
+    """How much a bundle's face looks like the person, measured on photos it never saw (held out): InsightFace
+    buffalo_l (ArcFace R50) on portraits rendered at every yaw from -90 to 90 degrees. For each held-out photo, the
+    render at the yaw that matches it best stands for that view (`matched`); `front`, `45` and `90` are the 0, +-45 and
+    +-90 degree renders against the held-out photos of that view (--front/--three-quarter/--profile name them).
+    photoVsPhoto (held-out photos against each other, same groups) is the ceiling. Writes likeness.json and
+    likeness.jpg: each held-out photo beside its matched render, per bundle."""
+    import os
+
+    import onnxruntime as ort
+    from insightface.app import FaceAnalysis
+    from insightface.model_zoo import model_zoo as mz
+    from PIL import Image, ImageDraw, ImageOps
+
+    # onnxruntime sizes its thread pool to the whole node (96 threads on a 3-core Slurm job: a crawl); keep it to ours
+    threads = int(os.environ.get("SLURM_CPUS_PER_TASK", "3"))
+
+    def _init(self, model_path, **kw):
+        so = ort.SessionOptions()
+        so.intra_op_num_threads, so.inter_op_num_threads = threads, 1
+        ort.InferenceSession.__init__(self, model_path, sess_options=so, **kw)
+        self.model_path = model_path
+
+    mz.PickableInferenceSession.__init__ = _init
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    app = FaceAnalysis(name="buffalo_l", root=args.insightface_root,
+                       providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    app.prepare(ctx_id=0, det_size=(640, 640))
+
+    def face(rgb):
+        faces = app.get(np.ascontiguousarray(np.asarray(rgb)[..., ::-1]))
+        return max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])) if faces else None
+
+    def emb(rgb):
+        f = face(rgb)
+        return None if f is None else f.normed_embedding
+
+    def shape(rgb):
+        """Face proportions in units of the eye distance (5-point eyes, 106-point jaw contour): length (eyes to chin),
+        jaw width, nose (eyes to nose tip), mouth width. Meaningful on frontal faces only."""
+        f = face(rgb)
+        if f is None or getattr(f, "landmark_2d_106", None) is None:
+            return None
+        k, c = f.kps, f.landmark_2d_106[:33]
+        eye = 0.5 * (k[0] + k[1])
+        de = float(np.linalg.norm(k[1] - k[0]))
+        return {"length": round(float((c[:, 1].max() - eye[1]) / de), 3),
+                "jaw": round(float((c[:, 0].max() - c[:, 0].min()) / de), 3),
+                "nose": round(float((k[2][1] - eye[1]) / de), 3),
+                "mouth": round(float(np.linalg.norm(k[4] - k[3]) / de), 3)}
+
+    photos = {}
+    for f in sorted(Path(args.heldout).glob("*.jpg")):
+        im = ImageOps.exif_transpose(Image.open(f)).convert("RGB")
+        im.thumbnail((1600, 1600))
+        e = emb(im)
+        if e is not None:
+            photos[f.stem] = (e, im)
+    groups = {"front": args.front.split(","), "45": args.three_quarter.split(","), "90": args.profile.split(",")}
+    allp = list(photos)
+    ceiling = {"all": round(float(np.mean([photos[a][0] @ photos[b][0] for a in allp for b in allp if a < b])), 4)}
+    for gname, names in groups.items():
+        names = [n for n in names if n in photos]
+        others = [o for o in allp if o not in names]
+        if names and others:  # a photo of this view against the other held-out photos: what a real face scores
+            ceiling[gname] = round(float(np.mean([photos[n][0] @ photos[o][0] for n in names for o in others])), 4)
+    yaws = list(range(-90, 91, 15))
+    frontal = [Path(x) for x in args.shape_photos.replace(":", ",").split(",") if x]
+    shapes = {f.stem: shape(np.asarray(ImageOps.exif_transpose(Image.open(f)).convert("RGB"))) for f in frontal}
+    for n, sh in shapes.items():
+        print(f"[likeness] photo {n}: shape {sh}", flush=True)
+    report = {"heldout": allp, "ceilingPhotoVsPhoto": ceiling, "bundles": {}, "photoShapes": shapes}
+    train_embs = None
+    print(f"[likeness] {len(photos)} held-out faces; providers {app.models['detection'].session.get_providers()}",
+          flush=True)
+    rows = []
+    for spec in args.bundles:
+        label, path = spec.split("=", 1)
+        gs = posed_gaussians(Path(path))
+        head = gs["head"] + np.array([0.0, 0.07, 0.0])
+        renders = {y: render(gs, orbit_eye(head, PORTRAIT["distance"], y), head, PORTRAIT["size"], PORTRAIT["fov"])
+                   for y in yaws}
+        re_ = {y: emb(r) for y, r in renders.items()}
+        print(f"[likeness] {label}: {sum(e is not None for e in re_.values())} of {len(yaws)} renders have a face",
+              flush=True)
+        r = {}
+        for gname, names in groups.items():
+            names = [n for n in names if n in photos]
+            want = {"front": [0], "45": [-45, 45], "90": [-90, 90]}[gname]
+            sc = [max(e @ photos[n][0] for e in [re_[y] for y in want] if e is not None) for n in names
+                  if any(re_[y] is not None for y in want)]
+            r[gname] = round(float(np.mean(sc)), 4) if sc else None
+        matched, pairs = {}, []
+        for n, (e, im) in photos.items():
+            best = max(((re_[y] @ e, y) for y in yaws if re_[y] is not None), default=(None, None))
+            matched[n] = {"cos": None if best[0] is None else round(float(best[0]), 4), "yaw": best[1]}
+            pairs.append((n, im, renders[best[1]] if best[1] is not None else renders[0], matched[n]))
+        r["matched"] = round(float(np.mean([m["cos"] for m in matched.values() if m["cos"] is not None])), 4)
+        r["perPhoto"] = matched
+        r["trainFront"] = None
+        if args.train and train_embs is None:
+            train_embs = []
+            for f in sorted(Path(args.train).glob("*.jpg")):
+                im = ImageOps.exif_transpose(Image.open(f)).convert("RGB")
+                im.thumbnail((1200, 1200))
+                train_embs.append(emb(im))
+            train_embs = [e for e in train_embs if e is not None]
+        if train_embs:
+            te = train_embs
+            if re_[0] is not None:
+                r["trainFront"] = round(float(np.mean([re_[0] @ e for e in te])), 4)
+        r["shapeFront"] = shape(renders[0])
+        report["bundles"][label] = r
+        print(f"[likeness] {label}: shape {r['shapeFront']}", flush=True)
+        print(f"[likeness] {label}: front {r['front']} 45 {r['45']} 90 {r['90']} matched {r['matched']} "
+              f"trainFront {r['trainFront']}")
+        rows.append((label, pairs))
+    (out / "likeness.json").write_text(json.dumps(report, indent=1) + "\n")
+    print(f"[likeness] ceiling (held-out photo vs photo): {ceiling}")
+    th = 300
+    tiles = []
+    for label, pairs in rows:
+        strip = []
+        for n, im, rend, m in pairs:
+            a = im.copy()
+            a.thumbnail((th, th))
+            bimg = Image.fromarray(rend)
+            bimg = bimg.resize((round(bimg.width * th / bimg.height), th), Image.LANCZOS)
+            t = Image.new("RGB", (a.width + bimg.width, th + 18), "white")
+            t.paste(a, (0, 18))
+            t.paste(bimg, (a.width, 18))
+            ImageDraw.Draw(t).text((3, 3), f"{label} | {n} | yaw {m['yaw']} cos {m['cos']}", fill=(0, 0, 0))
+            strip.append(t)
+        tiles.append(strip)
+    W = max(sum(t.width for t in s) for s in tiles)
+    sheet = Image.new("RGB", (W, (th + 18) * len(tiles)), "white")
+    for k, s in enumerate(tiles):
+        x = 0
+        for t in s:
+            sheet.paste(t, (x, k * (th + 18)))
+            x += t.width
+    sheet.save(out / "likeness.jpg", quality=90)
+    print("LIKENESS_OK", out / "likeness.jpg")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -834,6 +1336,32 @@ def main() -> None:
     d.add_argument("--photos-prep", required=True, help="a prep/raw folder: the photos identity is measured against")
     d.add_argument("--out", required=True)
     d.add_argument("--turntable", type=int, default=0, help="also write turntable.mp4 with this many frames, side by side")
+    o = sub.add_parser("polish")
+    o.add_argument("bundle")
+    o.add_argument("--mark-k", type=int, default=160, help="cloth neighbours a mark is judged against")
+    o.add_argument("--mark-drop", type=float, default=0.1, help="how much darker than its cloth a mark is")
+    o.add_argument("--skin-passes", type=int, default=3)
+    o.add_argument("--skin-sigma-m", type=float, default=0.012)
+    o.add_argument("--hair-k", type=int, default=64)
+    o.add_argument("--hair-pct", type=float, default=80.0)
+    o.add_argument("--hair-margin", type=float, default=0.006, help="metres a strand may stand off the outline")
+    o.add_argument("--ring", action="store_true", help="paint the headband all the way round")
+    o.add_argument("--ring-height", type=float, default=0.035)
+    o.add_argument("--ring-drop", type=float, default=0.025, help="how much lower the band sits at the back (m)")
+    o.add_argument("--solid", type=float, default=2.5, help="opacity a -> 1 - (1 - a)^k on the body (1 = off)")
+    k = sub.add_parser("likeness")
+    k.add_argument("bundles", nargs="+", help="label=bundle_dir")
+    k.add_argument("--heldout", required=True, help="photos the face was never built from")
+    k.add_argument("--train", default=None, help="the photos it was built from (a front-render score against them too)")
+    k.add_argument("--front", default="", help="held-out stems that face the camera, comma-separated")
+    k.add_argument("--three-quarter", default="")
+    k.add_argument("--profile", default="")
+    k.add_argument("--insightface-root", required=True)
+    k.add_argument("--shape-photos", default="", help="frontal photos (paths, comma-separated) to compare proportions with")
+    k.add_argument("--out", required=True)
+    u = sub.add_parser("audit")
+    u.add_argument("bundles", nargs="+", help="label=bundle_dir")
+    u.add_argument("--out", required=True)
     w = sub.add_parser("whites")
     w.add_argument("bundle")
     w.add_argument("--strength", type=float, default=0.8, help="how far the kit moves to its median white")
@@ -842,7 +1370,8 @@ def main() -> None:
     w.add_argument("--neutral", type=float, default=0.5, help="share of the photos' colour cast taken out of the white")
     w.add_argument("--max-sat", type=float, default=0.12, help="saturation (max-min RGB) below which a Gaussian is kit")
     args = p.parse_args()
-    {"colour": colour, "prep": prep, "build": build, "compare": compare, "whites": whites}[args.cmd](args)
+    {"colour": colour, "prep": prep, "build": build, "compare": compare, "whites": whites, "polish": polish,
+     "audit": audit, "likeness": likeness}[args.cmd](args)
 
 
 if __name__ == "__main__":

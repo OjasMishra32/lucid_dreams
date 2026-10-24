@@ -69,8 +69,9 @@ OPPONENTS = {
     "magnus-carlsen": "Photos: Ralf Roletschek, 2015-10-10, CC BY-SA 3.0 (Wikimedia Commons)",
     "bobby-fischer": "Photos: 1966 portrait (AP, John Lent), public domain; Amsterdam, March 1972, Anefo / Nationaal "
                      "Archief (Bert Verhoeff, W. Punt), CC0; Wikimedia Commons; black and white, colourised with DDColor",
-    "roger-federer": "Photos: Wimbledon, June 2009, by Squeaky Knees (CC BY 2.0) and Justin Smith (CC BY-SA 2.0); face "
-                     "close-up Australian Open 2010 by Esther Lim (CC BY-SA 2.0); Wikimedia Commons",
+    "roger-federer": "Photos (Wikimedia Commons): body, Wimbledon June 2009 by Squeaky Knees (CC BY 2.0) and Justin "
+                     "Smith (CC BY-SA 2.0); head, 2009-2012 by Justin Smith, Squeaky Knees, Esther Lim, Christopher "
+                     "Johnson, Christian Mesiano (CC BY-SA 2.0), Patricio Fernández and Tigre Municipio (CC BY 2.0)",
 }
 
 GAUSSIANS_FILE = "gaussians.npz"  # in the teacher folder: UIKA's own Gaussians at rest, in its FLAME frame
