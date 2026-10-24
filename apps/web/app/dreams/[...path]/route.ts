@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { DREAMS_DIR, listReady } from "@/lib/bridge/dreams";
@@ -22,11 +22,27 @@ const TYPES: Record<string, string> = {
  * GET /dreams/<id>/... : the bundle's files, static. Honours Range so previews seek on Safari and the Quest, and big
  * frame files can resume. /dreams/index.json mirrors the WebXR viewer's index, so it can point ?base= here too.
  */
+/** A family's dream: any ian-grandma* run, or one whose dream.json says "private": true. */
+function privateId(id: string): boolean {
+  const meta = resolve(DREAMS_DIR, id, "dream.json");
+  let flagged = false;
+  try {
+    flagged = existsSync(meta) && JSON.parse(readFileSync(meta, "utf8")).private === true;
+  } catch {
+    flagged = false;
+  }
+  return isPrivate({ id, private: flagged });
+}
+
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  // a private dream is never served over HTTP, not its files, not even its name in the index: this bridge can be
+  // reached through a tunnel (and Next marks every request as forwarded, so local can't be told apart). The headset
+  // gets a family's dream over USB (adb push, team/ian.md)
   if (path.length === 1 && path[0] === "index.json") {
-    return json(listReady(undefined, { withPrivate: true }).map((d) => (isPrivate(d) ? { ...d, private: true } : d))); // for players
+    return json(listReady(undefined, { withPrivate: false })); // for players
   }
+  if (privateId(path[0] ?? "")) return new Response("Not found", { status: 404, headers: CORS });
 
   const file = resolve(DREAMS_DIR, ...path);
   if (!file.startsWith(DREAMS_DIR + sep) || !existsSync(file) || !statSync(file).isFile()) {
