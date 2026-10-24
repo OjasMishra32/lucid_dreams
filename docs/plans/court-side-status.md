@@ -5,7 +5,8 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 1:10 PM. Court Side's GPU work runs mostly on a second lab allocation Vishal is approved for; on the TEA Lab account it stays at 6 GPUs or fewer, so the rest are free for Ojasva.
+**Ojasva: Court Side is completely off TEA (iruchkin) since 2:32 PM. All its GPUs are yours.**
+Updated Sat 2:40 PM. All Court Side GPU work now runs on the second lab allocation Vishal is approved for.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -148,11 +149,13 @@ private, outside the repo.
 - **Gate 2: passed for both players (12:09)**, so both get full-quality runs and there's no "main player alone" fallback.
   Every full run must also pass a back-view check before its score counts: no face painted on the back of a head and
   no doubled figure in any view of the frozen frame.
-- **GPU (1:10 PM):**
-  - TEA Lab account, 6 GPUs: main player seed 1 at full quality (4 GPUs; views due ~2 PM), plus both players' first
-    end-to-end fast freeze frames (1 GPU each; training done 12:58, being scored).
-  - Second allocation: the defender's seeds 1-2 at full quality (views due ~2:05 PM). Main player seeds 2-3, defender
-    seed 3 and one defender hedge are queued for free 4-GPU nodes; more cores free up ~2 PM.
+- **GPU (2:40 PM), all on the second allocation:**
+  - Both players' first end-to-end fast freeze frames are done and fetched.
+  - The first full-quality jobs pinned 4DAnyone's views to one GPU, leaving the job's other GPUs idle for ~70 min,
+    so HiPerGator's idle-GPU rule cancelled three of them. Fixed: the views now run on all of a job's GPUs (4DAnyone's
+    own multi-GPU path, ~2.7x faster), and the lost seeds were resubmitted.
+  - Full quality, 4 seeds per player: 3 running, the rest queued behind the allocation's memory cap. Requests were cut to
+    what the jobs really use, so more start as memory frees.
   - Other players: 5 fast 3D builds, 3 mask preps and 2 full-body builds, queued behind the two main players.
 - **Build:** interfaces, sound, harness, stand-in, the QA runner, core, look and assembly are merged on `court-side`.
   Video + hand-off is finishing its review fixes; the integrator merges it once the review is clean.
