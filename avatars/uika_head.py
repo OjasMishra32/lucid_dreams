@@ -372,6 +372,7 @@ STANDOFF_M = {"hair": 0.045, "back": 0.030, "other": 0.030}  # furthest from its
 # keeps the person's shape in offsets from the mean FLAME, so a face Gaussian may sit 2 cm off; a collar 4 cm)
 HAIR_REGIONS = ("scalp", "forehead", "left_ear", "right_ear")
 NECK_REGIONS = ("neck", "boundary")
+SMOOTH_K = 256  # seen Gaussians averaged for a repainted colour (smooth across the back of the head)
 CHIN_GAP_M = 0.03  # the seam sits this far under the chin (UIKA's face and lips): the whole jaw and upper neck are
 # UIKA's, and the cross-fade to the body's neck falls low on the neck, by the collar
 
@@ -409,7 +410,11 @@ def edit_uika(g: Gaussians, alpha: np.ndarray, near: np.ndarray, dist: np.ndarra
     sat = rgb.max(1) - rgb.min(1)
     low = neck | (hair & (v[:, 1] < -0.03))
     eyes = np.isin(reg, ("left_eyeball", "right_eyeball", "eye_region", "left_eye_region", "right_eye_region"))
-    shirt = (reg == "boundary") | (low & (((lum > 0.7) & (sat < 0.2)) | ((lum > 0.45) & (sat < 0.12)))) \
+    # clothes on the neck (the front, and the back under the hairline): a pale shirt or a dark jacket collar is greyer
+    # than skin (skin saturation ~0.3-0.5); behind the hairline dark grey is hair, so it stays
+    neck_skin_zone = neck & ((v[:, 2] > BACK_Z[1]) | (above_nape < 0.5))
+    cloth = neck_skin_zone & (((lum > 0.55) & (sat < 0.25)) | ((lum < 0.3) & (sat < 0.1)))
+    shirt = (reg == "boundary") | cloth | (low & (((lum > 0.7) & (sat < 0.2)) | ((lum > 0.45) & (sat < 0.12)))) \
         | (~eyes & (lum > 0.85) & (sat < 0.12))  # and white specks, but the eyes' whites stay
     limit = np.where(hair | neck, STANDOFF_M["hair"], STANDOFF_M["other"])  # a thick neck sits well off FLAME's
     limit = np.where((back_w > 0.5) | (skin_w > 0.5), STANDOFF_M["back"], limit)  # no tuft, no hanging bits behind
@@ -422,8 +427,10 @@ def edit_uika(g: Gaussians, alpha: np.ndarray, near: np.ndarray, dist: np.ndarra
         paint = keep & (weight > 0)
         if source.sum() < k or not paint.any():
             continue
-        _, i = cKDTree(g.xyz[source]).query(g.xyz[paint], k=k)
-        base = rgb[source][i].mean(1)
+        kb = min(int(source.sum()), SMOOTH_K)  # many neighbours: no seam where the nearest side flips
+        d, i = cKDTree(g.xyz[source]).query(g.xyz[paint], k=kb)
+        w_ = 1 / (d + 0.01)
+        base = (rgb[source][i] * w_[..., None]).sum(1) / w_.sum(1, keepdims=True)
         _, j = cKDTree(g.xyz[paint]).query(g.xyz[paint], k=k)
         detail = np.clip(rgb[paint] - rgb[paint][j].mean(1), -0.06, 0.06)  # UIKA's strands, not its bright lines
         w = weight[paint, None]
@@ -468,7 +475,7 @@ def scalp_shell(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, seam_lo: 
     if len(p) == 0 or len(hair_xyz) < k:
         return Gaussians(np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 0)), np.zeros(0), np.zeros((0, 3)),
                          np.zeros((0, 4)))
-    _, i = cKDTree(hair_xyz).query(p, k=k)
+    _, i = cKDTree(hair_xyz).query(p, k=min(len(hair_xyz), SMOOTH_K))
     noise = np.random.default_rng(seed).normal(0.0, 1.0, len(p))
     noise = noise[cKDTree(p).query(p, k=8)[1]].mean(1)  # mottled over a few mm, not per Gaussian
     jitter = 1.0 + 0.25 * noise[:, None]  # hair isn't one flat colour
