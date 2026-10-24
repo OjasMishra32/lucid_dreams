@@ -1118,6 +1118,91 @@ def cmd_judge(a) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- rebody: a fitted head on a newly cleaned body
+
+def cmd_rebody(a) -> int:
+    """The head a distill fitted (the bundle `--head`, its head range from uika_head.json) on another cleaning of the
+    same body (`--body`: the same LHM++ person, same skeleton and seam), cut at the same seam: the face stays exactly
+    as fitted (identity unchanged), the clothes get the new pass. Writes `--out` (a copy of `--head` with avatar.ply,
+    skin.bin, cleanup.json and uika_head.json replaced); then run finish on it."""
+    from lucid_avatars.skinning import SKELETON_FILE, read_skin_bin, write_skin_bin
+
+    head_b, body_b, out = a.head, a.body, a.out
+    report = json.loads((head_b / REPORT_FILE).read_text())
+    first = int(report["head"]["first"])
+    hd, bd = json.loads((head_b / "dream.json").read_text()), json.loads((body_b / "dream.json").read_text())
+    rest_h = np.asarray(json.loads((head_b / hd["avatar"].get("skeleton", SKELETON_FILE)).read_text())["rest"])
+    rest_b = np.asarray(json.loads((body_b / bd["avatar"].get("skeleton", SKELETON_FILE)).read_text())["rest"])
+    if np.abs(rest_h - rest_b).max() > 1e-4:
+        print("FAILED the body's skeleton isn't the head bundle's: not the same person's body")
+        return 1
+    g_h = read_ply(head_b / hd["avatar"]["file"])
+    i_h, q_h = read_skin_bin(head_b / hd["avatar"]["skin"])
+    body = read_ply(body_b / bd["avatar"]["file"])
+    idx, q = read_skin_bin(body_b / bd["avatar"]["skin"])
+    seam_y = float(report["seam"]["y"])
+    body_k, keep_b, _ = D.cut_body(body, idx, q, seam_y)
+    head = Gaussians(xyz=g_h.xyz[first:], f_dc=g_h.f_dc[first:], f_rest=g_h.f_rest[first:], opacity=g_h.opacity[first:],
+                     scale=g_h.scale[first:], rotation=g_h.rotation[first:])
+    h_idx, h_q = i_h[first:], q_h[first:]
+    lonely = 0
+    if a.head_lonely:  # a sliver of nape skin or a hair strand floating free of the head goes; the face is dense
+        from scipy.spatial import cKDTree
+
+        d9 = cKDTree(head.xyz).query(head.xyz, k=9)[0][:, 1:].mean(1)
+        keep_h = d9 < a.head_lonely
+        lonely = int((~keep_h).sum())
+        head = Gaussians(xyz=head.xyz[keep_h], f_dc=head.f_dc[keep_h], f_rest=head.f_rest[keep_h],
+                         opacity=head.opacity[keep_h], scale=head.scale[keep_h], rotation=head.rotation[keep_h])
+        h_idx, h_q = h_idx[keep_h], h_q[keep_h]
+    trimmed = dropped_hair = 0
+    if a.trim_side_hair is not None:  # a lock hanging down the side of the neck below the ear: neck skin, or gone
+        from scipy.spatial import cKDTree
+
+        jaw_y, head_x = float(rest_h[22, 1]), float(rest_h[15, 0])
+        rgb = np.clip(head.f_dc * SH_C0 + 0.5, 0, 1)
+        lum, sat = rgb @ np.array([0.299, 0.587, 0.114]), rgb.max(1) - rgb.min(1)
+        x, y = head.xyz[:, 0], head.xyz[:, 1]
+        lock = (lum < 0.28) & (y < jaw_y - a.trim_side_hair) & (np.abs(x - head_x) > 0.04)
+        skin = (lum > 0.3) & (sat > 0.1) & (y < jaw_y)
+        if lock.any() and skin.sum() > 50:
+            d, i = cKDTree(head.xyz[skin]).query(head.xyz[lock], k=8)
+            near = d[:, 0] < 0.008
+            ids = np.flatnonzero(lock)
+            rgb[ids[near]] = np.median(rgb[skin][i[near]], axis=1)
+            f_dc = (rgb - 0.5) / SH_C0
+            keep_h = np.ones(len(head.xyz), dtype=bool)
+            keep_h[ids[~near]] = False
+            trimmed, dropped_hair = int(near.sum()), int((~near).sum())
+            head = Gaussians(xyz=head.xyz[keep_h], f_dc=f_dc[keep_h], f_rest=head.f_rest[keep_h],
+                             opacity=head.opacity[keep_h], scale=head.scale[keep_h], rotation=head.rotation[keep_h])
+            h_idx, h_q = h_idx[keep_h], h_q[keep_h]
+    if out.resolve() != head_b.resolve():
+        if out.exists():
+            if not (out / REPORT_FILE).is_file():
+                print(f"REFUSED {out} exists and wasn't written by uika_head.py")
+                return 2
+            shutil.rmtree(out)
+        shutil.copytree(head_b, out, ignore=shutil.ignore_patterns(*_NOT_COPIED[:-1]))  # keeps uika_head.json
+    av = hd["avatar"]
+    write_ply(out / av["file"], D.merge_gaussians(body_k, head))
+    write_skin_bin(out / av["skin"], np.concatenate([idx[keep_b], h_idx]), np.concatenate([q[keep_b], h_q]))
+    report["head"].update(first=int(keep_b.sum()), bodyKept=int(keep_b.sum()), bodyDropped=int((~keep_b).sum()),
+                          gaussians=len(head))
+    report["rebody"] = {"body": str(body_b), "headFrom": str(head_b), "headLonelyDropped": lonely,
+                        "sideHairToSkin": trimmed, "sideHairDropped": dropped_hair, "trimSideHairM": a.trim_side_hair}
+    if (body_b / "cleanup.json").is_file():
+        shutil.copy(body_b / "cleanup.json", out / "cleanup.json")
+        report["bodyCleanup"] = json.loads((body_b / "cleanup.json").read_text())
+    (out / REPORT_FILE).write_text(json.dumps(report, indent=2) + "\n")
+    dream = json.loads((out / "dream.json").read_text())
+    dream.update(preview=None, thumb=None)  # finish renders them anew
+    (out / "dream.json").write_text(json.dumps(dream, indent=2) + "\n")
+    print(f"[rebody] {out}: {int(keep_b.sum())} body Gaussians (of {len(body)}) + the {len(head)} fitted head ones")
+    print("UIKA_REBODY_OK")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1158,6 +1243,13 @@ def main() -> int:
     d.add_argument("--max-head", type=int, default=350_000)
     d.add_argument("--seed", type=int, default=0)
     d.add_argument("--device", default="cuda")
+    r = sub.add_parser("rebody", help="a fitted head on a newly cleaned body of the same person")
+    r.add_argument("--head", type=Path, required=True, help="a bundle this step wrote (its head is kept as fitted)")
+    r.add_argument("--body", type=Path, required=True, help="the same person's body, cleaned anew")
+    r.add_argument("--out", type=Path, required=True)
+    r.add_argument("--head-lonely", type=float, default=0.0, help="drop head Gaussians whose 8 nearest average further (m)")
+    r.add_argument("--trim-side-hair", type=float, default=None,
+                   help="hair at the sides of the neck more than this (m) below the jaw joint becomes neck skin (or goes, if it hangs free)")
     f = sub.add_parser("finish", help="after lhmpp_cleanup.py: posed check, preview, thumb, validate")
     f.add_argument("bundle", type=Path)
     j = sub.add_parser("judge", help="portraits old vs new, identity, sharpness")
@@ -1170,7 +1262,8 @@ def main() -> int:
     j.add_argument("--insightface-root", type=Path, default=Path.home() / ".insightface")
     j.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
-    return {"teacher": cmd_teacher, "distill": cmd_distill, "finish": cmd_finish, "judge": cmd_judge}[a.cmd](a)
+    return {"teacher": cmd_teacher, "distill": cmd_distill, "rebody": cmd_rebody, "finish": cmd_finish,
+            "judge": cmd_judge}[a.cmd](a)
 
 
 if __name__ == "__main__":

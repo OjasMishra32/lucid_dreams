@@ -28,6 +28,24 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
    the large-scale brightness of each part's main fabric (the jacket, the trousers) by F; --legs-lum L darkens the
    trousers to luminance L (dark trousers where LHM++ guessed light, mottled jeans), and --legs-solid A makes them at
    least A opaque (LHM++ leaves hips half see-through where hands sat in pockets).
+8. Solid, crisp clothes: --drop-faint T drops faint large Gaussians on clothes (the smoke round a silhouette and
+   under a seated person), --cloth-solid A makes the rest at least A opaque, --fill-cloth F widens each along the
+   surface to F times its spacing (no see-through patches, no holes). --reskin-hips: the seat and the backs of the
+   thighs follow the thighs (SMPL-X's own weights) instead of hanging from the pelvis when he sits. --feet-lum L: one
+   dark leather for the shoes; --cloth-hue F: one colour for each fabric.
+9. Streaks and floaters: --light-streaks D gives a Gaussian D lighter than its 16 neighbours their colour,
+   --no-needles R caps the longest axis at R times the middle one, --back-smear D sets how much lighter than the
+   jacket back's dark half a smear is (0.15 by default), --skin-consistent gives a Gaussian whose joint disagrees with
+   70% of its neighbours their weights (no sliver left behind when he moves), --drop-lonely M drops clothes
+   Gaussians whose 8 nearest average further than M.
+10. --shirt-clean tie|open: the shirt between the lapels one white, grey blotches gone; with tie, the tie one dark
+   cloth (widths measured per centimetre of height from the colours). --relight-legs F: the trousers lit by a soft key
+   light through SMPL-X's normals, so knees and shins have shape when he sits.
+11. --rebuild-hands N: fresh hands, N flat opaque discs per hand on SMPL-X's hand surface, skinned as SMPL-X, shaded
+   as a hand (darker between the fingers and in the joint creases, nails, lighter palms, a faint mottle), toned to
+   --hand-rgb (the face's skin) when given.
+12. --keep-colours: the geometry and solidity passes only; a white kit keeps the photos' colours for
+   lhmpp_avatar.py whites.
 """
 
 from __future__ import annotations
@@ -35,6 +53,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -92,6 +111,132 @@ def even_brightness(xyz: np.ndarray, rgb: np.ndarray, part: np.ndarray, f: float
     return out, len(fab)
 
 
+def face_normals_at(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Unit vertex normals of a mesh (area-weighted face normals; SMPL-X's winding points them outward)."""
+    tri = verts[faces]
+    fn = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    vn = np.zeros_like(verts)
+    for k in range(3):
+        np.add.at(vn, faces[:, k], fn)
+    return vn / np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
+
+
+def disc_quats(normals: np.ndarray) -> np.ndarray:
+    """[w, x, y, z] rotations that turn +z onto each unit normal (a flat Gaussian lying on the surface)."""
+    n = np.asarray(normals, dtype=np.float64)
+    q = np.stack([1 + n[:, 2], -n[:, 1], n[:, 0], np.zeros(len(n))], 1)
+    q[n[:, 2] < -0.999] = [0.0, 1.0, 0.0, 0.0]
+    return q / np.linalg.norm(q, axis=1, keepdims=True)
+
+
+def hand_shading(p: np.ndarray, n: np.ndarray, hand_v: np.ndarray, joints: np.ndarray, side: str,
+                 seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """What makes a hand read as a hand at arm's length, measured in the rest pose (palms down, fingers straight):
+    (shade multiplier, nail mask, palm mask) per surface point p with unit normal n. Shade darkens where the hand
+    hides from the light (a finger's side next to the next finger, the webbing between them: the share of the hand's
+    own vertices within 12 mm above the point's tangent plane), along a thin crease across each finger at every
+    joint (knuckles on the back, deeper lines on the palm), and carries a faint 2-5 mm skin mottle. Nails are the
+    outer half of each fingertip's back; the palm is everything facing down."""
+    m = len(p)
+    occ = np.zeros(m)
+    for k, nb in enumerate(cKDTree(hand_v).query_ball_point(p, 0.012)):
+        if nb:
+            occ[k] = np.mean((hand_v[nb] - p[k]) @ n[k] > 0.0015)
+    shade = 1 - 0.42 * np.clip(occ / 0.35, 0, 1) ** 1.2
+
+    dorsal, palm_n = n[:, 1], -n[:, 1]  # T-pose, palms down: the back of the hand faces +Y
+    crease = np.zeros(m)
+    nail = np.zeros(m, dtype=bool)
+    wrist = joints[J[f"{side}_wrist"]]
+    fingers = ("index", "middle", "pinky", "ring", "thumb")
+    chains = []
+    for f in fingers:
+        c = [wrist] + [joints[J[f"{side}_{f}{k}"]] for k in (1, 2, 3)]
+        tip = c[3] - c[2]
+        chains.append(c + [c[3] + 0.025 * tip / np.linalg.norm(tip)])
+
+    def seg_dist(a, b):
+        ab = b - a
+        t = np.clip(((p - a) @ ab) / (ab @ ab), 0, 1)
+        return np.linalg.norm(p - (a + t[:, None] * ab), axis=1)
+
+    owner = np.argmin(np.stack([np.min([seg_dist(c[k], c[k + 1]) for k in range(4)], axis=0) for c in chains]), 0)
+    for fi, (f, chain) in enumerate(zip(fingers, chains)):
+        mine = owner == fi
+        for k in (1, 2, 3):  # a crease across the finger at each joint (the knuckle, the two finger joints)
+            axis = chain[k] - chain[k - 1]
+            axis /= np.linalg.norm(axis)
+            along = (p - chain[k]) @ axis
+            crease = np.maximum(crease, mine * np.exp(-((along / 0.0011) ** 2)))
+        # the nail: past the last joint, the outer part of the fingertip, on its back
+        tip_axis = chain[3] - chain[2]
+        tip_axis /= np.linalg.norm(tip_axis)
+        along = (p - chain[3]) @ tip_axis
+        tipm = mine & (along > 0)
+        reach = np.percentile(along[tipm], 99) if tipm.sum() > 8 else 0.02
+        up = n @ (np.array([0.0, 1.0, 0.0]) if f != "thumb" else np.array([0.0, 0.7, 0.7]) / math.sqrt(0.98))
+        nail |= tipm & (along > 0.35 * reach) & (along < 0.97 * reach) & (up > 0.55)
+    depth = np.where(dorsal > 0.3, 0.13, np.where(palm_n > 0.3, 0.24, 0.17))
+    shade *= 1 - depth * crease
+
+    rng = np.random.default_rng(seed)
+    mottle = np.zeros(m)
+    for _ in range(8):
+        k = rng.normal(size=3)
+        k *= 2 * math.pi / (rng.uniform(0.002, 0.005) * np.linalg.norm(k))
+        mottle += np.cos(p @ k + rng.uniform(0, 2 * math.pi))
+    shade *= 1 + 0.035 * mottle / math.sqrt(8 / 2)
+    return shade, nail, palm_n > 0.35
+
+
+def hand_gaussians(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, joints: np.ndarray, skin_xyz: np.ndarray,
+                   skin_rgb: np.ndarray, per_hand: int, seed: int = 0, tone: np.ndarray | None = None) -> dict:
+    """Fresh hands on the SMPL-X hand surface (both, from just behind the wrist to the fingertips): flat opaque
+    discs on the skin, coloured from the nearest Gaussians of the person's own skin (skin_xyz/skin_rgb, k = 12),
+    moved to `tone` (the face's skin, so hands and face match) when given, then shaded as a hand (hand_shading:
+    darker between the fingers and in the joint creases, lighter nails and palm, a faint mottle), skinned exactly as
+    SMPL-X (its face's three vertices' weights by barycentric blend). The discs are small (0.7 of their spacing, a
+    second layer 1.15 of it 1.2 mm in, so nothing shows through), so neighbouring fingers stay apart.
+    Returns xyz, rgb, log scale, rotation, skin idx/q."""
+    from lucid_avatars.head_distill_core import face_skin, sample_surface
+
+    dom = np.argmax(lbs, axis=1)
+    out = {k: [] for k in ("xyz", "rgb", "scale", "rot", "idx", "q")}
+    for side in ("left", "right"):
+        wrist, elbow = joints[J[f"{side}_wrist"]], joints[J[f"{side}_elbow"]]
+        along = (wrist - elbow) / np.linalg.norm(wrist - elbow)
+        mine = [J[f"{side}_wrist"]] + [j for j in range(25, 55) if (j < 40) == (side == "left")]
+        ok_v = np.isin(dom, mine) & (((verts - wrist) @ along) > -0.015)
+        fids = np.flatnonzero(ok_v[faces].all(axis=1))
+        if len(fids) == 0:
+            continue
+        fid, bary, p, n = sample_surface(verts, faces, fids, per_hand, seed=seed)
+        tri = verts[faces[fids]]
+        area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1).sum()
+        spacing = math.sqrt(area / per_hand)
+        d, i = cKDTree(skin_xyz).query(p, k=min(12, len(skin_xyz)))
+        w = 1 / (d + 0.003)
+        rgb = (skin_rgb[i] * w[..., None]).sum(1) / w.sum(1, keepdims=True)
+        if tone is not None:
+            rgb = rgb * (np.asarray(tone, dtype=np.float64) / np.maximum(np.median(rgb, axis=0), 1e-3))
+        shade, nail, palm = hand_shading(p, n, verts[ok_v], joints, side, seed=seed)
+        lum = (rgb @ LUM)[:, None]
+        rgb[palm] = lum[palm] + 0.8 * (rgb[palm] - lum[palm])  # palms: less pigment
+        rgb[palm] *= 1.07
+        nail_rgb = np.clip(lum[nail] * np.array([1.18, 1.0, 0.97]) + 0.12, 0, 1)  # pale, a little pink
+        rgb[nail] = 0.55 * nail_rgb + 0.45 * rgb[nail]
+        rgb = rgb * shade[:, None]
+        h_idx, h_q = face_skin(fid, bary, faces, lbs)
+        for depth, width, dim in ((0.0003, 0.7, 1.0), (-0.0012, 1.15, 0.9)):
+            out["xyz"].append(p + depth * n)
+            out["rgb"].append(np.clip(rgb * dim, 0, 1))
+            out["scale"].append(np.log(np.tile([width * spacing, width * spacing, 0.0003], (len(p), 1))))
+            out["rot"].append(disc_quats(n))
+            out["idx"].append(h_idx)
+            out["q"].append(h_q)
+    return {k: np.concatenate(v) for k, v in out.items() if v}
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("bundle", type=Path)
@@ -110,6 +255,23 @@ def main(argv=None) -> None:
     p.add_argument("--even-cloth", type=float, default=0.0, help="share of the jacket's and trousers' large-scale brightness patches evened out")
     p.add_argument("--legs-lum", type=float, default=None, help="the trousers' luminance (dark trousers for light, mottled jeans)")
     p.add_argument("--legs-solid", type=float, default=None, help="with --legs-lum: the trousers' least opacity (no see-through hips)")
+    p.add_argument("--feet-lum", type=float, default=None, help="the shoes' luminance (dark shoes without grey patches)")
+    p.add_argument("--cloth-hue", type=float, default=0.0, help="share of each fabric's colour pulled to its median (one jacket colour)")
+    p.add_argument("--reskin-hips", action="store_true", help="hip and seat Gaussians skinned from the nearest SMPL-X vertices (no smoke under a seated person)")
+    p.add_argument("--drop-faint", type=float, default=None, help="clothes: drop Gaussians fainter than this and over 5 mm (smoky edges)")
+    p.add_argument("--cloth-solid", type=float, default=None, help="clothes: the least opacity of the rest (no see-through patches)")
+    p.add_argument("--fill-cloth", type=float, default=None, help="clothes: each Gaussian at least this times its spacing across the surface (no holes)")
+    p.add_argument("--rebuild-hands", type=int, default=0, help="fresh hands on the SMPL-X surface, this many Gaussians per hand (0 = keep LHM++'s)")
+    p.add_argument("--no-needles", type=float, default=None, help="clothes: the longest axis at most this times the middle one (no streaks)")
+    p.add_argument("--light-streaks", type=float, default=None, help="clothes: a Gaussian this much lighter than its 16 neighbours' median takes it")
+    p.add_argument("--relight-legs", type=float, default=None, help="the trousers shaded by a soft key light from above and in front, this strong (knees, shins)")
+    p.add_argument("--skin-consistent", action="store_true", help="a Gaussian whose joint differs from its neighbours' takes their weights (no floaters when posed)")
+    p.add_argument("--drop-lonely", type=float, default=None, help="drop clothes Gaussians whose 8 nearest are on average further than this (m)")
+    p.add_argument("--hand-rgb", type=str, default=None, help="with --rebuild-hands: the hands' skin colour R,G,B or R:G:B (0-1), e.g. the face's, so they match")
+    p.add_argument("--keep-colours", action="store_true", help="skip the suit-minded colour passes (specks, sleeve logos, back smears, trouser blobs): a white kit keeps its colours for lhmpp_avatar.py whites")
+    p.add_argument("--back-smear", type=float, default=0.15, help="a Gaussian on the jacket's back this much lighter than its dark half's median is a smear")
+    p.add_argument("--shirt-clean", choices=["tie", "open"], default=None,
+                   help="the shirt between the lapels one clean white (grey blotches go) and, with tie, the tie one dark cloth")
     a = p.parse_args(argv)
 
     root = a.bundle
@@ -138,9 +300,23 @@ def main(argv=None) -> None:
     idx, q = idx.copy(), q.copy()
     idx[hands], q[hands] = h_idx, h_q
 
+    # 1a. --reskin-hips: LHM++'s skinning grid gives the seat and the backs of the thighs to the pelvis, so when he sits
+    # they stay behind and hang under him as smoke. Below the hip joints they take the nearest SMPL-X vertices' weights
+    # (4, by distance), so they go where the thigh goes; the crease rule below then gives each one a single joint.
+    HIPS = [J["pelvis"], J["left_hip"], J["right_hip"], J["spine1"]]
+    reskinned = hands & False
+    if a.reskin_hips:
+        hip_y = (joints[J["left_hip"], 1] + joints[J["right_hip"], 1]) / 2
+        reskinned = np.isin(dom, HIPS) & (g.xyz[:, 1] < hip_y - 0.02) & ~hands
+        lower = np.flatnonzero(np.isin(np.argmax(lbs, 1), HIPS + [J["left_knee"], J["right_knee"]]))
+        if reskinned.any() and len(lower) > 16:
+            from lucid_avatars.skinning import blend_vertex_weights, quantize_top4
+
+            d_v, i_v = cKDTree(verts[lower]).query(g.xyz[reskinned], k=4)
+            idx[reskinned], q[reskinned] = quantize_top4(blend_vertex_weights(np.asarray(lbs)[lower], i_v, d_v))
+
     # 1b. the hip crease: Gaussians shared between the torso and a thigh stretch into streaks when he sits (90 degrees
     # of hip flexion pulls them both ways). Each one follows only its strongest joint, and can't be a needle.
-    HIPS = [J["pelvis"], J["left_hip"], J["right_hip"], J["spine1"]]
     w = q.astype(np.float32) / 255.0
     top = w.max(1)
     shared = np.isin(idx, HIPS).sum(1) >= 2
@@ -180,7 +356,7 @@ def main(argv=None) -> None:
     if back.sum() > 64:
         lum = out @ np.array([0.299, 0.587, 0.114])
         dark = back & (lum < np.percentile(lum[back], 50))
-        smear = back & (lum > np.percentile(lum[back], 50) + 0.15)
+        smear = back & (lum > np.percentile(lum[back], 50) + a.back_smear)
         out[smear] = np.median(out[dark], axis=0)
 
     # 2c. trousers: a light blob on a thigh or the side of the hips takes the cloth colour (the shirt runs down the middle)
@@ -193,6 +369,9 @@ def main(argv=None) -> None:
         blob = legs & (lum > mid + 0.25)
         trousers = np.median(out[legs & (lum <= mid)], axis=0)
         out[blob] = trousers * (0.9 + 0.2 * np.clip(lum[blob, None] - mid, 0, 1))
+
+    if a.keep_colours:  # a kit the suit-minded colour passes would spoil (tennis whites): the photos' colours stay
+        out = rgb.copy()
 
     # 2d. --legs-lum: the trousers become one dark cloth (their median colour, a quarter of its hue kept, at luminance
     # L) with 30% of their own shading; a light shirt tail over the belt, in the front middle, stays
@@ -213,6 +392,32 @@ def main(argv=None) -> None:
     if solid.any():  # LHM++ leaves the hips half see-through where hands sat in pockets
         floor = math.log(a.legs_solid / (1 - a.legs_solid))
         opacity[solid] = np.maximum(opacity[solid], floor)
+
+    # 2d'. --feet-lum: the shoes one dark leather (grey patches were highlights and guesses), 30% of their shading kept
+    FEET = [J["left_ankle"], J["right_ankle"], J["left_foot"], J["right_foot"]]
+    shoes = np.isin(dom, FEET) & ~hands
+    if a.feet_lum is not None and shoes.sum() > 64:
+        lum = out[shoes] @ LUM
+        base = np.median(out[shoes], axis=0)
+        tone = float(base @ LUM) + 0.25 * (base - float(base @ LUM))
+        tone = tone * (a.feet_lum / max(float(tone @ LUM), 1e-3))
+        shade = np.clip(1 + 0.3 * (lum / max(float(np.median(lum)), 1e-3) - 1), 0.6, 1.4)
+        out[shoes] = np.clip(tone[None] * shade[:, None], 0, 1)
+
+    # 2d''. --cloth-hue F: each fabric (the jacket, the trousers) one colour: the main fabric's chroma pulled F of the way
+    # to its median (a navy jacket whose back came out brown); brightness, and other colours on the part, stay
+    hued = 0
+    if a.cloth_hue > 0:
+        for part in (np.isin(dom, JACKET) & ~hands, trousers):
+            ids = np.flatnonzero(part)
+            if len(ids) < 64:
+                continue
+            fab = ids[np.linalg.norm(out[ids] - np.median(out[ids], axis=0), axis=1) < 0.2]
+            lum = (out[fab] @ LUM)[:, None]
+            chroma = out[fab] - lum
+            target = np.median(chroma, axis=0)
+            out[fab] = np.clip(lum + (1 - a.cloth_hue) * chroma + a.cloth_hue * target, 0, 1)
+            hued += len(fab)
 
     # 2e. one fabric: the jacket's and trousers' large-scale light and dark patches evened, then the edge-preserving
     # filter over every cloth Gaussian (not the head, not the hands)
@@ -271,16 +476,209 @@ def main(argv=None) -> None:
         rotation[flat] = Rotation.from_matrix(axes).as_quat()[:, [3, 0, 1, 2]]
         scale[flat] = 0.5 * np.log(np.maximum(var, 0.0008**2))
 
-    write_ply(ply, replace(g, xyz=xyz, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale, rotation=rotation,
-                           opacity=opacity))
-    write_skin_bin(skin, idx, q)
+    # 8. solid, crisp clothes (not the head, neck or hands): faint large Gaussians are the smoke round a silhouette and
+    # under a seated person, so they go (--drop-faint); the rest are at least --cloth-solid opaque, and each is at least
+    # --fill-cloth times its spacing wide along the surface, so no patch is see-through and no hole shows the room
+    keep = np.ones(len(g), dtype=bool)
+    clothes = ~hands & ~head & (dom != J["neck"])
+    alpha = 1 / (1 + np.exp(-opacity))
+    faint = clothes & False
+    if a.drop_faint:
+        faint = clothes & (alpha < a.drop_faint) & (np.exp(scale.max(1)) > 0.005)
+        keep &= ~faint
+    firm = clothes & False
+    if a.cloth_solid:
+        firm = clothes & keep & (alpha > 0.02) & (alpha < a.cloth_solid)
+        opacity[firm] = math.log(a.cloth_solid / (1 - a.cloth_solid))
+    widened = 0
+    if a.fill_cloth:  # inside one colour only: a white shirt Gaussian at a dark lapel's edge stays its size
+        _, nn9 = cKDTree(xyz).query(xyz, k=9)
+        inside = np.linalg.norm(out - np.median(out[nn9], axis=1), axis=1) < 0.12
+        ids = np.flatnonzero(clothes & keep & inside)
+        d_n, _ = cKDTree(xyz[ids]).query(xyz[ids], k=5)
+        want = np.log(np.clip(a.fill_cloth * d_n[:, 1:].mean(1), 1e-4, 0.015))
+        order = np.argsort(scale[ids], axis=1)
+        srt = np.take_along_axis(scale[ids], order, 1)
+        before = srt.copy()
+        srt[:, 1] = np.maximum(srt[:, 1], want)  # the two axes along the surface (flatten left the third across it)
+        srt[:, 2] = np.maximum(srt[:, 2], want)
+        widened = int((srt != before).any(1).sum())
+        s_new = np.empty_like(srt)
+        np.put_along_axis(s_new, order, srt, 1)
+        scale[ids] = s_new
+
+    # 9. streaks: on clothes, a Gaussian much lighter than its neighbours (a white thread of shirt over a lapel, a grey
+    # streak on a dark sleeve) takes their median colour, and none is longer than --no-needles times its middle axis
+    streaks = clothes & False
+    if a.light_streaks:
+        _, nn17 = cKDTree(xyz).query(xyz, k=17)
+        med17 = np.median(out[nn17[:, 1:]], axis=1)
+        streaks = clothes & keep & ((out @ LUM) - (med17 @ LUM) > a.light_streaks)
+        out[streaks] = med17[streaks]
+    needled = 0
+    if a.no_needles:
+        ids = np.flatnonzero(clothes & keep)
+        order = np.argsort(scale[ids], axis=1)
+        srt = np.take_along_axis(scale[ids], order, 1)
+        cap = srt[:, 1] + math.log(a.no_needles)
+        needled = int((srt[:, 2] > cap).sum())
+        srt[:, 2] = np.minimum(srt[:, 2], cap)
+        s_new = np.empty_like(srt)
+        np.put_along_axis(s_new, order, srt, 1)
+        scale[ids] = s_new
+
+    # 9b. --shirt-clean: the shirt between the lapels is one white cloth: LHM++ garbles it into grey blotches (worst
+    # where the photos were black and white). Per 1 cm of height, the light V's half width w(y) and, with a tie, the
+    # dark strip's half width t(y) down its middle are measured from the colours themselves; inside the tie strip
+    # every Gaussian takes the tie's median colour (15% of its own shading kept: no marbling), and between the strip
+    # and the lapels a Gaussian well below the shirt's brightness takes the shirt's colour. The collar and the knot
+    # (the top 6 cm) and skin-coloured Gaussians (an open collar's neck) stay as they are.
+    shirt_n = tie_n = 0
+    if a.shirt_clean:
+        TORSO_F = [J[k] for k in ("pelvis", "spine1", "spine2", "spine3", "neck", "left_collar", "right_collar")]
+        lum = out @ LUM
+        sat = out.max(1) - out.min(1)
+        neck_j, s3 = joints[J["neck"]], joints[J["spine3"]]
+        front = keep & np.isin(dom, TORSO_F) & ~hands & ~head & (xyz[:, 2] > s3[2]) & (xyz[:, 1] < neck_j[1] - 0.06) \
+            & (xyz[:, 1] > joints[J["pelvis"], 1] - 0.02) & (np.abs(xyz[:, 0] - neck_j[0]) < 0.16)
+        light = front & (lum > 0.45) & (sat < 0.2)
+        if light.sum() > 200:
+            cx = float(np.median(xyz[light, 0]))
+            dx = np.abs(xyz[:, 0] - cx)
+            bins = np.floor((xyz[:, 1] - neck_j[1]) / 0.01).astype(int)
+            lo, hi = int(bins[front].min()), int(bins[front].max())
+            w = np.full(hi - lo + 1, np.nan)
+            t = np.full(hi - lo + 1, np.nan)
+            for b in range(lo, hi + 1):
+                lb = light & (bins == b)
+                if lb.sum() >= 10:
+                    w[b - lo] = np.percentile(dx[lb], 95)
+                db = front & (bins == b) & (lum < 0.3) & (dx < 0.06)
+                if a.shirt_clean == "tie" and db.sum() >= 6:
+                    t[b - lo] = np.clip(np.percentile(dx[db], 85), 0.012, 0.045)
+
+            def smooth(v):  # a median over 5 cm, gaps filled from the nearest measured height
+                ok = np.flatnonzero(np.isfinite(v))
+                if len(ok) == 0:
+                    return v
+                v = np.interp(np.arange(len(v)), ok, v[ok])
+                return np.array([np.median(v[max(0, k - 2):k + 3]) for k in range(len(v))])
+
+            w, t = smooth(w), smooth(t)
+            sb = np.clip(bins - lo, 0, hi - lo)
+            in_v = front & (dx < np.nan_to_num(w, nan=0.0)[sb] - 0.006)
+            skin_c = (sat > 0.15) & (lum > 0.3)
+            shirt_c = np.median(out[light], axis=0)
+            if a.shirt_clean == "tie" and np.isfinite(t).any():
+                strip = in_v & (dx < np.nan_to_num(t, nan=0.0)[sb])
+                dark = strip & (lum < 0.3)
+                if dark.sum() > 50:
+                    tie_c = np.median(out[dark], axis=0)
+                    sh = np.clip(1 + 0.15 * (lum[strip] / max(float(tie_c @ LUM), 1e-3) - 1), 0.85, 1.15)
+                    out[strip] = np.clip(tie_c[None] * sh[:, None], 0, 1)
+                    tie_n = int(strip.sum())
+                    in_v &= ~strip
+            blot = in_v & ~skin_c & (lum < float(shirt_c @ LUM) - 0.12)
+            sh = np.clip(1 + 0.1 * (lum[blot] / max(float(shirt_c @ LUM), 1e-3) - 1), 0.9, 1.0)
+            out[blot] = np.clip(shirt_c[None] * sh[:, None], 0, 1)
+            shirt_n = int(blot.sum())
+
+    # 10. trousers with shape: LHM++'s guessed shading was noise, and toning them flattened them, so they are lit
+    # again by a soft key light from above and in front, through SMPL-X's own normals (knees, shins and the tops of
+    # the thighs when he sits)
+    relit = 0
+    if a.relight_legs:
+        faces = np.asarray(np.load(a.smplx, allow_pickle=True)["f"], dtype=np.int64)
+        vn = face_normals_at(verts, faces)
+        legs_l = keep & (np.isin(dom, TROUSERS + [J["left_ankle"], J["right_ankle"]])) & ~hands
+        n_g = vn[cKDTree(verts).query(xyz[legs_l])[1]]
+        key = np.array([0.0, 0.75, 0.66]) / np.linalg.norm([0.0, 0.75, 0.66])
+        shade = (1 - a.relight_legs) + a.relight_legs * (0.55 + 0.6 * np.clip(n_g @ key, 0, 1))
+        out[legs_l] = np.clip(out[legs_l] * shade[:, None], 0, 1)
+        relit = int(legs_l.sum())
+
+    # 11. skinning that agrees with the neighbours: a Gaussian whose strongest joint isn't the one most of its 16
+    # nearest follow (at least 70% of them) takes their average weights, so no sliver stays behind when the arm or the
+    # leg moves; and lonely ones (--drop-lonely) go
+    consistent = 0
+    if a.skin_consistent:
+        body_m = keep & ~hands & ~head
+        bi = np.flatnonzero(body_m)
+        _, nn = cKDTree(xyz[bi]).query(xyz[bi], k=17)
+        dom_now = idx[np.arange(len(idx)), np.argmax(q, 1)].astype(np.int64)
+        nb_dom = dom_now[bi][nn[:, 1:]]
+        maj = np.array([np.bincount(r).argmax() for r in nb_dom])
+        share = (nb_dom == maj[:, None]).mean(1)
+        handish = np.isin(maj, HANDS) | np.isin(dom_now[bi], HANDS)  # sleeves never take the fingers' weights
+        odd = (dom_now[bi] != maj) & (share >= 0.7) & ~handish
+        if odd.any():
+            from lucid_avatars.skinning import quantize_top4
+
+            W = np.zeros((len(bi), 55))
+            np.add.at(W, (np.repeat(np.arange(len(bi)), 4), idx[bi].reshape(-1).astype(np.int64)), q[bi].reshape(-1) / 255.0)
+            avg = W[nn[:, 1:]].mean(1)
+            ni, nq = quantize_top4(avg[odd])
+            idx[bi[odd]], q[bi[odd]] = ni, nq
+            consistent = int(odd.sum())
+    lonely_n = 0
+    if a.drop_lonely:
+        d9, _ = cKDTree(xyz).query(xyz, k=9)
+        lonely = clothes & keep & (d9[:, 1:].mean(1) > a.drop_lonely)
+        keep &= ~lonely
+        lonely_n = int(lonely.sum())
+
+    # 12. --rebuild-hands N: LHM++ sees hands in few photos, so its hands are blurs with no fingers, smeared into the
+    # cuffs. They go (every finger Gaussian and the wrist ones past the wrist) and fresh ones are laid on SMPL-X's hand,
+    # coloured from his own skin there, skinned as SMPL-X: fingers that read as fingers and bend as fingers.
+    new_hands = None
+    if a.rebuild_hands > 0:
+        faces = np.asarray(np.load(a.smplx, allow_pickle=True)["f"], dtype=np.int64)
+        old_hand = np.zeros(len(g), dtype=bool)
+        for side in ("left", "right"):
+            wrist, elbow = joints[J[f"{side}_wrist"]], joints[J[f"{side}_elbow"]]
+            along = (wrist - elbow) / np.linalg.norm(wrist - elbow)
+            fingers = [j for j in range(25, 55) if (j < 40) == (side == "left")]
+            past = ((xyz - wrist) @ along) > 0.0
+            old_hand |= np.isin(dom, fingers) | ((dom == J[f"{side}_wrist"]) & past)
+        lum_h, sat_h = out @ LUM, out.max(1) - out.min(1)
+        skin_like = old_hand & (lum_h > 0.3) & (sat_h > 0.08)
+        if skin_like.sum() < 50:
+            skin_like = old_hand
+        tone = np.array([float(v) for v in re.split(r"[,:/]", a.hand_rgb)]) if a.hand_rgb else None
+        if tone is not None and tone.shape != (3,):
+            raise SystemExit(f"--hand-rgb wants R,G,B (or R:G:B), not {a.hand_rgb}")
+        new_hands = hand_gaussians(verts, faces, np.asarray(lbs), joints, xyz[skin_like], out[skin_like],
+                                   a.rebuild_hands, tone=tone)
+        keep &= ~old_hand
+
+    g_out = replace(g, xyz=xyz, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale, rotation=rotation, opacity=opacity)
+    if not keep.all():
+        g_out = replace(g_out, xyz=g_out.xyz[keep], f_dc=g_out.f_dc[keep], f_rest=g_out.f_rest[keep],
+                        opacity=g_out.opacity[keep], scale=g_out.scale[keep], rotation=g_out.rotation[keep])
+    idx_out, q_out = idx[keep], q[keep]
+    if new_hands:
+        m = len(new_hands["xyz"])
+        g_out = replace(g_out, xyz=np.concatenate([g_out.xyz, new_hands["xyz"]]),
+                        f_dc=np.concatenate([g_out.f_dc, (new_hands["rgb"] - 0.5) / SH_C0]),
+                        f_rest=np.concatenate([g_out.f_rest, np.zeros((m, g_out.f_rest.shape[1]))]),
+                        opacity=np.concatenate([g_out.opacity, np.full(m, math.log(0.97 / 0.03))]),
+                        scale=np.concatenate([g_out.scale, new_hands["scale"]]),
+                        rotation=np.concatenate([g_out.rotation, new_hands["rot"]]))
+        idx_out = np.concatenate([idx_out, new_hands["idx"]])
+        q_out = np.concatenate([q_out, new_hands["q"]])
+    write_ply(ply, g_out)
+    write_skin_bin(skin, idx_out, q_out)
     report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()),
               "trouserBlobs": int(blob.sum()), "backSmears": int(smear.sum()), "hair": int(hair.sum()), "mute": a.mute,
               "deflated": int(slim.sum()) if a.deflate < 1 else 0, "deflate": a.deflate,
               "flattened": int(flat.sum()) if a.flatten < 1 else 0, "flatten": a.flatten,
               "smoothCloth": a.smooth_cloth, "clothSmoothed": int(cloth.sum()) if a.smooth_cloth > 0 else 0,
               "evenCloth": a.even_cloth, "evened": evened, "legsLum": a.legs_lum, "legsToned": int(toned.sum()), "legsSolid": int(solid.sum()),
-              "of": len(g)}
+              "feetLum": a.feet_lum, "clothHue": a.cloth_hue, "hued": hued, "reskinnedHips": int(reskinned.sum()),
+              "droppedFaint": int(faint.sum()), "madeSolid": int(firm.sum()), "widened": widened,
+              "lightStreaks": int(streaks.sum()), "needlesCapped": needled, "legsRelit": relit, "skinConsistent": consistent,
+              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
+              "of": len(g), "kept": int(keep.sum()) + (len(new_hands["xyz"]) if new_hands else 0)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
 
