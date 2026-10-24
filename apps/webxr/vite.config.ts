@@ -42,6 +42,15 @@ function dreams(): Plugin {
         }
         const file = resolve(DREAMS, "." + path);
         if (!file.startsWith(DREAMS) || !existsSync(file) || statSync(file).isDirectory()) return next();
+        // a private dream (a family's: any ian-grandma* id, or "private": true) is never served from here, not even by a
+        // direct link: this server is reachable through a tunnel; the Quest app plays it from the headset's own storage
+        const id = path.split("/").filter(Boolean)[0] ?? "";
+        const meta = join(DREAMS, id, "dream.json");
+        if (/^ian-grandma/.test(id) || (existsSync(meta) && JSON.parse(readFileSync(meta, "utf8")).private === true)) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
         // the headset keeps a copy and asks each time: an unchanged frame costs a 304, not 4 MB again; one a re-export
         // changed comes fresh
         const st = statSync(file);
