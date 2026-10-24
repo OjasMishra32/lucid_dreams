@@ -1,67 +1,69 @@
 # Court Side: live status
 
-**Court Side replaces Ghost Coach for Vishal. Ghost Coach is paused.** Court Side: one short, real NBA moment rebuilt
-at real size in passthrough; pause it, walk around the two players frozen mid-air with the ball, press play. Plan (when
-approved): `docs/plans/court-side.md`. Ojasva's bar (5:25 AM): if a real two-player clip can't pass the still-camera
-and 121-frame rules by noon, ship one player on the court. Updated Sat 5:35 AM.
+**Court Side replaces Ghost Coach for Vishal. Ghost Coach is paused.** One clip only: **Steph's three over LeBron,
+2018 Finals, main side camera** (Vishal, 5:45 AM). The play runs about 5 s in real time, slows smoothly to a freeze
+at Steph's release with LeBron contesting, you walk about 1 m around them, then it plays on or replays; never a cut.
+Ojasva's bar: if two players can't pass by noon, ship one player on the court. Updated Sat 5:50 AM.
 
 ## Asks for Ojasva (newest first)
 
-5. **Approved (Ojasva, Sat 5:50 AM).** Send the command and clip path and it runs on the next free B200 (I'll hold other queued work for it).
-   Original ask, about 7:30-8 AM: One B200 for about 10 minutes: a **Turbo** views run on one player-only
-   portrait clip (121 frames, 1080x1920, cut from the broadcast) to see whether 4DAnyone gives a usable person before
-   any full-quality GPU hours. Exact command and clip path come with it.
-4. **Done.** SAM 3? **No** (gated). Use SAM 2.1 (Apache-2.0, not gated).
-3. **Done.** 4DAnyone needs **exactly 121 frames**, never padded.
-2. **Done.** `apps/webxr/src/court/` + `?mode=court` + the route line in `src/main.ts`: approved, chess hand rules.
+6. **Open.** Confirm the reconstruction plan for this clip: playback frames with `recon.py --cap 100000`, plus the
+   freeze frame trained again on its own at `--cap 250000` (one frame, one GPU, minutes). Both are existing flags
+   (`pipeline/lucid/recon.py:37`, `--end`), so this is a yes/no. Why: 5 s of two players must fit the Quest browser.
+5. **Approved (Ojasva, 5:50 AM).** One B200 for about 10 minutes, about 7:30-8 AM: a **Turbo** views run on one
+   player-only portrait clip (121 frames, 1080x1920) before any full-quality GPU hours. Command and path to follow.
+4. **Done.** SAM 3: no (gated). SAM 2.1 instead.
+3. **Done.** 4DAnyone needs exactly 121 frames, never padded.
+2. **Done.** `apps/webxr/src/court/` + `?mode=court` + the route line in `src/main.ts`: approved.
 1. **Done.** GPUs free from about 5:50 AM; about 16 GB disk lab-wide, one run on disk at a time.
 
 ## Now
 
-Throwaway spikes running outside the repo: a two-person Spark scene at Quest budgets, and the walkable spot in
-desktop emulation (IWER). Waiting for Vishal's clip files to measure them and run the court and player spikes.
+Waiting for the clip file. Spike S5 (walkable spot in desktop emulation) is on its second pass.
 
 ## Verdict so far
 
-**Possible with cuts** (Sat 5:35 AM). Each broken assumption has a route:
-- **Still camera:** a broadcast camera pans and zooms from a fixed spot, so undoing its rotation gives a true still
-  camera (fixed-centre calibration reaches 2.4 px median error in published work). Handheld baseline cameras don't fit.
-- **One person:** one 4DAnyone run per player, on a player-only portrait crop; the auto-crop is skipped for portrait.
-- **121 frames:** about 2 s of real action from a 60 fps broadcast, or a 3-4x slow-motion replay.
-- **Feet in metres:** court lines give the camera; feet on the floor fix takeoff and landing; gravity fixes the jump.
+**Feasible with cuts** (5:50 AM), for exactly this version:
+- **The whole 5 s can be real 3D:** our prep resamples every clip to 25 fps (`pipeline/lucid/prep_clip.py:21,74`),
+  so 121 frames are 4.84 s of real time. No broadcast-video hand-off is needed.
+- **Smooth slow-down:** the last stretch before the release uses denser real frames from the 60 fps source (a speed
+  ramp inside the 121 frames), and the player cross-fades adjacent frames at low speed. Fallback: even 25 fps plus
+  cross-fades.
+- **Cuts:** about 100k Gaussians per player per frame in playback and 250k in the freeze frame; the rest of the game
+  is a still court, stands and flat cut-outs; walkable ring 0.9-1.5 m around the pair. Target: the WebXR viewer.
+- **Biggest risks:** player size in the broadcast (soft faces up close), LeBron's hand overlapping Steph at the freeze,
+  and two full-quality runs inside the day.
 
-Cuts: 3D playback only for those 121 frames; at most 150k Gaussians per player per frame; the rest of the game is a
-still image on a court plane, a stands backdrop and flat cut-outs. Fallbacks: one hero player (noon rule), then a
-single frozen moment.
+## Done
 
-## Done (facts, Sat 5:35 AM)
-
-- Spark 2.4: all splats are sorted together (overlapping players blend right); Quest default budget 500K visible.
-- Quest 3S budget: about 150k splats per player per frame in the browser; 2-3 s of frames resident (0.5-0.7 GB);
-  quad layers give the sharpest backdrop. No fps measured on a headset yet.
-- A full-quality replay took about 2 h end to end tonight; Turbo views take minutes.
-- Clip shortlist (plays only): Giannis vs Ayton block (2021 Finals), LeBron vs Iguodala chase-down (2016 Finals),
-  Kawhi vs Embiid corner shot (2019), Steph vs LeBron three (2018 Finals).
-- Clip measurement tool ready locally (frames, cuts, camera motion, player height, sharpness, overlap, ball, feet).
-- Spikes: two running; none finished.
+- 5:47 AM, **S4 PASS (desktop):** two overlapping 150k-splat people x 60 frames + 225k freeze each + ball + 4K court
+  + 4K backdrop + 3 cut-outs in one Spark scene: 300k visible in playback, 450k frozen, 590 MB resident, 91 MB
+  textures, 10 ms median frame on a laptop. Quest fps not measured yet.
+- 5:45 AM, **S5 partial:** passthrough session, local-floor, anchor, palm menu (pause, play, slow-mo) and inert
+  gestures all work in emulation. The 0.6 m walk was wrong (it passes through the players); retrying at 1.1 m.
+- Spark sorts both players together; the Quest app sorts each person separately (wrong when they overlap).
+- Clip measurement tool ready (frames, cuts, camera motion, player height, sharpness, overlap, ball, feet).
 
 ## Next
 
-1. Measure Vishal's clip files; pick the moment.
-2. Court calibration and player tracking spikes on a real frame; build one player-only clip for ask 5.
-3. Write `docs/plans/court-side.md` (hour-by-hour, job specs, headset design options) once Vishal approves.
+1. Measure the clip; pick the 121 frames (ramp ending at the release).
+2. Court calibration, SAM 2.1 masks for both players (Vishal's PC), the stabilised still camera, one fixed crop per
+   player; then ask 5.
+3. `docs/plans/court-side.md` with the hour-by-hour build and exact job specs, once Vishal approves.
 
 ## Blocked on
 
-- The NBA clip files (Vishal).
+- The clip file (Vishal).
 
 ## Decisions
 
-- Court Side replaces Ghost Coach; Ghost Coach paused (Vishal, 5:15 AM; OK'd by Ojasva 5:25 AM).
-- SAM 2.1 instead of SAM 3; exactly 121 real frames, never padded; `apps/webxr/src/court/` approved; one run on disk at
-  a time (Ojasva, 5:25 AM).
-- Headset controls on the palm-up left-hand menu; the court pinned with a WebXR anchor; no gesture acts by itself
-  (Ojasva, 5:10 AM; Quest app too, Ian 5:28 AM).
+- One clip: Steph's three over LeBron, 2018 Finals, main side camera, 60p; no backups for now (Vishal, 5:45 AM).
+- Target the WebXR viewer; the Quest app is only an ask to Ian (Vishal, 5:45 AM).
+- Each player's crop is a fixed window in the stabilised frame covering their whole 5 s path, never a moving crop
+  (Vishal, 5:45 AM).
+- SAM 2.1 masks run on Vishal's PC first (Vishal, 5:45 AM).
+- Court Side replaces Ghost Coach (Vishal 5:15 AM, OK'd by Ojasva 5:25 AM). SAM 2.1 not SAM 3; 121 real frames;
+  `apps/webxr/src/court/` approved; one run on disk at a time (Ojasva, 5:25 AM).
+- Controls on the palm-up left-hand menu, the court pinned by a WebXR anchor, no gesture acts by itself (Ojasva).
 - Public figures: only what really happened, no voices, labelled "Real footage, rebuilt in 3D. Not affiliated with
   the NBA or the players.", source credited; the clip and its 3D stay out of the public repo and site (Vishal).
-- Spikes run outside the repo and are never merged (Vishal).
