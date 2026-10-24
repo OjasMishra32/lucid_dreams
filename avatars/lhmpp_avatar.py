@@ -7,7 +7,7 @@ photo shapes the same person instead of one photo guessing the rest. We ship onl
 refiner that LHM++ renders through in its paper and demo can't run on a Quest, so every render here is our own gsplat
 render of the bundle's avatar.ply, posed by the bundle's own skin.bin and motion.json.
 
-Four subcommands, three environments (avatars/hpg/lhmpp-avatar.sbatch runs them):
+Subcommands, in three environments (avatars/hpg/lhmpp-avatar.sbatch runs the first three):
   colour  envs/lam + DDColor photos/ -> <work>/colour/: black-and-white photos get natural colour (DDColor, ICCV 2023,
                              Apache-2.0, as lam-head.sbatch does), on the photo, never on the Gaussians; colour
                              photos and crops.json are linked through unchanged
@@ -19,6 +19,8 @@ Four subcommands, three environments (avatars/hpg/lhmpp-avatar.sbatch runs them)
                              preview.mp4, thumb.jpg), checked against LHM++'s own posing; renders of each
   compare envs/lhmpp, GPU    the same renders for any bundles, side by side with the photos, plus an ArcFace
                              identity score of each face against the photos
+  whites  any numpy env      all-white clothes after lhmpp_cleanup.py: the body's colours back from avatar.raw.ply,
+                             then the kit evened to one clean white (see whites())
 
 crops.json (optional, next to the photos): {"<photo>": [x0, y0, x1, y1]} as fractions of the photo, the region that
 holds only this person (no neighbour, no opponent); the matte finds the person inside it.
@@ -745,6 +747,66 @@ def compare(args) -> None:
     print("COMPARE_OK", out / "compare.jpg")
 
 
+def whites(args) -> None:
+    """All-white clothes (a tennis kit) after lhmpp_cleanup.py. Its colour passes assume a dark suit (the sleeve-logo
+    pass takes the darker half of an arm, the skin, for the cloth, and paints white sleeves brown), so the body's colours
+    come back from avatar.raw.ply (the cleanup's geometry, flatten and deflate, stays), then every low-saturation
+    Gaussian on the clothes (torso, hips, upper arms, upper legs, ankles and feet: shirt, shorts, socks, shoes,
+    wristbands) moves toward the kit's median bright white, keeping a little of its own shading. Greys, specks and dark
+    logos on the white go; skin, hair and coloured trim (saturated) stay. A head from a head model (uika_head.json) is
+    left as it is."""
+    from lucid_avatars import skinning as S
+    from lucid_avatars.gaussian_ply import SH_C0, read_ply, write_ply
+    from lucid_avatars.smplx_layout import J
+
+    b = Path(args.bundle)
+    av = json.loads((b / "dream.json").read_text())["avatar"]
+    g = read_ply(b / av["file"])
+    idx, q = S.read_skin_bin(b / av["skin"])
+    dom = idx[np.arange(len(idx)), np.argmax(q, 1)].astype(int)
+    body = ~np.isin(dom, [J["head"], J["jaw"], J["left_eye"], J["right_eye"]])  # a cleaned head keeps its colours
+    uika = b / "uika_head.json"
+    if uika.is_file():
+        body[int(json.loads(uika.read_text())["head"]["first"]):] = False
+    raw = b / "avatar" / "avatar.raw.ply"
+    restored = 0
+    if raw.is_file():
+        r = read_ply(raw)
+        if len(r) == len(g):
+            g.f_dc[body] = r.f_dc[body]
+            if g.f_rest.shape == r.f_rest.shape:
+                g.f_rest[body] = r.f_rest[body]
+            restored = int(body.sum())
+        else:
+            print(f"[whites] {raw.name} has {len(r)} Gaussians, the bundle {len(g)}: colours not restored")
+    cloth_j = [J[n] for n in ("pelvis", "spine1", "spine2", "spine3", "left_collar", "right_collar", "left_shoulder",
+                              "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle", "left_foot",
+                              "right_foot", "left_wrist", "right_wrist")]
+    rgb = np.clip(0.5 + SH_C0 * g.f_dc, 0, 1)
+    lum = rgb @ np.array([0.299, 0.587, 0.114])
+    sat = rgb.max(1) - rgb.min(1)
+    region = body & np.isin(dom, cloth_j)
+    # kit: grey or cool (white cloth in shade takes the sky's blue); skin and gold trim are warm and stay
+    kit = region & ((sat < args.max_sat) | (rgb[:, 2] >= rgb[:, 0] - 0.02))
+    bright = kit & (lum >= np.percentile(lum[kit], 70))
+    target = np.median(rgb[bright], axis=0)
+    # the photos' whites sit in shade and sky light (a cool grey): half way to neutral, lifted to a clean white
+    target = (1 - args.neutral) * target + args.neutral * target.mean()
+    target = np.clip(target * args.white_lum / max(float(target @ np.array([0.299, 0.587, 0.114])), 1e-3), 0, 1)
+    shade = np.clip(lum[kit] / max(float(np.median(lum[bright])), 1e-3), 0.6, 1.08)[:, None]
+    k = args.strength
+    rgb[kit] = (1 - k) * rgb[kit] + k * target * (1 - args.keep_shading + args.keep_shading * shade)
+    g.f_dc[:] = (np.clip(rgb, 0, 1) - 0.5) / SH_C0
+    if g.f_rest.shape[1]:
+        g.f_rest[kit] *= 1 - k
+    write_ply(b / av["file"], g)
+    report = {"restoredFromRaw": restored, "kit": int(kit.sum()), "region": int(region.sum()),
+              "white": np.round(target, 4).tolist(), "strength": k, "keepShading": args.keep_shading, "maxSat": args.max_sat,
+              "whiteLum": args.white_lum, "neutral": args.neutral}
+    (b / "whites.json").write_text(json.dumps(report, indent=1) + "\n")
+    print(f"[whites] {report}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -772,8 +834,15 @@ def main() -> None:
     d.add_argument("--photos-prep", required=True, help="a prep/raw folder: the photos identity is measured against")
     d.add_argument("--out", required=True)
     d.add_argument("--turntable", type=int, default=0, help="also write turntable.mp4 with this many frames, side by side")
+    w = sub.add_parser("whites")
+    w.add_argument("bundle")
+    w.add_argument("--strength", type=float, default=0.8, help="how far the kit moves to its median white")
+    w.add_argument("--keep-shading", type=float, default=0.4, help="share of its own light and shade it keeps")
+    w.add_argument("--white-lum", type=float, default=0.86, help="the kit's white, as luminance (0-1)")
+    w.add_argument("--neutral", type=float, default=0.5, help="share of the photos' colour cast taken out of the white")
+    w.add_argument("--max-sat", type=float, default=0.12, help="saturation (max-min RGB) below which a Gaussian is kit")
     args = p.parse_args()
-    {"colour": colour, "prep": prep, "build": build, "compare": compare}[args.cmd](args)
+    {"colour": colour, "prep": prep, "build": build, "compare": compare, "whites": whites}[args.cmd](args)
 
 
 if __name__ == "__main__":
