@@ -12,7 +12,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT=${SCRIPT:-court-job-submit.sh}; INTO=${INTO:-data/court}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/bin" "$T/code" "$T/$INTO" "$T/models/seedvr2"
+DR=${COURT_DATA_L:-$T}  # where the uploads and results go
+mkdir -p "$T/bin" "$T/code" "$T/$INTO" "$T/models/seedvr2" "$DR/$INTO"
+[ "$DR" = "$T" ] || { mkdir -p "$DR/code/pipeline"; ln -s "$HERE" "$DR/code/pipeline/court"; }
 mkdir -p "$T/code/pipeline/lucid"; ln -s "$HERE" "$T/code/pipeline/court"
 [ "${SEEDVR2:-1}" = 1 ] && echo weights > "$T/models/seedvr2/seedvr2_ema_3b_fp16.safetensors"
 printf 'export L=%s\n' "$T" > "$T/env.sh"  # the jobs' environment, pointing at a stand-in stack
@@ -29,8 +31,8 @@ fi
 IDS=(); ARGS=()
 for a in "$@"; do
   if [ -d "$a" ]; then
-    id=$(basename "$a"); IDS+=("$id"); cp -r "$a" "$T/$INTO/$id"
-    [ "$INTO" = runs ] && mkdir -p "$T/runs/$id/logs"
+    id=$(basename "$a"); IDS+=("$id"); cp -r "$a" "$DR/$INTO/$id"
+    [ "$INTO" = runs ] && mkdir -p "$DR/runs/$id/logs"
   else
     ARGS+=("$a")
   fi

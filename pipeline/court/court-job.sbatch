@@ -22,12 +22,14 @@
 # the run's other real views (real/extras.json, in order, with their weights) train beside A's frame); CAPS (300000);
 # METRICS (1: per variant a recon holding out every 8th view and every unused real view, weight 0); ITERS (15000);
 # FACE (2.0); TAG (results in $L/runs/$ID/$TAG); SEED (4DAnyone's seed; SEED_FLAG, default --seed); MIN_SCRATCH_GB
-# (200); KEEP_MB (900: past that the recon PLYs stay behind).
+# (200); KEEP_MB (900: past that the recon PLYs stay behind). COURT_DATA_L: where data/court/, runs/ and these scripts
+# live when not beside the stack at $L (e.g. /home while /blue is full); the stack is then only read.
 set -euo pipefail
-L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
+L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack (env.sh, repos, envs): only read
+D=${COURT_DATA_L:-$L}; C=$D/code/pipeline/court  # these court scripts, the uploads and the results: COURT_DATA_L moves them
 : "${ID:?ID}"
 [[ $ID =~ ^court-[a-z0-9][a-z0-9-]*$ ]] || { echo "court-job: bad id '$ID'" >&2; exit 1; }
-DATA=$L/data/court/$ID; OUTD=$L/runs/$ID${TAG:+/$TAG}
+DATA=$D/data/court/$ID; OUTD=$D/runs/$ID${TAG:+/$TAG}
 VARIANTS=${VARIANTS:-"raw:default raw:agree"}; REALS=${REALS:-"0 1 2"}; CAPS=${CAPS:-300000}; METRICS=${METRICS:-1}
 [[ -z ${TAG:-} || $TAG =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "court-job: bad tag '$TAG'" >&2; exit 1; }
 SEED_FLAG=${SEED_FLAG:---seed}  # 4DAnyone inference.py's own seed option (default 42 when not given)
@@ -54,6 +56,9 @@ GPUNAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | sed -n 1p)
 FREE_S=$(df -Pk "$S" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
 (( FREE_S >= ${MIN_SCRATCH_GB:-200} )) || { log "scratch $S has $FREE_S GB free, need ${MIN_SCRATCH_GB:-200}"; exit 1; }
 log "scratch $S: $FREE_S GB free"
+CPUS=${SLURM_CPUS_PER_TASK:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 12)}
+RT=$(( CPUS / NG > 0 ? CPUS / NG : 1 ))  # the recons run one per GPU at once
+log "threads: $CPUS for the views, $RT per recon on $NG GPUs"
 source "${ENV_SH:-$L/code/pipeline/hpg/env.sh}"  # 4DAnyone and recon keep reading their model caches from there
 PY=${PY:-python}
 
@@ -100,7 +105,7 @@ copy_back() {  # copy_back <path relative to the run>... : results only, into $O
 }
 log "prep + 4DAnyone views"
 $PY -m lucid.prep_clip input.mp4 --out prepped.mp4 --start-s 0 > prep.json
-( cd "$L/repos/4DAnyone" && CUDA_VISIBLE_DEVICES=0 $PY inference.py --video_path "$S/run/prepped.mp4" \
+( cd "$L/repos/4DAnyone" && export OMP_NUM_THREADS=$CPUS MKL_NUM_THREADS=$CPUS && CUDA_VISIBLE_DEVICES=0 $PY inference.py --video_path "$S/run/prepped.mp4" \
     --output_dir "$S/run/views" --views_per_layer "$VPL" --layer_pitches "$PITCHES" \
     $( ((TURBO)) || echo --enable_turbo=False ) ${SEED:+$SEED_FLAG $SEED} )
 SAMPLES=(views/videos/00.mp4 views/videos/04.mp4 views/videos/08.mp4 views/videos/12.mp4)
@@ -122,7 +127,7 @@ upscale() {
   for ((g = 0; g < NG; g++)); do
     mkdir -p "$S/up-in-$g" "$S/up-out-$g"
     for ((i = g; i < ${#ALL[@]}; i += NG)); do cp "${ALL[i]}" "$S/up-in-$g/"; done
-    ( source "$L/envs/seedvr2/bin/activate" && CUDA_VISIBLE_DEVICES=$g $PY "$L/repos/SeedVR2-cli/inference_cli.py" \
+    ( source "$L/envs/seedvr2/bin/activate" && OMP_NUM_THREADS=$RT CUDA_VISIBLE_DEVICES=$g $PY "$L/repos/SeedVR2-cli/inference_cli.py" \
         "$S/up-in-$g" --output "$S/up-out-$g" --resolution "$RES" --batch_size "$BATCH" \
         --dit_model seedvr2_ema_3b_fp16.safetensors --model_dir "$S/seedvr2" --video_backend ffmpeg \
         --color_correction lab --cache_dit --cache_vae --vae_encode_tiled --vae_decode_tiled ) > "$S/up-$g.log" 2>&1 &
@@ -198,14 +203,14 @@ recon() {  # recon freeze|metrics views:mode:reals cap gpu
   mkdir -p "$out"
   printf '{"K": %s, "FOCAL": %s, "views": "%s", "mode": "%s", "reals": %s, "cap": %s, "seed": "%s", "gpu": "%s"}\n' \
     "$k" "$f" "$res" "$mode" "$r" "$cap" "${SEED:-}" "$GPUNAME" > "$out/used.json"
-  CUDA_VISIBLE_DEVICES=$g $PY -m lucid.recon --result "$res" --start "$k" --end "$((k + 1))" --out "$out" \
+  OMP_NUM_THREADS=$RT MKL_NUM_THREADS=$RT CUDA_VISIBLE_DEVICES=$g $PY -m lucid.recon --result "$res" --start "$k" --end "$((k + 1))" --out "$out" \
     --cap "$cap" --iters-first "${ITERS:-15000}" --sh-degree 1 --aniso 0.05 --peek 0,4,8,12,20 \
     --source-video "$DATA/source-4k.mkv" --source-masks "$DATA/masks" --source-ignore "$DATA/ignore" --source-focal "$f" \
     --source-weight 3.0 --source-every 1 --source-iters 4000 --face-weight "${FACE:-2.0}" \
     $( [ "$kind" = metrics ] && echo --holdout-every 8 ) $( [ "$mode" = agree ] && echo --source-agree ) $xs > "$out.log" 2>&1 \
     || { log "$out FAILED (see $out.log)"; return 1; }
   [ "$kind" = metrics ] && return 0
-  CUDA_VISIBLE_DEVICES=$g $PY -m lucid.export --recon "$out" --out "bundle-${out#recon-}" --id "$ID" --name "Court Side" \
+  OMP_NUM_THREADS=$RT MKL_NUM_THREADS=$RT CUDA_VISIBLE_DEVICES=$g $PY -m lucid.export --recon "$out" --out "bundle-${out#recon-}" --id "$ID" --name "Court Side" \
     --result views --clip prepped.mp4 --fps 25 > "bundle-${out#recon-}.log" 2>&1 \
     || { log "bundle-${out#recon-} FAILED"; return 1; }
   log "$out done"

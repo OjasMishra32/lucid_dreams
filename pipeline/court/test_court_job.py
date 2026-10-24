@@ -168,6 +168,25 @@ class Job(unittest.TestCase):
         self.assertIn("raw-default-r0  300k", subprocess.run(["python3", str(HERE / "court_grid_report.py"), str(out)],
                                               capture_output=True, text=True).stdout)
 
+    def test_data_root_apart_from_the_stack(self):
+        d = self.t / "home" / "court-runs"
+        (d / "data" / "court").mkdir(parents=True)
+        (d / "code" / "pipeline").mkdir(parents=True)
+        (d / "code" / "pipeline" / "court").symlink_to(HERE)
+        self.data.rename(d / "data" / "court" / self.id)
+        before = sorted(str(x) for x in self.L.rglob("*"))
+        p = self.run_job(COURT_DATA_L=str(d), VARIANTS="raw:default", REALS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue((d / "runs" / self.id / "bundle-raw-default-r0-300k" / "dream.json").exists())
+        self.assertEqual(sorted(str(x) for x in self.L.rglob("*")), before)  # the stack's root: nothing written
+        rec = next(c for c in self.recons() if "--source-video" in c["args"])["args"]
+        self.assertEqual(rec[rec.index("--source-video") + 1], str(d / "data" / "court" / self.id / "source-4k.mkv"))
+
+    def test_cpus_set_the_thread_counts(self):
+        p = self.run_job(VARIANTS="raw:default", REALS="0", SLURM_CPUS_PER_TASK="8")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("threads: 8 for the views, 4 per recon on 2 GPUs", p.stdout)
+
     def test_winner_caps_without_upscale(self):
         p = self.run_job(VARIANTS="raw:default", CAPS="250000 200000", METRICS="0")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -352,6 +371,18 @@ class Submit(unittest.TestCase):
         rc, out = dryrun(a, STACK="noagree")
         self.assertIn("lacks --source-agree", out)
 
+    def test_data_root_apart_from_the_stack(self):
+        d = Path(self.tmp.name) / "home" / "court-runs"
+        rc, out = dryrun(make_data(self.root, "court-main-s2"), COURT_DATA_L=str(d), CPUS="8", NO_PYTHON="1")
+        self.assertEqual(rc, 0, out)
+        c = calls(out)
+        self.assertEqual(len(c), 1, out)
+        self.assertTrue(c[0].endswith(f"{d}/code/pipeline/court/court-job.sbatch"), c[0])
+        self.assertIn(" --cpus-per-task=8 ", c[0])
+        self.assertTrue((d / "runs" / "court-main-s2" / "logs" / "submitted").exists())
+        self.assertIn("GB free in " + str(d), out)
+        self.assertNotIn("--- $L/runs/court-main-s2", out)  # nothing under the stack's root
+
     def test_same_id_twice(self):
         a = make_data(self.root, "court-main-s2")
         rc, out = dryrun(a, a)
@@ -463,11 +494,20 @@ class GridDry(unittest.TestCase):
         self.assertIn("ACCOUNT=grp2", lines[-1])
         self.assertIn("QOS=grp2-b", lines[-1])
         self.assertIn("L=/blue/grp2/user2/lucid", lines[-1])
+        self.assertIn("bash /blue/grp2/user2/lucid/code/pipeline/court/court-job-submit.sh court-a-r2", lines[-1])
         lines = self.grid(HOST="hpg2", COURT_HPG_L="/blue/grp2/user2/lucid", ENV_SH="/blue/grp2/user2/lucid/env.sh",
                           QUOTA_GROUP="grp2")
         self.assertIn("ENV_SH=/blue/grp2/user2/lucid/env.sh", lines[-1])
         self.assertIn("QUOTA_GROUP=grp2", lines[-1])
-        self.assertIn("bash /blue/grp2/user2/lucid/code/pipeline/court/court-job-submit.sh court-a-r2", lines[-1])
+
+    def test_data_root_on_another_disk(self):
+        lines = self.grid(COURT_DATA_L="/home/u/court-runs", CPUS="8")
+        self.assertFalse([x for x in lines if "/blue/" in x and "mkdir" in x or "rsync" in x and ":/blue/" in x], lines)
+        self.assertIn("hpg:/home/u/court-runs/code/pipeline/court/", lines[1])
+        self.assertIn("hpg:/home/u/court-runs/data/court/court-a-r2/", lines[2])
+        self.assertIn("COURT_DATA_L=/home/u/court-runs", lines[-1])
+        self.assertIn("CPUS=8", lines[-1])
+        self.assertIn("bash /home/u/court-runs/code/pipeline/court/court-job-submit.sh court-a-r2", lines[-1])
 
 
 if __name__ == "__main__":
