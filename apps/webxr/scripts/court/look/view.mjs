@@ -269,15 +269,19 @@ export function standingBoxes(ctx, view) {
   return boxes;
 }
 
-/** Court floor points (0.5 m grid) at least `away` metres from the pair's centre, on screen in `view`, not under anyone. */
-export function backgroundPoints(ctx, view, away = 4.5) {
+/**
+ * Floor points (a `step` grid over the court and `apron` metres round it) at least `away` metres from the pair's
+ * centre, on screen in `view`, not under anyone (the pair, the extras, the ball or the hoop).
+ */
+export function backgroundPoints(ctx, view, away = 4.5, { step = 0.5, apron = 0 } = {}) {
   const c = ctx.court.court;
   const [px, , pz] = ctx.court.seat.pairCentre;
   const boxes = standingBoxes(ctx, view);
   const [vx, vy, vw, vh] = view.viewport;
   const out = [];
-  for (let x = -c.length / 2 + 0.25; x < c.length / 2; x += 0.5)
-    for (let z = -c.width / 2 + 0.25; z < c.width / 2; z += 0.5) {
+  const [hl, hw] = [c.length / 2 + apron, c.width / 2 + apron];
+  for (let x = -hl + step / 2; x < hl; x += step)
+    for (let z = -hw + step / 2; z < hw; z += step) {
       if (Math.hypot(x - px, z - pz) < away) continue;
       const q = project(view, [x, 0, z]);
       if (!q || q[0] < vx + 4 || q[1] < vy + 4 || q[0] >= vx + vw - 4 || q[1] >= vy + vh - 4) continue;

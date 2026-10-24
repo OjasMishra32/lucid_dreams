@@ -49,7 +49,8 @@ export default async function look(ctx) {
   const atF = await ctx.save("look-freeze");
   // the field at F (perceived): its floor level, and which floor points it leaves at that level (outside the spot that
   // holds the pair), for the background's dim
-  const cand = backgroundPoints(ctx, watch.view, 0);
+  // (a 0.25 m grid over the court and its apron: the extras stand on much of the lit floor beyond the pair)
+  const cand = backgroundPoints(ctx, watch.view, 0, { step: 0.25, apron: 1.7 });
   const { floorAtF, outside } = await ctx.page.evaluate((pts) => {
     const light = window.__courtLook.world.light;
     const level = Math.pow(light.levels.floor, 1 / 2.4);
@@ -85,7 +86,7 @@ export default async function look(ctx) {
   ctx.check(
     "the background away from the pair dims at F as the house light says (P28: within 0.1 of the field's floor level)",
     lit.length >= 12 && bf / bw <= 0.9 && Math.abs(bf / bw - floorAtF) <= 0.1,
-    `${lit.length} lit floor points outside the pair's spot: luma ${bw.toFixed(2)} -> ${bf.toFixed(2)} (x${(bf / bw).toFixed(3)}); the field's floor at F ${floorAtF.toFixed(3)}`,
+    `${lit.length} lit floor points outside the pair's spot (of ${cand.length} on screen and clear, ${outside.filter(Boolean).length} outside the spot): luma ${bw.toFixed(2)} -> ${bf.toFixed(2)} (x${(bf / bw).toFixed(3)}); the field's floor at F ${floorAtF.toFixed(3)}`,
   );
   // the Reality check, judged on the floor the bundle marks: what was never filmed goes clearly blue, and what was
   // filmed doesn't move (a tint missing and a tint leaking onto real footage both fail)
