@@ -52,37 +52,55 @@ export function hashSeed(...parts: (string | number)[]): number {
 // ---------------- between moves ----------------
 
 /**
- * What they do with themselves. chin: a fist under the chin, that elbow on the table. cheek: the side of the face
- * resting in an open hand. clasped: both elbows on the table, hands clasped in front of the mouth. forearms: forearms
- * folded on the table edge, leaning in. armsFolded: arms folded across the chest. leanBack: sitting back, hands on the
- * thighs. rest: hands resting on the table by the board. ready: the free hand's place while the other one moves.
+ * What they do with themselves between moves, the way players at a board do: long still stretches of concentration
+ * (breathing, eyes moving), the eyes working over the squares that matter, small settles of posture, leaning in and
+ * sitting back. The variety is in the head, the eyes and the trunk; the hands stay low and still where they rest
+ * (a photo-built avatar's hands are its weakest part, and nobody at a board waves theirs about).
+ *
+ * still: concentration, nothing but breathing and the eyes. rest: at ease, the head a little freer. scan: the eyes
+ * walk the board square by square. leanIn: leaning in over the board. leanBack: sitting back. shift: a settle in the
+ * seat, weight to one hip, the shoulders rising and coming down. breath: a deeper breath in, and the shoulders let go.
+ * neckRoll / shoulderRoll: a slow, small loosening of the neck or shoulders (rare). ready: while the other hand moves.
+ * chin, cheek, clasped, forearms, armsFolded: hands at the face or folded against the body; off (they sank into a
+ * photo-built body), kept for avatars whose bodies the clearance guard allows them on.
  */
-export type IdleKind = "rest" | "chin" | "cheek" | "clasped" | "forearms" | "armsFolded" | "leanBack" | "ready";
+export type IdleKind =
+  | "still" | "rest" | "scan" | "leanIn" | "leanBack" | "shift" | "breath" | "neckRoll" | "shoulderRoll" | "ready"
+  | "chin" | "cheek" | "clasped" | "forearms" | "armsFolded";
 export type Mode = "think" | "wait" | "move" | "over";
 
-const IDLE_KINDS: IdleKind[] = ["rest", "chin", "cheek", "clasped", "forearms", "armsFolded", "leanBack"];
+/** Kinds done by one particular hand (or toward one side): each side is checked, and chosen, on its own. */
+export const SIDED: IdleKind[] = ["chin", "cheek", "shift"];
+
 const WEIGHTS: Record<Exclude<Mode, "move">, Partial<Record<IdleKind, number>>> = {
-  // their own move to find: leaning in, over the board. No folded arms, forearms on the table or clasped hands: on a
-  // body built from photos (bulkier than the SMPL-X these poses were tuned on) the forearms sink into the jacket.
-  // Nor (for now) a hand at the chin or cheek: the hand sinks into a photo-built face. Hands rest by the board.
-  think: { rest: 3, leanBack: 0.6 },
+  // their own move to find: mostly stillness and the eyes
+  think: { still: 3, scan: 2.6, leanIn: 1.2, rest: 0.8, shift: 0.6, breath: 0.6, leanBack: 0.4, shoulderRoll: 0.2, neckRoll: 0.15 },
   // your move: watching, more at ease
-  wait: { leanBack: 2.4, rest: 2 },
-  over: { rest: 1, leanBack: 1 },
+  wait: { still: 1.6, leanBack: 1.6, rest: 1.4, scan: 0.8, shift: 0.8, breath: 0.7, leanIn: 0.5, shoulderRoll: 0.35, neckRoll: 0.3 },
+  over: { rest: 1, leanBack: 1, breath: 0.5 },
 };
 
-/** The next idle pose for this moment: never the one they're coming from. */
-export function pickIdle(rng: Rng, mode: Mode, last: IdleKind | null): IdleKind {
+/** The next idle pose for this moment: never the one they're coming from, and only one the body allows (ok). */
+export function pickIdle(rng: Rng, mode: Mode, last: IdleKind | null, ok: (k: IdleKind) => boolean = () => true): IdleKind {
   const w = WEIGHTS[mode === "move" ? "wait" : mode];
-  const kinds = IDLE_KINDS.filter((k) => k !== last && (w[k] ?? 0) > 0);
-  return rng.pick(kinds, kinds.map((k) => w[k] ?? 0));
+  const kinds = (Object.keys(w) as IdleKind[]).filter((k) => k !== last && (w[k] ?? 0) > 0 && ok(k));
+  return kinds.length ? rng.pick(kinds, kinds.map((k) => w[k] ?? 0)) : last === "rest" ? "still" : "rest";
 }
 
-/** How long a pose is held before the next one, seconds. */
-export function holdSeconds(rng: Rng, mode: Mode) {
-  if (mode === "think") return rng.range(2.2, 5.5);
-  if (mode === "over") return rng.range(6, 12);
-  return rng.range(3.5, 9);
+/**
+ * How long a pose is held before the next one, seconds: concentration lasts, the small settles run their course.
+ * pressure (0..1, a short clock) makes everything quicker.
+ */
+export function holdSeconds(rng: Rng, mode: Mode, kind: IdleKind = "rest", pressure = 0) {
+  const k = 1 - 0.5 * clamp(pressure, 0, 1);
+  if (kind === "neckRoll") return rng.range(2.9, 3.4);
+  if (kind === "shoulderRoll") return rng.range(1.9, 2.4);
+  if (kind === "shift" || kind === "breath") return rng.range(1.8, 3.2) * k;
+  if (kind === "still") return (mode === "think" ? rng.range(4, 10) : rng.range(4, 9)) * k;
+  if (kind === "scan") return rng.range(2.5, 5) * k;
+  if (mode === "think") return rng.range(2, 4.5) * k;
+  if (mode === "over") return rng.range(5, 10);
+  return rng.range(3, 7) * k;
 }
 
 // ---------------- a move ----------------
@@ -97,7 +115,7 @@ export interface Style {
   skew: number; // easing skew: > 0 accelerates early and settles long, like a real reach
   beta: number; // radians the fingers point below horizontal at a piece
   roll: number; // radians the thumb side lifts
-  open: number; // finger curl on the way in (< 0: spread a little)
+  open: number; // finger curl on the way in (< 0: spread a little; kept small, a hand's Gaussians stretch when it bends)
   settle: number; // seconds the hand lingers lifting off a placed piece
   overshoot: number; // meters past the square before settling onto it
   adjust: number; // added chance of re-centring the piece after setting it down
@@ -105,10 +123,10 @@ export interface Style {
 }
 
 export const STYLES: Style[] = [
-  { id: "brisk", speed: 1.12, hover: 0.034, lift: 0.9, bow: 0.6, skew: 0.25, beta: 0.86, roll: 0.3, open: -0.25, settle: 0.14, overshoot: 0, adjust: 0, lean: 0.05 },
-  { id: "careful", speed: 0.8, hover: 0.058, lift: 1.25, bow: 0.35, skew: 0.06, beta: 1.0, roll: 0.42, open: -0.32, settle: 0.24, overshoot: 0, adjust: 0.15, lean: 0.12 },
-  { id: "casual", speed: 0.95, hover: 0.042, lift: 0.7, bow: 1.0, skew: 0.16, beta: 0.76, roll: 0.22, open: -0.16, settle: 0.18, overshoot: 0.008, adjust: 0.05, lean: 0.0 },
-  { id: "decisive", speed: 1.2, hover: 0.03, lift: 1.0, bow: 0.45, skew: 0.36, beta: 0.95, roll: 0.36, open: -0.3, settle: 0.1, overshoot: 0, adjust: 0, lean: 0.07 },
+  { id: "brisk", speed: 1.12, hover: 0.026, lift: 0.75, bow: 0.6, skew: 0.25, beta: 0.86, roll: 0.3, open: -0.08, settle: 0.14, overshoot: 0, adjust: 0, lean: 0.05 },
+  { id: "careful", speed: 0.8, hover: 0.04, lift: 1.0, bow: 0.35, skew: 0.06, beta: 1.0, roll: 0.42, open: -0.1, settle: 0.24, overshoot: 0, adjust: 0.15, lean: 0.12 },
+  { id: "casual", speed: 0.95, hover: 0.032, lift: 0.6, bow: 1.0, skew: 0.16, beta: 0.76, roll: 0.22, open: -0.05, settle: 0.18, overshoot: 0.008, adjust: 0.05, lean: 0.0 },
+  { id: "decisive", speed: 1.2, hover: 0.024, lift: 0.85, bow: 0.45, skew: 0.36, beta: 0.95, roll: 0.36, open: -0.08, settle: 0.1, overshoot: 0, adjust: 0, lean: 0.07 },
 ];
 
 /** Hard positions bring out the careful hand, easy ones the decisive one; never last move's style. */
@@ -119,16 +137,12 @@ export function pickStyle(rng: Rng, last: string | null, hardness: number): Styl
   return rng.pick(options, options.map((s) => w[s.id]));
 }
 
-/**
- * A second thought on the way to the piece. hover: the hand stops over it a moment before coming down. retract: it
- * goes most of the way, then draws back and waits. decoy: it drifts over another of their pieces first.
- */
-export type Hesitation = "hover" | "retract" | "decoy";
+/** A second thought on the way to the piece: the hand stops a moment just above it before coming down. */
+export type Hesitation = "hover";
 
-export function pickHesitation(rng: Rng, last: Hesitation | null, hardness: number, hasDecoys: boolean): Hesitation | null {
-  if (!rng.chance(0.06 + 0.62 * clamp(hardness, 0, 1))) return null;
-  const options = (["hover", "retract", "decoy"] as Hesitation[]).filter((k) => k !== last && (k !== "decoy" || hasDecoys));
-  return options.length ? rng.pick(options) : null;
+export function pickHesitation(rng: Rng, last: Hesitation | null, hardness: number): Hesitation | null {
+  if (last || !rng.chance(0.05 + 0.4 * clamp(hardness, 0, 1))) return null; // never twice running
+  return "hover";
 }
 
 // ---------------- thinking ----------------

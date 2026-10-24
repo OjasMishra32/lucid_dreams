@@ -155,6 +155,7 @@ export async function renderChess(root: HTMLElement) {
         opponentGroup.add(opponent.mesh);
         seated = new SeatedOpponent(a, table, boardGroup);
         seated.reseed(hashSeed(id, gameNumber));
+        seated.setClock(() => clock.buttonTop("far"));
         seated.setOpacity(0);
         opponentGroup.add(seated.chair);
         // on a laptop: from a seated player's eyes, the board in front and them behind it, facing you (in the
@@ -175,7 +176,7 @@ export async function renderChess(root: HTMLElement) {
   const farSide = new THREE.Vector3();
   const placeOpponent = () => {
     table.updateMatrixWorld();
-    farSide.set(0, 0, -SEAT_DISTANCE); // their hips; the chair and the pose are built around this point
+    farSide.set(0, 0, -(seated?.seatDistance ?? SEAT_DISTANCE)); // their hips; the chair and the pose are built around this point
     table.localToWorld(farSide);
     opponentGroup.position.set(farSide.x, 0, farSide.z); // on the real floor, never scaled
     opponentGroup.rotation.y = table.rotation.y + Math.PI; // the avatar's front (-Z) turned toward you
@@ -272,6 +273,12 @@ export async function renderChess(root: HTMLElement) {
     drawPanel(text);
   };
   let opening = ""; // the legend's own line while they're in it
+  // you press your own clock: after your move your time keeps running until you do, and only then do they start
+  let awaitingPress = false;
+  let pressedOnce = false; // the hint shows until you've done it once
+  let awaitSince = 0;
+  let pulsed = false;
+  const clockHint = () => (renderer.xr.isPresenting ? "Tap your clock" : "Tap your clock (click it, or press Space)");
   const updateStatus = () => {
     const who = strength.legend ? `${strength.legend} (engine, ${strength.elo})` : opponentName ? `${opponentName} (${strength.label})` : strength.label;
     if (reaching) return setStatus(`${who} is moving…`);
@@ -279,6 +286,7 @@ export async function renderChess(root: HTMLElement) {
     if (chess.isCheckmate()) return setStatus(chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.");
     if (chess.isDraw()) return setStatus("Draw");
     if (thinking) return setStatus(`${who} is thinking…`);
+    if (awaitingPress) return setStatus(pressedOnce ? "Your clock is running" : clockHint());
     const line = opening ? `  ·  ${opening}` : "";
     setStatus((chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`) + line);
   };
@@ -388,12 +396,6 @@ export async function renderChess(root: HTMLElement) {
       const rook = meshes.get(rf + mv.from[1]);
       if (rook) carries.push(carry(rook, squareToLocal(rf + mv.from[1]), squareToLocal(rt + mv.from[1]), "rook"));
     }
-    // their other pieces within two squares of the one that moves: on a hard move a hand may hover over one first
-    const near = (a: string, b: string) => Math.abs(a.charCodeAt(0) - b.charCodeAt(0)) <= 2 && Math.abs(Number(a[1]) - Number(b[1])) <= 2;
-    const decoys = [...meshes]
-      .filter(([sq, m]) => sq !== mv.from && m.userData.color === mv.color && near(sq, mv.from))
-      .map(([, m]) => m.position.clone())
-      .slice(0, 6);
     reaching = true;
     updateStatus();
     const over = isOver();
@@ -413,7 +415,7 @@ export async function renderChess(root: HTMLElement) {
               if (!isOver() && chess.turn() === side) clock.run("near");
             },
           },
-      { hardness, decoys },
+      { hardness },
     );
     return true;
   };
@@ -459,9 +461,12 @@ export async function renderChess(root: HTMLElement) {
       ending();
       return true;
     }
-    clock.run("far"); // your move ends your turn (pressing your button does too)
+    // your move is on the board and your time keeps running until you press your clock (pressClock)
     seated?.saw(squareToLocal(mv.to)); // their eyes go to your move
-    void engineMove();
+    awaitingPress = true;
+    awaitSince = performance.now();
+    pulsed = false;
+    updateStatus();
     return true;
   };
 
@@ -482,6 +487,7 @@ export async function renderChess(root: HTMLElement) {
     gameId++;
     gameNumber++;
     thinking = false;
+    awaitingPress = false;
     lastEval = null;
     chess.reset();
     clock.reset();
@@ -654,11 +660,26 @@ export async function renderChess(root: HTMLElement) {
     panelTex.needsUpdate = true;
   }
 
-  // your clock button: a click; your move has already handed the time over
-  const pressClock = () => sounds.click(clock.worldPosition("near"));
+  // your clock button (a fingertip in the room, a click or the space bar on a laptop): after your move, pressing it
+  // stops your time and starts theirs, and only then do they start thinking
+  const pressClock = () => {
+    sounds.click(clock.worldPosition("near"));
+    if (!awaitingPress || isOver()) return;
+    awaitingPress = false;
+    pressedOnce = true;
+    clock.run("far");
+    void engineMove();
+  };
+  addEventListener("keydown", (e) => {
+    if (e.code !== "Space" || e.repeat) return;
+    e.preventDefault(); // not a page scroll, nor a click on whichever button has focus
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    pressClock();
+  });
 
   const undo = () => {
     if (thinking || reaching) return;
+    awaitingPress = false;
     gameId++;
     lastEval = null;
     seated?.cancel();
@@ -766,6 +787,12 @@ export async function renderChess(root: HTMLElement) {
     const dt = lastTime ? Math.min(0.1, (time - lastTime) / 1000) : 0;
     lastTime = time;
     clock.update(dt);
+    // still not pressed after 10 s: it's your time, they wait; the hint pulses once
+    if (awaitingPress && !pulsed && performance.now() - awaitSince > 10000) {
+      pulsed = true;
+      setStatus(clockHint());
+      $("#status").animate([{ transform: "scale(1)" }, { transform: "scale(1.12)" }, { transform: "scale(1)" }], { duration: 900, easing: "ease-in-out" });
+    }
     if (renderer.xr.isPresenting) {
       if (!placed) {
         const cam = renderer.xr.getCamera();
@@ -812,7 +839,8 @@ export async function renderChess(root: HTMLElement) {
       if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(viewer);
       else viewer.copy(camera.position);
       const watching = mouseHold?.obj ?? handHold[0]?.obj ?? handHold[1]?.obj; // a piece in your hand draws their eyes
-      seated.update(time, { thinking, viewer, watch: watching ? watching.getWorldPosition(watchAt) : null });
+      const pressure = THREE.MathUtils.clamp((60 - clock.time.far) / 50, 0, 1); // their clock running short
+      seated.update(time, { thinking, viewer, pressure, watch: watching ? watching.getWorldPosition(watchAt) : null });
       const o = Math.min(1, (performance.now() - opponentSince) / 1400); // they arrive, not pop in
       opponent.mesh.opacity = o;
       seated.setOpacity(o);
