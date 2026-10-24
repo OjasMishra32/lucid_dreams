@@ -22,6 +22,11 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
 6. --flatten F: clothes and skin are thin surfaces, but LHM++ fills them with round blobs, so from the side every
    edge is smoke. Each Gaussian (not hands, not hair) keeps only F of its thickness across the local surface (the
    normal of its 16 nearest neighbours): from the front nothing changes, from the side the silhouette is crisp.
+7. --smooth-cloth N: LHM++'s cloth is mottled (a suit reads as light and dark patches, jeans as smears). N passes of
+   a bilateral colour filter over each cloth Gaussian's 16 nearest cloth neighbours (2 cm in space, 0.08 in colour):
+   one fabric with soft shading, while strong edges (lapels, the collar, shirt and tie) stay. --even-cloth F evens
+   the large-scale brightness of each part's main fabric (the jacket, the trousers) by F; --legs-lum L darkens the
+   trousers to luminance L (dark trousers where LHM++ guessed light, mottled jeans).
 """
 
 from __future__ import annotations
@@ -45,6 +50,45 @@ from lucid_avatars.smplx_layout import J
 
 HANDS = [J["left_wrist"], J["right_wrist"]] + list(range(25, 55))
 HEAD = [J["head"], J["jaw"], J["left_eye"], J["right_eye"]]
+LUM = np.array([0.299, 0.587, 0.114])
+JACKET = [J[k] for k in ("spine1", "spine2", "spine3", "left_collar", "right_collar", "left_shoulder", "right_shoulder",
+                         "left_elbow", "right_elbow")]
+TROUSERS = [J[k] for k in ("pelvis", "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle")]
+
+
+def bilateral_colours(xyz: np.ndarray, rgb: np.ndarray, passes: int, sigma_m: float = 0.02, sigma_c: float = 0.08,
+                      k: int = 16) -> np.ndarray:
+    """rgb (n, 3) after `passes` of an edge-preserving filter: each point's colour becomes the average of itself and
+    its k nearest neighbours (positions xyz), weighted by closeness in space (sigma_m) and in colour (sigma_c), so
+    noise within one fabric evens out while an edge between two colours (a lapel, a collar, a tie) stays."""
+    if passes <= 0 or len(xyz) <= k:
+        return rgb
+    d, nb = cKDTree(xyz).query(xyz, k=k + 1)  # the point itself first
+    ws = np.exp(-(d**2) / (2 * sigma_m**2))
+    c = np.asarray(rgb, dtype=np.float64).copy()
+    for _ in range(passes):
+        w = ws * np.exp(-((c[nb] - c[:, None]) ** 2).sum(-1) / (2 * sigma_c**2))
+        c = (w[..., None] * c[nb]).sum(1) / w.sum(1, keepdims=True)
+    return c
+
+
+def even_brightness(xyz: np.ndarray, rgb: np.ndarray, part: np.ndarray, f: float, k: int = 64,
+                    main: float = 0.15) -> tuple[np.ndarray, int]:
+    """rgb with the large-scale brightness of the part's main fabric (colours within `main` of the part's median)
+    pulled by f toward the part's median brightness: a jacket without light and dark patches. Other colours on the
+    part (a shirt, a tie, a pocket square) stay."""
+    ids = np.flatnonzero(part)
+    if f <= 0 or len(ids) <= k:
+        return rgb, 0
+    fab = ids[np.linalg.norm(rgb[ids] - np.median(rgb[ids], axis=0), axis=1) < main]
+    if len(fab) <= k:
+        return rgb, 0
+    lum = rgb[fab] @ LUM
+    local = lum[cKDTree(xyz[fab]).query(xyz[fab], k=k)[1]].mean(1)
+    gain = 1 + f * (np.median(lum) / np.maximum(local, 1e-3) - 1)
+    out = rgb.copy()
+    out[fab] = np.clip(rgb[fab] * gain[:, None], 0, 1)
+    return out, len(fab)
 
 
 def main(argv=None) -> None:
@@ -59,6 +103,11 @@ def main(argv=None) -> None:
     p.add_argument("--deflate-legs", type=float, default=None, help="the same for the legs (default: --deflate); a jacket hem skinned to the hips sits there")
     p.add_argument("--body-only", action="store_true", help="leave the head as it is (a sharp head from a head model: UIKA, LAM)")
     p.add_argument("--flatten", type=float, default=1.0, help="share of thickness across the surface each Gaussian keeps (1 = all)")
+    p.add_argument("--smooth-cloth", type=int, default=0, help="passes of the edge-preserving cloth filter (0 = off)")
+    p.add_argument("--cloth-sigma-m", type=float, default=0.02, help="its reach in space (m)")
+    p.add_argument("--cloth-sigma-c", type=float, default=0.08, help="its reach in colour (0-1 RGB)")
+    p.add_argument("--even-cloth", type=float, default=0.0, help="share of the jacket's and trousers' large-scale brightness patches evened out")
+    p.add_argument("--legs-lum", type=float, default=None, help="the trousers' luminance (dark trousers for light, mottled jeans)")
     a = p.parse_args(argv)
 
     root = a.bundle
@@ -143,6 +192,29 @@ def main(argv=None) -> None:
         trousers = np.median(out[legs & (lum <= mid)], axis=0)
         out[blob] = trousers * (0.9 + 0.2 * np.clip(lum[blob, None] - mid, 0, 1))
 
+    # 2d. --legs-lum: the trousers become one dark cloth (their median colour, a quarter of its hue kept, at luminance
+    # L) with 30% of their own shading; a light shirt tail over the belt stays
+    trousers = np.isin(dom, TROUSERS) & ~hands
+    toned = trousers & False
+    if a.legs_lum is not None and trousers.sum() > 64:
+        lum = out @ LUM
+        toned = trousers & (lum < 0.55)
+        base = np.median(out[toned], axis=0)
+        tone = float(base @ LUM) + 0.25 * (base - float(base @ LUM))
+        tone = tone * (a.legs_lum / max(float(tone @ LUM), 1e-3))
+        shade = np.clip(1 + 0.3 * (lum[toned] / max(float(np.median(lum[toned])), 1e-3) - 1), 0.6, 1.4)
+        out[toned] = np.clip(tone[None] * shade[:, None], 0, 1)
+
+    # 2e. one fabric: the jacket's and trousers' large-scale light and dark patches evened, then the edge-preserving
+    # filter over every cloth Gaussian (not the head, not the hands)
+    evened = 0
+    for part in (np.isin(dom, JACKET) & ~hands, trousers):
+        out, n_even = even_brightness(g.xyz, out, part, a.even_cloth)
+        evened += n_even
+    cloth = ~hands & ~head
+    if a.smooth_cloth > 0 and cloth.sum() > 32:
+        out[cloth] = bilateral_colours(g.xyz[cloth], out[cloth], a.smooth_cloth, a.cloth_sigma_m, a.cloth_sigma_c)
+
     # 3. hair: halfway to the neighbours
     eyes_y = (joints[J["left_eye"], 1] + joints[J["right_eye"], 1]) / 2
     hair = head & (g.xyz[:, 1] > eyes_y + 0.01)
@@ -195,7 +267,10 @@ def main(argv=None) -> None:
     report = {"hands": int(hands.sum()), "crease": int(crease.sum()), "specks": int(specks.sum()), "sleeveLogos": int(logo.sum()),
               "trouserBlobs": int(blob.sum()), "backSmears": int(smear.sum()), "hair": int(hair.sum()), "mute": a.mute,
               "deflated": int(slim.sum()) if a.deflate < 1 else 0, "deflate": a.deflate,
-              "flattened": int(flat.sum()) if a.flatten < 1 else 0, "flatten": a.flatten, "of": len(g)}
+              "flattened": int(flat.sum()) if a.flatten < 1 else 0, "flatten": a.flatten,
+              "smoothCloth": a.smooth_cloth, "clothSmoothed": int(cloth.sum()) if a.smooth_cloth > 0 else 0,
+              "evenCloth": a.even_cloth, "evened": evened, "legsLum": a.legs_lum, "legsToned": int(toned.sum()),
+              "of": len(g)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
 
