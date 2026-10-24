@@ -53,7 +53,7 @@ Every check runs on the stand-in bundle first and on the real bundle at the end.
 | P15 | Full frame rate while walking and leaning in | Q1-Q3 `stats.ts` + OVR Metrics Tool | 0 dropped frames in a 60 s walk; GPU p95 <= 85% of 13.9 ms; AR (opaque) vs VR frame time logged at Q0 |
 | P16 | Every other player reads as a solid 3D person from every reachable spot | e2e contact sheet: every viewing spot (and the 17 ring poses when the ring is on) | no card seen edge-on (a relief only where the largest angle between its camera ray and any walk-spot ray is < 15 deg; visible width >= 30% of frontal), no holes, feet on the floor, a contact shadow; signed off by eye |
 | P17 | You never enter a body, and leaning in never fades one | e2e poses | eye 0.2 m from a torso or head capsule: that player fades to 30% within 300 ms; eye 0.3 m from the ball or a hand: no fade (the hands-and-ball region is outside the capsules and never fades) |
-| P29 | Every viewing place keeps 1 m clear of each body, and the bodies fit the floor | `seatmath.test.ts` | each viewing spot, and every ring point when the ring is on, >= 1.0 m from both players' body bounds; after Walk closer both bodies >= 0.3 m inside the play area at every viewing spot (corner chair on the diagonal: 3.4) |
+| P29 | Every viewing place keeps 1 m clear of each body, and the bodies fit the floor | `seatmath.test.ts` | each viewing spot, and every ring point when the ring is on, >= 1.0 m from both players' body bounds; after Walk closer both bodies >= 0.3 m inside the play area at every viewing spot (corner chair on the diagonal: 3.4; fails on the re-solve, OPEN in 3.4) |
 | P30 | The courtside plate never reads as a poster | e2e contact sheet at every viewing spot (and the ring poses), by eye | the plate dims steadily with the angle off the camera ray (to dark by ~45 deg, tuned by eye: `Proxies.dim(p)`); front row, photographers and the ref sit on their own depth cards |
 | **Back to the seat** | | | |
 | P18 | 3D folds back into the footage, then the play runs on through the make | e2e capture; `clock.test.ts` | P8 and P9 in reverse from the seated eye; resume speed eases from 0 to pass 2's speed over 0.8 s (<= 0.02 per frame); the ball drops through the drawn rim before the window dims, before A's next cut |
@@ -131,15 +131,17 @@ of F (the mapping is in the private plan).
 freeze). **Real high-speed, not AI slow motion:** the replay repeats some frames on a regular pattern and shows no
 interpolation ghosting; the shot clock gives its real speed and capture rate (private). The bake uses unique frames only.
 
-**Calibration of A (calib-real's final; the numbers are in the private calibration file):**
+**Calibration of A (calib-real's re-solve over the whole play; the numbers are in the private calibration file):**
 - One fixed camera centre behind the far end line, the lens low, facing Luka's basket. Depth along the line of sight is
-  the weak direction, so the solve quotes a tolerance there.
+  the weak direction, so the solve quotes a tolerance there until a backboard scan on B settles it.
 - A long lens (its focal and field of view per frame are in the private file) with a pincushion distortion term:
   every consumer undistorts (the bake, the stabilised canvas, the player clips).
 - Reprojection error far under the 0.05 deg seam; floor lines can't do better than a few pixels at this grazing angle.
-- The pair is far from the camera and spans some depth along its line of sight (used by the floor check, 3.4).
-- **The gate before FOCAL and D' are frozen** (stream A): a fixed-centre solve over the window with the rim and
-  backboard as 3D points; it must give the rim at 3.05 m and agree with a triangulation against B (P2).
+- The pair is far from the camera; Luka stands on camera F's line of sight and Gobert deeper and well to one side of
+  it (used by the floor check, 3.4).
+- B and C are calibrated too; C's player positions agree with A's.
+- **The gate before FOCAL and D' are frozen** (stream A): the re-solve is the fixed-centre solve over the window;
+  still to pass: the rim at 3.05 m and the triangulation against B (P2), which the backboard scan on B also uses.
 
 **The freeze frame F: Gobert's closeout** (the main session's pick; Vishal can change it). Gobert's right arm is
 stretched over Luka's head; the ball is in Luka's hand at his hip, mostly visible; both are head to toe and sharp. The
@@ -224,8 +226,10 @@ direction is decided (3.3a).
   reached over USB with `adb reverse`; never through the tunnel. A Service Worker precaches the page and the bundle,
   every asset is loaded into memory, then the cable comes off. (`serve.mjs --dev` runs vite's middleware on 127.0.0.1
   for the e2e on the real bundle.)
-- **Chair:** a normal chair. The eye stays at the judge's own seated height, a little above the camera's measured
-  height; the layered cards and the splat-depth proxy (3.3) carry that offset, and every seat P-row is tested at it.
+- **Chair:** a normal chair. The eye stays at the judge's own seated height, well above the camera's measured
+  height (less above camera F's ray, which rises toward the pair); the layered cards and the splat-depth proxy (3.3)
+  carry that offset, and every seat P-row is tested at it. The smooth spike measured smaller offsets only (3.3), so
+  these rows are its first test.
 - **Seat here:** the presenter sits, taps Enter on the page (`requestSession` needs a tap), and holds **Seat here**
   for 2 s on the palm menu's setup page. The court is placed so the seat point (on camera F's optical ray, D' ~5 m from
   the pair's centre; Decision W) is under their head and F's view direction is their forward; a courtside chair is
@@ -340,15 +344,20 @@ file with Decision W.
 
 ### 3.4 Walk closer, stand up and look around
 - **Walk closer (the normal path):** the seat is D' ~5 m from the pair, beyond the 3.5 m floor, so after the world
-  opens one press does a 0.3 s fade-jump along camera F's ray, re-anchoring the world so the pair's centre is ~2.0 m in
-  front of the chair. Stand up: Luka is close in front of you, on the camera's side.
+  opens one press does a 0.3 s fade-jump along camera F's ray, re-anchoring the world so the chair, which is spot 0,
+  stays 1 m clear of Luka. Stand up: Luka is close in front of you, on the camera's side.
 - **The floor, decided (main session): the corner chair on the diagonal.** At 3.5 x 3.5 m the chair sits in one
   corner, 0.6 m from both walls, facing the far corner, so camera F's line of sight runs down the room's 4.95 m
-  diagonal. Walk closer leaves the pair's centre 2.0 m from the chair along it; both bodies stay >= 0.3 m inside the
-  play area. `seatmath.ts` checks that for every viewing spot (Next view turns the world about the pair, so each spot
+  diagonal. Walk closer leaves the pair's centre on it, the chair 1 m clear of Luka, and both bodies must stay >= 0.3 m
+  inside the play area. `seatmath.ts` checks that for every viewing spot (Next view turns the world about the pair, so each spot
   places the bodies differently) and narrows the side spots' angle, up to 60 deg, until it holds; `seatmath.test.ts`
   fails the layout otherwise (P29). The automatic choice of ring or spots from the bounds is unchanged; in a ring-size
   room the chair is centred on a short side, 0.6 m from the edge, facing the long axis.
+- **OPEN (main session): on the re-solved calibration the 3.5 m floor fails P29.** Luka stands on camera F's ray, but
+  Gobert stands deeper and well to its side (2), so with the chair (spot 0) 1 m clear of Luka his front foot lands past
+  a far wall; turning the world and moving the chair into the corner bring only that foot to the 0.3 m inset, with the
+  rest of him further back (numbers in the private file). Choices: let Gobert's far side pass the boundary at the default floor (P29 for Luka and Gobert's near
+  side only), or a bigger default floor.
 - **3.5 x 3.5 m (default): three viewing spots** on the camera's side of the pair: front, and 60 deg to either side.
   **Next view** on the palm menu does a 0.3 s fade-jump that turns the world about the pair, so the next spot is where
   you stand; small steps and leaning in work at each. Nothing else ever moves the world.
@@ -357,7 +366,7 @@ file with Decision W.
   The choice is made from the bounds alone, and is unit-tested only (IWER has no `bounded-floor`).
 - **Standing** is detected when the head rises > 0.25 m. Spots show as faint floor marks; the ring as a chalk-white
   ring (2 cm line, 25% opacity) that fades in over 0.8 s and out after ~45 degrees of walking. Every spot and ring
-  point keeps 1 m clear of each body (about 1.5 m from the pair's centre).
+  point keeps 1 m clear of each body (spot 0 is standing at the chair).
 - **Lean in close:** a player fades to 30% over 300 ms only when your eye comes within 0.2 m of their torso or head
   capsules. The hands-and-ball region is outside the capsules and never fades, so you can put your face by the ball
   and Gobert's hand.
@@ -373,19 +382,23 @@ never a flat cut-out or a card seen edge-on; soft faces are fine at their distan
 arena light, feet on the floor, real size, their **real** frozen pose. Never a guessed pose. Ojasva approved up to 8.
 
 At F, A's frame holds only **Naz Reid** (head to toe) and **the baseline referee**. C's synced frame sees the other
-players and referees; stream A lists which of them are visible from the viewing spots.
+players and referees; all of them are visible from the seat or a viewing spot.
 
 | Option | How | For |
 | --- | --- | --- |
 | **Build** | that player's own fixed crop -> **Turbo** 4DAnyone views -> recon of the freeze frame only at 60k | Reid, and the baseline referee if head to toe; their video card fades over their drawn 3D at the hand-off |
 | **C-Turbo** | the same, from that player's crop in C around the synced frame (real time 60p) | C-only players visible from the spots (one of the two prototypes) |
 | **Body** | calibrate C; that player's pose at the synced frame from GVHMR on C; 8-16 crops of them across C -> LHM++ (installed) -> posed to it | C-only players (the other prototype); Reality-marked (A never saw them) |
-| **Relief** | metric depth of that player in A's frame (MoGe / Depth Anything 3, ask before download) -> a relief mesh textured from the frame | only a player whose largest angle between its camera ray and any walk-spot ray is < ~15 deg |
-| **Leave out** | the floor beyond the lit pair falls to dark where they would stand | only with Vishal's OK |
+| **Relief** | metric depth of that player in A's frame (MoGe / Depth Anything 3, ask before download) -> a relief mesh textured from the frame | only a player whose largest angle between its camera ray and any walk-spot ray is < ~15 deg; on the visibility check it fails for everyone (the baseline referee is just over it at one side spot), so only if Vishal accepts that |
+| **Leave out** | the floor beyond the lit pair falls to dark where they would stand | only with Vishal's OK; one near-sideline referee by default, unless Vishal objects (C sees only his back and no camera sees his legs, so there is no real leg pose) |
 
 - **Prototype, then batch:** C-Turbo and Body both on one C-only player (Anthony Edwards), rendered from every viewing
   spot plus the seat; pick by eye; then the rest of the visible C-only players in parallel (as many at once as the
   quota allows).
+- **Per-player defaults** (private file; the prototype's pick can change them): Build from A for Reid if A holds him
+  over the window, else from C; Build from C for the players and the referee C sees cleanly; Build from C with an
+  ignore mask for the two who overlap, else Body; Body for Kyrie (legs hidden in C) and for the baseline referee
+  unless Vishal accepts Relief; the near-sideline referee left out unless Vishal objects.
 - Every placed extra gets a baked contact shadow and a reflection (the same bake as the pair) and passes
   `foot_check.py`. `freeze.ts` owns them.
 - **Budget:** inside the 500k (section 8): extras at 60k each, down the cut ladder first.
@@ -516,7 +529,7 @@ audio/sfx/*.m4a          squeak, bounce, release (only if Vishal approves CC0 so
   },
   "light": { "crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5,
              "alternative": { "crowd": 0.16, "floor": 0.14 } },
-  "seat": { "ray": "freeze", "distance": 5.0, "distanceRange": [4, 7], "pairCentre": [0, 0, 0], "closer": 2.0,
+  "seat": { "ray": "freeze", "distance": 5.0, "distanceRange": [4, 7], "pairCentre": [0, 0, 0], "closer": 0,
             "clear": 1.0, "spots": [[0, 0, 0], [0, 0, 0], [0, 0, 0]], "ringArea": [4.5, 5.5] },
   "freeze": {
     "players": [{ "id": "…", "name": "…", "splats": "players/…/freeze.ply", "reality": "players/…/reality.ply",
@@ -679,7 +692,7 @@ apps/webxr/scripts/court/<name>.test.ts`); `E2E=node apps/webxr/scripts/court/e2
 | --- | --- | --- |
 | `clock.ts` ease-to-frame | `clock.test.ts` | every press before the cutoff lands exactly on F (pass 1, pass 2 early, at and between ease starts); after it, the next pass stops; speed C2 (1 - smootherstep); no step > 0.02 per display frame (eases from pass 2's speed at 1.2, 1.0, 0.8 s; resume 0.8 s); step = round(dt x displayHz) at 72 and 90 Hz |
 | `format.ts` | `format.test.ts` | the `court.json` fixture validates; every bad field is named in the error |
-| `seatmath.ts` | `seatmath.test.ts` | seat on camera F's ray at D' from the pair (5 m, and 4 and 7 m), yaw = camera yaw; Walk closer leaves the pair's centre 2.0 m ahead along the diagonal of a 3.5 x 3.5 m play area (corner chair); the three spots fit it; the ring turns on only for bounds >= `ringArea`, with 0.7 m inset; every spot and ring point >= 1.0 m from both bodies; both bodies >= 0.3 m inside the play area at every spot after Walk closer, side-spot angle narrowed as needed (P29); `boundsDistance` exact |
+| `seatmath.ts` | `seatmath.test.ts` | seat on camera F's ray at D' from the pair (5 m, and 4 and 7 m), yaw = camera yaw; Walk closer leaves the pair's centre `closer` ahead along the diagonal of a 3.5 x 3.5 m play area (the corner chair is spot 0, 1 m clear of Luka); the three spots fit it; the ring turns on only for bounds >= `ringArea`, with 0.7 m inset; every spot and ring point >= 1.0 m from both bodies; both bodies >= 0.3 m inside the play area at every spot after Walk closer, side-spot angle narrowed as needed (P29); `boundsDistance` exact |
 | Calibration and alignment | the gate, then `python3 -I pipeline/court/check_align.py` | P2: rim 3.05 +/- 0.03 m; A-B triangulation agrees; court points <= 0.02 deg median, <= 0.05 deg p95 in every calibrated frame |
 | Layered watch | `$E2E --only layers` on the stand-in with a gap and a third person | P43: no doubled or torn body > 0.1 deg; P9's held-frame shimmer bar |
 | Cadence | `$E2E --only cadence` + `smooth_metrics.py` | P4, P5: 0 held frames, CV <= 0.15, queue 1-4, no reset at a press |
@@ -707,7 +720,8 @@ rsync from a checkout of `court-side`. Run ids: `court-main`, `court-def`, `cour
 
 **Ojasva's session submits whatever command appears in the status file, and the status file is in git.** So the
 posted command carries no numbers: it is one call, `court-submit.sh <id>`, which reads K and FOCAL from the run's own
-`court-run.json` on HiPerGator, checks everything first, and submits nothing if any check fails.
+`court-run.json` on HiPerGator, checks everything first, and submits nothing if any check fails. Each freeze job
+reads K and FOCAL from that file again when it starts, so a FOCAL fixed after the gate is the one used.
 
 **Run folder** (Vishal's Mac rsyncs it; everything stays under `$L/runs/court-*`, never in git):
 ```
@@ -748,7 +762,8 @@ $L/runs/court-<id>/
 ```bash
 #!/bin/bash
 # Court Side: preflight, then one player's chain. Usage: court-submit.sh <id>  (K and FOCAL come from $RUN/court-run.json)
-# Nothing is submitted if a file is missing, K or FOCAL is wrong, or the group quota is short.
+# Nothing is submitted if a file is missing, K or FOCAL is wrong, or the group quota is short. Each freeze job reads
+# K and FOCAL from court-run.json again when it starts, so no number is ever passed to a job.
 # Env: VIEWS_ONLY=1 (Turbo checks), CAPS, MIN_GB, ITERS, FACE, KEEP_VIEWS=1 (skip the views cleanup).
 set -euo pipefail
 ID=${1:-}; L=/blue/iruchkin/vishalnaveen/lucid; H=$L/code/pipeline/hpg; C=$L/code/pipeline/court; RUN=$L/runs/$ID
@@ -758,7 +773,7 @@ for f in input.mp4 job.json; do test -s "$RUN/$f" || fail "missing $RUN/$f"; don
 if [ "${VIEWS_ONLY:-0}" != 1 ]; then
   test -s "$RUN/court-run.json" || fail "missing $RUN/court-run.json"
   read -r K FOCAL < <(python3 -c 'import json, sys; j = json.load(open(sys.argv[1])); print(j["K"], j["FOCAL"])' \
-    "$RUN/court-run.json" 2>/dev/null || true)
+    "$RUN/court-run.json" 2>/dev/null) || true
   [[ ${K:-} =~ ^[0-9]+$ ]] && (( K <= 120 )) || fail "K=${K:-}"
   [[ ${FOCAL:-} =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "FOCAL=${FOCAL:-}"
   P=$(printf '%06d' "$K")
@@ -775,12 +790,12 @@ if [ "${VIEWS_ONLY:-0}" = 1 ]; then echo "SUBMITTED $ID views=$V"; exit 0; fi
 CAPS=${CAPS:-"300000 250000 200000"}; R=""; E=""
 for CAP in $CAPS; do
   T=$((CAP / 1000))k
-  r=$(sbatch --parsable --dependency=afterok:$V --export=ALL,RUN=$RUN,K=$K,FOCAL=$FOCAL,CAP=$CAP,OUT=recon-$T "$C/court-freeze.sbatch")
+  r=$(sbatch --parsable --dependency=afterok:$V --export=ALL,RUN=$RUN,CAP=$CAP,OUT=recon-$T "$C/court-freeze.sbatch")
   E="$E:$(sbatch --parsable --dependency=afterok:$r --export=ALL,RUN=$RUN,RECON=recon-$T,OUT=bundle-$T "$C/court-export.sbatch")"
   R="$R:$r"
 done
 M=$(sbatch --parsable --dependency=afterok:$V --job-name=court-metrics \
-  --export=ALL,RUN=$RUN,K=$K,FOCAL=$FOCAL,CAP=${CAPS%% *},OUT=recon-metrics,HOLDOUT=8 "$C/court-freeze.sbatch")
+  --export=ALL,RUN=$RUN,CAP=${CAPS%% *},OUT=recon-metrics,HOLDOUT=8 "$C/court-freeze.sbatch")
 [ "${KEEP_VIEWS:-0}" = 1 ] || sbatch --parsable --dependency=afterok$R:$M --export=ALL,RUN=$RUN,WHAT=views "$C/court-clean.sbatch"
 sbatch --parsable --dependency=afterok$E:$M --export=ALL,RUN=$RUN,WHAT=frames "$C/court-clean.sbatch"
 echo "SUBMITTED $ID views=$V recons=$R metrics=$M exports=$E"
@@ -798,11 +813,17 @@ echo "SUBMITTED $ID views=$V recons=$R metrics=$M exports=$E"
 #SBATCH --time=01:30:00
 #SBATCH --output=%x-%j.log
 # Court Side: the freeze frame K only, trained cold at CAP, with the real native-4K frame as a solved view (our mask,
-# whoever is in front ignored, the calibrated focal held). Needs RUN, K, FOCAL; optional CAP, OUT, ITERS, FACE, HOLDOUT.
+# whoever is in front ignored, the calibrated focal held). Needs RUN; reads K and FOCAL from $RUN/court-run.json when
+# it starts and fails if either is wrong. Optional CAP, OUT, ITERS, FACE, HOLDOUT.
 # The metrics run is this script with OUT=recon-metrics HOLDOUT=8.
 set -euo pipefail
 source /blue/iruchkin/vishalnaveen/lucid/code/pipeline/hpg/env.sh
 cd "$RUN"
+read -r K FOCAL < <(python -c 'import json, sys; j = json.load(open(sys.argv[1])); print(j["K"], j["FOCAL"])' \
+  court-run.json) || true
+[[ ${K:-} =~ ^[0-9]+$ ]] && (( K <= 120 )) || { echo "court-run.json: K=${K:-}" >&2; exit 1; }
+[[ ${FOCAL:-} =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "court-run.json: FOCAL=${FOCAL:-}" >&2; exit 1; }
+echo "K=$K FOCAL=$FOCAL"
 python -m lucid.recon --result views --start "$K" --end "$((K + 1))" --out "${OUT:-recon}" \
   --cap "${CAP:-300000}" --iters-first "${ITERS:-15000}" --sh-degree 1 --aniso 0.05 --peek 0,4,8,12,20 \
   --source-video source-4k.mkv --source-masks masks --source-ignore ignore --source-focal "$FOCAL" \
@@ -1195,6 +1216,15 @@ Verdicts are the main session's (in the private review notes); each was checked 
   from the camera (numbers in the private calibration file): 0 (header, P1, P2), 2 (the calibration block), 3.1, 3.2
   (Decision W), 3.3 (undistort), 3.4 (the floor check), 7 (FOCAL). It supersedes every earlier interim solve.
 
+### calib-real re-solve and extras (folded 10:10)
+- A re-solved over the whole play; B and C calibrated (the numbers are applied in the private file: 0, 2, 3.1, 3.2,
+  4.2, 6 and 7; here in words: 2, 3.1). The seated eye now sits well above the camera; the seat rows test that offset, which the smooth spike didn't
+  reach (3.1).
+- Extras: spot 0 keeps 1 m clear of Luka, so it is standing at the chair (3.4, 4.2, 6, P29); with the re-solve that
+  fails P29 at 3.5 m (3.4 OPEN). Every extra is visible from the seat or a spot; Relief fails the 15 deg rule for
+  everyone; per-player defaults, and one referee left out unless Vishal objects (3.4b).
+- FOCAL is read by the freeze jobs at run time from `court-run.json`; an unreadable file now fails with its message (7).
+
 ### indep-review (Opus): NOT READY, 1 blocker + 11 major; 11 accepted, 1 rejected, 1 partly
 - ir 1 BLOCKER (watch layering: no per-frame cards or plate): ACCEPT; 1, 3.2, 3.3, 4.1 (instance masks, mosaic,
   plates), 4.2 (`cards.json`, regions, backboard, ball card), 4.3 `proxies.ts`/`world.ts` (hoop), 5 (`plates.py`), 6,
@@ -1211,8 +1241,8 @@ Verdicts are the main session's (in the private review notes); each was checked 
   documented fallback (4.1, 9).
 - ir 8 (extras default "leave out"): ACCEPT; 3.4b (list the visible C-only players, prototype C-Turbo vs Body on one,
   batch the rest, leave out only with Vishal's OK), 7, 8.
-- ir 9 (the far player at the boundary): ACCEPT; closer 2.0 m (3.4, 4.2, 6) and the 0.3 m floor test (P29). New: with
-  the final calibration it failed with the chair on a side; closed with the corner chair on the diagonal (3.4).
+- ir 9 (the far player at the boundary): ACCEPT; closer 2.0 m, later set by the extras check (3.4, 4.2, 6) and the 0.3 m floor test (P29). New: with
+  the final calibration it failed with the chair on a side; closed with the corner chair on the diagonal (3.4); reopened by the re-solve (3.4 OPEN).
 - ir 10 (direction open at T0; Decision W not in the status): ACCEPT; 3.3a (now decided: the direction pick below),
   header.
 - ir 11 (ownership): ACCEPT; 4.3 (`court.ts` integrator-only, `Proxies.dim(p)` called by the world,
