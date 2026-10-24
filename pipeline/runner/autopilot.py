@@ -66,6 +66,8 @@ def main():
     DROP.mkdir(parents=True, exist_ok=True)
     PHOTOS.mkdir(parents=True, exist_ok=True)
     state = json.loads(state_path.read_text()) if state_path.exists() else {"submitted": {}, "fetched": []}
+    # only runs that are really in the library count as fetched (older versions also marked failures fetched)
+    state["fetched"] = [r for r in state.get("fetched", []) if (runner.DEFAULT_DEST / r / "dream.json").exists()]
     sizes: dict[str, int] = {}
     seeded = state.get("seeded", False)
     while True:
@@ -113,8 +115,12 @@ def main():
                     state["fetched"].append(run_id)
                     log(f"fetched {run_id}")
                 elif st["status"] == "failed":
-                    log(f"{run_id} failed at {st['stage']}")
-                    state["fetched"].append(run_id)
+                    if run_id not in state.setdefault("failed", []):  # kept apart: a resubmitted run comes home
+                        log(f"{run_id} failed at {st['stage']}")
+                        state["failed"].append(run_id)
+                elif run_id in state.get("failed", []):
+                    state["failed"].remove(run_id)
+                    log(f"{run_id} is running again")
             # photos -> avatars (Vishal's DiGS job needs its assets first)
             photos = [f for f in sorted(PHOTOS.iterdir()) if f.suffix.lower() in PHOTO
                       and str(f) not in [v["clip"] for v in state["submitted"].values()]]
