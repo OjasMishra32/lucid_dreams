@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 11:12 AM. Vishal is up and submits the HiPerGator jobs himself (his account).
+Updated Sat 12:07 PM. Court Side's GPU work moved off the TEA Lab account at 12:06 (all its jobs cancelled, so the lab's GPUs are free for Ojasva); it now runs on a second lab allocation Vishal is approved for.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -143,19 +143,14 @@ private, outside the repo.
 
 ## Now
 
-- **Build on `court-side`:** interfaces, sound, the test harness and the stand-in are merged (148 tests, emulator runs
-  clean). Core, look (world + light) and the private-data assembler are done in their own branches, each going
-  through an independent review before the integrator merges it. Video + hand-off is still building. The QA runner
-  is fixed after review and being re-checked.
-- **Camera:** the second low angle pins the main camera's distance to about ±0.5 m (from ±2-3 m). The full-show
-  camera solve lands in about 30 minutes.
-- **Show video:** the in-between frames ran on HiPerGator in under a minute: 35 dB against held-out real frames,
-  against 22 dB for a cross-dissolve. Stacking and encoding are next.
-- **GPU:** the masks for Luka, Gobert and the ball are done and checked (ids hold through the side swap). Plain masks
-  beat the soft-edge pass, so plain ones go in. Luka and Gobert's freeze runs go to the GPUs once the clips finish
-  encoding, both window variants at Turbo for the noon gate. Three other players are built. One trained against the
-  real broadcast frame; two fell short of the real-view bar and are being fixed.
-- Waiting on: the clip encodes, the full-show camera solve.
+- **Gate 2:** the first fast views of both players are back (stride 1). They're being laid out on one sheet now.
+- **GPU:** all Court Side jobs on the TEA Lab account were cancelled at 12:06 to free it for Ojasva. The software stack is being
+  installed on Vishal's second allocation. After that, the full-quality runs for both players (best of 3), the other
+  players and the final winner runs all go there.
+- **Build:** interfaces, sound, harness, stand-in and the QA runner are merged. Core, look and video + hand-off are each
+  done and in review or fixes; the integrator merges each one once its review is clean. The private-data assembler
+  takes the real show (frames A921-1360 baked and validated); the full show re-bakes on the final camera solve.
+- **Camera:** the full-show solve v2 has landed (median 0.42 px). Waiting on the final sign-off.
 
 ## Verdict so far
 
