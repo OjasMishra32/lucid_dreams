@@ -76,10 +76,12 @@ class RealLayers:
 class SourceProvider:
     """bake.Provider over source.py (live frames, undistortion, in-betweens) and the layers' files (plates, mattes, people)."""
 
-    def __init__(self, cfg, source, layout: Layout, layers: LayersFiles | None, cache: int = 8, matte_pad: int = 2):
+    def __init__(self, cfg, source, layout: Layout, layers: LayersFiles | None, cache: int = 8, matte_pad: int = 2, freeze_source=None):
         self.cfg, self.source, self.layout, self.files = cfg, source, layout, layers
+        self.freeze_source = freeze_source  # a Source over F's full-resolution frame: F's live region and freeze.png come from it
         self.cache_n, self.pad = cache, matte_pad
         self._cache: dict[int, RealLayers] = {}
+        self.methods: dict[str, int] = {}  # live frames by origin: real / rife / dis (every render counts, retries too)
 
     # one real frame's layers (cached: an in-between needs both neighbours, the next frame the same pair again)
     def real(self, src: int) -> RealLayers:
@@ -104,7 +106,11 @@ class SourceProvider:
         return self._cache[src]
 
     def layers(self, df) -> Layers:
-        live, _ = self.source.live(df)
+        if self.freeze_source is not None and not df.interp and int(round(df.src)) == self.cfg.freeze:
+            live, info = self.freeze_source.clean(self.cfg.freeze)  # F itself: the sharpest frame there is, downscaled by the stacker
+        else:
+            live, info = self.source.live(df)
+        self.methods[info["method"]] = self.methods.get(info["method"], 0) + 1
         if self.files is None:
             return Layers(live)
         if not df.interp:
@@ -129,7 +135,7 @@ class SourceProvider:
 
     # F and its files
     def freeze(self) -> np.ndarray:
-        return self.source.clean(self.cfg.freeze)[0]
+        return (self.freeze_source or self.source).clean(self.cfg.freeze)[0]
 
     def _like_freeze(self, img: np.ndarray, nearest: bool = False) -> np.ndarray:
         h, w = self.freeze().shape[:2]
@@ -174,6 +180,9 @@ class CoreCameras:
     def camera_block(self) -> dict:
         return cam_mod.video_json_camera(self.solve, self.cfg)
 
+    def source_size(self) -> tuple[int, int]:
+        return (self.solve.width, self.solve.height)
+
 
 def needed_sources(timelines) -> set[int]:
     """Every real source frame some display frame of these timelines shows or is made from."""
@@ -184,10 +193,51 @@ def needed_sources(timelines) -> set[int]:
     return out
 
 
-def build_run(cfg, out_dir: Path, opts, bake_fn, label: str = "") -> dict:
+def extract_frame(clip: Path, n: int, dest: Path) -> Path:
+    """Frame n (0 = first decoded frame) of a video as a lossless PNG (cached)."""
+    import subprocess
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest.exists():
+        tmp = dest.with_suffix(".part.png")
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-threads", "2", "-i", str(clip), "-vf", f"select=eq(n\\,{n})", "-fps_mode", "passthrough", "-frames:v", "1", str(tmp)], check=True)
+        tmp.replace(dest)
+    return dest
+
+
+def freeze_source_for(cfg, src, clip: Path | None, tmp: Path, warnings: list):
+    """A Source over F's full-resolution frame (decoded from the clip), checked against the 1080p set's F; None if no clip."""
+    import dataclasses as dc
+    from pipeline.court.bake import source as source_mod
+
+    if not clip or not Path(clip).expanduser().exists():
+        return None
+    png = extract_frame(Path(clip).expanduser(), cfg.freeze, tmp / "f4k" / f"{cfg.freeze:06d}.png")
+    full = cv2.cvtColor(cv2.imread(str(png)), cv2.COLOR_BGR2RGB)
+    ref = src.raw(cfg.freeze)
+    small = cv2.resize(full, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_AREA)
+    mad = float(np.abs(small.astype(np.float32) - ref.astype(np.float32)).mean())
+    if mad > 6:  # jpg + resize differences are ~1-3 grey levels; a different frame is far more
+        warnings.append(f"the clip's frame {cfg.freeze} does not match the 1080p set's (MAD {mad:.1f}): full-resolution freeze not used")
+        return None
+    cfg4 = dc.replace(cfg, frames_dir=str(png.parent), frame_pattern="{src:06d}.png")
+    return source_mod.Source.from_config(cfg4, f_of=lambda s: src.f_of(s))
+
+
+class MissingInput(RuntimeError):
+    """An input the bake needs is not there yet (named in the message); nothing was written."""
+
+
+def build_run(cfg, out_dir: Path, opts, bake_fn, label: str = "", freeze_clip: Path | None = None) -> dict:
     """Timelines (every display Hz of the config), the source, the layers (when every needed frame has them), cameras -> bake_fn."""
     from pipeline.court.bake import source as source_mod
 
+    calib = Path(cfg.calib).expanduser()
+    if not calib.is_file():
+        raise MissingInput(f"the calibration {calib} does not exist yet: nothing was baked")
+    frames = Path(cfg.frames_dir).expanduser()
+    if not frames.is_dir():
+        raise MissingInput(f"the source frames folder {frames} does not exist: nothing was baked")
     timelines = {hz: timeline_mod.build(cfg, hz) for hz in cfg.display_hz}
     warnings = []
     layers = None
@@ -204,7 +254,9 @@ def build_run(cfg, out_dir: Path, opts, bake_fn, label: str = "") -> dict:
         warnings.append("no layers data (people.json): live-only stacking, no cards")
     solve = cam_mod.load_calib(cfg.calib)
     src = source_mod.Source.from_config(cfg, f_of=lambda s: _solved_f(solve, s))
-    provider = SourceProvider(cfg, src, opts.layout, layers)
+    tmp = Path(cfg.tmp).expanduser() if cfg.tmp else Path.home() / "court-side-data" / "luka" / "work" / "bake" / "tmp"
+    fsrc = freeze_source_for(cfg, src, freeze_clip, tmp, warnings)
+    provider = SourceProvider(cfg, src, opts.layout, layers, freeze_source=fsrc)
     opts.make_source = cfg.make
     t0 = time.time()
     report = bake_fn(timelines, provider, CoreCameras(cfg, solve), Path(out_dir), opts, main_hz=72)
@@ -240,10 +292,13 @@ def synth_run(work, out, config, opts, bake_fn) -> dict:
 REAL_FRAMES = Path.home() / "court-side-data" / "luka" / "work" / "layers" / "f1080"
 
 
+REAL_CLIP = Path.home() / "court-side-data" / "luka" / "A-main-615.mp4"
+
+
 def real_run(work, out, config, opts, bake_fn) -> dict:
     cfg = config_mod.load(config)
     if not cfg.frames_dir:  # the private config may leave the decoded frames' folder out: the 1080p set (jpg) is the default
         cfg = dataclasses.replace(cfg, frames_dir=str(REAL_FRAMES), frame_pattern="{src:06d}.jpg")
     from pipeline.court.bake import bake as bake_mod
 
-    return build_run(cfg, bake_mod.check_out_dir(out) if out else bake_mod.STAGING, opts, bake_fn)
+    return build_run(cfg, bake_mod.check_out_dir(out) if out else bake_mod.STAGING, opts, bake_fn, freeze_clip=None if opts.no_freeze_4k else REAL_CLIP)

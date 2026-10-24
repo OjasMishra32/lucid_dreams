@@ -66,6 +66,10 @@ def test_output_contract_files_and_video_json_shape(baked):
     vid = info["video"]
     assert vid["file"] == "video/show.h264" and vid["frames"] == "video/frames.json" and vid["cards"] == "video/cards.json"
     assert vid["freeze"] == "video/freeze.png" and vid["freezeClean"] == "video/freeze-clean.png"
+    assert "standsMask" not in vid and "inpaintMask" not in vid  # not made yet: left out of video.json, never faked
+    files = [p for p in v.parent.rglob("*") if p.is_file()]
+    assert not [p for p in files if ".tmp" in p.name]
+    assert max(files, key=lambda p: p.stat().st_mtime_ns) == v.parent / "video.json"
     assert vid["regions"] == LAY.regions_json()
     assert vid["fallbacks"]["small"]["file"] == "video/show-small.h264" and vid["fallbacks"]["hz90"]["file"] == "video/show-90.h264"
     assert vid["fallbacks"]["hz90"]["displayHz"] == 90 and vid["displayHz"] == 72
@@ -244,3 +248,44 @@ def test_bake_refuses_the_assembled_bundle(tmp_path):
     assert bake.check_out_dir(bake.STAGING) == bake.STAGING.resolve()
     with pytest.raises(ValueError, match="refusing"):
         bake.main(["--real", "--out", str(forbidden)])
+
+
+def box_iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
+
+
+def test_cards_follow_the_people_of_the_scene(baked):
+    """Every visible person has a card whose box (source pixel edges) and decoded matte match the true mask (P43)."""
+    clip, tl, cfg = baked["clip"], baked["tls"][72], baked["cfg"]
+    cards = json.loads((baked["v"] / "cards.json").read_text())
+    W, H = cfg.src_width, cfg.src_height
+    mw, mh = LAY.mattes[2], LAY.mattes[3]
+    reals = [f for f in tl.frames if not f.interp and f.segment == "pass2"][::25]
+    atlas = {i: g for i, g in zip(sorted(f.i for f in reals), encode.decode_frames(baked["v"] / "show.h264", [f.i for f in reals], LAY.width, LAY.height).values())}
+    checked = 0
+    for f in reals:
+        truth = clip.render(clip.time_of(int(f.src)), masks=True)
+        by_id = {c["id"]: c for c in cards[f.i]["cards"]}
+        for pid, cover in truth.items():
+            ys, xs = np.nonzero(cover > 0.5)
+            if len(xs) < 30:
+                continue  # a sliver: the layers may drop it
+            assert pid in by_id, f"frame {f.i}: {pid} is visible but has no card"
+            c = by_id[pid]
+            assert c["kind"] == "person" and len(c["at"]) == 3 and c["at"][1] == 0
+            tb = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+            assert box_iou(c["box"], tb) > 0.8, (f.i, pid, c["box"], tb)
+            assert 0 <= c["box"][0] < c["box"][2] <= W and 0 <= c["box"][1] < c["box"][3] <= H
+            # the atlas tile, mapped back onto the box, is the true matte
+            u0, v0, u1, v1 = c["tile"]
+            tile = atlas[f.i][LAY.mattes[1] + round(v0 * mh) : LAY.mattes[1] + round(v1 * mh), round(u0 * mw) : round(u1 * mw), 0]
+            bx0, by0, bx1, by1 = (int(round(v)) for v in c["box"])
+            want = cv2.resize((np.clip(cover[by0:by1, bx0:bx1], 0, 1) * 255).astype(np.uint8), (tile.shape[1], tile.shape[0]), interpolation=cv2.INTER_AREA)
+            inter = np.logical_and(tile > 127, want > 127).sum()
+            union = np.logical_or(tile > 127, want > 127).sum()
+            assert inter / max(union, 1) > 0.8, (f.i, pid, inter / max(union, 1))
+            checked += 1
+    assert checked >= 6

@@ -135,8 +135,37 @@ def test_track_falls_back_to_the_nearest_frame_when_a_source_frame_has_no_entry(
 
 def test_cards_for_frames_is_one_entry_per_frame_with_stable_tiles():
     people = {s: [P("a", (100 + s, 100, 300 + s, 600), order=0), P("b", (500, 100, 700, 600), order=1)] for s in range(10, 14)}
-    out, dropped = cd.cards_for_frames(LAY, [10, 10.5, 11, 12, 13], cd.PeopleTrack(people))
+    out, dropped = cd.cards_for_frames(LAY, [10, 10.5, 11, 12, 13], cd.PeopleTrack(people), (3840, 2160))
     assert len(out) == 5 and dropped == []
-    tiles_a = {tuple(e["cards"][0]["tile"][:2]) for e in out}
+    tiles_a = {tuple(e["cards"][0]["tile"][:2]) for e in out if e["cards"][0]["id"] == "a"}
     assert len(tiles_a) == 1  # a's tile never moves
     assert all(set(e) == {"cards"} for e in out)
+
+
+def test_format_card_is_resolution_free():
+    cards = cd.build_cards(LAY, [P("a", (100, 100, 350, 700), foot=(3.0, 0, -2.0)), P("b", (500, 200, 700, 800), order=1)], TileSlots(LAY, 6))
+    out = [cd.to_format(c, LAY, (3840, 2160)) for c in cards]
+    a = out[0]
+    assert set(a) == {"id", "kind", "at", "box", "tile", "order"}
+    assert a["kind"] == "person" and a["at"] == [3.0, 0.0, -2.0]
+    # live 1536 x 864 -> source 3840 x 2160: x2.5 (pixel edges, 0 at the top-left edge)
+    assert a["box"] == [250.0, 250.0, 875.0, 1750.0]
+    t = a["tile"]
+    assert 0 <= t[0] < t[2] <= 1 and 0 <= t[1] < t[3] <= 1
+    assert t[0] * LAY.mattes[2] == pytest.approx(cards[0]["tile"][0], abs=1e-3)  # the uv is the pixel tile over the atlas size
+
+
+def test_tiles_of_two_cards_keep_four_pixels_apart():
+    people = [P(str(i), (100 * i, 0, 100 * i + 120, 800), order=i) for i in range(6)]  # wide boxes: every slot filled to its width
+    cards = cd.build_cards(LAY, people, TileSlots(LAY, 6))
+    mw, mh = LAY.mattes[2], LAY.mattes[3]
+    px = sorted((c["tile"] for c in cards), key=lambda t: t[0])
+    assert len(px) == 6
+    for u, v in zip(px, px[1:]):
+        assert v[0] - u[2] >= 4
+    assert all(t[0] >= 2 and t[2] <= mw - 2 and t[1] >= 2 and t[3] <= mh - 2 for t in px)
+
+
+def test_format_boxes_scale_with_the_camera_size():
+    c = cd.build_cards(LAY, [P("a", (0, 0, 768, 432))], TileSlots(LAY, 6))
+    assert cd.to_format(c[0], LAY, (1920, 1080))["box"] == [0.0, 0.0, 960.0, 540.0]

@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +62,7 @@ class Provider(Protocol):
 class Cameras(Protocol):
     def frames_json(self, timeline) -> list: ...
     def camera_block(self) -> dict: ...
+    def source_size(self) -> tuple[int, int]: ...  # camera.width x camera.height: the pixels cards.json boxes are in
 
 
 @dataclass
@@ -75,14 +78,16 @@ class Options:
     small: bool = True
     hz90: bool = True
     pass1_mp4: bool = True
+    no_freeze_4k: bool = False  # real run: do not decode F at full resolution from the clip
     log: Callable[[str], None] = lambda s: print(s, file=sys.stderr, flush=True)
 
 
 class Renderer:
     """The stacked frames of one timeline, in order, plus the cards.json they imply (rebuilt on every pass)."""
 
-    def __init__(self, timeline, provider: Provider, layout: Layout, n_slots: int, log=None):
+    def __init__(self, timeline, provider: Provider, layout: Layout, n_slots: int, camera_size: tuple[int, int], log=None):
         self.tl, self.provider, self.layout, self.n_slots, self.log = timeline, provider, layout, n_slots, log
+        self.camera_size = camera_size
         self.cards: list[dict] = []
         self.dropped: list[tuple[str, int]] = []
         self.missing_mattes: set[str] = set()
@@ -100,7 +105,7 @@ class Renderer:
         t0 = time.time()
         for k, fr in enumerate(self.tl.frames):
             img, cards = self.render(fr, slots)
-            self.cards.append({"cards": cards})
+            self.cards.append({"cards": [cards_mod.to_format(c, self.layout, self.camera_size) for c in cards]})
             if self.log and k % 100 == 0:
                 self.log(f"  [{self.tl.hz} Hz] frame {k}/{len(self.tl.frames)} ({time.time() - t0:.0f} s)")
             yield img
@@ -121,10 +126,10 @@ def video_name(hz: int, main_hz: int) -> str:
 
 
 def encode_timeline(
-    tl, provider: Provider, layout: Layout, opts: Options, out: Path, outputs: Sequence[encode.Output], reference: np.ndarray, protect_qp: int | None
+    tl, provider: Provider, layout: Layout, opts: Options, out: Path, outputs: Sequence[encode.Output], reference: np.ndarray, protect_qp: int | None, camera_size: tuple[int, int]
 ) -> tuple[Renderer, list[encode.Result], dict]:
     """Render and encode one timeline into `outputs` (the first is the layout's own size); returns the quality of F."""
-    rend = Renderer(tl, provider, layout, opts.n_slots, opts.log)
+    rend = Renderer(tl, provider, layout, opts.n_slots, camera_size, opts.log)
     protect = freeze_indices(tl)
     qp = protect_qp if protect_qp is not None else opts.protect_qp
     if qp is None:
@@ -148,9 +153,16 @@ def encode_timeline(
 
 
 def write_json(path: Path, obj) -> None:
-    path.write_text(json.dumps(obj, separators=(",", ":")))
+    """Atomically: written to <name>.tmp, fsynced, renamed (a reader never sees half a file)."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as fh:
+        fh.write(json.dumps(obj, separators=(",", ":")))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
 
 
+OPTIONAL_FILES = ("freeze-clean.png", "stands-mask.png", "inpaint-mask.png")  # only from the layers' data
 BUNDLE = Path.home() / "court-side-data" / "luka" / "bundle" / "court-side"
 STAGING = Path.home() / "court-side-data" / "luka" / "work" / "show"
 
@@ -170,6 +182,10 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
     out_dir = check_out_dir(out_dir)
     vdir = out_dir / "video"
     vdir.mkdir(parents=True, exist_ok=True)
+    # the folder is a staging area read by assemble.py: video.json (written last) is what says the show is complete, so a
+    # run in progress must not leave the previous run's video.json or optional files naming things that are about to change
+    for stale in [out_dir / "video.json", *(vdir / n for n in OPTIONAL_FILES), *vdir.glob("*.tmp"), *vdir.glob("*.tmp.png")]:
+        stale.unlink(missing_ok=True)
     tl = timelines[main_hz]
     layout = opts.layout
     small_layout = layout.scaled(opts.small_width) if opts.small else None
@@ -184,7 +200,7 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
         outputs.append(encode.Output(vdir / "show-small.h264", small_layout.width, small_layout.height))
     if opts.pass1_mp4:
         outputs.append(encode.Output(vdir / "pass1.mp4", layout.width, layout.height, fmt="mp4", limit=tl.segments["pass1"][1] + 1))
-    rend, results, quality = encode_timeline(tl, provider, layout, opts, vdir, outputs, freeze_img, None)
+    rend, results, quality = encode_timeline(tl, provider, layout, opts, vdir, outputs, freeze_img, None, cameras.source_size())
     report["streams"]["main"] = {"frames": len(tl.frames), "bytes": {r.path.name: r.bytes for r in results}, "idr": results[0].idr, "f": quality}
     write_json(vdir / "frames.json", cameras.frames_json(tl))
     write_json(vdir / "cards.json", rend.cards)
@@ -215,7 +231,7 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
     if opts.hz90 and 90 in timelines:
         t90 = timelines[90]
         outs = [encode.Output(vdir / "show-90.h264", layout.width, layout.height)]
-        r90, res90, q90 = encode_timeline(t90, provider, layout, opts, vdir, outs, freeze_img, None)
+        r90, res90, q90 = encode_timeline(t90, provider, layout, opts, vdir, outs, freeze_img, None, cameras.source_size())
         report["streams"]["hz90"] = {"frames": len(t90.frames), "bytes": {r.path.name: r.bytes for r in res90}, "idr": res90[0].idr, "f": q90}
         write_json(vdir / "frames-90.json", cameras.frames_json(t90))
         write_json(vdir / "cards-90.json", r90.cards)
@@ -233,11 +249,32 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
         encode.write_png(vdir / name, img if img.ndim == 3 else np.repeat(img[..., None], 3, -1))
         video[key] = f"video/{name}"
 
-    info = {"video": video, "camera": cameras.camera_block()}
-    write_json(out_dir / "video.json", info)
-    check = fmtcheck.check_bundle(vdir)
+    if hasattr(provider, "methods"):
+        report["live_frames_by_method"] = dict(provider.methods)
+    camera = cameras.camera_block()
+    # validate with every path filled in (a placeholder for a file that is not made yet), but publish only what exists
+    full = dict(video)
+    full.setdefault("freezeClean", "video/freeze-clean.png")
+    full.setdefault("standsMask", "video/stands-mask.png")
+    with tempfile.TemporaryDirectory() as td:
+        probe = Path(td) / "video.json"
+        probe.write_text(json.dumps({"video": full, "camera": camera}))
+        check = fmtcheck.check_bundle(vdir, info=probe)
     report["format"] = check
     report["ok"] = bool(check["ok"]) and all(s["f"]["ok"] for s in report["streams"].values())
+    for key in ("freezeClean", "standsMask"):
+        if key not in video or not (out_dir / video[key]).exists():
+            video.pop(key, None)
+    names = [video[k] for k in ("file", "frames", "cards", "freeze", "freezeClean", "standsMask", "inpaintMask") if k in video]
+    names += [fb[k]["file"] for k in ("small", "hz90") if k in fb] + [fb["hz90"][k] for k in ("frames", "cards") if "hz90" in fb] + ([fb["element"]] if "element" in fb else [])
+    absent = [n for n in names if not (out_dir / n).is_file()]
+    if absent:
+        report["ok"] = False
+        report["warnings"].append(f"video.json would name files that do not exist: {absent}")
+    report["published"] = False
+    if report["ok"]:
+        write_json(out_dir / "video.json", {"video": video, "camera": camera})  # last: the signal that every file is complete
+        report["published"] = True
     return report
 
 
@@ -257,15 +294,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--no-small", action="store_true")
     ap.add_argument("--no-pass1-mp4", action="store_true")
     ap.add_argument("--protect-qp", type=int)
+    ap.add_argument("--no-freeze-4k", action="store_true", help="real: use the 1080p set's F instead of decoding F at full resolution from the clip")
     args = ap.parse_args(argv)
     if args.out:
         check_out_dir(args.out)  # refuse before any work
     from pipeline.court.bake import providers  # the footage-side adapters (source / interp / layers / cameras)
 
     extra = dict(layout=stack.synthetic_layout(256), small_width=128, n_slots=4) if args.synth else {}  # the synthetic clip is tiny
-    opts = Options(**extra, crf=args.crf, preset=args.preset, protect_qp=args.protect_qp, hz90=not args.no_hz90, small=not args.no_small, pass1_mp4=not args.no_pass1_mp4)
+    opts = Options(**extra, crf=args.crf, preset=args.preset, protect_qp=args.protect_qp, hz90=not args.no_hz90, small=not args.no_small, pass1_mp4=not args.no_pass1_mp4, no_freeze_4k=args.no_freeze_4k)
     run = providers.synth_run if args.synth else providers.real_run
-    report = run(Path(args.synth) if args.synth else None, args.out, args.config, opts, bake)
+    try:
+        report = run(Path(args.synth) if args.synth else None, args.out, args.config, opts, bake)
+    except providers.MissingInput as e:
+        print(f"bake: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(report, indent=1, default=str))
     return 0 if report["ok"] else 1
 

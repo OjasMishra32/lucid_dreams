@@ -66,6 +66,22 @@ class Result:
     codec: str
 
 
+def partial(path: Path) -> Path:
+    """The name a stream is written under until it is complete (renamed over `path` after ffmpeg exits and it is fsynced)."""
+    return path.with_name(path.name + ".tmp")
+
+
+def publish(path: Path) -> None:
+    """fsync the finished partial file and rename it to its real name (never visible half-written)."""
+    tmp = partial(path)
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+
+
 def zones_arg(protect: Sequence[int], qp: int) -> str:
     """x264 zones: a constant QP on each protected frame (consecutive frames merge into one zone)."""
     idx = sorted(set(protect))
@@ -100,7 +116,7 @@ def ffmpeg_command(outputs: Sequence[Output], size: tuple[int, int], hz: float, 
             "-map", f"[o{k}]", "-fps_mode", "passthrough", "-force_key_frames", keys,
             "-c:v", "libx264", "-threads", THREADS, "-profile:v", "high", "-level:v", level, "-preset", preset, "-crf", f"{crf:g}",
             "-bf", "0", "-refs", "3", "-g", "100000", "-keyint_min", "100000", "-sc_threshold", "0", "-forced-idr", "1",
-            "-x264-params", params, *(["-movflags", "+faststart", "-f", "mp4"] if mp4 else ["-f", "h264"]), str(o.path),
+            "-x264-params", params, *(["-movflags", "+faststart", "-f", "mp4"] if mp4 else ["-f", "h264"]), str(partial(o.path)),
         ]
     return cmd
 
@@ -144,6 +160,8 @@ def encode(
         except BaseException:
             proc.kill()
             proc.wait()
+            for o in outputs:
+                partial(o.path).unlink(missing_ok=True)
             raise
         try:
             proc.stdin.close()
@@ -151,6 +169,8 @@ def encode(
             pass
         code = proc.wait()
         if code != 0 or sent != n_frames:
+            for o in outputs:
+                partial(o.path).unlink(missing_ok=True)
             log.seek(0)
             tail = log.read().decode("utf8", "replace")[-800:]
             if code != 0:
@@ -158,13 +178,17 @@ def encode(
             raise ValueError(f"{sent} frames given, {n_frames} promised")
     results = []
     for o in outputs:
+        scan_target = partial(o.path)
         if o.fmt == "mp4":
+            publish(o.path)
             results.append(Result(o.path, min(n_frames, o.limit or n_frames), [0], o.path.stat().st_size, codec_for(o.width, o.height, hz)))
             continue
-        info = scan_h264(o.path)
+        info = scan_h264(scan_target)
         want = codec_for(o.width, o.height, hz)
         if info.codec != want:  # ultrafast/superfast drop the High-profile tools and x264 then writes Baseline/Main
+            partial(o.path).unlink(missing_ok=True)
             raise RuntimeError(f"{o.path.name}: the SPS says {info.codec}, the format needs {want} (preset {preset!r} too fast for High profile?)")
+        publish(o.path)
         results.append(Result(o.path, info.frames, info.idr, o.path.stat().st_size, info.codec))
     return results
 
@@ -374,6 +398,14 @@ def calibrate_protect_qp(
 
 def write_png(path: Path | str, rgb: np.ndarray) -> None:
     """A lossless PNG of an RGB image (freeze.png)."""
-    ok = cv2.imwrite(str(path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_PNG_COMPRESSION, 6])
+    path = Path(path)
+    tmp = path.with_name(path.stem + ".tmp.png")  # cv2 needs the .png extension; renamed once complete
+    ok = cv2.imwrite(str(tmp), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR) if rgb.ndim == 3 else rgb, [cv2.IMWRITE_PNG_COMPRESSION, 6])
     if not ok:
         raise OSError(f"could not write {path}")
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)

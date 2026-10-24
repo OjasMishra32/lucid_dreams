@@ -110,6 +110,9 @@ class FakeCameras:
     def frames_json(self, tl):
         return [{"src": f.src, "interp": f.interp, "q": [0.0, 0.0, 0.0, 1.0], "f": 1000.0 + (0 if f.src == FREEZE else 1.0)} for f in tl.frames]
 
+    def source_size(self):
+        return (384, 216)
+
     def camera_block(self):
         return {"centre": [-20.0, 1.0, 3.0], "width": 384, "height": 216, "cx": 191.5, "cy": 107.5, "k1": 0, "sourceFps": 60.0, "captureFps": 120.0, "slow": 2.67}
 
@@ -171,3 +174,39 @@ def test_a_bad_stream_fails_the_report(tmp_path, monkeypatch):
     opts = Options(layout=LAY, small_width=128, crf=26, preset="veryfast", hz90=False, pass1_mp4=False, log=lambda s: None)
     rep = bake.bake({72: make_timeline(72)}, FakeProvider(), FakeCameras(), tmp_path, opts)
     assert rep["ok"] is False
+
+
+def named_files(info):
+    v = info["video"]
+    out = [v[k] for k in ("file", "frames", "cards", "freeze", "freezeClean", "standsMask", "inpaintMask") if k in v]
+    fb = v["fallbacks"]
+    out += [fb["small"]["file"], fb["element"], fb["hz90"]["file"], fb["hz90"]["frames"], fb["hz90"]["cards"]]
+    return out
+
+
+def test_staging_is_atomic_video_json_last_and_names_only_what_exists(tmp_path):
+    # a previous run's leftovers must not survive into this run's folder
+    (tmp_path / "video").mkdir()
+    (tmp_path / "video.json").write_text("{}")
+    (tmp_path / "video" / "stands-mask.png").write_bytes(b"old")
+    rep, _ = run_bake(tmp_path)
+    assert rep["ok"] and rep["published"]
+    info = json.loads((tmp_path / "video.json").read_text())
+    for n in named_files(info):
+        assert (tmp_path / n).is_file(), n
+    assert "standsMask" not in info["video"] and "inpaintMask" not in info["video"]  # not made: left out, not faked
+    assert "freezeClean" in info["video"]
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert not [p for p in files if ".tmp" in p.name or p.name.endswith(".part")], "a partial file was left behind"
+    newest = max(files, key=lambda p: p.stat().st_mtime_ns)
+    assert newest == tmp_path / "video.json"  # written last
+    assert not (tmp_path / "video" / "stands-mask.png").exists()  # the stale optional file was cleared
+
+
+def test_a_failed_validation_publishes_no_video_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(fmtcheck, "check_bundle", lambda *a, **k: {"ok": False, "problems": ["x"], "report": []})
+    opts = Options(layout=LAY, small_width=128, crf=26, preset="veryfast", hz90=False, pass1_mp4=False, log=lambda s: None)
+    (tmp_path / "video.json").write_text("{}")  # an older, now stale, show
+    rep = bake.bake({72: make_timeline(72)}, FakeProvider(), FakeCameras(), tmp_path, opts)
+    assert rep["ok"] is False and rep["published"] is False
+    assert not (tmp_path / "video.json").exists()
