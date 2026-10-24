@@ -55,8 +55,9 @@ def slug(text: str) -> str:
 
 
 def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks: int, start_s: float = 0.0,
-           kind: str = "replay") -> dict:
-    """clip: a local file, or "hpg:/path" for a clip already on HiPerGator."""
+           kind: str = "replay", intent: str = "") -> dict:
+    """clip: a local file, or "hpg:/path" for a clip already on HiPerGator. intent: what you want to do with this
+    person ("teach me this strum"), carried into dream.json for the experience step."""
     on_hpg = isinstance(clip, str) and clip.startswith("hpg:")
     if not on_hpg and not Path(clip).exists():
         raise SystemExit(f"no such clip: {clip}")
@@ -70,7 +71,7 @@ def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks:
     else:
         rsync(str(clip), f"{HOST}:{run}/input{Path(clip).suffix.lower()}")
     if kind == "avatar":  # one photo -> a rigged person (Vishal's DiGS-Avatar job)
-        job = {"id": run_id, "name": name, "kind": "avatar", "submittedAt": time.time()}
+        job = {"id": run_id, "name": name, "kind": "avatar", "intent": intent, "submittedAt": time.time()}
         remote(f"cat > {run}/job.json <<'JSON'\n{json.dumps(job)}\nJSON")
         jid = remote(f"mkdir -p {run}/logs && cd {run}/logs && sbatch --parsable --export=ALL,RUN={run} "
                      f"{REMOTE}/code/pipeline/hpg/stage-avatar.sbatch").strip()
@@ -78,7 +79,8 @@ def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks:
         return {"id": run_id, "slurm": {"avatar": jid}}
     job = {"id": run_id, "name": name, "kind": "replay", "turbo": turbo, "chunks": chunks,
            "viewsPerLayer": 16, "layerPitches": [-10, 15, 35], "itersFirst": 7000, "itersWarm": 1500,
-           "cap": 300000, "shDegree": 1, "fps": 25, "frames": 121, "startS": start_s, "submittedAt": time.time()}
+           "cap": 300000, "shDegree": 1, "fps": 25, "frames": 121, "startS": start_s, "intent": intent,
+           "submittedAt": time.time()}
     remote(f"cat > {run}/job.json <<'JSON'\n{json.dumps(job)}\nJSON")
     slurm = json.loads(remote(f"bash {REMOTE}/code/pipeline/hpg/submit.sh {run}").strip().splitlines()[-1])
     return {"id": run_id, "slurm": slurm}
@@ -114,6 +116,7 @@ def main(argv=None):
     s.add_argument("--turbo", action="store_true", help="faster, slightly softer views (previews)")
     s.add_argument("--chunks", type=int, default=6, help="GPUs used in parallel for reconstruction")
     s.add_argument("--kind", choices=["replay", "avatar"], default="replay", help="avatar: the file is a photo")
+    s.add_argument("--intent", default="", help='what you want to do with them, e.g. "teach me this strum"')
     st = sub.add_parser("status")
     st.add_argument("id")
     f = sub.add_parser("fetch")
@@ -124,7 +127,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     if a.cmd == "submit":
         clip = a.clip if a.clip.startswith("hpg:") else Path(a.clip)
-        out = submit(clip, a.name, a.id, a.turbo, a.chunks, a.start_s, a.kind)
+        out = submit(clip, a.name, a.id, a.turbo, a.chunks, a.start_s, a.kind, a.intent)
     elif a.cmd == "status":
         out = status(a.id)
     elif a.cmd == "fetch":

@@ -7,6 +7,8 @@ also runs 4DAnyone's sample clips of real people. Waits until SMPL-X is installe
 A photo in ~/Downloads/lucid-photos/ (a consenting person, or a freely licensed photo of a public figure for the
 chess demo under AGENTS.md's consent rule; head to toe; iPhone HEIC is fine) becomes an avatar, named
 after the file (vishal.jpg -> "Vishal", id vishal), once the avatar assets are installed.
+A text file with the same name next to a clip or photo (guitar-teacher.mp4 + guitar-teacher.txt) is the intent: what
+you want to do with that person ("teach me this strum"); it goes into dream.json for the experience step.
 A queue item's "then" jobs, e.g. [{"job": "avatars/hpg/digs-finetune.sbatch", "env": {}}], are submitted with
 RUN_ID=<its id> once its run is done and the avatar assets are installed.
 
@@ -31,6 +33,11 @@ PHOTO = {".jpg", ".jpeg", ".png", ".heic"}
 SAMPLES = runner.REMOTE + "/repos/4DAnyone/data/source/pexels"
 SMPLX = runner.REMOTE + "/repos/4DAnyone/models/body_models/smplx/SMPLX_NEUTRAL.npz"
 ASSETS_READY = f"grep -l ASSETS_OK {runner.REMOTE}/jobs/lucid-digs-assets-*.log >/dev/null 2>&1 && echo yes || echo no"
+
+
+def intent_for(f: Path) -> str:
+    side = f.with_suffix(".txt")
+    return side.read_text().strip() if side.exists() else ""
 
 
 def log(msg: str) -> None:
@@ -62,7 +69,7 @@ def main():
                     if item["clip"] in [v["clip"] for v in state["submitted"].values()]:
                         continue
                     out = runner.submit("hpg:" + item["clip"], item["name"], item.get("id"), False, item.get("chunks", 6),
-                                        item.get("startS", 0.0))
+                                        item.get("startS", 0.0), intent=item.get("intent", ""))
                     state["submitted"][out["id"]] = {"clip": item["clip"], "at": time.time()}
                     log(f"submitted queued clip {out['id']}")
                 if a.seed_samples and not seeded:
@@ -80,7 +87,8 @@ def main():
                     if sizes.get(str(f)) != size:  # still copying: wait for the size to settle
                         sizes[str(f)] = size
                         continue
-                    out = runner.submit(f, f.stem.replace("_", " ").replace("-", " ").strip().title(), None, False, 6)
+                    out = runner.submit(f, f.stem.replace("_", " ").replace("-", " ").strip().title(), None, False, 6,
+                                        intent=intent_for(f))
                     state["submitted"][out["id"]] = {"clip": str(f), "at": time.time()}
                     log(f"submitted {f.name} as {out['id']}")
             for run_id in list(state["submitted"]):
@@ -115,7 +123,7 @@ def main():
                                        capture_output=True)
                     rid = runner.slug(f.stem)
                     out = runner.submit(src, f.stem.replace("_", " ").replace("-", " ").strip().title(), rid, False, 6,
-                                        0.0, kind="avatar")
+                                        0.0, kind="avatar", intent=intent_for(f))
                     state["submitted"][out["id"]] = {"clip": str(f), "at": time.time(), "kind": "avatar"}
                     log(f"submitted photo {f.name} as avatar {out['id']}")
             # follow-up jobs on finished runs (job paths are relative to the repo clone on HiPerGator)

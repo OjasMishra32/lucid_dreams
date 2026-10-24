@@ -140,7 +140,8 @@ export async function renderChess(root: HTMLElement) {
   // ---------------- game state ----------------
   const chess = new Chess();
   const engine = new Engine();
-  let strength: Strength = STRENGTHS.find((s) => s.id === "gm")!;
+  const askedStrength = new URLSearchParams(location.search).get("strength");
+  let strength: Strength = STRENGTHS.find((s) => s.id === askedStrength) ?? STRENGTHS.find((s) => s.id === "gm")!;
   let side: "w" | "b" = "w";
   let thinking = false;
   const meshes = new Map<string, THREE.Object3D>(); // square -> piece

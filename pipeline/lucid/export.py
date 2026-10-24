@@ -34,6 +34,7 @@ def parse_args(argv=None):
     p.add_argument("--result", type=Path, help="4DAnyone result dir (cameras.json: which way the source camera looked)")
     p.add_argument("--clip", type=Path, help="source clip, for audio and source metadata")
     p.add_argument("--fps", type=float, default=25.0)
+    p.add_argument("--intent", default="", help="what the user wants to do with this person (for experience.json)")
     p.add_argument("--preview-size", default="720x1280")
     p.add_argument("--preview-bg", default="0,0,0", help="r,g,b in 0-255")
     p.add_argument("--device", default="cuda:0")
@@ -282,6 +283,7 @@ def main(argv=None):
             "reality": "%06d.reality.spz" if seen_fractions else None,
         },
         "avatar": None,
+        "intent": a.intent or None,
         "audio": audio,
         "voice": voice,
         "preview": "preview.mp4",

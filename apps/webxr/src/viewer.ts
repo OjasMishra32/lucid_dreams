@@ -4,6 +4,7 @@ import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "./avatar";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
+import { Lesson, loadExperience, say, StepCard } from "./experience";
 import { fingertips, handOccluder, XrButton } from "./xr/hands";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
@@ -24,6 +25,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
     <div class="loader" id="loader"><div class="loader-inner">
       <svg class="ring" viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="19"/><circle class="bar" id="ring" cx="22" cy="22" r="19"/></svg>
       <h2 id="loading-title">Bringing them in</h2><p id="loading-pct">0%</p></div></div>
+    <aside class="step-card" id="step-card" hidden>
+      <p class="step-count" id="step-count"></p><h3 id="step-title"></h3><p class="step-tip" id="step-tip"></p>
+      <div class="step-progress"><i id="step-bar"></i></div>
+      <div class="step-nav"><button class="pill" id="step-back">Back</button><button class="pill" id="step-again">Again</button><button class="pill" id="step-next">Next</button></div>
+    </aside>
     <p class="cue" id="cue" hidden></p>
     <div class="controls" id="controls" hidden>
       <button class="play" id="play" aria-label="Play">${PAUSE}</button>
@@ -32,6 +38,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       <div class="segmented" id="speeds"><button data-speed="0.25">0.25×</button><button data-speed="0.5">0.5×</button><button data-speed="1" class="on">1×</button></div>
       <button class="pill" id="reality" hidden aria-pressed="false">Reality check</button>
       <button class="pill on" id="cc" hidden aria-pressed="true">Captions</button>
+      <a class="pill" id="play-chess" hidden>Play chess</a>
       <button class="cta" id="room" hidden>View in your room</button>
     </div>`;
   const $ = <T extends HTMLElement>(s: string) => root.querySelector<T>(s)!;
@@ -154,6 +161,17 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let t = 0; // seconds into the clip
   let shown = -1;
   const duration = avatar ? avatar.duration : Math.max(dream.durationS, 1 / dream.fps);
+  // what you came to do with them (experience.json, written from your intent)
+  const experience = await loadExperience(dream);
+  const steps = (experience?.steps ?? []).map((st) => ({ ...st, end: Math.min(st.end, duration) })).filter((st) => st.end > st.start);
+  const lesson = experience?.mode === "teach" && steps.length ? new Lesson(steps) : null;
+  if (experience?.title) $("#subtitle").textContent = experience.title;
+  if (experience?.mode === "play" && experience.play?.game === "chess") {
+    const a = $<HTMLAnchorElement>("#play-chess");
+    a.href = `?mode=chess&opponent=${encodeURIComponent(dream.id)}&strength=${encodeURIComponent(experience.play.strength ?? "gm")}`;
+    a.textContent = `Play chess with ${dream.name}`;
+    a.hidden = false;
+  }
   let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
   const show = (i: number, force = false) => {
     if (active[i]) active[i]!.opacity = reveal;
@@ -166,8 +184,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!audio) return;
     audio.playbackRate = speed;
     if (Math.abs(audio.currentTime - t) > 0.12) audio.currentTime = t;
-    if (playing && audio.paused) audio.play().catch(() => {});
-    if (!playing && !audio.paused) audio.pause();
+    const audible = playing && lesson?.phase !== "turn"; // quiet while it's your turn
+    if (audible && audio.paused) audio.play().catch(() => {});
+    if (!audible && !audio.paused) audio.pause();
   };
   const playBtn = $("#play");
   let xrPlay: XrButton | null = null;
@@ -192,6 +211,42 @@ export async function renderViewer(root: HTMLElement, id: string) {
     syncAudio();
   };
   root.querySelectorAll<HTMLButtonElement>("#speeds button").forEach((b) => b.addEventListener("click", () => setSpeed(Number(b.dataset.speed))));
+
+  // ---------------- a lesson: watch each step slowed down, then your turn ----------------
+  const stepCard = new StepCard();
+  const stepCardGroup = new THREE.Group();
+  stepCardGroup.add(stepCard.mesh);
+  stepCard.mesh.scale.setScalar(0.66);
+  stepCardGroup.visible = false;
+  scene.add(stepCardGroup);
+  let lastSaid = "";
+  const showStep = () => {
+    if (!lesson) return;
+    const st = lesson.step;
+    $("#step-card").hidden = false;
+    $("#step-count").textContent = lesson.phase === "turn" ? "Your turn" : `Step ${lesson.i + 1} of ${lesson.steps.length}`;
+    $("#step-title").textContent = st.title;
+    $("#step-tip").textContent = st.tip ?? "";
+    $("#step-card").classList.toggle("turn", lesson.phase === "turn");
+    stepCard.draw(lesson, performance.now());
+    if (lesson.phase === "watch") {
+      setSpeed(lesson.speed);
+      t = st.start;
+    }
+    const line = lesson.phase === "turn" ? "Your turn." : `${st.title}. ${st.tip ?? ""}`;
+    if (line !== lastSaid) say((lastSaid = line));
+    syncAudio();
+  };
+  if (lesson) {
+    lesson.onChange = showStep;
+    $("#step-back").addEventListener("click", () => lesson.go(lesson.i - 1));
+    $("#step-again").addEventListener("click", () => {
+      lastSaid = "";
+      lesson.go(lesson.i);
+    });
+    $("#step-next").addEventListener("click", () => lesson.go(lesson.i + 1));
+    showStep();
+  }
   addEventListener("keydown", (e) => {
     if (e.code === "Space") {
       e.preventDefault();
@@ -280,7 +335,17 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const xrButtons: XrButton[] = [];
   xrPlay = new XrButton("play", "Pause", () => setPlaying(!playing));
   xrSpeed = new XrButton("speed", "1×", () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]));
-  xrButtons.push(xrPlay, xrSpeed);
+  xrButtons.push(xrPlay);
+  if (lesson)
+    xrButtons.push(
+      new XrButton("back", "Back", () => lesson.go(lesson.i - 1)),
+      new XrButton("again", "Again", () => {
+        lastSaid = "";
+        lesson.go(lesson.i);
+      }),
+      new XrButton("next", "Next", () => lesson.go(lesson.i + 1)),
+    );
+  else xrButtons.push(xrSpeed);
   if (!realityBtn.hidden) {
     const xrReality: XrButton = new XrButton("reality", "Reality check", () => void toggleReality().then((on) => xrReality.setOn(on)));
     xrButtons.push(xrReality);
@@ -317,11 +382,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
       });
       session?.addEventListener("squeeze", () => (placeNextFrame = true));
       bar.visible = true;
+      stepCardGroup.visible = !!lesson;
       caption.visible = true;
       captionUntil = performance.now() + 7000;
     },
     onExitXr: () => {
       bar.visible = false;
+      stepCardGroup.visible = false;
       pinches.clear();
       person.position.set(0, 0, 0);
       person.rotation.y = Math.PI;
@@ -345,8 +412,23 @@ export async function renderViewer(root: HTMLElement, id: string) {
     forward.y = 0;
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     forward.normalize();
-    person.position.set(head.x + forward.x * PLACE_DISTANCE, 0, head.z + forward.z * PLACE_DISTANCE);
-    person.rotation.y = Math.atan2(forward.x, forward.z); // front (-Z) turned to face you
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
+    const place = experience?.place ?? "facing";
+    if (place === "beside") {
+      // at your side, facing the way you face: copy them like the person next to you in a class
+      person.position.set(head.x + right.x * 0.8 + forward.x * 0.5, 0, head.z + right.z * 0.8 + forward.z * 0.5);
+      person.rotation.y = Math.atan2(forward.x, forward.z) + Math.PI;
+    } else if (place === "ahead") {
+      // in front of you, facing away: follow them like the teacher at the front of the room
+      person.position.set(head.x + forward.x * 1.5, 0, head.z + forward.z * 1.5);
+      person.rotation.y = Math.atan2(forward.x, forward.z) + Math.PI;
+    } else {
+      person.position.set(head.x + forward.x * PLACE_DISTANCE, 0, head.z + forward.z * PLACE_DISTANCE);
+      person.rotation.y = Math.atan2(forward.x, forward.z); // front (-Z) turned to face you
+    }
+    // the step card: at eye level, off to the right so it never hides them
+    stepCardGroup.position.set(head.x + forward.x * 0.95 + right.x * 0.42, head.y - 0.08, head.z + forward.z * 0.95 + right.z * 0.42);
+    stepCardGroup.rotation.y = Math.atan2(-forward.x, -forward.z) - 0.35;
     // the control bar: within reach, a little below your eyes, between you and them
     bar.position.set(head.x + forward.x * 0.42, Math.max(0.7, head.y - 0.42), head.z + forward.z * 0.42);
     bar.rotation.y = Math.atan2(-forward.x, -forward.z);
@@ -377,7 +459,15 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const tips = fingertips(hands);
       for (const b of xrButtons) b.touch(tips, now);
     }
-    if (playing) t = (t + dt * speed) % duration;
+    if (lesson) {
+      if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration);
+      if (playing) t = lesson.update(t, performance.now());
+      if (lesson.phase === "turn") {
+        const pct = lesson.turnProgress(performance.now());
+        $("#step-bar").style.width = `${pct * 100}%`;
+        if (renderer.xr.isPresenting && Math.floor(pct * 30) !== Math.floor((pct - dt) * 30)) stepCard.draw(lesson, performance.now());
+      }
+    } else if (playing) t = (t + dt * speed) % duration;
     reveal = Math.min(1, reveal + dt / 1.4);
     if (renderer.xr.isPresenting) {
       const target = !playing || performance.now() < captionUntil ? 1 : 0;

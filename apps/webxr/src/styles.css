@@ -136,3 +136,24 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 .cue { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(max(28px, env(safe-area-inset-bottom)) + 84px); max-width: min(720px, calc(100% - 32px)); margin: 0; padding: 10px 18px; border-radius: 14px; background: rgba(29, 29, 31, 0.72); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); color: #f5f5f7; font-size: 19px; line-height: 1.35; text-align: center; white-space: pre-line; z-index: 9; }
 .thumb .initial { position: absolute; inset: 0; display: grid; place-items: center; font-size: 64px; font-weight: 600; letter-spacing: -0.02em; color: var(--muted); opacity: 0.5; }
 .nav-links { display: flex; gap: 20px; }
+
+/* ---------- lessons ---------- */
+.step-card {
+  position: fixed; right: 24px; top: 50%; transform: translateY(-50%); z-index: 9; width: 300px; padding: 20px 20px 16px;
+  background: var(--glass); backdrop-filter: saturate(180%) blur(24px); -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border-radius: 22px; box-shadow: 0 0 0 1px var(--hairline) inset, 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+.step-card[hidden] { display: none; }
+.step-count { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.step-card.turn .step-count { color: var(--link); }
+.step-card h3 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+.step-tip { margin: 8px 0 0; font-size: 15px; line-height: 1.4; color: #d1d1d6; }
+.step-progress { height: 4px; margin: 14px 0 12px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); overflow: hidden; visibility: hidden; }
+.step-card.turn .step-progress { visibility: visible; }
+.step-progress i { display: block; height: 100%; width: 0; background: var(--link); }
+.step-nav { display: flex; gap: 8px; }
+.step-nav .pill { flex: 1; }
+@media (max-width: 720px) {
+  .step-card { top: auto; right: 16px; left: 16px; width: auto; transform: none; bottom: calc(max(28px, env(safe-area-inset-bottom)) + 84px); }
+}
+

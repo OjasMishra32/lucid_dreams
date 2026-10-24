@@ -15,6 +15,8 @@ export interface Dream {
   audio: string | null;
   voice?: string | null; // the speaking voice, separated from background noise and music
   captions?: string | null; // WebVTT of what the person says, in the clip's own time
+  intent?: string | null; // what the user wants to do with this person ("teach me this strum")
+  experience?: string | null; // experience.json: the plan written from the intent
   preview: string | null;
   thumb: string | null;
   metrics?: { psnr: number | null; ssim: number | null; lpips: number | null; views: number | null; seenFraction?: number | null };
