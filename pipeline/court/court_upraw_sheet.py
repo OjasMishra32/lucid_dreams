@@ -78,13 +78,21 @@ def hands_box(real: np.ndarray, ball: bool = False) -> tuple[int, int, int, int]
 
 
 def head(img: np.ndarray | None) -> np.ndarray | None:
-    """The head of a person on a plain background: a square from their top, a seventh of their height."""
+    """The head of a person on a plain background: a square from the top of their body with the arms opened away (a
+    raised arm is thinner than a head), a seventh of their height."""
     if img is None:
         return None
-    ys, xs = np.nonzero(silhouette(img, img[0, 0]))
+    body = silhouette(img, img[0, 0])
+    ys, xs = np.nonzero(body)
     if not len(ys):
         return None
-    top, s = ys.min(), max(16, int((ys.max() - ys.min()) / 7))
+    s = max(16, int((ys.max() - ys.min()) / 7))
+    k = max(3, int(0.45 * s))
+    core = cv2.morphologyEx(body.astype(np.uint8), cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    cy, cx_ = np.nonzero(core)
+    if len(cy):
+        ys, xs = cy, cx_
+    top = ys.min()
     cx = int(np.median(xs[ys <= top + s // 3]))
     return cut(img, (max(0, cx - s // 2), max(0, top - s // 8), s, s))
 

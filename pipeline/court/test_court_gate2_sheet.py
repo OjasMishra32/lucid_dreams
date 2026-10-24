@@ -107,6 +107,24 @@ def disc(rgb, r, h=1280, w=704):
     return img
 
 
+class Heads(unittest.TestCase):
+    def test_heads_add_one_row_under_each_orbit(self):
+        import cv2
+        with tempfile.TemporaryDirectory() as t:
+            run = Path(t) / "court-x-r2" / "seed1"
+            ramp(run / "prepped.mp4", 36, 64)
+            ramp(run / "views" / "videos" / "00.mp4", 22, 40)
+            (run / "court-run.json").parent.mkdir(parents=True, exist_ok=True)
+            (run / "court-run.json").write_text(json.dumps({"K": 5}))
+            ramp(run / "bundle-raw-default-r0-300k" / "preview.mp4", 36, 64, n=12)
+            rows = []
+            for heads in (False, True):
+                out = Path(t) / f"g{heads}.jpg"
+                g2.main([str(run), "--out", str(out), "--height", "64"] + (["--heads"] if heads else []))
+                rows.append(cv2.imread(str(out)).shape[0] // (64 + 4))
+            self.assertEqual(rows[1], rows[0] + 1)
+
+
 class Ball(unittest.TestCase):
     """The ball gate: a saturated orange ball, not skin, not a speck; half the ring must show it."""
 

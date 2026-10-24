@@ -6,7 +6,8 @@ space and the held-out --depth-view's PSNR, then the views' ground truth | rende
 
     python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] [--ball] <run dir>...
 
---ball: the player holds the ball at K in the real frame, so the views must too: the ball gate passes when at least half
+--heads: under each orbit, its head close-up at the same 8 angles (the seam check of a face swap: 45/90/270/315 are
+where a swapped front face meets the generated profile). --ball: the player holds the ball at K in the real frame, so the views must too: the ball gate passes when at least half
 the fetched ring views show it (the back can hide it), written to <run>/ball.json for the pick (court_grid_report.py).
 
 A run dir is what a job copied back ($L/runs/<id>, or <id>/seed<k>): prepped.mp4, views/videos/NN.mp4, recon-*/.
@@ -143,7 +144,7 @@ def p42_text(rec: Path, clips: Path | None) -> str:
 
 
 def rows_for(run: Path, h: int, clips: Path | None, depth_view: str | None = None,
-             ball: bool = False) -> list[np.ndarray]:
+             ball: bool = False, heads: bool = False) -> list[np.ndarray]:
     k = find_k(run, clips)
     name = f"{run_id(run)}{'/' + run.name if run.name.startswith('seed') else ''}"
     if k is None:
@@ -168,6 +169,8 @@ def rows_for(run: Path, h: int, clips: Path | None, depth_view: str | None = Non
                                   tile(imgs[1], h, "views gt | render")]))
     for b in sorted(run.glob("bundle-*/preview.mp4")):
         out.append(orbit_row(b, h))
+        if heads:
+            out.append(heads_row(b, h))
     return out
 
 
@@ -188,6 +191,15 @@ def orbit_row(preview: Path, h: int) -> np.ndarray:
     return np.hstack(tiles)
 
 
+def heads_row(preview: Path, h: int) -> np.ndarray:
+    """The orbit's head close-up every 45 degrees; the seam angles (45/90/270/315) marked."""
+    from court_upraw_sheet import head
+
+    n = frame_count(preview)
+    return np.hstack([tile(head(frame_at(preview, n * i // 8)) if n else None, h,
+                           f"head {45 * i}" + (" SEAM?" if i in (1, 2, 6, 7) else "")) for i in range(8)])
+
+
 def stack(rows: list[np.ndarray]) -> np.ndarray:
     w = max(r.shape[1] for r in rows)
     return np.vstack([np.pad(r, ((0, 4), (0, w - r.shape[1]), (0, 0))) for r in rows])
@@ -202,8 +214,9 @@ def main(argv=None):
     ap.add_argument("--depth-view", default=None, help="the real view that sees the source camera's depth axis: its "
                                                        "held-out PSNR goes on each freeze")
     ap.add_argument("--ball", action="store_true", help="the player holds the ball at K: gate the views on it")
+    ap.add_argument("--heads", action="store_true", help="head close-ups under each orbit (a face swap's seam check)")
     a = ap.parse_args(argv)
-    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips, a.depth_view, a.ball)]
+    rows = [r for run in pick_runs(a.runs) for r in rows_for(run, a.height, a.clips, a.depth_view, a.ball, a.heads)]
     cv2.imwrite(str(a.out), stack(rows), [cv2.IMWRITE_JPEG_QUALITY, 90])
     print(f"{a.out}: {len(a.runs)} runs, {len(rows)} rows")
 
