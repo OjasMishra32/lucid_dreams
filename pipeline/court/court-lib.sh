@@ -6,5 +6,5 @@ group_free_gb() {
   blue_quota | awk 'function b(s, u) { sub(/[bB]$/, "", s); u = tolower(substr(s, length(s)))
       return (s + 0) * (u == "k" ? 2^10 : u == "m" ? 2^20 : u == "g" ? 2^30 : u == "t" ? 2^40 : 1) }
     /^Storage quotas for group/ { g = 1; next } /^Storage quotas for user/ { g = 0 }
-    g && $1 ~ /^blue/ { printf "%d", (b($4) - b($2)) / 2^30; exit }'
+    g && !done && $1 ~ /^blue/ { printf "%d", (b($4) - b($2)) / 2^30; done = 1 }'  # reads to the end: no SIGPIPE
 }

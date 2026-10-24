@@ -14,8 +14,9 @@
 # variant asks for them, then every freeze of frame K (one per variant and cap), a held-out metrics recon per variant
 # and an export per freeze, spread over the node's GPUs; copies only results back to $L/runs/$ID/ (the gate-2 view
 # samples as soon as the views exist). Writes nothing else on /blue and deletes nothing outside its own scratch.
-# K and FOCAL are read from $L/data/court/$ID/court-run.json just before each recon, so a corrected FOCAL uploaded
-# while the views run is used; each recon logs and records the K and FOCAL it trained with.
+# K and FOCAL are read from $L/data/court/$ID/court-run.json just before each recon (with that upload's real frame,
+# masks and ignore, read in place), so a corrected FOCAL uploaded while the views run is used; each recon logs and
+# records the K and FOCAL it trained with. If SeedVR2 fails, the up variants are dropped and the exit code says so.
 # Env: ID; VARIANTS ("raw:default raw:agree up:default up:agree": views raw|up x mode default|agree, where agree
 # = recon --source-agree, solid from every side but a few cm off the real camera); CAPS (300000); METRICS (1);
 # ITERS (15000); FACE (2.0); MIN_SCRATCH_GB (200); KEEP_MB (900: past that the recon PLYs stay behind).
@@ -30,6 +31,11 @@ log() { echo "[court-job $(date +%T)] $*"; }
 for v in $VARIANTS; do
   [[ $v =~ ^(raw|up):(default|agree)$ ]] || { echo "court-job: variant '$v' (raw|up):(default|agree)" >&2; exit 1; }
 done
+seen=" "
+for cap in $CAPS; do
+  [[ $cap =~ ^[1-9][0-9]{3,}$ && $seen != *" $((cap / 1000)) "* ]] || { echo "court-job: cap '$cap' (whole numbers, distinct in thousands)" >&2; exit 1; }
+  seen="$seen$((cap / 1000)) "
+done
 mkdir -p "$S"
 trap 'cd /; rm -rf "$S"' EXIT  # our own scratch only
 
@@ -38,12 +44,11 @@ log "$ID on $(hostname), job ${SLURM_JOB_ID:-local}; GPUs:"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader | sed 's/^/  /'
 NG=$(nvidia-smi -L | grep -c '^GPU' || true)
 (( NG >= 1 )) || { log "no GPU"; exit 1; }
-GPUNAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
+GPUNAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | sed -n 1p)
 FREE_S=$(df -Pk "$S" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
 (( FREE_S >= ${MIN_SCRATCH_GB:-200} )) || { log "scratch $S has $FREE_S GB free, need ${MIN_SCRATCH_GB:-200}"; exit 1; }
 log "scratch $S: $FREE_S GB free"
-source "${ENV_SH:-$L/code/pipeline/hpg/env.sh}"
-export HF_HOME=$S/hf PIP_CACHE_DIR=$S/pip XDG_CACHE_HOME=$S/cache  # no caches on /blue
+source "${ENV_SH:-$L/code/pipeline/hpg/env.sh}"  # 4DAnyone and recon keep reading their model caches from there
 PY=${PY:-python}
 
 # --- inputs ----------------------------------------------------------------------------------------------------------
@@ -70,7 +75,8 @@ for f in input.mp4 source-4k.mkv "masks/$P.png" "ignore/$P.png"; do test -s "$f"
 log "K=$K FOCAL=$FOCAL $( ((TURBO)) && echo Turbo || echo 24-step) views; variants: $VARIANTS; caps: $CAPS"
 UP=0; [[ " $VARIANTS " == *" up:"* ]] && UP=1
 if (( UP )); then  # SeedVR2's weights into scratch while the views are made
-  ( source "$L/envs/seedvr2/bin/activate" && $PY "$C/court_fetch_seedvr2.py" "$S/seedvr2" ) > "$S/fetch.log" 2>&1 &
+  ( export HF_HOME=$S/hf HF_HUB_DISABLE_XET=1 && source "$L/envs/seedvr2/bin/activate" \
+      && $PY "$C/court_fetch_seedvr2.py" "$S/seedvr2" ) > "$S/fetch.log" 2>&1 &
   FETCH=$!
 fi
 
@@ -92,15 +98,18 @@ SAMPLES=(views/videos/00.mp4 views/videos/04.mp4 views/videos/08.mp4 views/video
 copy_back prep.json prepped.mp4 views/cameras.json views/metadata.json views/gvhmr "${SAMPLES[@]}"
 log "views done; gate-2 samples in $OUTD/views"
 
-# --- SeedVR2 2x ------------------------------------------------------------------------------------------------------
-if (( UP )); then
-  wait "$FETCH" || { cat "$S/fetch.log"; log "SeedVR2 weights not fetched"; exit 1; }
+# --- SeedVR2 2x (on any failure the up variants are dropped and the raw ones go on) --------------------------------------
+RC=0
+upscale() {
+  wait "$FETCH" || { cat "$S/fetch.log"; log "SeedVR2 weights not fetched"; return 1; }
   log "SeedVR2 2x on $NG GPU(s)"
+  local ALL W H FPS FRAMES RES BATCH g i p f b o w h r n pids=()
   ALL=($(ls views/videos/*.mp4 | sort))
-  IFS=, read -r W H FPS FRAMES < <(ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames -of csv=p=0 "${ALL[0]}")
+  probe() { ffprobe -v error -count_packets -select_streams v:0 \
+      -show_entries stream=width,height,r_frame_rate,nb_read_packets -of csv=p=0 "$1"; }
+  IFS=, read -r W H FPS FRAMES < <(probe "${ALL[0]}") || return 1
   RES=$(( ( (W < H ? W : H) * 2 + 8 ) / 16 * 16 )); BATCH=$(( (FRAMES + 2) / 4 * 4 + 1 ))
   mkdir -p views-up/videos
-  pids=()
   for ((g = 0; g < NG; g++)); do
     mkdir -p "$S/up-in-$g" "$S/up-out-$g"
     for ((i = g; i < ${#ALL[@]}; i += NG)); do cp "${ALL[i]}" "$S/up-in-$g/"; done
@@ -110,11 +119,12 @@ if (( UP )); then
         --color_correction lab --cache_dit --cache_vae --vae_encode_tiled --vae_decode_tiled ) > "$S/up-$g.log" 2>&1 &
     pids+=($!)
   done
-  for p in "${pids[@]}"; do wait "$p" || { cat "$S"/up-*.log; log "SeedVR2 failed"; exit 1; }; done
+  for p in "${pids[@]}"; do wait "$p" || { tail -20 "$S"/up-*.log; log "SeedVR2 failed"; return 1; }; done
   for f in "${ALL[@]}"; do
-    b=$(basename "$f"); o=$(ls "$S"/up-out-*/"$b")
-    IFS=, read -r w h r n < <(ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames -of csv=p=0 "$o")
-    [ "$n" = "$FRAMES" ] && [ "$r" = "$FPS" ] || { log "SeedVR2 $b: $n frames at $r, wanted $FRAMES at $FPS"; exit 1; }
+    b=$(basename "$f"); o=$(ls "$S"/up-out-*/"$b" 2>/dev/null | sed -n 1p)
+    [ -n "$o" ] || { log "SeedVR2 made no $b"; return 1; }
+    IFS=, read -r w h r n < <(probe "$o") || return 1
+    [ "$n" = "$FRAMES" ] && [ "$r" = "$FPS" ] || { log "SeedVR2 $b: $n frames at $r, wanted $FRAMES at $FPS"; return 1; }
     mv "$o" views-up/videos/
   done
   $PY - "$S/run" "$w" "$h" <<'PY'
@@ -132,7 +142,15 @@ if (run / "views/metadata.json").exists():
     shutil.copy(run / "views/metadata.json", run / "views-up/metadata.json")
 print(f"[upscale] cameras.json scaled {w0}x{h0} -> {w}x{h}")
 PY
-  copy_back views-up/cameras.json "${SAMPLES[@]/views/views-up}"
+}
+if (( UP )); then
+  if upscale; then
+    copy_back views-up/cameras.json "${SAMPLES[@]/views/views-up}"
+  else
+    RC=1
+    VARIANTS=$(for v in $VARIANTS; do [[ $v == up:* ]] || echo "$v"; done | xargs)
+    log "SeedVR2 FAILED: going on with ${VARIANTS:-nothing}"
+  fi
 fi
 
 # --- freezes, metrics and exports, one queue per GPU -----------------------------------------------------------------
@@ -144,6 +162,10 @@ done
 recon() {  # recon freeze|metrics views:mode cap gpu
   local kind=$1 views=${2%%:*} mode=${2##*:} cap=$3 g=$4 out res k f t
   read -r k f t _ < <(runinfo) || { log "bad run record"; return 1; }
+  local p6; p6=$(printf '%06d' "$k")
+  for x in source-4k.mkv "masks/$p6.png" "ignore/$p6.png"; do
+    test -s "$DATA/$x" || { log "$x missing in $DATA for K=$k"; return 1; }
+  done
   [ "$views" = up ] && res=views-up || res=views
   if [ "$kind" = metrics ]; then out=recon-metrics-$views-$mode; else out=recon-$views-$mode-$((cap / 1000))k; fi
   log "$out: K=$k FOCAL=$f on GPU $g ($GPUNAME)"
@@ -152,7 +174,7 @@ recon() {  # recon freeze|metrics views:mode cap gpu
     "$k" "$f" "$res" "$mode" "$cap" "$GPUNAME" > "$out/used.json"
   CUDA_VISIBLE_DEVICES=$g $PY -m lucid.recon --result "$res" --start "$k" --end "$((k + 1))" --out "$out" \
     --cap "$cap" --iters-first "${ITERS:-15000}" --sh-degree 1 --aniso 0.05 --peek 0,4,8,12,20 \
-    --source-video source-4k.mkv --source-masks masks --source-ignore ignore --source-focal "$f" \
+    --source-video "$DATA/source-4k.mkv" --source-masks "$DATA/masks" --source-ignore "$DATA/ignore" --source-focal "$f" \
     --source-weight 3.0 --source-every 1 --source-iters 4000 --face-weight "${FACE:-2.0}" \
     $( [ "$kind" = metrics ] && echo --holdout-every 8 ) $( [ "$mode" = agree ] && echo --source-agree ) > "$out.log" 2>&1 \
     || { log "$out FAILED (see $out.log)"; return 1; }
@@ -162,6 +184,7 @@ recon() {  # recon freeze|metrics views:mode cap gpu
     || { log "bundle-${out#recon-} FAILED"; return 1; }
   log "$out done"
 }
+(( ${#TASKS[@]} )) || { log "nothing to train"; exit 1; }
 pids=()
 for ((g = 0; g < NG; g++)); do
   ( rc=0
@@ -169,7 +192,6 @@ for ((g = 0; g < NG; g++)); do
     exit $rc ) &
   pids+=($!)
 done
-RC=0
 for p in "${pids[@]}"; do wait "$p" || RC=1; done
 
 # --- results back to /blue -------------------------------------------------------------------------------------------

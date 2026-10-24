@@ -39,6 +39,9 @@ Filesystem    Use     Quota    Limit    Grace       Files
 -----------  ------  -------  -------  -------  --------
 blue2         $(python3 -c "print(f'{5 - ${FREE_T:-0.2}:.3f}T')")  5T       5T       -        95400576
 
+EOF
+[ "\${QUOTA_SLOW:-0}" = 1 ] && sleep 1
+cat <<EOF
 Storage quotas for user 'vishalnaveen':
 Filesystem    Use    Quota    Limit    Grace      Files
 -----------  -----  -------  -------  -------  -------
