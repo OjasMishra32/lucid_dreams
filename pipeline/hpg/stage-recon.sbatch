@@ -5,7 +5,7 @@
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=3
-#SBATCH --mem=32G
+#SBATCH --mem=20G
 #SBATCH --time=03:00:00
 #SBATCH --output=%x-%A_%a.log
 # Stage "reconstruct": one array task per chunk of frames; each chunk warm-starts frame to frame. Needs RUN, CHUNKS.
