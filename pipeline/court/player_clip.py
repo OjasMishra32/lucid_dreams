@@ -257,6 +257,7 @@ def decode_frames(video: Path, wanted: set[int], w: int, h: int):
                 yield n, np.frombuffer(buf, np.uint8).reshape(h, w, 3)
     finally:
         p.kill()
+        p.stdout.close()
         p.wait()
 
 

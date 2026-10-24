@@ -302,6 +302,30 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(int(dark.sum()), 0)
 
 
+class ExtraView(EndToEnd):
+    """Another camera's frame of the same instant, cropped around one player (here: the same clip, frame 200)."""
+
+    def test_extra_view_is_native_pixels_with_its_masks(self):
+        import extra_view
+        import cv2
+        out = self.root / "real" / "X200" / "back"
+        extra_view.main(["--video", self.cfg["video"], "--calib", self.cfg["calib"], "--frame", "200", "--masks",
+                         self.cfg["masks"], "--player", "back", "--front", "front", "--out", str(out), "--margin", "2"])
+        cam = json.loads((out / "camera.json").read_text())
+        x0, y0, cw, ch = cam["crop"]
+        self.assertLessEqual(cw / ch, 9 / 16 + 1e-9)
+        frame = cv2.cvtColor(cv2.imread(str(out / "frame.png")), cv2.COLOR_BGR2RGB)
+        ref = np.zeros((ch, cw, 3), np.uint8)
+        a, b, c, d = max(0, x0), max(0, y0), min(W, x0 + cw), min(H, y0 + ch)
+        ref[b - y0:d - y0, a - x0:c - x0] = self.frames[200][b:d, a:c]
+        np.testing.assert_array_equal(frame, ref)
+        m = cv2.imread(str(out / "mask.png"), cv2.IMREAD_GRAYSCALE)
+        ig = cv2.imread(str(out / "ignore.png"), cv2.IMREAD_GRAYSCALE)
+        self.assertEqual(int((m.astype(int) * (ig > 0)).max()), 0)
+        self.assertGreater(int((ig > 0).sum()), 0)
+        self.assertEqual(float((out / "focal.txt").read_text()), 400.0)
+
+
 class EndToEndScaled(EndToEnd):
     """The same clip with a clip cap under the window: input.mp4 is scaled, the real frame stays native."""
 
