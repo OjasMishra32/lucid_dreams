@@ -58,6 +58,15 @@ namespace LucidDreams.Tests
                 Done = true;
                 yield break;
             }
+            if (Seating.WantsSeat(player.Experience, player.Dream.intent))
+            {
+                yield return SeatedChecks(root);
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
+            Check(!placer.Seat.seated && placer.person.localPosition == Vector3.zero && FindAnyObjectByType<DreamBench>().Root == null,
+                "standing: feet on the floor, no bench");
             if (DreamPlaces.Starting(player.Experience?.environment, player.Experience?.intent ?? player.Dream.intent) != null)
             {
                 yield return PlacesChecks(root);
@@ -88,6 +97,9 @@ namespace LucidDreams.Tests
             }
             Check(Vector3.Distance(root.position, new Vector3(0f, 0f, 0.2f)) < 0.02f, $"placed 1.8 m in front, on the floor ({root.position})");
             Check(Vector3.Angle(root.forward, Vector3.forward) < 1f, "faces the viewer");
+            var askedToSit = new Experience { intent = "sit next to me and teach me this piece", objects = { "piano", "bench" } };
+            Check(!Seating.For(player.Body, askedToSit, askedToSit.intent).seated,
+                $"a person standing at full height stays standing even when the plan says sit ({player.Body.Height:F2} m tall)");
 
             // Quick pinch in the room toggles playback.
             bool wasPlaying = player.IsPlaying;
@@ -476,6 +488,73 @@ namespace LucidDreams.Tests
         }
 
         // A lesson from experience.json: placement by place, steps at their speed and repeats, your turn, Back/Again/Next.
+        // Seated at a bench (Seating): hips at bench height, a piano bench under them, voice and captions raised with them.
+        IEnumerator SeatedChecks(Transform root)
+        {
+            Check(Experience.Fallback("teach me this piece on the piano", 3f).place == "beside"
+                  && Experience.Fallback("teach me this dance", 3f).place == "ahead"
+                  && !Seating.WantsSeat(null, "teach me this jump shot") && !Seating.WantsSeat(new Experience { objects = { "basketball", "hoop" } }, null)
+                  && Seating.WantsSeat(new Experience { objects = { "piano", "bench" } }, null) && Seating.WantsSeat(null, "sit next to me and teach me this piece"),
+                "an instrument plays beside you; a piano, a bench or \"sit\" asks for a seat, a jump shot doesn't");
+            var seat = placer.Seat;
+            var body = player.Body;
+            var person = placer.person;
+            Check(seat.seated, $"seated: {body.Height:F2} m from lowest point to top, seat {body.seat - body.low:F2} m above the lowest point");
+            if (!seat.seated) yield break;
+            Check(placer.place == DreamPlacer.Place.Beside && Vector3.Distance(root.position, new Vector3(-0.8f, 0f, 1.5f)) < 0.02f
+                  && Vector3.Angle(root.forward, Vector3.back) < 1f, $"beside: at your right, facing your way ({root.position})");
+
+            float Above(float bundleY) => person.TransformPoint(new Vector3(body.axis.x, bundleY, body.axis.y)).y - placer.FloorY;
+            Check(Mathf.Abs(Above(body.seat) - seat.benchTop) < 0.005f, $"hips at bench height ({Above(body.seat):F3} m, bench {seat.benchTop:F3} m)");
+            if (!seat.legs)
+                Check(Mathf.Approximately(seat.benchTop, Seating.BenchHeight) && Above(body.low) > 0.3f,
+                    $"no legs in the reconstruction: raised {seat.lift:F2} m, hips on a {Seating.BenchHeight:F2} m piano bench, nothing on the floor");
+            else
+                Check(Mathf.Abs(Above(0f)) < 0.001f && Above(body.low) < 0.05f && seat.benchTop > 0.38f && seat.benchTop < 0.6f,
+                    $"legs in the reconstruction: their floor on yours, feet on it ({Above(body.low):F3} m), the bench at their own seat ({seat.benchTop:F2} m)");
+
+            var bench = FindAnyObjectByType<DreamBench>();
+            var benchRoot = bench.Root;
+            Check(benchRoot != null, "a bench is built under them (the reconstruction has none)");
+            if (benchRoot == null) yield break;
+            Bounds Of(string part)
+            {
+                var rs = benchRoot.GetComponentsInChildren<MeshRenderer>().Where(r => r.name == part).ToArray();
+                var b = rs[0].bounds;
+                foreach (var r in rs) b.Encapsulate(r.bounds);
+                return b;
+            }
+            var cushion = Of("Cushion");
+            var legs = Of("Leg");
+            Check(Mathf.Abs(cushion.max.y - placer.FloorY - seat.benchTop) < 0.002f && Mathf.Abs(legs.min.y - placer.FloorY) < 0.002f,
+                $"cushion level with the hips ({cushion.max.y:F3} m), legs on the floor ({legs.min.y:F3} m)");
+            var hips = person.TransformPoint(new Vector3(body.axis.x, body.seat, body.seatBack - 0.08f));
+            var top = Of("Case");
+            Check(hips.x > top.min.x && hips.x < top.max.x && hips.z > top.min.z && hips.z < top.max.z,
+                $"under the hips ({hips.x:F2}, {hips.z:F2} inside x {top.min.x:F2}..{top.max.x:F2}, z {top.min.z:F2}..{top.max.z:F2})");
+            Check(Mathf.Abs(top.size.x - Seating.BenchWidth) < 0.002f && Mathf.Abs(top.size.z - Seating.BenchDepth) < 0.002f,
+                $"a real piano bench, {top.size.x:F2} x {top.size.z:F2} m");
+
+            var speech = FindAnyObjectByType<DreamSpeech>();
+            float mouth = speech.Voice.transform.position.y - placer.FloorY, crown = Above(player.Dream.bounds.Max.y);
+            Check(Mathf.Abs(mouth - (crown - 0.13f)) < 0.005f, $"their voice comes from their mouth, seated ({mouth:F2} m, top of the head {crown:F2} m)");
+
+            // grabbing moves them, bench and all, and they stay seated
+            placer.MoveTo(root.position + new Vector3(0.4f, 0f, -0.3f), root.eulerAngles.y + 25f);
+            yield return Frames(2);
+            Check(Mathf.Abs(Above(body.seat) - seat.benchTop) < 0.005f && Mathf.Abs(Of("Leg").min.y - placer.FloorY) < 0.002f,
+                "moved and turned, still on the bench and the bench still on the floor");
+            placer.PlaceInFrontOfViewer();
+            yield return Frames(2);
+
+            player.Pause();
+            player.Seek(0.3f);
+            yield return Frames(2);
+            Render(Path.Combine(outputDir, "seated-eye.png"), head.transform.position, root.position + Vector3.up * 0.8f);
+            Render(Path.Combine(outputDir, "seated-front.png"), root.position + root.forward * 2.0f + Vector3.up * 1.0f, root.position + Vector3.up * 0.65f);
+            Render(Path.Combine(outputDir, "seated-side.png"), root.position + root.right * 2.2f + Vector3.up * 0.9f, root.position + Vector3.up * 0.6f);
+        }
+
         IEnumerator TeachChecks(Transform root)
         {
             var lesson = player.Lesson;

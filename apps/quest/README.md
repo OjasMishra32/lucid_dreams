@@ -127,6 +127,15 @@ The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experien
   button for **Back / Again / Next**.
 - **Placement by `place`:** `facing` (1.8 m in front, facing you; default), `beside` (0.8 m to your right, 0.5 m
   ahead, facing your way), `ahead` (1.5 m ahead, facing away). A long-pinch re-place keeps that orientation.
+  Instrument intents (piano, guitar, violin...) default to `beside`, as in the WebXR app.
+- **Seated people** (`Seating`): someone who sits for what you came to do (a bench, chair or piano in the plan's
+  `objects`, or "sit", piano, cello, drums... in the intent) sits at real bench height. Each frame is measured as it
+  decodes (lowest and highest point, the torso's axis, where the torso column ends: the seat) and the middle of all
+  frames is used, so they never bob. If nothing reaches below their hips (a piano hid their legs), they are raised
+  until their hips are at 0.48 m; if their legs are there, their feet stay on the floor. Anyone taller than 1.45 m
+  from lowest point to top is standing and stays on the floor. Unless the reconstruction kept a bench, a plain piano
+  bench (0.76 x 0.36 m, black lacquer, leather cushion level with their hips) is built under them, with its back
+  just behind their hips. Voice and captions rise with them.
 
 ## Hands (no controllers needed)
 
@@ -162,7 +171,8 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
 eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
 instead: placement, step timing, your turn, Back / Again / Next and the voice; with a `voice` or `captions` it checks
 those (decode, mouth position, sync, quiet when paused or slowed, cue text); with `props` it checks the ball on its
-track, fades, the bounce and the hoop's regulation sizes. With `-bridge <url>` (no bundle) it
+track, fades, the bounce and the hoop's regulation sizes; with a seat in the plan it checks seating (hips at bench
+height with and without legs, the bench's size, cushion and legs, the voice at their mouth) and renders three views. With `-bridge <url>` (no bundle) it
 checks the library from an empty cache: list, download, play from the headset, then offline. For an avatar bundle,
 `-expect <dir>` compares the GPU-skinned positions with reference poses (`frameN.bin` from `skinning.py`'s
 `pose_points`, `frameN.dq.bin` from a dual-quaternion blend of its `skin_matrices`):

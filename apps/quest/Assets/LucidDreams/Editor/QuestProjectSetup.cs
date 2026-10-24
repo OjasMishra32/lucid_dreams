@@ -69,7 +69,10 @@ namespace LucidDreams.Editor
                 target = BuildTarget.Android,
                 options = BuildOptions.None,
             });
-            Debug.Log($"[Lucid Dreams] APK build {report.summary.result}: {report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalTime:mm\\:ss}.");
+            // the APK file itself: the report's totalSize counts intermediate files too
+            var apk = new FileInfo("Builds/LucidDreams.apk");
+            string size = apk.Exists ? $"{apk.Length / (1024f * 1024f):F1} MB" : "no file";
+            Debug.Log($"[Lucid Dreams] APK build {report.summary.result}: {size}, {report.summary.totalTime:mm\\:ss}.");
             if (Application.isBatchMode && report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
         }
 
@@ -286,6 +289,7 @@ namespace LucidDreams.Editor
             controls.placer = placer;
             var speech = dreamGo.AddComponent<DreamSpeech>();
             speech.player = player;
+            speech.placer = placer;
             var props = dreamGo.AddComponent<DreamProps>();
             props.player = player;
             props.person = personGo.transform;
@@ -299,6 +303,13 @@ namespace LucidDreams.Editor
             props.glass = PropMaterial("Board glass", new Color(1f, 1f, 1f, 0.09f), 0f, 0.96f, transparent: true);
             props.glassEdge = PropMaterial("Board glass edge", WithAlpha(Hex(0x9cc7bd), 0.55f), 0f, 0.85f, transparent: true);
             props.cord = PropMaterial("Net cord", WithAlpha(Hex(0xf7f7f5), 0.9f), 0f, 0.1f, transparent: true);
+            var bench = dreamGo.AddComponent<DreamBench>();
+            bench.placer = placer;
+            bench.player = player;
+            bench.person = personGo.transform;
+            bench.shadowShader = props.shadowShader;
+            bench.lacquer = PropMaterial("Bench lacquer", Hex(0x0d0d0f), 0f, 0.82f);
+            bench.leather = PropMaterial("Bench leather", Hex(0x1b1a19), 0f, 0.32f);
 
             // Light for the solid props only (Gaussians carry their own light): a soft sky and one key light.
             var keyGo = new GameObject("Prop key light");

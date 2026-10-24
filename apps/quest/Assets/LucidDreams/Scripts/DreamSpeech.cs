@@ -22,6 +22,8 @@ namespace LucidDreams
         const string CaptionsKey = "LucidDreams.captions", LargeKey = "LucidDreams.largeCaptions";
 
         public DreamSequencePlayer player;
+        [Tooltip("Raises the voice and captions with a seated person (Seating).")]
+        public DreamPlacer placer;
         [Range(0f, 1f)] public float captionOpacity = 0.9f;
 
         public AudioSource Voice { get; private set; }
@@ -86,10 +88,12 @@ namespace LucidDreams
                 return;
             }
 
-            // Mouth and chest height from the bundle's real size (never scaled).
+            // Mouth and chest height from the bundle's real size (never scaled), raised with someone seated on a bench.
             float height = player.Dream.bounds != null && player.Dream.bounds.Height > 0.5f ? player.Dream.bounds.Height : 1.7f;
-            Voice.transform.localPosition = new Vector3(0f, height - MouthBelowTop, FaceForward);
-            captionGroup.transform.localPosition = new Vector3(0f, height * 0.6f, 0.42f);
+            bool seated = placer != null && placer.Seat.seated;
+            float top = height + (placer != null ? placer.Lift : 0f);
+            Voice.transform.localPosition = new Vector3(0f, top - MouthBelowTop, FaceForward);
+            captionGroup.transform.localPosition = new Vector3(0f, seated ? top - 0.42f : height * 0.6f, 0.42f);
 
             SyncVoice();
             ShowCaption(CaptionsOn ? Captions.At(cues, player.ClipTime) : null);

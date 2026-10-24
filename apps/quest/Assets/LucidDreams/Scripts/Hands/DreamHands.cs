@@ -116,6 +116,7 @@ namespace LucidDreams
             var root = placer.transform.position;
             float height = player != null && player.Dream?.bounds != null && player.Dream.bounds.Height > 0.5f
                 ? player.Dream.bounds.Height : personHeight;
+            height += placer.Lift;
             var flat = new Vector2(p.x - root.x, p.z - root.z);
             return flat.magnitude < PersonRadius && p.y > root.y - 0.1f && p.y < root.y + height + 0.15f;
         }

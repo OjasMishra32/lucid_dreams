@@ -85,6 +85,55 @@ namespace LucidDreams
             return Build("Border", verts, normals, tris);
         }
 
+        // A box of the given size around the origin with every edge and corner rounded to `radius`: each face is a grid,
+        // denser near its edges, pushed out from the box shrunk by the radius.
+        public static Mesh RoundedBox(Vector3 size, float radius, int steps = 6)
+        {
+            var half = size / 2f;
+            radius = Mathf.Min(radius, Mathf.Min(half.x, Mathf.Min(half.y, half.z)));
+            var inner = half - Vector3.one * radius;
+            float[] Samples(float h)
+            {
+                var v = new List<float>();
+                for (int i = 0; i <= steps; i++) v.Add(-h + radius * i / steps);
+                for (int i = 0; i <= steps; i++) v.Add(h - radius + radius * i / steps);
+                return v.ToArray();
+            }
+            var verts = new List<Vector3>();
+            var normals = new List<Vector3>();
+            var tris = new List<int>();
+            for (int axis = 0; axis < 3; axis++)
+                for (int sign = -1; sign <= 1; sign += 2)
+                {
+                    int ua = (axis + 1) % 3, va = (axis + 2) % 3;
+                    var us = Samples(half[ua]);
+                    var vs = Samples(half[va]);
+                    int start = verts.Count;
+                    foreach (float v in vs)
+                        foreach (float u in us)
+                        {
+                            var p = Vector3.zero;
+                            p[axis] = sign * half[axis];
+                            p[ua] = u;
+                            p[va] = v;
+                            var core = new Vector3(Mathf.Clamp(p.x, -inner.x, inner.x), Mathf.Clamp(p.y, -inner.y, inner.y), Mathf.Clamp(p.z, -inner.z, inner.z));
+                            var n = (p - core).normalized;
+                            verts.Add(core + n * radius);
+                            normals.Add(n);
+                        }
+                    int w = us.Length;
+                    for (int j = 0; j < vs.Length - 1; j++)
+                        for (int i = 0; i < w - 1; i++)
+                        {
+                            int a = start + j * w + i, b = a + w;
+                            // u x v points out of the + face; Unity's front faces have normal (p1 - p0) x (p2 - p0)
+                            if (sign > 0) tris.AddRange(new[] { a, a + 1, b, b, a + 1, b + 1 });
+                            else tris.AddRange(new[] { a, b, a + 1, a + 1, b, b + 1 });
+                        }
+                }
+            return Build("Rounded box", verts, normals, tris);
+        }
+
         static Mesh Build(string name, List<Vector3> verts, List<Vector3> normals, List<int> tris)
         {
             var mesh = new Mesh { name = name, indexFormat = verts.Count > 65000 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16 };

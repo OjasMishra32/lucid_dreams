@@ -35,6 +35,10 @@ namespace LucidDreams
 
         public float FloorY => floorY;
         public bool IsPlaced => placed;
+        // Seated at bench height (Seating), or standing on the floor.
+        public Seating Seat { get; private set; }
+        // How far the person is raised above their bundle's own floor: a seated person without legs, onto the bench.
+        public float Lift => Seat.lift;
 
         float floorY;
         bool placed;
@@ -51,9 +55,15 @@ namespace LucidDreams
             if (player != null) player.Ready -= OnReady;
         }
 
-        // A plan that wants them beside you or ahead re-stands them once it's known.
+        // Someone seated goes up (or down) to bench height. A plan that wants them beside you or ahead re-stands them
+        // once it's known.
         void OnReady()
         {
+            Seat = Seating.For(player.Body, player.Experience, player.Dream?.intent);
+            if (person != null) person.localPosition = new Vector3(0f, Seat.lift, 0f);
+            if (Seat.seated)
+                Debug.Log($"[Lucid Dreams] Seated: hips at {Seat.benchTop:F2} m, raised {Seat.lift:+0.00;-0.00} m{(Seat.needsBench ? ", a bench under them" : "")}.");
+
             var wanted = Parse(player.Experience?.place);
             if (wanted == place && placed) return;
             place = wanted;

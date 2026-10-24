@@ -67,6 +67,9 @@ namespace LucidDreams
         // What you came to do with them (experience.json, or a plan guessed from the intent), and the lesson it runs.
         public Experience Experience { get; private set; }
         public Lesson Lesson { get; private set; }
+        // Where the body really is (lowest and highest point, the seat if they sit), the middle of every frame's
+        // measure; not measured for avatars.
+        public BodyShape Body { get; private set; }
 
         public event Action Ready;
 
@@ -75,6 +78,7 @@ namespace LucidDreams
             public DreamSequence sequence;
             public GaussianFrame first;
             public Bounds bounds;
+            public BodyShape[] shapes; // measured as each frame decodes, when set
             public int overflow;
             public string error;
         }
@@ -255,7 +259,7 @@ namespace LucidDreams
             int capacity = Mathf.Max(1, Dream.frames.gaussiansPerFrame);
             while (true)
             {
-                loading = new LoadResult();
+                loading = new LoadResult { shapes = new BodyShape[Dream.frameCount] };
                 yield return Fill(pattern, decoder, capacity, (long)gpuBudgetMB << 20, loading, p => LoadProgress = p);
                 var result = loading;
                 loading = null;
@@ -275,6 +279,7 @@ namespace LucidDreams
                 }
 
                 sequence = result.sequence;
+                Body = BodyShape.Median(result.shapes);
                 result.bounds.Expand(0.2f); // splat extents reach past their centres
                 canonical = sequence.CreateCanonicalAsset(result.first, result.bounds, Dream.id);
                 splat.m_Asset = canonical;
@@ -426,7 +431,13 @@ namespace LucidDreams
                 byte[] data = null;
                 yield return Fetch($"{baseUrl}/{Dream.FramePath(index, pattern)}", bytes => data = bytes, e => result.error ??= e);
                 if (data == null || result.error != null) yield break;
-                var decode = Task.Run(() => decoder(data));
+                var shapes = result.shapes;
+                var decode = Task.Run(() =>
+                {
+                    var decoded = decoder(data);
+                    if (shapes != null) shapes[index] = BodyShape.Measure(decoded);
+                    return decoded;
+                });
                 while (!decode.IsCompleted) yield return null;
                 if (decode.IsFaulted)
                 {
@@ -526,6 +537,7 @@ namespace LucidDreams
             if (Lesson != null) Lesson.Changed -= OnLessonChanged;
             Lesson = null;
             Experience = null;
+            Body = default;
             RealityLoading = false;
             if (splat != null)
             {

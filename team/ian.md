@@ -336,3 +336,18 @@ What makes it simple, and what to do the same way in Unity:
 - Passthrough (ARCameraManager) is off while a place is fully in, saving the camera feed's cost; the hand stand-ins are
   off too (with passthrough off they would cut holes showing the panorama instead of your hand).
 
+
+## Decisions: seated people (Ian, Sat)
+
+- Read from the Gaussians, not from a new contract field: each frame's lowest point, top, torso axis and seat (where
+  the torso column ends going down) are measured on the decode thread, and the median over frames is used. A
+  per-frame lift would make them bob whenever a foot moved.
+- Seated only when the plan or sentence asks for it (`experience.objects` bench / chair / piano..., or sit / piano /
+  cello / drums in the intent) and the shape agrees (under 1.45 m tall from the lowest point). A standing person
+  asked to sit stays standing.
+- No legs below the hips: hips go to 0.48 m (a piano bench). Legs there: the bundle's floor stays on yours and the
+  bench goes at their own seat height. Bench only if the reconstruction has almost nothing under the seat.
+- Not applied to avatars (their rest pose stands). A `bench` kind in props.json, if the pipeline adds one, would
+  draw a second bench; we'd drop ours then.
+- Checked headless on two synthetic pianists (legs, no legs) and every earlier check; not yet on a real seated
+  reconstruction (piano-han) or on a Quest.

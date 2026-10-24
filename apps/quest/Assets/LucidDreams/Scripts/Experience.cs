@@ -17,6 +17,7 @@ namespace LucidDreams
         public string summary;
         public string place; // facing (default), beside, ahead
         public string environment; // a place around the person (concert-hall, court, gym, ring, studio, mountains) or "room"
+        public List<string> objects = new(); // what matters for the intent ("piano", "bench"); props.json builds them
         public List<ExperienceStep> steps = new();
         public ExperiencePlay play;
 
@@ -60,7 +61,9 @@ namespace LucidDreams
                     intent = intent,
                     mode = "teach",
                     title = char.ToUpperInvariant(intent[0]) + intent.Substring(1),
-                    place = Regex.IsMatch(said, @"\b(dance|move|shoot|swing|throw|kick|form|step)\b") ? "ahead" : "facing",
+                    // an instrument is learned sitting next to the teacher; a movement by following them; else face to face
+                    place = Regex.IsMatch(said, @"\b(piano|keyboard|guitar|violin|cello|drums|ukulele|instrument|play this song|play this piece)\b") ? "beside"
+                        : Regex.IsMatch(said, @"\b(dance|move|shoot|swing|throw|kick|form|step)\b") ? "ahead" : "facing",
                 };
                 for (int i = 0; i < parts; i++)
                     e.steps.Add(new ExperienceStep
