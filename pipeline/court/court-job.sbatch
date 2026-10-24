@@ -108,7 +108,7 @@ $PY -m lucid.prep_clip input.mp4 --out prepped.mp4 --start-s 0 > prep.json
 ( cd "$L/repos/4DAnyone" && export OMP_NUM_THREADS=$CPUS MKL_NUM_THREADS=$CPUS && CUDA_VISIBLE_DEVICES=0 $PY inference.py --video_path "$S/run/prepped.mp4" \
     --output_dir "$S/run/views" --views_per_layer "$VPL" --layer_pitches "$PITCHES" \
     $( ((TURBO)) || echo --enable_turbo=False ) ${SEED:+$SEED_FLAG $SEED} )
-SAMPLES=(views/videos/00.mp4 views/videos/04.mp4 views/videos/08.mp4 views/videos/12.mp4)
+SAMPLES=(views/videos/{00,02,04,06,08,10,12,14}.mp4)  # the first ring every 45 degrees, its back included (~12 MB)
 copy_back prep.json prepped.mp4 views/cameras.json views/metadata.json views/gvhmr "${SAMPLES[@]}"
 log "views done; gate-2 samples in $OUTD/views"
 

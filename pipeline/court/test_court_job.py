@@ -145,8 +145,8 @@ class Job(unittest.TestCase):
             self.assertEqual((used["K"], used["FOCAL"], used["gpu"]), (118, 2000.5, "NVIDIA B200"))
         self.assertFalse((out / "recon-metrics-raw-default-r0" / "frames").exists())
         self.assertEqual(sorted(x.name for x in (out / "views" / "videos").iterdir()),
-                         ["00.mp4", "04.mp4", "08.mp4", "12.mp4"])
-        self.assertEqual(len(list((out / "views-up" / "videos").iterdir())), 4)
+                         [f"{v:02d}.mp4" for v in range(0, 16, 2)])  # the ring every 45 degrees: the back too
+        self.assertEqual(len(list((out / "views-up" / "videos").iterdir())), 8)
         cams = json.loads((out / "views-up" / "cameras.json").read_text())["cameras"][0]
         self.assertEqual((cams["image_width"], cams["K"][0][0]), (32, 20.0))
         for f in ("prepped.mp4", "prep.json", "views/cameras.json", "views/gvhmr/m.pt"):

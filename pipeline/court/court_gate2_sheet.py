@@ -1,4 +1,5 @@
-"""Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 at the freeze frame K, and,
+"""Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 (and any other views fetched)
+at the freeze frame K, and,
 when a freeze has been trained, its peeks (the real frame | render, then the views' ground truth | render).
 
     python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] <run dir>...
@@ -18,8 +19,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-VIEWS = ("00", "04", "08", "12")
+VIEWS = ("00", "04", "08", "12")  # always shown (a missing one as a grey tile), with any other views fetched
 GREY = (90, 90, 90)
+
+
+def views_of(run: Path) -> list[str]:
+    return sorted(set(VIEWS) | {p.stem for p in (run / "views" / "videos").glob("[0-9][0-9].mp4")})
 
 
 def run_id(run: Path) -> str:
@@ -59,7 +64,7 @@ def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
     if k is None:
         return [tile(None, h, f"{name}: no K")]
     row = [tile(frame_at(run / "prepped.mp4", k), h, f"{name} clip k={k}")]
-    row += [tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}") for v in VIEWS]
+    row += [tile(frame_at(run / "views" / "videos" / f"{v}.mp4", k), h, f"view {v}") for v in views_of(run)]
     out = [np.hstack(row)]
     for rec in sorted(run.glob("recon-*")):
         if not rec.is_dir():
