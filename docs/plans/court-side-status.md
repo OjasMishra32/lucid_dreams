@@ -1,92 +1,75 @@
 # Court Side: live status
 
-**Court Side replaces Ghost Coach for Vishal (Ghost Coach paused).** **One iconic NBA play, chosen for the best
-footage** (Vishal, ~7:05 AM: Steph vs LeBron has no good enough clip; any hype play with a low, fixed courtside camera,
-60 fps, no cut; several synced fixed angles best; front-runner to check: the "every angle" video of Giannis blocking
-Ayton, 2021 Finals G4). In full-immersion VR you watch the real footage as immersive courtside video from where that
-camera stood; "Step into the court" eases it to a stop and **that one frame becomes 3D** (same pixels at the
-hand-off, then the world opens up); you stand and walk in around the frozen moment, **every player on court a solid
-3D person** (Vishal, 7:00 AM); "Back to my seat" eases back into the video. Ojasva's bar: if the two main players
-aren't passing by noon, ship the main player alone.
-Updated Sat 7:43 AM.
+**Court Side replaces Ghost Coach for Vishal (Ghost Coach paused).** In full-immersion VR you watch one real NBA play
+as immersive courtside video from where the low camera stood; "Step into the court" eases it to a stop and **that
+one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
+moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
+two main players aren't passing by noon, ship the main player alone.
+Updated Sat 7:56 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
+
+**Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
+Game 2, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60) at 6:15. Kept
+private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
-11. **Where Court Side's clip tools live?** Hand-tuned calibration, masks and assembly scripts for this one clip:
-    `pipeline/court/` (code only, no clip data), or outside the repo? Your call.
-10. **`sourceView` for Court Side runs (needs a small patch in your lane):** (a) take our SAM 2.1 player mask
-    instead of BiRefNet, with the other player's pixels ignored in the loss (`source_view.py:67-70` only reads
-    BiRefNet today); (b) take our known focal length for the crop instead of solving it (a long broadcast lens);
-    (c) bonus: a second real camera (the play's other angle) as another real view of the freeze frame, so Luka's
-    front is real, not invented. Yes / no / which?
-9. **GPU ask, new shape (supersedes the 100k playback part of 6):** (a) the two main players: 50-step views on
-   each 121-frame clip, then reconstruction of **only the freeze frame**, cold, as dense as the Quest holds (250-300k)
-   with more iterations: ~30-45 min of one B200 each. (b) **The other players on court** (up to 8): each its own
-   Turbo views run + freeze frame at 40-80k, ~15 min of a B200 each, run in parallel (~20-30 min wall on 4-8 GPUs);
-   some may instead be LHM++ bodies on an L4 (~5 min each). Disk: delete each run's views after its recon, so
-   batches stay inside the ~16 GB. Exact commands follow with the clip. OK?
-8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only** (Vishal, 6:50 AM): WebXR
-   `immersive-vr` with `local-floor` (court floor exactly on the real floor, safe to walk), the arena from the
-   footage where the camera saw it, darkness beyond the court lights elsewhere. An exception to your passthrough-only
-   rule (Sat 3:30 AM) for court mode alone; every other mode stays passthrough. Players lit like the footage's arena.
-7. **Ready now: the first real Quest 3S number (Ian or Ojasva, ~20 min).** Vishal sends `dropin.zip` (28 MB,
-   throwaway, never commit). Copy `court-quest.html` into `apps/webxr/` and `src/spike6/` into `apps/webxr/src/`;
-   set a roomscale boundary of at least 3.5 x 3.5 m; open `/court-quest.html?a=<replay id>&b=<another replay id>`
-   (your two best replays; only their middle frames load) or plain `/court-quest.html` (synthetic). Press "Enter at
-   0.5x", stand still: five phases run by themselves (immersive 720p60 video, 3D freeze 2x250k, 2x400k, walk round,
-   video-to-3D hand-off), then a results table. Photo it, exit, repeat at 0.75x and 1x (and once `&vw=1920`). Send
-   the photos plus anything odd (tab reload, flicker, Hz), then delete the files. Full steps in its `HOW-TO.md`.
-6. **Yes (Ojasva, 6:05 AM):** 100k playback + a 250k freeze frame; keep `aniso`, `sourceView`, 50-step views.
-5. **Approved (Ojasva, 5:50 AM):** one B200 ~10 min for a **Turbo** views run on one player-only portrait clip.
-1-4. **Done:** GPUs free; ~16 GB lab disk, one run at a time; `apps/webxr/src/court/` + `?mode=court` approved;
-   4DAnyone needs exactly 121 frames; SAM 2.1 (SAM 3 gated).
+8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only** (Vishal, 6:50 AM):
+   `immersive-vr` + `local-floor`, the arena from the footage where the camera saw it, darkness elsewhere. An
+   exception to your passthrough-only rule for court mode alone; every other mode stays passthrough.
+7. **The first real Quest 3S number (Ian or Ojasva, ~20 min).** Vishal sends `dropin.zip` (throwaway, never
+   commit): copy `court-quest.html` into `apps/webxr/` and `src/spike6/` into `apps/webxr/src/`, open
+   `/court-quest.html`, press "Enter at 0.5x", stand still; photo the results table; repeat at 0.75x and 1x. Steps
+   in its `HOW-TO.md`.
+9. **GPU, new shape:** (a) each main player: 50-step views on its 121-frame clip, then **only the freeze frame**
+   reconstructed cold at 250-300k with more iterations (~30-45 min of one B200 each); (b) up to 8 other players:
+   Turbo views + freeze frame at 40-80k (~15 min each, parallel), or LHM++ on an L4. Views deleted after each recon
+   to stay inside ~16 GB. Exact commands follow the calibration. OK?
+10. **`sourceView` patch (your lane):** (a) our SAM 2.1 player mask instead of BiRefNet, other player ignored in
+    the loss (`source_view.py:67-70`); (b) our known focal for the crop; (c) bonus: a second real camera (the
+    play's other angle) as another real view of the freeze, so Luka's front is real. Yes / no / which?
+11. **Where Court Side's clip tools live:** `pipeline/court/` (code only, no clip data) or outside the repo?
+6. **Yes (6:05 AM):** 100k playback + 250k freeze; keep `aniso`, `sourceView`, 50-step views. 5. **Approved:**
+   one B200 Turbo run. 1-4. **Done.**
 
 ## Now
 
-**Clip decided (Vishal, 7:34 AM): Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
-Game 2**, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60), Vishal's
-pick at 6:15. Fetched (private, outside the repo): that angle 5:55-6:25, the release angle 4:45-5:05, the
-broadcast 0:00-0:15. **Gate 1 on it: 7/9, a pass in substance:** players ~900 px tall at 1080p (bar 600), both head
-to toe, zero overlap, feet visible, sharp; real high-speed slow motion (3 unique frames in every 4, no interpolation
-dips: ~45 unique fps at ~4-5x slow, ~180-220 fps capture), no cut through the release (the camera tilts up to
-follow the ball); the two misses are expected (the camera pans: calibration undoes it; the ball detector misses).
-Freeze candidates: 6:15.7 (Gobert's reach, players huge) and 6:16.6 (the release, ball up, basket in frame); both
-will be reconstructed and picked in the headset. The camera mostly sees Luka's back: ask 10(c) would make his
-front real. Planning hands off to a fresh session now; build on branch `court-side` after an independent review.
+- Plan `docs/plans/court-side.md` being finished (definition of perfect, footage, smoothness results, frame budget,
+  shot list); then break-it reviews and one independent review; then the build on branch `court-side`.
+- Three hand-off directions being prototyped in parallel on the VR rig: "Same Pixels", "House Lights",
+  "Depth Grows". The session picks one by ~8:45 and logs why here.
+- Court calibration of the chosen angle running (the tool is proven on a synthetic bench: ~0.2 px, ~0.3 cm).
 
 ## Verdict so far
 
-**More feasible than before:** GPU drops to ~1-1.5 h for both players, headset memory is no longer a constraint, and
-the splat budget goes into one sharp frozen moment. Biggest risks now: the angle (no 60 fps public copy found yet;
-fixed vs handheld unverified), the video-to-3D hand-off matching to the pixel (calibration), and how sharp a 720p
-player can be in 3D up close.
+Feasible. The footage is far better than the 2018 options: players ~900 px tall at 1080p, real high-speed, no cut.
+Biggest risks: the video-to-3D hand-off matching to the pixel (calibration), Luka seen mostly from behind (ask
+10c), and the Quest frame rate (ask 7).
 
 ## Done
 
-- 5:47 AM, S4 PASS (desktop): two players + freeze + court + backdrop in one Spark scene, 10 ms on a laptop.
-- 5:57 AM, S5 PASS except one field-of-view rule (desktop, AR): anchor 0 mm drift, palm menu works, pinches do
-  nothing, ring ~1.5 m. Being re-run in VR.
-- 6:43 AM, S6 Quest stereo test page built and proven on desktop (0 errors); VR version in progress.
+- 7:34 AM clip decided; gate 1 7/9, a pass in substance (the two misses: camera pans, ball detector).
+- 7:42 AM smoothness spike: ease = baked flow in-betweens at 72 Hz via WebCodecs; hand-off = frozen frame projected
+  onto proxies, 3D drawn under it, video faded out over 1 s; <= 1.08 px p95 for head moves up to 10-15 cm.
+- 7:50 AM VR prototype rig with projected proxies (0 console errors, timeline tests 7/7); crowd audio separated
+  (commentary-free bed from the release angle).
+- Earlier: S4 budget, S5 walk (anchor 0 mm drift, palm menu), S6 Quest test page, shadows/reflections/light match.
 
 ## Next
 
-1. The angle: exact video + timestamps for Vishal. 2. Prototypes (seat view, the hand-off and walk) for Vishal to
-pick. 3. The Quest number (ask 7). 4. When the clip lands: gate 1, calibration, masks, player clips, Turbo (ask 5).
-5. `docs/plans/court-side.md`, broken by reviewers before any build.
+1. Pick the hand-off direction. 2. Finish the plan + reviews. 3. Build on `court-side` against stand-in data.
+4. With calibration: player clips, masks, then the GPU commands (ask 9).
 
 ## Blocked on
 
-- The clip file (Vishal), after the angle pick.
+- The Quest number (ask 7) for the final splat budget; Ojasva's yes on 8 before the build ships to main.
 
 ## Decisions
 
-- Video-first: watch the real footage immersively; only the freeze frame becomes 3D (Vishal, 6:55 AM).
-- Full immersion: `immersive-vr` + `local-floor`, `?mode=court` only (Vishal, 6:50 AM; Ojasva to confirm, ask 8).
-- Code: a clean, self-contained `apps/webxr/src/court/` module with a simple documented data format (cameras,
-  players, freeze frame, video, audio); nothing generalised beyond this demo (Vishal, 6:55 AM).
-- One play from a low, fixed courtside camera; the seat sits where it stood (Vishal, 6:20 AM). Plan and prototype
-  only until Vishal approves the plan. Target the WebXR viewer (Quest app only an ask to Ian).
-- Fixed crop per player in the stabilised frame; SAM 2.1 masks on Vishal's PC (Vishal, 5:45 AM).
-- Controls on the left-palm menu, the court locked to the room, no gesture acts by itself (Ojasva).
+- Video-first: only the freeze frame becomes 3D (Vishal, 6:55 AM). Full immersion, `?mode=court` only (6:50 AM).
+- Overnight (Vishal's standing orders): build on branch `court-side`, pushed for Ojasva to see; nothing merged to
+  main until Vishal is back; choices he'd normally make are made here and logged with the reason.
+- Crowd sound: the clip's own crowd with commentary removed (no CC0 downloads until Vishal approves).
+- Code: a clean, self-contained `apps/webxr/src/court/` module with a documented data format; nothing generalised.
+- Controls on the left-palm menu; the court locked to the room; no gesture acts by itself (Ojasva).
 - Public figures: only what really happened, no voices, labelled "Real footage, rebuilt in 3D. Not affiliated with
-  the NBA or the players.", source credited; the clip and its 3D stay out of the public repo and site (Vishal).
+  the NBA or the players.", source credited; the clip and its 3D stay out of the public repo and site.
