@@ -268,6 +268,45 @@ def standin_camera_f(S: dict, standin: Path) -> geo.Cam:
     return frame_camera(S["camera"], frames, S["video"])
 
 
+def resolve_run(slot: dict) -> dict:
+    """A player slot filled in from a fetched freeze run (court-job.sbatch's results): {"run": dir, "variant":
+    "raw-default-r1", "cap": "300k"} names bundle-<variant>-<cap>/ (the export: frames/000000.ply in bundle space,
+    .spz, .reality.spz, dream.json with its placement) and recon-<variant>-<cap>/ (source-camera-<K>.json and the
+    recon's report: P42's iou, focal, focalHeld; the real frame's PSNR), and recon-metrics-<variant>/ for the held-out
+    PSNR against the generated views. Keys already in the slot win."""
+    if not slot.get("run"):
+        return slot
+    run = expand(slot["run"])
+    v, cap = slot.get("variant"), slot.get("cap")
+    if not (v and cap):
+        found = sorted(d.name[len("bundle-"):] for d in run.glob("bundle-*") if d.is_dir())
+        if len(found) != 1:
+            raise ValueError(f"{run}: name the player's variant and cap (bundles here: {found or 'none'})")
+        v, cap = re.fullmatch(r"(.+)-(\d+k)", found[0]).groups()
+    b, r = run / f"bundle-{v}-{cap}", run / f"recon-{v}-{cap}"
+    out = dict(slot)
+    out.setdefault("splats", str(b / "frames" / "000000.ply"))
+    out.setdefault("reality", str(b / "frames" / "000000.reality.spz"))
+    out.setdefault("spz", str(b / "frames" / "000000.spz"))
+    out.setdefault("dream", str(b / "dream.json"))
+    cams = sorted(r.glob("source-camera-*.json"))
+    if cams:
+        out.setdefault("sourceCamera", str(cams[0]))
+
+    def report(d: Path) -> tuple[dict, dict]:
+        files = sorted(d.glob("recon-*.json"))
+        rep = json.loads(files[0].read_text()) if files else {}
+        return (rep.get("frames") or [{}])[0], rep.get("source") or {}
+
+    fr, src = report(r)
+    held = report(run / f"recon-metrics-{v}")[0].get("psnr")
+    out["run_report"] = {"variant": v, "cap": cap, "iou": src.get("iou"), "focal": src.get("focal"), "focalHeld": src.get("focalHeld"),
+                         "sourcePsnr": fr.get("sourcePsnr"), "facePsnr": fr.get("facePsnr"), "gaussians": fr.get("gaussians"),
+                         "heldOutPsnr": held}
+    out["metrics"] = {**(slot.get("metrics") or {}), **({"heldOutPsnr": held} if held is not None else {})}
+    return out
+
+
 def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
     """(the run's solved source camera in the PLY's bundle space, the court camera it was cut from) from the run's
     files: recon's source-camera-<K>.json (the rig's world, OpenCV camera_to_world, K for source-4k.mkv's crop), the
@@ -341,6 +380,11 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         "_": {"sim": sim, "contact": contact, "count": b["count"], "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
               "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
     }
+    if slot.get("run_report"):
+        rr = dict(slot["run_report"])
+        if slot.get("courtRun") and expand(slot["courtRun"]).exists():
+            rr["FOCAL"] = json.loads(expand(slot["courtRun"]).read_text()).get("FOCAL")
+        entry["_"]["run"] = rr
     if feet is not None:
         entry["_"]["footError"] = round(float(np.linalg.norm(contact - feet.mean(0))), 3)
     w.piece(f"player:{pid}", real, str(expand(slot["splats"])) if real else f"stand-in body '{S['freeze']['players'][i]['id']}' re-placed at the calibrated feet")
@@ -547,6 +591,7 @@ def cfg_player(cfg: dict, pid: str) -> dict:
 
 def assemble(cfg: dict, standin: Path, out: Path) -> dict:
     standin = standin.resolve()
+    cfg = {**cfg, "players": [resolve_run(p) for p in cfg.get("players", [])]}
     S = json.loads((standin / "court.json").read_text())
     calib_json = json.loads(expand(cfg["calib"]).read_text()) if cfg.get("calib") else None
     calib = geo.CalibTrack(calib_json) if calib_json else None
@@ -769,6 +814,19 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
                 pending.append(f"metrics.{grp}.{k}")
     asm = bundle / "assembly.json"
     if asm.exists():
+        for pid, d in json.loads(asm.read_text())["players"].items():
+            rr = d.get("run")
+            if not rr:
+                continue
+            # P42: the real view really trained the freeze
+            if not rr.get("focalHeld"):
+                errs.append(f"{pid} (P42): the recon didn't hold the calibrated focal (focalHeld {rr.get('focalHeld')})")
+            if rr.get("FOCAL") is not None and (rr.get("focal") is None or abs(rr["focal"] - rr["FOCAL"]) > 0.5):
+                errs.append(f"{pid} (P42): the recon's focal {rr.get('focal')} isn't the run's FOCAL {rr['FOCAL']}")
+            if (rr.get("iou") or 0) < 0.95:
+                errs.append(f"{pid} (P42): the real frame's silhouette IoU {rr.get('iou')} is under 0.95")
+            info.append(f"{pid}: {rr['variant']}-{rr['cap']}, real-frame PSNR {rr.get('sourcePsnr')}, face {rr.get('facePsnr')}, "
+                        f"held-out {rr.get('heldOutPsnr')}, iou {rr.get('iou')}")
         for k, pc_ in json.loads(asm.read_text())["pieces"].items():
             if pc_["source"] != "real":
                 pending.append(f"{k}: {pc_['detail']}")

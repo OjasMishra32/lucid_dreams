@@ -189,6 +189,38 @@ class ReconFiles(unittest.TestCase):
         self.assertLess(info["tilt_deg"], 1.5)
 
 
+class RunLayout(unittest.TestCase):
+    def test_a_fetched_freeze_run_names_its_files_and_numbers(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d) / "court-main-s2"
+            b, r, m = run / "bundle-raw-default-r1-300k", run / "recon-raw-default-r1-300k", run / "recon-metrics-raw-default-r1"
+            for p in (b / "frames", r, m):
+                p.mkdir(parents=True)
+            for f in ("frames/000000.ply", "frames/000000.spz", "frames/000000.reality.spz"):
+                (b / f).write_bytes(b"x")
+            (b / "dream.json").write_text("{}")
+            (r / "source-camera-000118.json").write_text("{}")
+            (r / "recon-000118.json").write_text(json.dumps({"frames": [{"sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000}],
+                                                             "source": {"iou": 0.962, "focal": 22350.0, "focalHeld": True}}))
+            (m / "recon-000118.json").write_text(json.dumps({"frames": [{"psnr": 27.4, "ssim": 0.95}], "source": {}}))
+            slot = A.resolve_run({"id": "luka", "run": str(run), "variant": "raw-default-r1", "cap": "300k", "courtRun": "x.json"})
+            self.assertEqual(Path(slot["splats"]), b / "frames/000000.ply")
+            self.assertEqual(Path(slot["reality"]), b / "frames/000000.reality.spz")
+            self.assertEqual(Path(slot["spz"]), b / "frames/000000.spz")
+            self.assertEqual(Path(slot["dream"]), b / "dream.json")
+            self.assertEqual(Path(slot["sourceCamera"]), r / "source-camera-000118.json")
+            self.assertEqual(slot["metrics"]["heldOutPsnr"], 27.4)
+            self.assertEqual(slot["run_report"], {"variant": "raw-default-r1", "cap": "300k", "iou": 0.962, "focal": 22350.0,
+                                                  "focalHeld": True, "sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000, "heldOutPsnr": 27.4})
+            # one bundle in the run: no need to name it
+            self.assertEqual(A.resolve_run({"run": str(run)})["run_report"]["variant"], "raw-default-r1")
+
+
 class Ball(unittest.TestCase):
     def test_ball_on_its_pixel_at_the_hands_depth(self):
         import tempfile
