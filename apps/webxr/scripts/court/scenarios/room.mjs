@@ -67,4 +67,23 @@ export default async function room(ctx) {
     ctx.report[phase] = [...out, ...back].map(({ thumb, view, ...f }) => f);
   }
   if (!ctx.modules.clock) ctx.report.watching = "waiting on the clock (stream C): the way back restarts it";
+
+  // last (it takes the arena away): dispose frees the dome and every arena geometry, material and texture it made
+  const freed = await ctx.page.evaluate(() => {
+    const w = window.__courtLook.world;
+    const r = w.renderer;
+    const count = () => ({ geometries: r.info.memory.geometries, textures: r.info.memory.textures });
+    let dome = 0;
+    w.dome.geometry.addEventListener("dispose", () => dome++);
+    w.dome.material.addEventListener("dispose", () => dome++);
+    const before = count();
+    w.dispose();
+    return { before, after: count(), dome, domeInScene: !!w.dome.parent, arenaInWorld: !!w.group.parent };
+  });
+  ctx.check(
+    "dispose frees the dome and the arena",
+    freed.dome === 2 && !freed.domeInScene && !freed.arenaInWorld && freed.after.geometries < freed.before.geometries && freed.after.textures < freed.before.textures,
+    `dome ${freed.dome}/2 disposed; geometries ${freed.before.geometries} -> ${freed.after.geometries}, textures ${freed.before.textures} -> ${freed.after.textures}`,
+  );
+  ctx.report.dispose = freed;
 }

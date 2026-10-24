@@ -9,12 +9,15 @@
 // lightfield.test.ts can load it under node. Stream E (`look`) builds it, from House Lights' FIELD_GLSL and splatK
 // (court-spikes/proto-house-lights/webxr/src/proto/directions/house-lights.ts).
 //
-// P44 sets every duration: no light change may move a pixel more than 1 grey level per display frame at 72 Hz. A
-// level change dL over T seconds on the ramp below (peak slope 1.25 / T) moves a surface of display luma Y by
-// 1.25 Y dL / (72 T) grey levels per frame, so each change is long enough for SAFE_LUMA: the crowd's 0.55 over the
-// 1.2 s ease (crowd up to luma 125), the floor's 0.70 over 2.2 s from the ease start (it lands at F+1, under the
-// hand-off, which multiplies the video and the 3D by the same numbers), and every pool point at 1.25 / 3.0 s per unit
-// of its own change (floor up to luma 170), so the farthest points land at F+5. The hardwood is luma ~140.
+// P44 sets every duration: no light change may move a pixel's 8-bit value (three's exact sRGB encode, then the
+// dither) more than 1 grey level per display frame at 72 Hz (or 90). Levels are display-referred: a level q becomes the
+// linear multiplier q^2.4, so a surface's encoded value moves at a constant K(grey) per unit of q (K = 184 for a
+// grey-170 surface: 255 x 1.055 x c^(1/2.4), c its linear value). Every change follows the ramp below (peak slope
+// 1.11 / T), and lasts long enough to keep 184 x 1.11 x dq / T under 72 a second for a grey-170 surface (SAFE_GREY):
+// the crowd's 0.52 over 1.8 s from the ease start (it lands at F+0.6 after the 1.2 s ease), the floor's 0.67 over
+// 2.2 s (F+1, under the hand-off, which multiplies the video and the 3D by the same numbers), and every pool point at
+// 1.11 / 3.0 s per unit of its own change, so the farthest land at F+5. lightfield.test.ts checks the encoded bytes,
+// dither included, at 72 and 90 Hz. The hardwood is grey ~140.
 import type * as THREE from "three";
 import type { GsplatModifier, SplatMesh } from "@sparkjsdev/spark";
 import type { dyno } from "@sparkjsdev/spark";
@@ -69,8 +72,8 @@ export interface LightConfig {
 
 /** The lights come up over this long (court.ts LIGHTS_UP_S). */
 export const ARRIVAL_S = 2.5;
-/** The crowd goes down over the ease (P28: 1.2 s); and comes back up over the same on resume. */
-export const CROWD_DIM_S = 1.2;
+/** The crowd goes down over this from the ease start (P28's ease is 1.2 s; P44 needs 1.8 s for grey 170); up on resume. */
+export const CROWD_DIM_S = 1.8;
 /** The floor outside the pool goes down over this, from the ease start (F+1 after the 1.2 s ease); up on resume. */
 export const FLOOR_DIM_S = 2.2;
 /** The pool starts growing at F + this. */
@@ -88,15 +91,17 @@ export const OPEN_DONE_S = 5.0;
 export const BACK_DONE_S = OPEN_DONE_S - POOL_START_S;
 /** The house comes up this long after play resumes. */
 export const UP_LAG_S = 0.25;
-/** The brightest surfaces (display luma, 0-255) every light change keeps under 1 grey level per frame at 72 Hz. */
-export const SAFE_LUMA = { floor: 170, crowd: 125 };
+/** The brightest surface (sRGB grey, 0-255) every light change keeps under 1 grey level per frame at 72 Hz. */
+export const SAFE_GREY = 170;
 
-/** The ramp every light change follows: eased in and out over its first and last 20%, peak slope 1.25. */
-const EDGE = 0.2;
+/** The ramp every light change follows: eased in and out over its first and last 10%, peak slope 1.11. */
+const EDGE = 0.1;
 /** The pool's core: a lane this wide (half-width, m) from the pair to the seat, and the walking floor round the pair. */
 const LANE_HALF = 0.9;
 /** The walking anchoring puts the pair at the room's centre (seatmath): the judge walks within this of it, metres. */
 const WALK_R = 2.5;
+/** A disc this big round each walking spot (spots(), from seat.layout()), metres. */
+const SPOT_DISC = 0.9;
 /** The spot that holds the pair through the time stop: their bounds plus this margin, metres. */
 const SPOT_MARGIN = 0.5;
 /** The soft edge runs over penumbra x this, so that from 99% lit to the dark is at least the penumbra. */
@@ -108,9 +113,9 @@ export type LightPerson = { pair: true } | { foot: [number, number]; reach?: num
 /** The shared uniforms: merge into a ShaderMaterial's `uniforms` (or a patched material's shader.uniforms). */
 export type LightUniforms = Record<string, THREE.IUniform>;
 
-/** A perceived level from a linear multiplier (and back). */
-export const perceived = (k: number): number => Math.pow(Math.max(0, k), 1 / 2.2);
-export const linear = (p: number): number => Math.pow(Math.max(0, p), 2.2);
+/** A display level from a linear multiplier (and back): q^2.4, so the encoded value moves evenly with q. */
+export const perceived = (k: number): number => Math.pow(Math.max(0, k), 1 / 2.4);
+export const linear = (p: number): number => Math.pow(Math.max(0, p), 2.4);
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 /** GLSL smoothstep. */
@@ -172,7 +177,9 @@ uniform vec4 uLightLevel; // perceived: floor outside the pool, crowd, pair; arr
 uniform vec4 uLightFrame; // the pair's centre x, z; unit axis x, z (pair -> seat)
 uniform vec4 uLightSpot;  // the spot on the pair: offset along the axis, half across, half along; falloff (m)
 uniform vec4 uLightFoot;  // the footprint: offset along, half across, half along; the lane's half-width
-uniform vec4 uLightLane;  // seat distance; the walking disc's radius; unused; the growth's reach (m)
+uniform vec4 uLightLane;  // seat distance; the walking disc's radius; walking spots (0-4); the growth's reach (m)
+uniform vec4 uLightSpotsA; // walking spots 0, 1 (x, z each), court space
+uniform vec4 uLightSpotsB; // walking spots 2, 3
 uniform vec4 uLightGrow;  // seconds into the growth; ramp s for a whole change; spread s; ramp edge
 uniform vec4 uLightView;  // unused; the arena's opacity: stands, floor (See my room, the edge); unused
 float lightRamp(float u, float a) {
@@ -199,7 +206,12 @@ float lightShape(vec2 xz) {
   vec2 q = lightLocal(xz);
   float s = lightEllipse(q - vec2(0.0, uLightFoot.x), uLightFoot.yz);
   s = min(s, length(vec2(q.x, q.y - clamp(q.y, 0.0, uLightLane.x))) - uLightFoot.w);
-  return min(s, length(q) - uLightLane.y);
+  s = min(s, length(q) - uLightLane.y);
+  if (uLightLane.z > 0.5) s = min(s, distance(xz, uLightSpotsA.xy) - ${SPOT_DISC.toFixed(2)});
+  if (uLightLane.z > 1.5) s = min(s, distance(xz, uLightSpotsA.zw) - ${SPOT_DISC.toFixed(2)});
+  if (uLightLane.z > 2.5) s = min(s, distance(xz, uLightSpotsB.xy) - ${SPOT_DISC.toFixed(2)});
+  if (uLightLane.z > 3.5) s = min(s, distance(xz, uLightSpotsB.zw) - ${SPOT_DISC.toFixed(2)});
+  return s;
 }
 // o: the point's level outside the pool; each point's ramp is as long as its own change needs (P44)
 float lightPool(vec2 xz, float o) {
@@ -213,11 +225,11 @@ float lightPool(vec2 xz, float o) {
 // the floor at court xz; reach = the rendered court's darkness falloff outside the frame (1 on the footage's surfaces)
 float lightFloor(vec2 xz, float reach) {
   float o = uLightLevel.x * reach;
-  return pow(mix(o, 1.0, lightPool(xz, o)) * uLightLevel.w, 2.2);
+  return pow(mix(o, 1.0, lightPool(xz, o)) * uLightLevel.w, 2.4);
 }
-float lightCrowd() { return pow(uLightLevel.y * uLightLevel.w, 2.2); }
+float lightCrowd() { return pow(uLightLevel.y * uLightLevel.w, 2.4); }
 float lightHouse() { return lightCrowd(); }
-float lightPair() { return pow(uLightLevel.z * uLightLevel.w, 2.2); }
+float lightPair() { return pow(uLightLevel.z * uLightLevel.w, 2.4); }
 float lightAt(vec2 foot) { return lightFloor(foot, 1.0); }
 // the multiplier for a footage, floor or stands fragment at a court-space position (part: PART.*)
 float courtLight(vec3 worldPos, float part) {
@@ -310,6 +322,12 @@ export class LightField {
   private foot: [number, number, number] = [0, 2, 2];
   private seatDist: number;
   private reachR = 1;
+  private discs: [number, number][] = [];
+  // scratch for local()
+  private lu = 0;
+  private lv = 0;
+  /** The levels when the current beat began (return, resume and ease start from wherever the light was). */
+  private from = { beat: "watch" as Beat, floor: 1, crowd: 1, grow: -1e3, easeFloor: 1, easeCrowd: 1 };
   private falloff: number;
 
   /** One field per bundle (the first call's options win). */
@@ -345,6 +363,8 @@ export class LightField {
       uLightSpot: { value: new Vec4() },
       uLightFoot: { value: new Vec4() },
       uLightLane: { value: new Vec4() },
+      uLightSpotsA: { value: new Vec4() },
+      uLightSpotsB: { value: new Vec4() },
       uLightGrow: { value: new Vec4(this.grow, POOL_RAMP_S, POOL_SPREAD_S, EDGE) },
       uLightView: { value: new Vec4(1, 1, 1, 0) },
     };
@@ -388,7 +408,8 @@ export class LightField {
     let near = across;
     if (bottom[1] < -1e-6) {
       const s = -cc[1] / bottom[1];
-      near = this.local(cc[0] + bottom[0] * s, cc[2] + bottom[2] * s)[1];
+      this.local(cc[0] + bottom[0] * s, cc[2] + bottom[2] * s);
+      near = this.lv;
     }
     this.shape(across, Math.min(8, Math.max(1.5, near)));
     this.push();
@@ -401,8 +422,8 @@ export class LightField {
     for (const p of this.court.freeze.players)
       for (const x of [p.bounds.min[0], p.bounds.max[0]])
         for (const z of [p.bounds.min[2], p.bounds.max[2]]) {
-          const [u, v] = this.local(x, z);
-          u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+          this.local(x, z);
+          u0 = Math.min(u0, this.lu); u1 = Math.max(u1, this.lu); v0 = Math.min(v0, this.lv); v1 = Math.max(v1, this.lv);
         }
     if (!Number.isFinite(u0)) [u0, u1, v0, v1] = [-0.5, 0.5, -0.5, 0.5];
     this.spot = [(v0 + v1) / 2, Math.max(0.8, (u1 - u0) / 2 + SPOT_MARGIN), Math.max(0.8, (v1 - v0) / 2 + SPOT_MARGIN)];
@@ -413,25 +434,59 @@ export class LightField {
     (u.uLightFrame.value as Vec4).set(pc[0], pc[2], this.axis[0], this.axis[1]);
     (u.uLightSpot.value as Vec4).set(this.spot[0], this.spot[1], this.spot[2], this.falloff);
     (u.uLightFoot.value as Vec4).set(this.foot[0], this.foot[1], this.foot[2], LANE_HALF);
-    (u.uLightLane.value as Vec4).set(this.seatDist, WALK_R, 0, this.reachR);
+    (u.uLightLane.value as Vec4).set(this.seatDist, WALK_R, this.discs.length, this.reachR);
   }
 
-  /** Court (x, z) in the pool's frame: [across, along toward the seat]. */
-  private local(x: number, z: number): [number, number] {
+  /** Court (x, z) in the pool's frame, into this.lu (across) and this.lv (along toward the seat): no allocation. */
+  private local(x: number, z: number): void {
     const dx = x - this.pairXZ[0];
     const dz = z - this.pairXZ[1];
-    return [-this.axis[1] * dx + this.axis[0] * dz, this.axis[0] * dx + this.axis[1] * dz];
+    this.lu = -this.axis[1] * dx + this.axis[0] * dz;
+    this.lv = this.axis[0] * dx + this.axis[1] * dz;
   }
 
-  /** Move the field to `t` seconds into `beat` (see Beat). */
+  /**
+   * The walking spots (court space, at most 4; court.ts from seat.layout() whenever it changes): the pool also covers
+   * a disc round each, so wherever the judge is walked to stands in the light.
+   */
+  spots(points: readonly Vec3[]): void {
+    this.discs = points.slice(0, 4).map((p) => [p[0], p[2]] as [number, number]);
+    const d = (i: number): [number, number] => this.discs[i] ?? [0, 0];
+    (this.uniforms.uLightSpotsA.value as Vec4).set(...d(0), ...d(1));
+    (this.uniforms.uLightSpotsB.value as Vec4).set(...d(2), ...d(3));
+    this.reachR = Math.max(this.reachR, ...this.discs.map(([x, z]) => Math.hypot(x - this.pairXZ[0], z - this.pairXZ[1]) + SPOT_DISC));
+    (this.uniforms.uLightLane.value as Vec4).set(this.seatDist, WALK_R, this.discs.length, this.reachR);
+    this.push();
+  }
+
+  /**
+   * Move the field to `t` seconds into `beat` (see Beat). The ease, the hand-off without an ease, the walk back and
+   * the resume start from wherever the light is when the beat begins and ease from there, so an interrupted change
+   * never jumps (dark, arrival and watch set the arena outright: they're called when it's black or already as filmed).
+   */
   set(beat: Beat, t: number): void {
     const L = this.config;
-    const standsAt = (open: number) => L.crowd + (L.stands - L.crowd) * ramp((open - STANDS_START_S) / STANDS_S);
-    const b = beat === "open" ? "handoff" : beat === "back" ? "return" : beat;
+    const b: Beat = beat === "open" ? "handoff" : beat === "back" ? "return" : beat;
     if (b === "handoff" && t < 0) return; // the ease drives the field until F
+    const f = this.from;
+    if (b !== f.beat) {
+      // a new beat: remember where the light is (the hand-off after an ease carries the ease's own curves on)
+      if (!(b === "handoff" && f.beat === "ease")) {
+        f.floor = this.floorOut;
+        f.crowd = this.crowdLevel;
+        f.grow = this.grow;
+        if (b === "ease" || b === "handoff") {
+          f.easeFloor = this.floorOut;
+          f.easeCrowd = this.crowdLevel;
+          this.easeAtF = 0;
+        }
+      }
+      f.beat = b;
+    }
     this.beat = beat;
     this.t = t;
     this.arrival = b === "dark" ? 0 : b === "arrival" ? clamp01(t / ARRIVAL_S) : 1;
+    const toward = (a: number, z: number, u: number) => a + (z - a) * ramp(u);
     switch (b) {
       case "dark":
       case "arrival":
@@ -442,29 +497,29 @@ export class LightField {
         this.easeAtF = 0;
         break;
       case "ease":
-        this.floorOut = 1 + (L.floor - 1) * ramp(t / FLOOR_DIM_S);
-        this.crowdLevel = 1 + (L.crowd - 1) * ramp(t / CROWD_DIM_S);
-        this.grow = -1e3;
+        this.floorOut = toward(f.easeFloor, L.floor, t / FLOOR_DIM_S);
+        this.crowdLevel = toward(f.easeCrowd, L.crowd, t / CROWD_DIM_S);
+        // a pool still open (an ease after the resume) gathers onto the pair at the pool's own pace
+        this.grow = f.grow > -1e2 ? f.grow - t : -1e3;
         this.easeAtF = t;
         break;
-      case "handoff":
-        this.floorOut = 1 + (L.floor - 1) * ramp((this.easeAtF + t) / FLOOR_DIM_S);
-        this.crowdLevel = t < STANDS_START_S ? 1 + (L.crowd - 1) * ramp((this.easeAtF + t) / CROWD_DIM_S) : standsAt(t);
-        this.grow = t - POOL_START_S;
-        break;
-      case "return": {
-        const open = Math.max(POOL_START_S, OPEN_DONE_S - t);
-        this.floorOut = L.floor;
-        this.crowdLevel = standsAt(open);
-        this.grow = open - POOL_START_S;
+      case "handoff": {
+        const e = this.easeAtF + t;
+        this.floorOut = toward(f.easeFloor, L.floor, e / FLOOR_DIM_S);
+        this.crowdLevel = t < STANDS_START_S ? toward(f.easeCrowd, L.crowd, e / CROWD_DIM_S) : toward(L.crowd, L.stands, (t - STANDS_START_S) / STANDS_S);
+        this.grow = Math.max(t - POOL_START_S, f.grow);
         break;
       }
+      case "return":
+        this.floorOut = toward(f.floor, L.floor, t / FLOOR_DIM_S);
+        this.crowdLevel = toward(f.crowd, L.crowd, t / STANDS_S);
+        this.grow = f.grow > -1e2 ? f.grow - t : -1e3;
+        break;
       case "resume": {
         const up = t - UP_LAG_S;
-        this.floorOut = L.floor + (1 - L.floor) * ramp(up / FLOOR_DIM_S);
-        this.crowdLevel = L.crowd + (1 - L.crowd) * ramp(up / CROWD_DIM_S);
-        this.grow = -1e3;
-        this.easeAtF = 0;
+        this.floorOut = toward(f.floor, 1, up / FLOOR_DIM_S);
+        this.crowdLevel = toward(f.crowd, 1, up / CROWD_DIM_S);
+        this.grow = f.grow; // held: the floor coming up covers it
         break;
       }
     }
@@ -563,7 +618,7 @@ export class LightField {
   /** A person's linear multiplier: the pair's, or the floor's under their feet (with that floor's darkness falloff). */
   personLight(person: LightPerson): number {
     if ("pair" in person) return this.pair();
-    const reach = person.reach ?? (this.reach ? reachAt(this.reach, [person.foot[0], 0, person.foot[1]]) : 1);
+    const reach = person.reach ?? (this.reach ? reachAtXYZ(this.reach, person.foot[0], 0, person.foot[1]) : 1);
     return this.at(person.foot[0], person.foot[1], PART.floor, reach);
   }
 
@@ -584,11 +639,14 @@ export class LightField {
 
   /** The pool at (x, z), 0..1 (GLSL lightPool); o = that point's level outside the pool. */
   private pool(x: number, z: number, o: number): number {
-    const [u, v] = this.local(x, z);
+    this.local(x, z);
+    const u = this.lu;
+    const v = this.lv;
     const spot = 1 - smoothstep(0, this.falloff, ellipse(u, v - this.spot[0], this.spot[1], this.spot[2]));
     let s = ellipse(u, v - this.foot[0], this.foot[1], this.foot[2]);
     s = Math.min(s, Math.hypot(u, v - Math.min(this.seatDist, Math.max(0, v))) - LANE_HALF);
     s = Math.min(s, Math.hypot(u, v) - WALK_R);
+    for (const [sx, sz] of this.discs) s = Math.min(s, Math.hypot(x - sx, z - sz) - SPOT_DISC);
     const mask = 1 - smoothstep(0, this.falloff, s);
     const delay = clamp01(Math.hypot(x - this.pairXZ[0], z - this.pairXZ[1]) / this.reachR) * POOL_SPREAD_S;
     const change = (1 - o) * (1 - spot) * mask;
@@ -609,8 +667,8 @@ export class LightField {
     s.pool.penumbra = this.config.penumbra;
     for (const a of this.attached) {
       const k = this.personLight(a.person);
-      if (Math.abs(k - a.k.value) > 1 / 2048) {
-        // under 0.3 grey levels behind the footage, even in the darks
+      if (k !== a.k.value) {
+        // every change, as the GLSL's uniforms take every change: the 3D never lags the footage by a frame
         a.k.value = k;
         a.mesh.updateVersion();
       }
@@ -679,8 +737,13 @@ export function reachPlanes(cam: PinholeCamera): ReachPlanes {
 
 /** How lit the rendered court is at p by the frame's reach (1 inside the frame, 0 REACH_FALLOFF_M outside it). */
 export function reachAt(r: ReachPlanes, p: Vec3): number {
+  return reachAtXYZ(r, p[0], p[1], p[2]);
+}
+
+/** reachAt without an array (the per-frame paths). */
+export function reachAtXYZ(r: ReachPlanes, x: number, y: number, z: number): number {
   let out = -Infinity;
-  for (const [nx, ny, nz, k] of r.planes) out = Math.max(out, (nx * (p[0] - r.centre[0]) + ny * (p[1] - r.centre[1]) + nz * (p[2] - r.centre[2])) * k);
+  for (const pl of r.planes) out = Math.max(out, (pl[0] * (x - r.centre[0]) + pl[1] * (y - r.centre[1]) + pl[2] * (z - r.centre[2])) * pl[3]);
   return 1 - smoothstep(0, REACH_FALLOFF_M, out);
 }
 

@@ -12,7 +12,7 @@ import * as THREE from "three";
 import { standaloneHoop } from "../props";
 import { cameraOf, type PinholeCamera } from "./camera";
 import type { CourtBundle } from "./format";
-import { PART, REACH_GLSL, edgeLevel, linear, ramp, reachAt, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
+import { PART, REACH_GLSL, edgeLevel, linear, ramp, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
 import type { Proxies } from "./proxies";
 import { EDGE_FADE } from "./seatmath";
 import type { Head } from "./types";
@@ -243,6 +243,8 @@ export class CourtWorld {
   private hoopMats: { m: THREE.Material; base: number }[] = [];
   private readonly hoopK = { value: 1 };
   private readonly hoopReality = { value: 0 };
+  /** The textures this module loaded or drew (dispose; the hoop's environment and shadow belong to props.ts). */
+  private textures: THREE.Texture[] = [];
   // the room and edge state (court.ts calls room(p) then edge(d) every frame)
   private roomP = 0;
   private edgeD = Infinity;
@@ -296,6 +298,7 @@ export class CourtWorld {
       loader.loadAsync(this.bundle.file(c.floor)).catch(() => null),
       loader.loadAsync(this.bundle.file(c.floorSeen)).catch(() => null),
     ]);
+    for (const t of [floorMap, seenMap]) if (t) this.textures.push(t);
     const aniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     if (floorMap) {
       floorMap.colorSpace = THREE.SRGBColorSpace;
@@ -356,6 +359,7 @@ export class CourtWorld {
 
     // the house lights over the court
     const tex = glowTexture();
+    this.textures.push(tex);
     this.glows = FIXTURES.map(([x, z], i) => {
       const m = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false });
       const sprite = new THREE.Sprite(m);
@@ -460,6 +464,27 @@ export class CourtWorld {
     this.refresh();
   }
 
+  /**
+   * Free what the arena made (court.ts, leaving court mode): the dome's geometry and material, the floor's, bowl's,
+   * glows' and hoop's geometries and materials, and floor.jpg, floor-seen.png and the glow. Sprites share three's own
+   * quad and the hoop's environment and shadow textures are props.ts's, so those stay.
+   */
+  dispose(): void {
+    this.dome.removeFromParent();
+    this.dome.geometry.dispose();
+    this.dome.material.dispose();
+    this.group.removeFromParent();
+    this.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.geometry.dispose();
+      if (mesh.isMesh || (o as THREE.Sprite).isSprite) for (const m of ([] as THREE.Material[]).concat(mesh.material)) m.dispose();
+    });
+    for (const t of this.textures) t.dispose();
+    this.textures = [];
+    if (import.meta.env.DEV && look().world === this) delete look().world;
+  }
+
+
   /** The arena's opacity from See my room and the edge, onto the dome, the field and the hoop; the lights' levels. */
   private refresh(): void {
     const curves = roomCurves(this.roomP);
@@ -473,7 +498,7 @@ export class CourtWorld {
     this.dome.material.opacity = dome;
     this.light.room(stands, floor);
     const rim = this.bundle.court.court.rim;
-    const reach = this.light.reach ? reachAt(this.light.reach, [rim[0], 0, rim[2]]) : 1;
+    const reach = this.light.reach ? reachAtXYZ(this.light.reach, rim[0], 0, rim[2]) : 1;
     this.hoopK.value = this.light.at(rim[0], rim[2], PART.floor, reach);
     for (const { m, base } of this.hoopMats) m.opacity = base * floor;
     // the house lights: each ignites on its own curve at the arrival, then follows the house; tinted to the players' white
