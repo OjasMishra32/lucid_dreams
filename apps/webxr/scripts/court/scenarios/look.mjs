@@ -49,6 +49,40 @@ export default async function look(ctx) {
   const r0 = blueRatio(ctx, "look-open");
   const r1 = blueRatio(ctx, "look-reality");
   ctx.check("the Reality check tints what was never filmed blue (P23)", r1 > r0 * 1.2, `blue / red ${r0.toFixed(2)} -> ${r1.toFixed(2)}`);
+  // the hoop and the house lights take the field's light the frame it moves: court.ts calls the world's per-frame
+  // methods (update, room, then edge) and moves the field after them, so here the field moves right after edge()
+  const sync = await ctx.page.evaluate(async (hz) => {
+    const w = window.__courtLook.world;
+    const methods = ["edge"];
+    const saved = methods.map((m) => w[m]);
+    let t = 0;
+    w.light.set("watch", 0);
+    methods.forEach((m, i) => {
+      w[m] = function (...args) {
+        saved[i].apply(this, args);
+        w.light.set("ease", t);
+      };
+    });
+    const out = [];
+    try {
+      for (let i = 0; i < 8; i++) {
+        t += 1 / hz;
+        await window.__court.nextFrame();
+        const drawn = { hoop: w.hoopK.value, glow: w.glows[0]?.material.color.g ?? NaN };
+        w.lights(); // what the field says now
+        out.push({ ...drawn, hoopNow: w.hoopK.value, glowNow: w.glows[0]?.material.color.g ?? NaN });
+      }
+    } finally {
+      methods.forEach((m, i) => (w[m] = saved[i]));
+    }
+    return out;
+  }, HZ);
+  const lagging = sync.filter((s) => s.hoop !== s.hoopNow || s.glow !== s.glowNow).length;
+  ctx.check(
+    "the hoop and the house lights move with the field the same frame (P44)",
+    lagging === 0 && sync[0].hoop !== sync.at(-1).hoop && sync[0].glow !== sync.at(-1).glow,
+    `${lagging} of ${sync.length} frames drawn a frame behind; hoop ${sync[0].hoop.toFixed(4)} -> ${sync.at(-1).hoop.toFixed(4)}, glow ${sync[0].glow.toFixed(4)} -> ${sync.at(-1).glow.toFixed(4)}`,
+  );
   ctx.report.luma = { watch: a[0].luma, freeze: a.at(-1).luma, open: b.at(-1).luma, pairBefore: before, pairAfter: after };
   ctx.report.frames = all.map(({ thumb, view, ...f }) => f);
 }

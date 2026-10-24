@@ -10,14 +10,15 @@
 // (court-spikes/proto-house-lights/webxr/src/proto/directions/house-lights.ts).
 //
 // P44 sets every duration: no light change may move a pixel's 8-bit value (three's exact sRGB encode, then the
-// dither) more than 1 grey level per display frame at 72 Hz (or 90). Levels are display-referred: a level q becomes the
-// linear multiplier q^2.4, so a surface's encoded value moves at a constant K(grey) per unit of q (K = 184 for a
-// grey-170 surface: 255 x 1.055 x c^(1/2.4), c its linear value). Every change follows the ramp below (peak slope
-// 1.11 / T), and lasts long enough to keep 184 x 1.11 x dq / T under 72 a second for a grey-170 surface (SAFE_GREY):
-// the crowd's 0.52 over 1.8 s from the ease start (it lands at F+0.6 after the 1.2 s ease), the floor's 0.67 over
-// 2.2 s (F+1, under the hand-off, which multiplies the video and the 3D by the same numbers), and every pool point at
-// 1.11 / 3.0 s per unit of its own change, so the farthest land at F+5. lightfield.test.ts checks the encoded bytes,
-// dither included, at 72 and 90 Hz. The hardwood is grey ~140.
+// dither) more than 1 grey level per display frame at 72 Hz (or 90), on any surface up to full white (SAFE_GREY: the
+// floor shader's white lines are linear 0.72, grey 222; floor.jpg and the footage can reach 255). Levels are display-
+// referred: a level q becomes the linear multiplier q^2.4, so a surface's encoded value moves at a constant K per unit
+// of q (K = 255 x 1.055 x c^(1/2.4) for linear colour c: 269 for white). Every change follows the ramp below (peak slope
+// 1.11 / T) over LEVEL_S per unit of its own change, so 269 x 1.11 / (LEVEL_S x 72) = 0.97 levels a frame at most: the
+// crowd's 0.55 takes 2.4 s from the ease start (F+1.2 after the 1.2 s ease; the darker set's 0.84, 3.6 s), the floor's
+// 0.70 3.0 s (F+1.8; 0.86, 3.7 s), every pool point the same rate from F+0.8 (its timing set by the floor's target, so
+// a floor still dimming only slows it), and the arrival from black over ARRIVAL_S. lightfield.test.ts checks the
+// encoded bytes, dither included, at 72 and 90 Hz, on both sets.
 import type * as THREE from "three";
 import type { GsplatModifier, SplatMesh } from "@sparkjsdev/spark";
 import type { dyno } from "@sparkjsdev/spark";
@@ -29,14 +30,15 @@ export const BUILT = true;
 
 /**
  * What the field is doing; `set(beat, t)` takes seconds into the beat:
- * - "dark": the arrival's hold, everything at 0; "arrival": the lights come up over ARRIVAL_S, evenly on the encoded value (arrivalLevel, P44);
- * - "watch": the arena as filmed (the pool is the spot on the pair);
- * - "ease": t since the ease began: the crowd goes to light.crowd over the ease, the floor outside the pool to
- *   light.floor over FLOOR_DIM_S (it lands at F+1, under the hand-off), the pair at 1;
- * - "handoff" (alias "open"): t from F: the time stop lands, the pool grows F+1..F+5, the stands rise to light.stands
- *   F+3..F+5; t < 0 is ignored (the ease drives the field until F);
+ * - "dark": the arrival's hold, everything at 0; "arrival": the lights come up over ARRIVAL_S, evenly on a white
+ *   surface's encoded value (arrivalLevel, P44);
+ * - "watch": the arena as filmed (the pool is the spot on the pair; an arrival cut short carries on rising);
+ * - "ease": t since the ease began: the crowd goes to light.crowd and the floor outside the pool to light.floor, each
+ *   over LEVEL_S per unit of its change (they land after F, under the hand-off), the pair at 1;
+ * - "handoff" (alias "open"): t from F: the time stop lands, the pool grows from F+POOL_START_S to F+5, the stands rise
+ *   to light.stands F+3..F+5; t < 0 is ignored (the ease drives the field until F);
  * - "return" (alias "back"): t since Back to my seat: the stands go down and the pool gathers onto the pair (done by
- *   BACK_DONE_S, under the room fade);
+ *   BACK_DONE_S, under the room fade), the floor holding;
  * - "resume": t since play resumed: the house comes up UP_LAG_S later.
  * "handoff" carries the floor's dim on from where the last "ease" left it (with no ease before it, the dims start at
  * F), so the field is a function of the beats called, deterministic for a recording.
@@ -70,29 +72,34 @@ export interface LightConfig {
   penumbra: number;
 }
 
-/** The lights come up over this long (court.ts LIGHTS_UP_S). */
-export const ARRIVAL_S = 2.5;
-/** The crowd goes down over this from the ease start (P28's ease is 1.2 s; P44 needs 1.8 s for grey 170); up on resume. */
-export const CROWD_DIM_S = 1.8;
-/** The floor outside the pool goes down over this, from the ease start (F+1 after the 1.2 s ease); up on resume. */
-export const FLOOR_DIM_S = 2.2;
-/** The pool starts growing at F + this. */
-export const POOL_START_S = 1.0;
+/** The fastest any light moves: seconds per unit of display level (P44 on white at 72 Hz: 0.97 levels a frame). */
+export const LEVEL_S = 4.3;
+/** How long a change of level from a to b takes: LEVEL_S per unit, at least `min`. */
+export function changeS(a: number, b: number, min = 0): number {
+  return Math.max(min, Math.abs(b - a) * LEVEL_S);
+}
+/**
+ * The lights come up from black over this long, evenly on a white surface's encoded value (0.93 levels a frame at
+ * 72 Hz). court.ts's LIGHTS_UP_S should be this; a watch that starts sooner carries the rise on, so it never jumps.
+ */
+export const ARRIVAL_S = 3.8;
+/** The pool starts growing at F + this (under the floor's dim: the two move opposite ways, so never faster together). */
+export const POOL_START_S = 0.8;
 /** A pool point whose level changes by the whole 0 -> 1 takes this long (a smaller change proportionally less). */
-export const POOL_RAMP_S = 3.0;
-/** The pool's starts spread over this, nearest the pair first. */
-export const POOL_SPREAD_S = 1.0;
+export const POOL_RAMP_S = LEVEL_S;
+/** The pool's starts spread over this, nearest the pair first (so the darker set's farthest points land by F+5). */
+export const POOL_SPREAD_S = 0.4;
 /** The stands rise to `stands` over F+3..F+5. */
 export const STANDS_START_S = 3.0;
 export const STANDS_S = 2.0;
 /** Seconds into "handoff" by which every light change has landed (handoff.ts HANDOFF_END must reach it). */
 export const OPEN_DONE_S = 5.0;
-/** "return" runs "handoff" backwards from OPEN_DONE_S to the pool's start: done by this. */
+/** "return": the pool gathers back onto the pair as it grew, the floor holds and the stands go down: done by this. */
 export const BACK_DONE_S = OPEN_DONE_S - POOL_START_S;
 /** The house comes up this long after play resumes. */
 export const UP_LAG_S = 0.25;
-/** The brightest surface (sRGB grey, 0-255) every light change keeps under 1 grey level per frame at 72 Hz. */
-export const SAFE_GREY = 170;
+/** The brightest surface (sRGB grey, 0-255) every light change keeps under 1 grey level per frame at 72 Hz: all of them. */
+export const SAFE_GREY = 255;
 
 /** The ramp every light change follows: eased in and out over its first and last 10%, peak slope 1.11. */
 const EDGE = 0.1;
@@ -123,7 +130,7 @@ const srgbToLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.
 
 /**
  * The arrival's level s of the way up (0-1 of ARRIVAL_S): the level at which a SAFE_GREY surface's encoded value is
- * s of its own, so it rises evenly (P44): 170 levels over 2.5 s is 0.94 a frame at 72 Hz; any darker grey rises slower.
+ * s of its own, so it rises evenly (P44): 255 levels over 3.8 s is 0.93 a frame at 72 Hz; any darker grey rises slower.
  */
 export function arrivalLevel(s: number): number {
   const g = SAFE_GREY / 255;
@@ -191,7 +198,7 @@ uniform vec4 uLightFoot;  // the footprint: offset along, half across, half alon
 uniform vec4 uLightLane;  // seat distance; the walking disc's radius; walking spots (0-4); the growth's reach (m)
 uniform vec4 uLightSpotsA; // walking spots 0, 1 (x, z each), court space
 uniform vec4 uLightSpotsB; // walking spots 2, 3
-uniform vec4 uLightGrow;  // seconds into the growth; ramp s for a whole change; spread s; ramp edge
+uniform vec4 uLightGrow;  // seconds into the growth; ramp s for a whole change; spread s; the set's floor level
 uniform vec4 uLightView;  // unused; the arena's opacity: stands, floor (See my room, the edge); unused
 float lightRamp(float u, float a) {
   u = clamp(u, 0.0, 1.0);
@@ -224,19 +231,20 @@ float lightShape(vec2 xz) {
   if (uLightLane.z > 3.5) s = min(s, distance(xz, uLightSpotsB.zw) - ${SPOT_DISC.toFixed(2)});
   return s;
 }
-// o: the point's level outside the pool; each point's ramp is as long as its own change needs (P44)
-float lightPool(vec2 xz, float o) {
+// ot: the point's level outside the pool once the floor has dimmed (the set's floor, x reach): each point's ramp is as
+// long as that change needs (P44), whatever the floor is doing meanwhile
+float lightPool(vec2 xz, float ot) {
   float spot = lightSpotOf(xz);
   float mask = 1.0 - smoothstep(0.0, uLightSpot.w, lightShape(xz));
   float delay = clamp(distance(xz, uLightFrame.xy) / uLightLane.w, 0.0, 1.0) * uLightGrow.z;
-  float change = (1.0 - o) * (1.0 - spot) * mask;
-  float grow = lightRamp((uLightGrow.x - delay) / max(uLightGrow.y * change, 0.05), uLightGrow.w);
+  float change = (1.0 - ot) * (1.0 - spot) * mask;
+  float grow = lightRamp((uLightGrow.x - delay) / max(uLightGrow.y * change, 1e-4), ${EDGE.toFixed(2)});
   return spot + (1.0 - spot) * mask * grow;
 }
 // the floor at court xz; reach = the rendered court's darkness falloff outside the frame (1 on the footage's surfaces)
 float lightFloor(vec2 xz, float reach) {
   float o = uLightLevel.x * reach;
-  return pow(mix(o, 1.0, lightPool(xz, o)) * uLightLevel.w, 2.4);
+  return pow(mix(o, 1.0, lightPool(xz, uLightGrow.w * reach)) * uLightLevel.w, 2.4);
 }
 float lightCrowd() { return pow(uLightLevel.y * uLightLevel.w, 2.4); }
 float lightHouse() { return lightCrowd(); }
@@ -325,9 +333,13 @@ export class LightField {
   private floorOut = 1;
   private crowdLevel = 1;
   private arrival = 1;
+  /** How far up the arrival's curve the lights are, 0-1 (arrivalLevel's s). */
+  private arrivalS = 1;
   private grow = -1e3; // seconds into the pool's growth (negative: not started)
   /** The ease's own t when it ended, so "handoff" carries the floor dim on (0: no ease seen, the dims start at F). */
   private easeAtF = 0;
+  /** An ease that began with the pool open waits this long (the pool gathering) before the floor dims. */
+  private easeHold = 0;
   // the pool's shape (court metres; the uniforms carry the same numbers)
   private spot: [number, number, number] = [0, 0.8, 0.8];
   private foot: [number, number, number] = [0, 2, 2];
@@ -338,7 +350,7 @@ export class LightField {
   private lu = 0;
   private lv = 0;
   /** The levels when the current beat began (return, resume and ease start from wherever the light was). */
-  private from = { beat: "watch" as Beat, floor: 1, crowd: 1, grow: -1e3, easeFloor: 1, easeCrowd: 1 };
+  private from = { beat: "watch" as Beat, floor: 1, crowd: 1, grow: -1e3, arrivalS: 1, easeFloor: 1, easeCrowd: 1 };
   private falloff: number;
 
   /** One field per bundle (the first call's options win). */
@@ -376,7 +388,7 @@ export class LightField {
       uLightLane: { value: new Vec4() },
       uLightSpotsA: { value: new Vec4() },
       uLightSpotsB: { value: new Vec4() },
-      uLightGrow: { value: new Vec4(this.grow, POOL_RAMP_S, POOL_SPREAD_S, EDGE) },
+      uLightGrow: { value: new Vec4(this.grow, POOL_RAMP_S, POOL_SPREAD_S, 1) },
       uLightView: { value: new Vec4(1, 1, 1, 0) },
     };
     this.select(opts);
@@ -473,31 +485,41 @@ export class LightField {
   /**
    * Move the field to `t` seconds into `beat` (see Beat). The ease, the hand-off without an ease, the walk back and
    * the resume start from wherever the light is when the beat begins and ease from there, so an interrupted change
-   * never jumps (dark, arrival and watch set the arena outright: they're called when it's black or already as filmed).
+   * never jumps; every beat after the arrival carries its rise on until it's done. Dark, arrival and watch set the
+   * arena's levels outright (they're called when it's black or as filmed).
    */
   set(beat: Beat, t: number): void {
     const L = this.config;
     const b: Beat = beat === "open" ? "handoff" : beat === "back" ? "return" : beat;
     if (b === "handoff" && t < 0) return; // the ease drives the field until F
     const f = this.from;
+    const carried = b === "handoff" && f.beat === "ease"; // the hand-off after an ease carries the ease's own curves on
     if (b !== f.beat) {
-      // a new beat: remember where the light is (the hand-off after an ease carries the ease's own curves on)
-      if (!(b === "handoff" && f.beat === "ease")) {
+      // a new beat: remember where the light is
+      if (!carried) {
         f.floor = this.floorOut;
         f.crowd = this.crowdLevel;
         f.grow = this.grow;
+        f.arrivalS = this.arrivalS;
         if (b === "ease" || b === "handoff") {
           f.easeFloor = this.floorOut;
           f.easeCrowd = this.crowdLevel;
           this.easeAtF = 0;
+          this.easeHold = Math.max(0, this.grow); // an open pool gathers before the floor dims (they'd darken together)
         }
       }
       f.beat = b;
     }
     this.beat = beat;
     this.t = t;
-    this.arrival = b === "dark" ? 0 : b === "arrival" ? arrivalLevel(t / ARRIVAL_S) : 1;
-    const toward = (a: number, z: number, u: number) => a + (z - a) * ramp(u);
+    // every change from where it began at LEVEL_S per unit of level (P44), never shorter than `min`
+    const toward = (a: number, z: number, u: number, min = 0) => {
+      const d = changeS(a, z, min);
+      return d > 0 ? a + (z - a) * ramp(u / d) : z;
+    };
+    const since = b === "handoff" ? this.easeAtF + t : t;
+    this.arrivalS = b === "dark" ? 0 : b === "arrival" ? clamp01(t / ARRIVAL_S) : Math.min(1, f.arrivalS + since / ARRIVAL_S);
+    this.arrival = arrivalLevel(this.arrivalS);
     switch (b) {
       case "dark":
       case "arrival":
@@ -508,28 +530,32 @@ export class LightField {
         this.easeAtF = 0;
         break;
       case "ease":
-        this.floorOut = toward(f.easeFloor, L.floor, t / FLOOR_DIM_S);
-        this.crowdLevel = toward(f.easeCrowd, L.crowd, t / CROWD_DIM_S);
-        // a pool still open (an ease after the resume) gathers onto the pair at the pool's own pace
+        this.floorOut = toward(f.easeFloor, L.floor, t - this.easeHold);
+        this.crowdLevel = toward(f.easeCrowd, L.crowd, t);
         this.grow = f.grow > -1e2 ? f.grow - t : -1e3;
         this.easeAtF = t;
         break;
       case "handoff": {
         const e = this.easeAtF + t;
-        this.floorOut = toward(f.easeFloor, L.floor, e / FLOOR_DIM_S);
-        this.crowdLevel = t < STANDS_START_S ? toward(f.easeCrowd, L.crowd, e / CROWD_DIM_S) : toward(L.crowd, L.stands, (t - STANDS_START_S) / STANDS_S);
-        this.grow = Math.max(t - POOL_START_S, f.grow);
+        this.floorOut = toward(f.easeFloor, L.floor, e - this.easeHold);
+        // the stands rise from wherever the crowd is at F+3 (still dimming only after a jump to F on the darker set)
+        const crowd = (u: number) => toward(f.easeCrowd, L.crowd, u);
+        const atStands = crowd(this.easeAtF + STANDS_START_S);
+        this.crowdLevel = t < STANDS_START_S ? crowd(e) : toward(atStands, L.stands, t - STANDS_START_S, STANDS_S);
+        const gather = f.grow > -1e2 ? f.grow - e : -1e3;
+        this.grow = Math.max(t - POOL_START_S, gather);
         break;
       }
       case "return":
-        this.floorOut = toward(f.floor, L.floor, t / FLOOR_DIM_S);
-        this.crowdLevel = toward(f.crowd, L.crowd, t / STANDS_S);
+        // the floor holds (it's at its level, or above it after an early back) while the pool gathers onto the pair
+        this.floorOut = f.floor;
+        this.crowdLevel = toward(f.crowd, L.crowd, t, STANDS_S);
         this.grow = f.grow > -1e2 ? f.grow - t : -1e3;
         break;
       case "resume": {
         const up = t - UP_LAG_S;
-        this.floorOut = toward(f.floor, 1, up / FLOOR_DIM_S);
-        this.crowdLevel = toward(f.crowd, 1, up / CROWD_DIM_S);
+        this.floorOut = toward(f.floor, 1, up);
+        this.crowdLevel = toward(f.crowd, 1, up);
         this.grow = f.grow; // held: the floor coming up covers it
         break;
       }
@@ -604,8 +630,9 @@ export class LightField {
    */
   at(x: number, z: number, part: number = PART.floor, reach = 1): number {
     if (part === PART.crowd || part === PART.stands) return this.crowd();
-    const o = this.floorOut * (part === PART.floor ? reach : 1);
-    return linear((o + (1 - o) * this.pool(x, z, o)) * this.arrival);
+    const r = part === PART.floor ? reach : 1;
+    const o = this.floorOut * r;
+    return linear((o + (1 - o) * this.pool(x, z, this.config.floor * r)) * this.arrival);
   }
 
   /** The crowd's linear multiplier now (lightCrowd()). */
@@ -648,8 +675,8 @@ export class LightField {
     return ramp(((Math.atan2(across, along) * 180) / Math.PI) / OFF_RAY_DARK_DEG);
   }
 
-  /** The pool at (x, z), 0..1 (GLSL lightPool); o = that point's level outside the pool. */
-  private pool(x: number, z: number, o: number): number {
+  /** The pool at (x, z), 0..1 (GLSL lightPool); ot = that point's level outside the pool once the floor has dimmed. */
+  private pool(x: number, z: number, ot: number): number {
     this.local(x, z);
     const u = this.lu;
     const v = this.lv;
@@ -660,8 +687,8 @@ export class LightField {
     for (const [sx, sz] of this.discs) s = Math.min(s, Math.hypot(x - sx, z - sz) - SPOT_DISC);
     const mask = 1 - smoothstep(0, this.falloff, s);
     const delay = clamp01(Math.hypot(x - this.pairXZ[0], z - this.pairXZ[1]) / this.reachR) * POOL_SPREAD_S;
-    const change = (1 - o) * (1 - spot) * mask;
-    const grow = ramp((this.grow - delay) / Math.max(POOL_RAMP_S * change, 0.05));
+    const change = (1 - ot) * (1 - spot) * mask;
+    const grow = ramp((this.grow - delay) / Math.max(POOL_RAMP_S * change, 1e-4));
     return spot + (1 - spot) * mask * grow;
   }
 
@@ -669,12 +696,13 @@ export class LightField {
   private push(): void {
     (this.uniforms.uLightLevel.value as Vec4).set(this.floorOut, this.crowdLevel, this.config.pair, this.arrival);
     (this.uniforms.uLightGrow.value as Vec4).x = this.grow;
+    (this.uniforms.uLightGrow.value as Vec4).w = this.config.floor;
     const s = this.levels;
     s.crowd = this.crowd();
     s.stands = s.crowd;
     s.pair = this.pair();
     s.floor = linear(this.floorOut * this.arrival);
-    s.pool.radius = clamp01(this.grow / (POOL_SPREAD_S + POOL_RAMP_S)) * this.reachR;
+    s.pool.radius = clamp01(this.grow / (POOL_SPREAD_S + POOL_RAMP_S * (1 - this.config.floor))) * this.reachR;
     s.pool.penumbra = this.config.penumbra;
     for (const a of this.attached) {
       const k = this.personLight(a.person);
@@ -690,6 +718,18 @@ export class LightField {
 const fields = new WeakMap<CourtBundle, LightField>();
 
 // ---------------- the arena's maths (world.ts draws it; the numbers live here so node can test them) ----------------
+
+/** The house lights' stagger: fixture i of n starts igniting (i / n) x this of the arrival in (P44 caps it). */
+export const FIXTURE_STAGGER = 0.12;
+
+/**
+ * A house light's brightness (linear, before the players' white point and See my room's fade): fixture i of n ignites
+ * over its own share of the arrival, a little after the one before, then follows the house (the crowd's level).
+ */
+export function fixtureGlow(i: number, n: number, house: number, arrival: number): number {
+  const d = (i / Math.max(1, n)) * FIXTURE_STAGGER;
+  return 0.55 * linear(house * clamp01((arrival - d) / (1 - FIXTURE_STAGGER)));
+}
 
 /** The courtside plate is dark this far off camera F's ray, degrees (P30, tuned by eye). */
 export const OFF_RAY_DARK_DEG = 45;

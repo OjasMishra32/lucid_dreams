@@ -12,7 +12,7 @@ import * as THREE from "three";
 import { standaloneHoop } from "../props";
 import { cameraOf, type PinholeCamera } from "./camera";
 import type { CourtBundle } from "./format";
-import { PART, REACH_GLSL, edgeLevel, linear, ramp, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
+import { PART, REACH_GLSL, edgeLevel, fixtureGlow, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
 import type { Proxies } from "./proxies";
 import { EDGE_FADE } from "./seatmath";
 import type { Head } from "./types";
@@ -30,7 +30,7 @@ const APRON_STAIN = 0.62;
 const ARENA_FLOOR = new THREE.Color().setRGB(0.004, 0.004, 0.005);
 /** The seating bowl: tiers from this far past the sidelines / baselines, never filmed. */
 const BOWL = { side: 3.2, end: 3.6, tiers: 7, depth: 0.85, rise: 0.42, base: 0.45 };
-/** The house lights: fixtures over the court, igniting one after another over the arrival's first 60%. */
+/** The house lights: fixtures over the court, igniting one after another through the arrival (fixtureGlow). */
 const FIXTURES: [number, number][] = [[-10.5, -5], [-3.5, -5], [3.5, -5], [10.5, -5], [-10.5, 5], [-3.5, 5], [3.5, 5], [10.5, 5]];
 const FIXTURE_Y = 11.5;
 const REALITY_BLUE = new THREE.Vector3(0.1, 0.28, 1.0);
@@ -238,7 +238,7 @@ export class CourtWorld {
   private readonly realityU = { value: 0 };
   private readonly blueU = { value: REALITY_BLUE.clone() };
   private floor: THREE.Mesh | null = null;
-  private glows: { sprite: THREE.Sprite; delay: number }[] = [];
+  private glows: THREE.Sprite[] = [];
   private hoop: THREE.Group | null = null;
   private hoopMats: { m: THREE.Material; base: number }[] = [];
   private readonly hoopK = { value: 1 };
@@ -277,6 +277,9 @@ export class CourtWorld {
     );
     this.dome.renderOrder = -1000;
     this.dome.frustumCulled = false;
+    // the hoop's and the house lights' levels as the frame draws (the dome goes first), after court.ts has moved the
+    // field this frame: they never lag the shaders, which read the field's uniforms as they draw
+    this.dome.onBeforeRender = () => this.lights();
     scene.add(this.dome);
     this.group.name = "court-arena";
     world.add(this.group);
@@ -360,14 +363,14 @@ export class CourtWorld {
     // the house lights over the court
     const tex = glowTexture();
     this.textures.push(tex);
-    this.glows = FIXTURES.map(([x, z], i) => {
+    this.glows = FIXTURES.map(([x, z]) => {
       const m = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false });
       const sprite = new THREE.Sprite(m);
       sprite.position.set(x, FIXTURE_Y, z);
       sprite.scale.setScalar(1.4);
       sprite.renderOrder = -880;
       this.group.add(sprite);
-      return { sprite, delay: (i / FIXTURES.length) * 0.6 };
+      return sprite;
     });
 
     // the hoop at the rim the play attacks, facing centre court; lit by the field where it stands
@@ -497,18 +500,22 @@ export class CourtWorld {
     this.arena.dome = dome;
     this.dome.material.opacity = dome;
     this.light.room(stands, floor);
+    for (const { m, base } of this.hoopMats) m.opacity = base * floor;
+    for (const sprite of this.glows) sprite.material.opacity = stands;
+    this.lights();
+  }
+
+  /** The hoop's light where it stands, and the house lights (each on its own ignition, tinted to the players' white). */
+  private lights(): void {
     const rim = this.bundle.court.court.rim;
     const reach = this.light.reach ? reachAtXYZ(this.light.reach, rim[0], 0, rim[2]) : 1;
     this.hoopK.value = this.light.at(rim[0], rim[2], PART.floor, reach);
-    for (const { m, base } of this.hoopMats) m.opacity = base * floor;
-    // the house lights: each ignites on its own curve at the arrival, then follows the house; tinted to the players' white
     const house = this.light.crowdLevelNow;
     const w = this.light.white;
     const norm = Math.max(w[0], w[1], w[2]);
-    for (const { sprite, delay } of this.glows) {
-      const k = 0.55 * linear(house * ramp((this.light.arrivalNow - delay) / 0.4)) * stands;
+    this.glows.forEach((sprite, i) => {
+      const k = fixtureGlow(i, this.glows.length, house, this.light.arrivalNow) * this.arena.stands;
       sprite.material.color.setRGB((w[0] / norm) * k, (w[1] / norm) * k, (w[2] / norm) * k);
-      sprite.material.opacity = stands;
-    }
+    });
   }
 }

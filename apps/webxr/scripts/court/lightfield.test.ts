@@ -1,14 +1,14 @@
 // lightfield.ts: the one light field (3.3, 3.3a). The levels (court.json `light`, both sets), the beats, the pool's
 // shape and growth, and P44's bar on the CPU twin of the GLSL: no light change faster than 1 grey level per display
-// frame at 72 (and 90) Hz on any surface up to SAFE_GREY, on the encoded 8-bit value (three's sRGB encode plus the
-// field's dither), through every beat and through interrupted ones.
+// frame at 72 (and 90) Hz on any surface up to full white (SAFE_GREY), on the encoded 8-bit value (three's sRGB encode
+// plus the field's dither), on both light sets, through every beat and through interrupted ones.
 //   node --experimental-transform-types --test apps/webxr/scripts/court/lightfield.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { dyno } from "@sparkjsdev/spark";
 import {
-  BACK_DONE_S, CROWD_DIM_S, FLOOR_DIM_S, LightField, OPEN_DONE_S, PART, POOL_START_S, SAFE_GREY, ARRIVAL_S,
+  BACK_DONE_S, LEVEL_S, LightField, OPEN_DONE_S, PART, POOL_START_S, SAFE_GREY, ARRIVAL_S, changeS, fixtureGlow,
   REACH_FALLOFF_M, VEIL, VEIL_S, edgeLevel, lightLevels, perceived, reachAt, reachPlanes, roomCurves, veil, whitePoint,
   type Beat,
 } from "../../src/court/lightfield.ts";
@@ -56,7 +56,7 @@ test("watch: the broadcast, everything at 1 on the footage's own surfaces", () =
   close(p(f, 6, 1, 0.25), 1, 1e-9, "the spot on the pair");
 });
 
-test("ease and hand-off: the crowd lands on 0.45 by F+0.6 and the floor outside the pool on 0.30 by F+1, after the 1.2 s ease; the pair never moves", () => {
+test("ease and hand-off: the crowd lands on 0.45 and the floor outside the pool on 0.30 at LEVEL_S per unit (F+1.2 and F+1.8 after the 1.2 s ease); the pair never moves", () => {
   const b = bundleOf();
   const f = new LightField(b);
   const [cx, , cz] = b.court.seat.pairCentre;
@@ -66,15 +66,17 @@ test("ease and hand-off: the crowd lands on 0.45 by F+0.6 and the floor outside 
     f.set("ease", i / HZ);
     pairMax = Math.max(pairMax, Math.abs(perceived(f.pair()) - 1), Math.abs(p(f, cx, cz) - 1));
   }
-  assert.ok(perceived(f.crowd()) < 0.7, `the crowd two-thirds down at F: ${perceived(f.crowd()).toFixed(3)}`);
+  assert.ok(perceived(f.crowd()) < 0.75, `the crowd half way down at F: ${perceived(f.crowd()).toFixed(3)}`);
   for (let i = 0; i <= OPEN_DONE_S * HZ; i++) {
     f.set("handoff", i / HZ);
     pairMax = Math.max(pairMax, Math.abs(perceived(f.pair()) - 1), Math.abs(p(f, cx, cz) - 1));
   }
-  f.set("handoff", CROWD_DIM_S - ease);
-  close(perceived(f.crowd()), TUNED.crowd, 1e-3, "crowd landed");
-  f.set("handoff", POOL_START_S);
-  close(p(f, -12, -7), TUNED.floor, 1e-3, "floor outside the pool at F+1");
+  f.set("handoff", changeS(1, TUNED.crowd) - ease);
+  close(perceived(f.crowd()), TUNED.crowd, 1e-4, "crowd landed (the ease's last frame is 1/72 s before F)");
+  close(changeS(1, TUNED.crowd) - ease, 1.165, 1e-9, "at F+1.2");
+  f.set("handoff", changeS(1, TUNED.floor) - ease);
+  close(p(f, -12, -7), TUNED.floor, 1e-4, "floor outside the pool landed");
+  close(changeS(1, TUNED.floor) - ease, 1.81, 1e-9, "at F+1.8");
   assert.equal(pairMax, 0, "the pair and the floor under them stay at exactly 1 (P28)");
 });
 
@@ -86,13 +88,13 @@ test("the dark set: 0.16 / 0.14 at the freeze", () => {
   close(p(f, -12, -7), 0.14, 1e-6, "floor");
 });
 
-/** The whole show's light at `hz` for one ease length: [beat, t] per display frame (the arrival is its own test). */
+/** The whole show's light at `hz` for one ease length (0: a jump to F): [beat, t] per display frame (the arrival is its own test). */
 function timeline(ease: number, hz = HZ): [Beat, number][] {
   const out: [Beat, number][] = [["watch", 0]];
   for (let i = 0; i < Math.round(ease * hz); i++) out.push(["ease", i / hz]);
   for (let i = 0; i <= OPEN_DONE_S * hz + 10; i++) out.push(["handoff", i / hz]);
   for (let i = 0; i <= BACK_DONE_S * hz + 10; i++) out.push(["return", i / hz]);
-  for (let i = 0; i <= (0.25 + FLOOR_DIM_S) * hz + 10; i++) out.push(["resume", i / hz]);
+  for (let i = 0; i <= (0.25 + LEVEL_S) * hz + 10; i++) out.push(["resume", i / hz]);
   return out;
 }
 
@@ -117,68 +119,106 @@ const ign = (x: number, y: number) => {
   return f(52.9829189 * f(x * 0.06711056 + y * 0.00583715));
 };
 const dither = (x: number, y: number) => ign(x, y) + ign(x + 17, y + 59) - 1;
-/** The 8-bit value written for a surface of sRGB grey `grey` under linear multiplier k at a fragment with dither n. */
-const byteOf = (grey: number, k: number, n: number) => Math.min(255, Math.max(0, Math.round(255 * enc(dec(grey / 255) * k) + n)));
 
-test("P44 on the encoded byte: no light change moves a grey-170 pixel more than 1 level a frame, 72 and 90 Hz, every ease, interrupted too", () => {
+/** The 8-bit value written for a surface of linear colour c under linear multiplier k at a fragment with dither n. */
+const byteLin = (c: number, k: number, n: number) => Math.min(255, Math.max(0, Math.round(255 * enc(c * k) + n)));
+/** world.ts LINE_WHITE (linear): the floor shader's white markings, the brightest colour it draws itself. */
+const LINE_WHITE = [0.72, 0.72, 0.69];
+
+test("P44 on the encoded byte: no light change moves any pixel up to white more than 1 level a frame, 72 and 90 Hz, both sets, every ease, interrupted too", () => {
   const b = bundleOf();
   const [cx, , cz] = b.court.seat.pairCentre;
-  // floor points over the court at three darkness-falloff values, the lane to the seat finely, and the crowd
-  const pts: [number, number, number][] = [];
-  for (let x = -15; x <= 15; x += 2) for (let z = -8; z <= 8; z += 2) for (const r of [1, 0.5, 0]) pts.push([x, z, r]);
-  for (let d = 0; d <= 8; d += 0.25) for (const r of [1, 0]) pts.push([cx - d, cz - 0.4 * d, r]);
+  // floor points over the court at three darkness-falloff values, the lane to the seat, the review's free-throw-circle
+  // fragment (8.535, 1.83), and the crowd
+  const pts: [number, number, number][] = [[8.535, 1.83, 1]];
+  for (let x = -15; x <= 15; x += 3) for (let z = -8; z <= 8; z += 4) for (const r of [1, 0.5, 0]) pts.push([x, z, r]);
+  for (let d = 0; d <= 8; d += 0.5) for (const r of [1, 0]) pts.push([cx - d, cz - 0.4 * d, r]);
   const fragments = Array.from({ length: 64 }, (_, i) => dither(0.5 + (i % 8) * 37, 0.5 + Math.floor(i / 8) * 23));
-  fragments.push(dither(0.5, 0.5)); // the review's fragment
-  for (const hz of [72, 90]) {
-    const runs = [...[1.2, 1.0, 0.8].map((e) => timeline(e, hz)), ...interrupted(hz)];
-    runs.forEach((run, ri) => {
-      const f = new LightField(b);
-      let prev: number[] | null = null;
-      let prevK = -1;
-      let worst = 0;
-      let worstAt = "";
-      for (const [beat, t] of run) {
-        f.set(beat, t);
-        const k = f.crowd();
-        // the continuous encoded value of a grey-170 surface: a change under 1 level can only round to a 1-level step
-        const now = [...pts.map(([x, z, r]) => f.at(x, z, PART.floor, r)), k].map((m) => 255 * enc(dec(SAFE_GREY / 255) * m));
-        if (prev)
-          for (let i = 0; i < now.length; i++) {
-            const d = Math.abs(now[i] - prev[i]);
-            if (d > worst) [worst, worstAt] = [d, `${beat} ${t.toFixed(3)} ${i < pts.length ? `floor ${pts[i]}` : "crowd"}`];
-          }
-        // and the bytes themselves, dither included, for the crowd on greys 170 and 125
-        if (prevK >= 0)
-          for (const grey of [SAFE_GREY, 125])
-            for (const n of fragments) {
-              const step = Math.abs(byteOf(grey, k, n) - byteOf(grey, prevK, n));
-              assert.ok(step <= 1, `${hz} Hz run ${ri}: crowd grey ${grey} steps ${step} at ${beat} ${t.toFixed(3)}`);
+  fragments.push(dither(0.5, 0.5));
+  // the bytes themselves, dither included: white, the line paint's channels, greys 170 and 125, on the crowd and on
+  // the review's line fragment
+  const colours = [1, ...LINE_WHITE, dec(170 / 255), dec(125 / 255)];
+  const worst: Record<string, number> = {};
+  for (const set of ["main", "alternative"] as const)
+    for (const hz of [72, 90]) {
+      const runs = [...[1.2, 1.0, 0.8, 0].map((e) => timeline(e, hz)), ...interrupted(hz)];
+      runs.forEach((run, ri) => {
+        const f = new LightField(b, { set });
+        let prev: number[] | null = null;
+        let prevK: number[] = [];
+        let w = 0;
+        let wAt = "";
+        for (const [beat, t] of run) {
+          f.set(beat, t);
+          const ks = [...pts.map(([x, z, r]) => f.at(x, z, PART.floor, r)), f.crowd()];
+          // white's continuous encoded value: a change under 1 level can only round to a 1-level step, and every
+          // darker surface moves less
+          const now = ks.map((k) => 255 * enc(k));
+          if (prev)
+            for (let i = 0; i < now.length; i++) {
+              const d = Math.abs(now[i] - prev[i]);
+              if (d > w) [w, wAt] = [d, `${beat} ${t.toFixed(3)} ${i < pts.length ? `floor ${pts[i]}` : "crowd"}`];
             }
-        prev = now;
-        prevK = k;
-      }
-      assert.ok(worst < 1, `${hz} Hz run ${ri}: largest encoded change ${worst.toFixed(3)} levels a frame at ${worstAt}`);
-    });
-  }
-  // the stand-in's hardwood is inside the bar
-  const [r, g, bl] = b.court.court.hardwood;
-  assert.ok(255 * (0.2126 * r + 0.7152 * g + 0.0722 * bl) <= SAFE_GREY, "hardwood under SAFE_GREY");
+          if (prevK.length)
+            for (const idx of [0, ks.length - 1])
+              for (const c of colours)
+                for (const n of fragments) {
+                  const step = Math.abs(byteLin(c, ks[idx], n) - byteLin(c, prevK[idx], n));
+                  assert.ok(step <= 1, `${set} ${hz} Hz run ${ri}: ${idx ? "crowd" : "line"} colour ${c.toFixed(3)} steps ${step} at ${beat} ${t.toFixed(3)}`);
+                }
+          prev = now;
+          prevK = ks;
+        }
+        assert.ok(w < 1, `${set} ${hz} Hz run ${ri}: largest encoded change on white ${w.toFixed(3)} levels a frame at ${wAt}`);
+        worst[`${set} ${hz}`] = Math.max(worst[`${set} ${hz}`] ?? 0, w);
+      });
+    }
+  assert.ok(worst["main 72"] > 0.85, `the bound is met, not avoided: ${JSON.stringify(worst)}`);
+  assert.equal(SAFE_GREY, 255, "every surface");
 });
 
-test("the arrival (court.ts's 2.5 s lights-up) moves a grey-170 pixel 0.94 encoded levels a frame at 72 Hz, darker greys less than 1", () => {
+test("the arrival rises evenly on white's encoded value (0.93 levels a frame at 72 Hz), and a watch that starts at court.ts's 2.5 s carries it on", () => {
   for (const hz of [72, 90])
-    for (const grey of [SAFE_GREY, 125, 60, 20]) {
-      const f = new LightField(bundleOf());
-      let worst = 0;
-      let prev = 0;
-      for (let i = 0; i <= ARRIVAL_S * hz; i++) {
-        f.set("arrival", i / hz);
-        const v = 255 * enc(dec(grey / 255) * f.pair());
-        if (i) worst = Math.max(worst, Math.abs(v - prev));
-        prev = v;
+    for (const grey of [255, 222, 170, 125, 60, 20])
+      for (const cut of [ARRIVAL_S, 2.5]) {
+        const f = new LightField(bundleOf());
+        f.set("dark", 0);
+        let worst = 0;
+        let prev = 0;
+        const run: [Beat, number][] = [];
+        for (let i = 0; i <= Math.round(cut * hz); i++) run.push(["arrival", i / hz]);
+        for (let i = 0; i <= 2 * hz; i++) run.push(["watch", i / hz]);
+        run.forEach(([beat, t], i) => {
+          f.set(beat, t);
+          const v = 255 * enc(dec(grey / 255) * f.pair());
+          if (i) worst = Math.max(worst, Math.abs(v - prev));
+          prev = v;
+        });
+        assert.ok(worst < 0.95 * (72 / hz), `${hz} Hz grey ${grey}, watch at ${cut} s: largest encoded change ${worst.toFixed(3)}`);
+        close(f.pair(), 1, 1e-12, `${hz} Hz grey ${grey}, watch at ${cut} s: all the way up`);
       }
-      assert.ok(worst < 0.95 * (72 / hz), `${hz} Hz grey ${grey}: largest encoded change ${worst.toFixed(3)}`);
+});
+
+test("the house lights (fixtureGlow) ignite and dim under 1 level a frame on their own white, every beat, both sets", () => {
+  for (const set of ["main", "alternative"] as const)
+    for (const hz of [72, 90]) {
+      const f = new LightField(bundleOf(), { set });
+      f.set("dark", 0);
+      const run: [Beat, number][] = [];
+      for (let i = 0; i <= Math.round(2.5 * hz); i++) run.push(["arrival", i / hz]);
+      run.push(...timeline(1.2, hz));
+      let prev: number[] | null = null;
+      let worst = 0;
+      for (const [beat, t] of run) {
+        f.set(beat, t);
+        const now = Array.from({ length: 8 }, (_, i) => 255 * enc(fixtureGlow(i, 8, f.crowdLevelNow, f.arrivalNow)));
+        if (prev) for (let i = 0; i < 8; i++) worst = Math.max(worst, Math.abs(now[i] - prev[i]));
+        prev = now;
+      }
+      assert.ok(worst < 1, `${set} ${hz} Hz: largest encoded change ${worst.toFixed(3)}`);
     }
+  close(fixtureGlow(7, 8, 1, 1), 0.55, 1e-12, "every fixture all the way up at the end of the arrival");
+  assert.ok(fixtureGlow(7, 8, 1, 0.1) < fixtureGlow(0, 8, 1, 0.1), "one after another");
 });
 
 test("the pool grows nearest the pair first, then covers the footprint, the lane to the seat and every spot", () => {
@@ -211,15 +251,19 @@ test("the pool grows nearest the pair first, then covers the footprint, the lane
   }
   assert.ok(halfway.length >= 4, `${halfway.length} lane points outside the spot`);
   for (let i = 1; i < halfway.length; i++) assert.ok(halfway[i] >= halfway[i - 1], `nearest first: ${halfway.map((t) => t.toFixed(2)).join(" ")}`);
-  assert.ok(halfway[0] >= POOL_START_S, "the pool starts growing at F+1");
+  assert.ok(halfway[0] >= POOL_START_S, "the pool starts growing at F+POOL_START_S");
   assert.ok(halfway[halfway.length - 1] - halfway[0] >= 0.8, `the pool visibly grows: ${halfway.map((t) => t.toFixed(2)).join(" ")}`);
   f.set("handoff", OPEN_DONE_S);
-  close(p(f, seat[0], seat[2], 0), 1, 1e-6, "the seat is lit");
+  // by F+5 the pool has landed wherever the rendered court is no darker than half its falloff (camera F's frame holds
+  // the seat, the lane and the walking floor); a point fully outside it (reach 0) comes up from black, a whole level,
+  // so by then it's most of the way
+  close(p(f, seat[0], seat[2], 0.5), 1, 1e-6, "the seat is lit");
+  assert.ok(p(f, seat[0], seat[2], 0) > 0.9, `the seat lit even from black: ${p(f, seat[0], seat[2], 0).toFixed(3)}`);
   // the walking floor round the pair (the walking anchoring puts the pair at the room's centre): every point within
   // 2 m of the pair's centre, where the judge walks, is lit
   for (let a = 0; a < 360; a += 30) {
     const r = (a * Math.PI) / 180;
-    close(p(f, cx + 2 * Math.cos(r), cz + 2 * Math.sin(r), 0), 1, 1e-6, `2 m from the pair at ${a} deg`);
+    close(p(f, cx + 2 * Math.cos(r), cz + 2 * Math.sin(r), 0.5), 1, 1e-6, `2 m from the pair at ${a} deg`);
   }
   close(p(f, cx, cz, 0), 1, 1e-6, "the pair's floor");
 });
@@ -262,7 +306,7 @@ test("stands: 0.45 at the freeze, rising to 0.6 over F+3..F+5, steadily", () => 
   for (let t = 0; t <= OPEN_DONE_S + 0.01; t += 1 / HZ) {
     f.set("handoff", t);
     const c = perceived(f.crowd());
-    if (t >= CROWD_DIM_S - ease && t <= 3) close(c, TUNED.crowd, 1e-6, `crowd at F+${t.toFixed(2)}`);
+    if (t >= changeS(1, TUNED.crowd) - ease && t <= 3) close(c, TUNED.crowd, 1e-6, `crowd at F+${t.toFixed(2)}`);
     if (t < 3) assert.ok(c <= prev + 1e-12, `still falling at F+${t.toFixed(2)}`);
     else assert.ok(c >= prev - 1e-12, `never dips at F+${t.toFixed(2)}`);
     prev = c;
@@ -283,7 +327,7 @@ test("back: the stands go down and the pool gathers onto the pair; resume: the h
   close(p(f, cx, cz), 1, 1e-9, "the pair's spot stays");
   f.set("resume", 0.25);
   close(perceived(f.crowd()), TUNED.crowd, 1e-6, "not before 0.25 s");
-  f.set("resume", 0.25 + FLOOR_DIM_S);
+  f.set("resume", 0.25 + changeS(TUNED.floor, 1));
   close(perceived(f.crowd()), 1, 1e-9, "crowd up");
   close(p(f, -12, -7), 1, 1e-9, "floor up");
 });
@@ -302,10 +346,10 @@ test("arrival: everything rises out of black together", () => {
   close(f.at(6, 1), 0, 1e-12, "floor");
   close(f.crowd(), 0, 1e-12, "crowd");
   close(f.pair(), 0, 1e-12, "pair");
-  f.set("arrival", 1.25);
-  close(255 * enc(dec(SAFE_GREY / 255) * f.pair()), SAFE_GREY / 2, 1e-9, "half way up on a SAFE_GREY surface's encoded value (P44)");
+  f.set("arrival", ARRIVAL_S / 2);
+  close(255 * enc(dec(SAFE_GREY / 255) * f.pair()), SAFE_GREY / 2, 1e-9, "half way up on a white surface's encoded value (P44)");
   close(f.crowd(), f.pair(), 1e-12, "the crowd with it");
-  f.set("arrival", 2.5);
+  f.set("arrival", ARRIVAL_S);
   close(f.pair(), 1, 1e-12, "pair at the end");
 });
 
