@@ -213,6 +213,31 @@ Quest: Ian). Unknown fields are ignored, so it can grow.
 The drop folder takes an intent too: a `.txt` with the same name next to the clip or photo
 (`guitar-teacher.mp4` + `guitar-teacher.txt`).
 
+### Props (the objects around the person: `props.json`, optional in any bundle)
+
+`dream.json` may carry `"props": "props.json"`: the important objects in the scene, so a basketball lesson has the real
+ball moving with the player and a regulation hoop in your room. Same coordinates as the person (meters, +Y up, floor at
+y = 0, their front faces -Z), so wherever the person is placed the props come along. Players build every object
+themselves, real size, from code (WebXR: `apps/webxr/src/props.ts`; Quest: Ian). Unknown kinds are ignored.
+
+```json
+{
+  "fps": 25,
+  "objects": [
+    { "kind": "basketball", "radius": 0.12, "track": [[0.25, 0.85, -0.32], null] },
+    { "kind": "hoop", "rim": [0.0, 3.05, -4.5], "facing": [0, 0, 1] }
+  ]
+}
+```
+
+- `fps`: the dream's own fps (defaults to it); `track` has one entry per bundle frame, `null` where the ball isn't known.
+  Players interpolate smoothly between frames, follow the same clip time as the person (lessons included), and fade the
+  ball out and in across `null`s instead of popping.
+- `rim`: the centre of the ring, `y` = rim height (3.05 m regulation). `facing`: unit direction from the rim toward the
+  shooter; the backboard sits behind the rim, away from them (its face 0.15 m behind the ring's inner edge).
+- Players build regulation sizes: ring 0.457 m inside, board 1.83 x 1.07 m (bottom edge 0.15 m under the ring), shooter's
+  square 0.59 x 0.45 m, net about 0.40 m long.
+
 ### Job API (the bridge on Ojasva's Mac; Raami builds it, Ojasva wires it to HiPerGator)
 
 | Call | Body / reply |

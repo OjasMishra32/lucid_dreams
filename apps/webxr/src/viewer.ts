@@ -5,6 +5,7 @@ import { SkinnedAvatar } from "./avatar";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
+import { loadProps } from "./props";
 import { fingertips, handOccluder, XrButton } from "./xr/hands";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
@@ -84,6 +85,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
   person.rotation.y = Math.PI;
   scene.add(person);
   person.add(floorShadow(dream));
+  // the objects around them (the ball, a hoop): in their space, so wherever they're placed the props come along
+  const propsReady = loadProps(dream, renderer).catch((e) => {
+    console.warn("Showing the person without props.", e);
+    return null;
+  });
 
   // ---------------- frames ----------------
   const count = dream.kind === "replay" ? dream.frameCount : 1;
@@ -129,6 +135,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
     }
   }
   if (!avatar) await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, count) }, worker));
+  const props = await propsReady;
+  if (props) {
+    person.add(props.group);
+    if (props.hoops.length) frameWithHoop(camera, controls, person, dream, props.hoops[0]);
+  }
   $("#loader").classList.add("done");
   $("#controls").hidden = false;
 
@@ -484,6 +495,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       shownAvatar.pose(t);
       shownAvatar.mesh.opacity = reveal;
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
+    props?.update(t, dt, reveal);
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;
     if (!renderer.xr.isPresenting) controls.update();
@@ -514,6 +526,49 @@ function floorShadow(dream: Dream): THREE.Mesh {
   mesh.position.y = 0.002;
   mesh.renderOrder = -1;
   return mesh;
+}
+
+/**
+ * With a hoop in the room the desktop view comes round to the shooter's right side, just in front of side-on so their
+ * face still shows: the person whole and as large as fits, the ring beyond them (the board may be cut off). If the
+ * screen is too narrow for both, the usual front view stays.
+ */
+function frameWithHoop(camera: THREE.PerspectiveCamera, controls: OrbitControls, person: THREE.Object3D, dream: Dream, rimLocal: THREE.Vector3) {
+  person.updateMatrixWorld(true);
+  const b = dream.bounds ?? { min: [-0.4, 0, -0.3], max: [0.4, 1.8, 0.3] };
+  const rim = person.localToWorld(rimLocal.clone());
+  const body = person.localToWorld(new THREE.Vector3(0, b.max[1] / 2, 0));
+  const toward = rim.clone().sub(body).setY(0);
+  const far = toward.length();
+  if (far < 0.5) return; // standing under it: the front view already shows both
+  toward.divideScalar(far);
+  const right = new THREE.Vector3(-toward.z, 0, toward.x); // a right-handed shooter's ball side
+  const angle = THREE.MathUtils.degToRad(86);
+  const view = toward.clone().multiplyScalar(Math.cos(angle)).addScaledVector(right, Math.sin(angle));
+  const corners: THREE.Vector3[] = [];
+  for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) corners.push(person.localToWorld(new THREE.Vector3(x, y, z)));
+  const inFrame = (pts: THREE.Vector3[], m: number) =>
+    pts.every((p) => {
+      const q = p.clone().project(camera);
+      return Math.abs(q.x) < m && Math.abs(q.y) < m && q.z < 1;
+    });
+  const from = camera.position.clone();
+  for (let d = 3.6; d <= 7.2; d += 0.2)
+    for (const lead of [0.3, 0.4, 0.2, 0.5, 0.1]) {
+      const target = body.clone().addScaledVector(toward, far * lead).setY(rim.y * 0.42);
+      camera.position.copy(target).addScaledVector(view, d).setY(1.4);
+      camera.lookAt(target);
+      camera.updateMatrixWorld();
+      if (inFrame(corners, 0.88) && inFrame([rim], 0.96)) {
+        controls.target.copy(target);
+        controls.maxDistance = Math.max(controls.maxDistance, d + 2);
+        controls.update();
+        return;
+      }
+    }
+  camera.position.copy(from);
+  camera.lookAt(controls.target);
+  camera.updateMatrixWorld();
 }
 
 /** A small floating label beside the person, set like system text: the name, then a hint. Faces the viewer. */
