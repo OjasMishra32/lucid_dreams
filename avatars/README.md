@@ -354,12 +354,43 @@ What to check before anyone sees it: in the log, `FBX SDK OK`, the `[arkit]` lin
 0.04, `jawOpenMaxMm` a few centimetres at most), `LIPS_OK`. In `lips.json`: `varianceKept` > 0.95 (the share of the mouth's
 motion, against its own mean, that the 9 channels keep: the stricter measure; `energyKept` is against neutral; a
 busy mouth under it prints a WARNING), `clipS` equal to the recording's length, `flameChannelCheckMm` ~0, `peakMm` a
-few centimetres. Then **look at a render with the mouth open and shut**: nothing here renders the speaking face yet.
+few centimetres. Then **look at a render with the mouth open and shut**: `syncnet.sbatch` below renders it.
 
-Not measured yet: SyncNet confidence on a front render, before (idle) and after (voice-driven), is the number for the
-slide: render the bundle front-on to a video with `voice.m4a` muxed in, run SyncNet on both, and report the two
-confidences. Untested on the cluster: the whole job (A2E env, weights layout, its CLI), and above all the FBX route:
-the SDK calls, the channel names, whether shapes come out as absolute positions, and the template's vertex order.
+Untested on the cluster: the whole job (A2E env, weights layout, its CLI), and above all the FBX route: the SDK calls,
+the channel names, whether shapes come out as absolute positions, and the template's vertex order.
+
+### The lip-sync number (SyncNet, before and after)
+
+The slide number: SyncNet confidence of a front face render of the speaking avatar with its own voice, **before** (the
+same avatar, camera and audio with the `mouth*` channels zeroed: idle and blink only) and **after** (mouth driven).
+After `lips.sbatch` has made `vishal-head-voice` (same gate: `VOICE_CONSENTED`, his own voice-driven bundle, nothing in
+`dreams/.held`; it runs first, before the audio or any render):
+
+```bash
+sbatch --export=ALL,NAME=vishal avatars/hpg/syncnet.sbatch     # any GPU, minutes; BUNDLE=, FACTOR= to change
+```
+
+It runs `lips_render.py` (4DAnyone env, gsplat: the bundle's motion frame by frame at 25 fps from one fixed camera in
+front of the face, `expr` added through `expr.bin` with `apply_expr`, then skinned; face framing as `head_swap_render.py`),
+then `lips_sync_score.py` in `envs/syncnet` (built once; torch, numpy, scipy, opencv, python_speech_features, versions
+logged; `joonson/syncnet_python`, MIT, weights `syncnet_v2.model` from the repo's own download script). Our 224 x 224 crops
+(the full render box-averaged) are fed to SyncNet's `demo_syncnet.py` directly; its S3FD detect-and-track step is skipped
+because the crops are already the face, at about the framing that step produces. Out: `lips_sync.json` in the bundle
+`{before, after: {conf, dist, offset}, deltaConf, deltaDist, improved, model, fps, clipS}`, one log line
+`SYNC conf before X after Y`, and in `data/avatars/lips/<bundle>.sync/`: `before.mp4`, `after.mp4` (full resolution,
+`voice.m4a` muxed, for people to watch), the SyncNet crops, `compare.png` (widest mouth, before | after), the raw SyncNet logs.
+
+What good looks like: **conf** is LSE-C (higher is better) and **dist** is LSE-D (lower is better). Published real-video
+LSE-C is about 6-8 on LRS2 (generated video usually scores lower); ours near the generated-video range is fine. Idle should score near the floor (conf ~1-2, an offset that wanders); the **before/after delta is the claim**. The job
+also runs SyncNet's own `example.avi` first (their README: confidence about 10): if that is far off, the env is wrong and
+nothing below it counts. Look at `after.mp4` before quoting anything.
+
+Caveats, said plainly: this is measured on **our own gsplat render** (a fixed front camera, mid-grey background, only the
+head's Gaussians drawn, orientations turned by their main joint only), **not the Quest**, and not on a real video; the
+mouth is 9 principal components of ARKit's lower-face shapes on FLAME, so it can be at best as good as A2E's weights and
+those shapes. Tests cover the parsing, the zeroing by channel name, 25 fps resampling, the camera and the report, and run
+both scripts end to end with a recorder in place of the renderer; **nothing has run on the cluster** (the gsplat render,
+SyncNet in its env and the `demo_syncnet.py` output format are read from its source, not run).
 
 ## Seated at the chess board
 
