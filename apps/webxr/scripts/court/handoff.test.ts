@@ -171,3 +171,20 @@ test("only the video layer's opacity ever changes: never splat opacity (P10)", (
   for (const t of frames(-0.1, HANDBACK_END)) handback(t, parts);
   assert.ok(!calls.some((c) => /opacity/i.test(c[0]) && c[0] !== "video.opacity"));
 });
+
+test("P8 on a real bundle (no stand-in truth) is judged by the bundle's own validate: every frozen player's silhouette IoU at F, each over the bar", async () => {
+  const { p8FromAssembly, P8_IOU_BAR } = await import("./scenarios/handoff.mjs");
+  const players = [{ id: "a" }, { id: "b" }];
+  const asm = (a?: number, b?: number) => ({ pieces: { "player:a": { silhouetteIoU: a }, "player:b": { silhouetteIoU: b } } });
+  const ok = p8FromAssembly(asm(0.99, 0.97), players);
+  assert.equal(ok.ok, true, ok.detail);
+  assert.match(ok.detail, /bundle validate/);
+  assert.deepEqual(ok.ious, [0.99, 0.97]);
+  assert.equal(p8FromAssembly(asm(0.99, P8_IOU_BAR - 0.01), players).ok, false, "a player under the bar fails");
+  const missing = p8FromAssembly(asm(0.99, undefined), players);
+  assert.equal(missing.ok, false, "a player the validate didn't measure fails");
+  assert.match(missing.detail, /not measured/);
+  const none = p8FromAssembly(null, players);
+  assert.equal(none.ok, false);
+  assert.match(none.detail, /no assembly\.json/);
+});

@@ -7,7 +7,8 @@
 // few display frames and in consecutive pairs (P9, P44 per pixel); (C) the head rising 15 cm mid-fade (P10). Frames are
 // kept in the page while the show runs (window.__courtSave held back) and handed over after, so none slips by. The e2e
 // view is IWER's (~6 px/deg): sub-pixel shifts (Lucas-Kanade) carry P8 here; scripts/court/d-check.mjs measures it at
-// the Quest's 19.5 px/deg and zoomed.
+// the Quest's 19.5 px/deg and zoomed. On a real bundle there is no true scene to render: P8 is the bundle's own
+// validate there (assembly.json: each frozen player's silhouette IoU at F through the real camera, over its bar).
 import { readPng } from "../png.mjs";
 import { shift, ssim, toLuma } from "../diff.mjs";
 import { BEATS, HANDOFF_END, handoffBeats } from "../../../src/court/handoff.ts";
@@ -28,6 +29,23 @@ const PAIRS_AT = [0.6, 1.1, 2.0, 3.6];
 const FEATHER_PX = 24;
 /** The stand-in's pair in truthAt's kinds (people are 10 + their index; the shooter and the defender first). */
 const PAIR_KINDS = [10, 11];
+/** P8 on a real bundle: each frozen player's silhouette IoU at F at least this (assemble.py validate's silhouette bar, P42). */
+export const P8_IOU_BAR = 0.95;
+
+/**
+ * P8 where there is no true scene to render (a real bundle): the bundle's own validate (assemble.py) is the ground
+ * truth, each frozen player's splats seen through the real camera F against their mask at F (assembly.json
+ * pieces["player:<id>"].silhouetteIoU). Every player must be measured and over the bar.
+ */
+export function p8FromAssembly(asm, players, bar = P8_IOU_BAR) {
+  const how = `judged by the bundle validate (silhouette IoU at F through the real camera F, bar ${bar})`;
+  if (!asm) return { ok: false, ious: [], detail: `${how}: no assembly.json beside the bundle` };
+  const ious = players.map((p) => asm.pieces?.[`player:${p.id}`]?.silhouetteIoU);
+  const missing = ious.map((x, i) => (typeof x === "number" ? null : `player ${i + 1}`)).filter(Boolean);
+  const list = ious.map((x, i) => `player ${i + 1} ${typeof x === "number" ? x : "-"}`).join(", ");
+  if (missing.length) return { ok: false, ious, detail: `${how}: ${missing.join(", ")} not measured (${list})` };
+  return { ok: ious.every((x) => x >= bar), ious, detail: `${how}: ${list}` };
+}
 
 /** Back to the watch (Replay), then a press in pass 2. */
 async function toPress(ctx, replay) {
@@ -153,10 +171,17 @@ export default async function handoff(ctx) {
   }
   const worst = Math.max(0, ...players.map((p) => p.vsTruthDeg));
   ctx.report.p8 = { ppd, players };
-  ctx.check("P8: same pixels per eye at the seat", players.length > 0 && worst <= 0.055,
-    players.length
-      ? `the picture's players vs the true scene, worst ${worst.toFixed(4)} deg (${players.map((p) => p.vsTruthDeg.toFixed(4)).join(", ")}); vs the 3D after the fade ${players.map((p) => p.vs3dDeg.toFixed(4)).join(", ")} (the stand-in's splats); ${ppd.toFixed(1)} px/deg, sub-pixel`
-      : "no player in view (needs the stand-in's truth)");
+  if (ctx.standin)
+    ctx.check("P8: same pixels per eye at the seat", players.length > 0 && worst <= 0.055,
+      players.length
+        ? `the picture's players vs the true scene, worst ${worst.toFixed(4)} deg (${players.map((p) => p.vsTruthDeg.toFixed(4)).join(", ")}); vs the 3D after the fade ${players.map((p) => p.vs3dDeg.toFixed(4)).join(", ")} (the stand-in's splats); ${ppd.toFixed(1)} px/deg, sub-pixel`
+        : "no player in view");
+  else {
+    const asm = await ctx.page.evaluate(() => fetch("/bundle/assembly.json").then((r) => (r.ok ? r.json() : null)).catch(() => null));
+    const p8 = p8FromAssembly(asm, ctx.court.freeze.players);
+    ctx.report.p8.assembly = p8.ious;
+    ctx.check("P8: same pixels at F", p8.ok, p8.detail);
+  }
 
   // (B) the fade every EVERY display frames, and consecutive pairs for P44 per pixel
   await toPress(ctx, true);
