@@ -20,6 +20,7 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | `retarget.py` | Someone else's motion on an avatar: leg-length scaling, facing the viewer, soles on the floor |
 | `gvhmr.py` | GVHMR's SMPL-X motion (4DAnyone's) as a Motion, moved into 4DAnyone's world |
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
+| `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
 
 GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
 4DAnyone views; `digs_perform.py` an avatar doing someone else's move; `gvhmr_motion.py` and `prep_views.py`
@@ -88,6 +89,15 @@ frames composited on white (so absolute PSNR runs high; the before/after change 
 `hpg/digs-perform.sbatch` with `AVATAR=<some avatar's code.pt>`, `RUN_ID=<the run with the move>`, `ID`, `NAME`:
 the move's joint rotations play on the avatar unchanged, the root path scaled by leg length, turned to face the
 viewer, and dropped so the avatar's lowest Gaussian over the clip touches the floor (crouches and jumps stay).
+
+## Showing an avatar in a player that can't skin yet
+
+The WebXR viewer and the Quest app play replays; until they read `skin.bin`, bake the avatar into one (numpy only,
+runs on the Mac after fetching; about 20 MB of `.ply` + 2 MB of `.spz` per frame, so not on HiPerGator's Blue):
+
+```bash
+cd avatars && uv run python -m lucid_avatars bake ../dreams/<id> --fps 15   # writes ../dreams/<id>-baked
+```
 
 ## motion.json and skinning (for Ian's player and the WebXR viewer)
 

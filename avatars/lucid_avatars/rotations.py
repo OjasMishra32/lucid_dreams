@@ -59,3 +59,20 @@ def quat_to_matrix(q: np.ndarray) -> np.ndarray:
         np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], axis=-1),
         np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], axis=-1),
     ], axis=-2)
+
+
+def matrix_to_quat(R: np.ndarray) -> np.ndarray:
+    """Rotation matrix (3, 3) to unit quaternion [x, y, z, w] (Shepperd: branch on the largest component)."""
+    R = np.asarray(R, dtype=np.float64)
+    tr = np.trace(R)
+    if tr > 0:
+        s = 2 * np.sqrt(1 + tr)
+        q = [(R[2, 1] - R[1, 2]) / s, (R[0, 2] - R[2, 0]) / s, (R[1, 0] - R[0, 1]) / s, s / 4]
+    else:
+        i = int(np.argmax(np.diag(R)))
+        j, k = (i + 1) % 3, (i + 2) % 3
+        s = 2 * np.sqrt(1 + R[i, i] - R[j, j] - R[k, k])
+        q = [0.0, 0.0, 0.0, (R[k, j] - R[j, k]) / s]
+        q[i], q[j], q[k] = s / 4, (R[j, i] + R[i, j]) / s, (R[k, i] + R[i, k]) / s
+    q = np.asarray(q)
+    return q / np.linalg.norm(q)
