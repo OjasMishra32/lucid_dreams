@@ -47,6 +47,13 @@ class BakeConfig:
     calib: str = ""  # calib_A.json-schema file; "" = none (synthetic tests pass their own)
     undistort_f_scale: float = 1.0  # output focal / solved focal of the undistorted pinhole image (source.py's choice)
     camera_hold_edge: bool = False  # TEST ONLY: frames outside the calibration take the nearest solved camera
+    # where the inputs and outputs live (bake.py / source.py; "" = not set)
+    frames_dir: str = ""  # decoded source frames
+    frame_pattern: str = "{src:06d}.png"
+    layers: str = ""  # the layers agent's out/ (people.json, plates/, mattes/)
+    out: str = ""  # the bundle's video/ folder
+    tmp: str = ""  # scratch
+    synthetic: bool = False  # written by synth.py
     notes: dict = field(default_factory=dict, compare=False)
 
     @property

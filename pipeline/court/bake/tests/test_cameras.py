@@ -146,3 +146,54 @@ def test_write_frames_json(tmp_path, calib):
     C.write_frames_json(out, tl, C.cameras_for(tl, sol, CFG))
     data = json.loads(out.read_text())
     assert len(data) == len(tl.frames) and abs(np.linalg.norm(data[5]["q"]) - 1) < 1e-6
+
+
+# ---------------- against synth.py's clip (known capture times and cameras) ----------------
+
+@pytest.fixture(scope="module")
+def synth_clip(tmp_path_factory):
+    from pipeline.court.bake import config, synth
+
+    clip = synth.SynthClip()
+    root = tmp_path_factory.mktemp("synth")
+    (root / "calib_A.json").write_text(json.dumps(clip.calib()))
+    cfg = config.from_dict(clip.bake_config(root))
+    return clip, cfg
+
+
+def test_synth_config_loads_and_capture_times_match_its_truth(synth_clip):
+    from pipeline.court.bake.captime import CapTime
+
+    clip, cfg = synth_clip
+    cap = CapTime.from_config(cfg)
+    for s in clip.srcs:
+        assert cap.time_of(s) == pytest.approx(clip.time_of(s), abs=1e-12)
+        assert cap.is_real(s) == (not clip.is_repeat(s))
+
+
+@pytest.mark.parametrize("hz", [72, 90])
+def test_synth_timeline_and_cameras_match_ground_truth(synth_clip, hz):
+    clip, cfg = synth_clip
+    tl = T.build(cfg, hz)
+    assert T.check(tl, cfg)["errors"] == []
+    sol = C.load_calib(cfg.calib)
+    cams = C.cameras_for(tl, sol, cfg)
+    worst_deg = 0.0
+    for f, cam in zip(tl.frames, cams):
+        R, focal = clip.camera(f.t)  # the true camera at the shown capture time
+        truth = Rotation.from_matrix(R.T)
+        err = (truth.inv() * Rotation.from_quat(cam.q)).magnitude()
+        worst_deg = max(worst_deg, np.degrees(err))
+        if not f.interp:
+            assert err < 1e-9 and cam.f == pytest.approx(focal, rel=1e-12)
+        else:
+            assert cam.f == pytest.approx(focal, rel=1e-9)  # zoom is linear in time: lerp is exact
+    assert worst_deg < 1e-4  # slerp between neighbouring real frames vs the true in-between camera
+    # no flashed frame is ever shown or used as an in-between's neighbour
+    flash = set(clip.flash_srcs)
+    assert all(f.a not in flash and f.b not in flash for f in tl.frames)
+    near = [f for f in tl.frames if any(abs(f.t - clip.time_of(s)) < 1.5 / 120 for s in flash)]
+    assert near and all(f.interp for f in near if f.src in flash)
+    errors = C.validate_with_format_ts(C.frames_json(tl, cams), tl)
+    if errors is not None:
+        assert errors == []
