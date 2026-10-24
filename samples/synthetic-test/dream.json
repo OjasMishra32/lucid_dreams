@@ -1,0 +1,41 @@
+{
+  "id": "synthetic-test",
+  "name": "Synthetic test",
+  "kind": "replay",
+  "fps": 25.0,
+  "frameCount": 4,
+  "durationS": 0.16,
+  "units": "meters",
+  "upAxis": "+Y",
+  "bounds": {
+    "min": [
+      -0.33399999141693115,
+      -0.0,
+      -0.20100000500679016
+    ],
+    "max": [
+      0.34700000286102295,
+      1.7300000190734863,
+      0.20100000500679016
+    ]
+  },
+  "frames": {
+    "dir": "frames",
+    "pattern": "%06d.ply",
+    "spz": "%06d.spz",
+    "gaussiansPerFrame": 13527,
+    "spzBytesTotal": 831587
+  },
+  "avatar": null,
+  "audio": null,
+  "preview": "preview.mp4",
+  "thumb": "thumb.jpg",
+  "source": null,
+  "metrics": {
+    "psnr": 32.37,
+    "ssim": 0.98,
+    "lpips": null,
+    "views": null
+  },
+  "createdAt": "2026-10-23T23:29:55Z"
+}

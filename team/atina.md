@@ -33,3 +33,23 @@ not for long coding sessions. Read `AGENTS.md` first.
 - Raami: screenshots, copy, and the web app's look so the headset UI matches it.
 - Ian: what the Quest can show (panel sizes, text sizes) before you design.
 - Everyone: two lines each about what they built, for Devpost.
+
+## Work without waiting
+
+- **Clips:** shoot to the capture guide (landscape is fine now: the pipeline frames the person automatically) and
+  AirDrop them to Ojasva's Mac into `~/Downloads/lucid-clips/`. That's all: they process by themselves.
+- **Design tokens** for the headset UI are at the top of `apps/web/app/globals.css` (Raami's). Match them exactly.
+- Most of your list is writing and design, so it fits your Codex plan: use Codex to polish text, not to generate it.
+
+## Your backlog (ordered)
+
+1. Shoot 3-5 clips tonight (teammates doing moves) and AirDrop them in.
+2. Family moment: pick the photo or video, get consent in writing, save it in `demo/consent.md`.
+3. In-headset UI mockups for Ian (controls, library, reality toggle, captions), with exact sizes.
+4. Devpost draft in `demo/devpost.md`: what it does, how we built it, the new tech and why it's recent
+   (4DAnyone Aug 2026, DiGS-Avatar 2026), challenges, what's next. Leave blanks for numbers.
+5. README draft in `demo/README-draft.md` with the credits list (4DAnyone, DiGS-Avatar, gsplat, Spark, three.js,
+   Unity Gaussian Splatting, NLF, rembg, GVHMR, BiRefNet, SMPL-X and their licenses).
+6. Video: script + shot list in `demo/video.md` (family moment first, then the wow, then how it works, then the team).
+7. Judge Q&A in `demo/judges.md`: theme fit, consent, what's real vs imagined, limits, what's next.
+8. Slides with placeholders for the numbers (PSNR, % seen, Gaussians, time per dream).

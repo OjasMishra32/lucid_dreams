@@ -53,9 +53,11 @@ def show(run: Path) -> dict:
     stage = current or ("views" if not started else next(k for k in ORDER if s.get(k, {}).get("state") != "done"))
     progress = _progress(run, s)
     remaining = sum(EXPECTED.get(k, 0) for k in ORDER[ORDER.index(stage):]) if stage in ORDER else 0
+    if job.get("kind") == "avatar" and stage in ("views", "reconstruct"):
+        stage = "reconstruct"
     message = {
         "views": "Imagining every angle of them",
-        "reconstruct": "Building them in 3D, frame by frame",
+        "reconstruct": "Building them in 3D" if job.get("kind") == "avatar" else "Building them in 3D, frame by frame",
         "export": "Getting them ready for your room",
     }.get(stage, "Waiting for a GPU")
     return {"id": job["id"], "status": status, "stage": stage, "progress": round(progress, 3),

@@ -76,3 +76,19 @@ Put a consented, head-to-toe photo of a teammate at `$L/data/avatars/inputs/samp
    back, apply the 180-degree turn in `avatar.ply` so every player gets the front facing the viewer (contract: front
    faces -Z).
 
+## Work without waiting (while SMPL-X and the first real runs land)
+
+- Develop the fine-tune loop now on synthetic data: `cd pipeline && python -m lucid.synthetic --out /tmp/synth
+  --frames 4 --views 24` (in the 4DAnyone env on a GPU node) writes `cameras.json` + RGBA views of a moving person,
+  the same camera format 4DAnyone produces. Swap in real 4DAnyone runs when they exist.
+- Unit-test everything that doesn't need the GPU (you already do: keep it up).
+- Decide the fine-tune design yourself (which parameters, losses, schedule); write it in this file.
+
+## Your backlog (ordered)
+
+1. Fine-tune on 4DAnyone views, with the before/after table (the research claim).
+2. "You, perfected": GVHMR motion from a replay run driving a teammate's avatar.
+3. `skin.bin` + `skeleton.json` export, validated by your bundle checker.
+4. Family-photo person: one old photo -> avatar + idle loop, with an honest "imagined" share.
+5. Blink: optional `expr` in `motion.json`.
+6. A short results page in `avatars/README.md`: images and numbers Atina can drop into the slides.

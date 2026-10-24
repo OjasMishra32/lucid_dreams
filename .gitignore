@@ -29,3 +29,6 @@ apps/quest/Build*/
 dreams/
 apps/webxr/dist/
 .claude/
+
+# the small sample bundle is committed on purpose (everyone develops against it)
+!samples/**

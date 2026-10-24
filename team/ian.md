@@ -52,3 +52,22 @@ Avatar bundles (`kind: "avatar"`) will carry `avatar/avatar.ply` (SMPL-X rest po
 `avatar/skin.bin` (per Gaussian: 4 joint indices + 4 weights as uint8) and `avatar/skeleton.json` (rest joints +
 parents). Plan an avatar player that skins Gaussians on the GPU (linear blend skinning of positions and rotations).
 
+## Your backlog (ordered; decide everything inside apps/quest yourself)
+
+Test data now: `samples/synthetic-test/` in the repo (frame 0 as PLY, frames 0-3 as SPZ). Real bundles land in
+`dreams/` on Ojasva's Mac as they finish; ask anyone at the table to copy one to you.
+
+1. **Sequence player:** import all frames, swap at `fps`, preload, loop; play/pause, 0.25/0.5/1x, scrub.
+2. **Runtime loading (big win):** a C# SPZ reader so bundles load at runtime from the bridge, with no editor import.
+   The format is tiny: gzip of a header + packed arrays; `pipeline/lucid/gaussians.py` `write_spz` is the exact
+   spec we write (positions 24-bit fixed point, alpha u8, colour u8, log-scale u8, rotation xyz u8). Build Aras's
+   `GaussianSplatAsset` data from it at runtime.
+3. **Library from the bridge:** `GET http://<mac>:5170/api/dreams`, download with progress, cache to disk for offline.
+4. **Placement and hands:** pinch to pause, grab to move or rotate, soft contact shadow, the person life size on the
+   real floor (never scaled).
+5. **Reality check:** a toggle that swaps to `frames.reality` (the blue imagined parts), with the seen % shown.
+6. **In-headset UI:** build Atina's mockups (she's designing to match Raami's web app). Start with placeholders now.
+7. **Avatar player:** GPU skinning from `avatar/skin.bin` + `skeleton.json` + `motion.json` (Vishal's format above).
+8. **Performance report:** fps vs Gaussians on Quest 3S, so Ojasva sets the export cap; LOD if needed.
+9. **Max-fidelity mode:** PC streaming over Quest Link if anyone has a Windows laptop with an RTX GPU.
+10. **Capture:** record a clean passthrough video of a person in the room for Atina's demo video.

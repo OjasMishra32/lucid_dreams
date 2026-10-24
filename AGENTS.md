@@ -60,6 +60,18 @@ We do **not** enter the Twinly API prize (conflict of interest: it's Ojasva's co
    toggle. We never present generated detail as real.
 7. Stay in your lane: each area below has one owner. Change a contract (bundle format, API) only after telling everyone.
 
+## Work without waiting (everyone)
+
+- **Decide inside your own area. Don't wait for anyone, Ojasva included.** Write the decision in your brief and move on.
+  Only changes to a shared contract (bundle format, job API, coordinates) need a one-line heads-up in the Status log first.
+- **Never block on real data.** `samples/synthetic-test/` is a real dream bundle in the repo (4 frames, SPZ + one PLY,
+  preview, thumb). Copy it to `dreams/synthetic-test/` and build against it. `python -m lucid.synthetic` (in `pipeline/`)
+  makes a multi-view moving person with cameras, for anyone who needs views + cameras.
+- **Getting clips into the pipeline:** AirDrop or copy them to Ojasva's Mac into `~/Downloads/lucid-clips/`. An
+  autopilot there submits them, and finished dreams appear in `dreams/` and in both web apps. Nobody has to be awake.
+- **When you finish something:** push, add one line to the Status log, then take the next item in your brief's backlog.
+  Backlogs are ordered: top item first.
+
 ## Team
 
 | Person | Owns | Brief |
@@ -158,7 +170,7 @@ For an avatar, `kind` is `"avatar"`, `frames` is null and
 
 | Call | Body / reply |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` (clip or photo), `name`, `kind` = `replay` or `avatar` -> `{ "id" }` |
+| `POST /api/jobs` | multipart: `file` (clip or photo), `name`, `kind` = `replay` or `avatar`, optional `startS` (seconds: where the 5-second window starts in a long clip) -> `{ "id" }` |
 | `GET /api/jobs/:id` | `{ id, status: queued/running/done/failed, stage, progress 0-1, etaS, message }` |
 | `GET /api/dreams` | list of `dream.json` objects |
 | `GET /dreams/<id>/...` | the bundle's files, static |
@@ -231,3 +243,4 @@ samples/           a small sample dream bundle for development (kept tiny, or li
 - Fri 9:35 PM, Ojasva: export verified (synthetic person 1.73 m tall, feet on y = 0) and SPZ frames load in the WebXR viewer. Landscape clips now get a fixed 9:16 crop around the person automatically. Autopilot runs on Ojasva's Mac: drop clips in ~/Downloads/lucid-clips/ and they come back as dreams.
 - Fri 8:00 PM, Raami: web app + bridge in apps/web on :5170 (landing, Make a dream with in-browser clip checks, live progress, library, dream pages with seen % and fidelity). Job API done; mock mode by default, BRIDGE_MODE=runner calls lucid_runner.py. Ian: GET http://<mac>:5170/api/dreams. Run: npm --prefix apps/web install && npm --prefix apps/web run dev.
 - Fri 10:15 PM, Ojasva: avatar environment (DiGS-Avatar) built on HiPerGator with public weights; gsplat runs on L4s too (about 290 more GPUs for reconstruction). Seen-vs-imagined frames + seenFraction in every replay. Still blocked: SMPL-X download (stalled in Safari), DINOv3 access.
+- Fri 11:00 PM, Ojasva: runner submits avatars too (`--kind avatar`, photo -> Vishal's DiGS job). `startS` approved in the job API. Sample bundle committed at samples/synthetic-test. Every brief now has a long self-serve backlog.

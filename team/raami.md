@@ -71,3 +71,28 @@ or `import lucid_runner` and call the functions. Every command prints one JSON o
    person automatically, so stop rejecting landscape: accept it and say "We'll frame them for you."
 5. **Screenshots** of every page for Atina's Devpost once real dreams are in.
 
+## Unblocked (Ojasva, Fri 11 PM): your three asks are answered
+
+- **Sample bundle:** it's in the repo now: `samples/synthetic-test/`. `cp -R samples/synthetic-test dreams/`.
+- **Avatar jobs:** `lucid_runner.py submit <photo> --kind avatar --name "<name>"` now runs Vishal's DiGS job. Pass
+  `kind` straight through from `POST /api/jobs`. Status and fetch work the same as replays.
+- **`startS`: approved.** Add it to `POST /api/jobs` and pass `--start-s` to the runner. It's in the contract now.
+- **Gemini key:** get your own free key at https://aistudio.google.com/apikey and put it in `apps/web/.env.local`
+  (git-ignored). For the demo, put the same key on Ojasva's Mac yourself when you're at the table.
+
+## Your backlog (ordered; decide everything inside apps/web yourself)
+
+1. **Gemini guide** (MLH prize): `guide.json` (move, summary, steps with timestamps, tips) + spoken `guide.m4a`;
+   dream page shows steps synced to the preview video. Cache per dream so it runs once.
+2. **5-second window picker** in Make a dream: a filmstrip of the clip with a draggable 5-second highlight -> `startS`.
+   It should feel like trimming in Photos.
+3. **"From a photo" flow** (`kind: "avatar"`): full-body photo checks (one person, head to toe, decent size), a consent
+   checkbox ("I have permission to bring this person in"), and the same calm progress screen.
+4. **Landing:** hero = newest real dream's 360 preview; a three-step "How it works" with real numbers pulled from
+   `dream.json` (views, Gaussians per frame, % seen); one closing line and the Make a dream button.
+5. **Dream page:** big preview, the guide, honest numbers (PSNR, % seen), "View in your room" linking to the WebXR
+   viewer, and a share link with the thumb as the preview image.
+6. **Failure states that feel designed:** a run that fails shows what to fix (from the runner's message), never a stack trace.
+7. **Demo command:** `npm run demo` in apps/web that starts the web app in runner mode; document it in the README.
+8. **Polish pass:** motion (subtle, under 300 ms), focus states, empty states, mobile layout, Lighthouse 95+.
+9. **Screenshots** of every page at 2x for Atina's Devpost once real dreams exist.
