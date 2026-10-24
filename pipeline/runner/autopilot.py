@@ -106,8 +106,11 @@ def main():
             runs_file = runner.DEFAULT_DEST / ".runs.json"  # runs submitted by hand or by other tools
             for rid in json.loads(runs_file.read_text()) if runs_file.exists() else []:
                 state["submitted"].setdefault(rid, {"clip": "", "at": time.time()})
+            # dreams held back from the library (not good enough to show yet), one id per line
+            held_file = runner.DEFAULT_DEST / ".held"
+            held = set(held_file.read_text().split()) if held_file.exists() else set()
             for run_id in list(state["submitted"]):
-                if run_id in state["fetched"]:
+                if run_id in state["fetched"] or run_id in held:
                     continue
                 st = runner.status(run_id)
                 if st["status"] == "done":

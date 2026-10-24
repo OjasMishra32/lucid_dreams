@@ -4,6 +4,28 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## TOP PRIORITY (Sat 1 AM): more photos in, the most human result out
+
+Ojasva's verdict on the photo people: "creepy, uncanny". One photo is too little. The face now gets its own model
+(LAM, one photo becomes a 3D head that talks and blinks), and it does better with the right photo. Your part is
+getting several photos in and picking the winner:
+
+1. **Several photos of one person.** "From a photo" takes 1-10 photos of the same person: the best head-to-toe
+   one builds the body, every face photo goes to the face model. Show a strip of thumbnails with "Body" and
+   "Face" tags, and reject photos with no face or two people.
+   - **Contract change** (posted in the Status log): `POST /api/jobs` with `kind=avatar` accepts repeated `file`
+     fields; the first is the body photo.
+   - The bridge saves the rest to `faces/` next to it. Ojasva makes `lucid_runner.py` pass them on.
+2. **Gemini realism check** (`apps/web/server/realism.ts`). When a dream lands, send Gemini the source photo and
+   three renders (front, 3/4 and profile, frames of `preview.mp4`). Ask for JSON: same person (yes/no plus
+   confidence), and concrete defects (eyes, skin tone, hairline, hands, seams, floaters) with where they are.
+   - Show it on the dream page as an honest "Realism check" panel.
+   - Use it to choose between candidate heads (one per face photo): the highest same-person confidence ships.
+   - Cache it by `updatedAt`, and rate-limit it.
+3. **You own `apps/site` now** (the public showcase site; same design bar). Swap the hero to the real `jump-shot`
+   replay: `PERSON.frames` in `apps/site/src/config.ts` points at a bundle. Then make the use-case reel play the
+   three best real dreams with their names. No public-figure dream in the hero.
+
 ## BIG CHUNK (Sat 12:20 AM): make the main goal real in the web app
 
 Round two is excellent (guide, window picker, consent, Lighthouse 98-100, the injection fix). Your two notes for

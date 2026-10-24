@@ -20,6 +20,8 @@ import json; j = json.load(open("job.json"))
 print(j.get("itersFirst", 7000), j.get("itersWarm", 1500), j.get("cap", 300000), j.get("shDegree", 1))
 PY
 )
+# 121 frames in 12 chunks of 11 leaves the last chunk empty: that's success, not a failure that blocks the export
+if [ "$START" -ge "$END" ]; then echo "[recon] chunk $SLURM_ARRAY_TASK_ID has no frames"; exit 0; fi
 python -m lucid.status mark "$RUN" reconstruct running
-[ "$START" -lt "$END" ] && python -m lucid.recon --result "$RUN/views" --start "$START" --end "$END" --out "$RUN/recon" \
+python -m lucid.recon --result "$RUN/views" --start "$START" --end "$END" --out "$RUN/recon" \
   --iters-first "$ITF" --iters-warm "$ITW" --cap "$CAP" --sh-degree "$SH"

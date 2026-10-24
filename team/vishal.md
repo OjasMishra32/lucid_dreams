@@ -6,7 +6,42 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
-## TOP PRIORITY (Sat 1:10 AM): the face pass, so the legends look like themselves
+## TOP PRIORITY (Sat 1 AM): make them look like actual humans, not mannequins
+
+Ojasva's verdict on the legends: "creepy, uncanny, I want it to look like an actual human". Three causes: the face
+is guessed from about 60 px; the black-and-white recolour flattened all shading (that's going: B&W photos are now
+colourised on the photo, with DDColor, before any model sees them); and nothing moves when they're idle (dead eyes).
+This is the hardest and most important avatar work left. In order:
+
+1. **A real face: LAM's head on your body** (`avatars/head_swap.py` + `hpg/head-swap.sbatch`). LAM (SIGGRAPH 2025,
+   Apache-2.0) builds an animatable FLAME Gaussian head from one photo and was trained on real talking-head video.
+   Ojasva's `avatars/hpg/lam-head.sbatch` is running on an L4 now. For every photo in `data/avatars/faces/<name>/`
+   it writes `data/avatars/heads/<name>/heads/<name>-<photo>_gs_offset.ply` (canonical head Gaussians, FLAME space),
+   `..._shaped_mesh.obj` (the FLAME mesh they sit on, 5023 vertices) and a talking render in `videos/`. Your part:
+   - **Align.** SMPL-X's head is FLAME topology. Pair LAM's 5023 vertices with the avatar's rest-pose SMPL-X head
+     through the official `SMPL-X__FLAME_vertex_ids.npy` (SMPL-X site, same login), solve a similarity transform
+     (Umeyama, with scale) and apply it to the head Gaussians (means, rotations, scales).
+   - **Replace.** Drop body Gaussians whose dominant joint is head, jaw or eyes above the jaw line. Fade the
+     opacity of the ones left over a 3 cm band at the seam, so there's no collar.
+   - **Skin.** Each head Gaussian takes the LBS weights of its nearest SMPL-X vertex, written into `skin.bin`
+     (same format).
+   - **Tone.** Match the head's skin to the body's on the neck ring (mean and std in Lab), so face and hands agree.
+   - **Output** a bundle `<id>-head` and a `compare.png`: source photo, old face and new face, front and 3/4. Run
+     it on `bobby-fischer` and `magnus-carlsen`. Ojasva swaps the chess legends to it if it wins.
+   - **The number for the slide:** identity cosine (InsightFace `buffalo_l`) between a front render and the source
+     photo, before and after.
+2. **Life when idle** (this kills most of the uncanny):
+   - `motion.json` gets an optional `expr` per frame (FLAME's first 10 expression coefficients).
+   - The bundle gets an optional `avatar/expr.bin`: per head Gaussian, 10 x xyz offsets from FLAME's expression
+     basis, float16.
+   - Write a 20 s idle loop: breathing (chest and shoulders 2-3 mm at 0.25 Hz), a blink every 3-5 s (150 ms),
+     small eye saccades, slight head sway.
+   - This changes the contract: post one line in the Status log first. Ojasva wires the WebXR side.
+3. **Colour photos into DiGS too.** LAM's job leaves DDColor-colourised copies in `heads/<name>/colour/`. Rebuild
+   `bobby-fischer`'s body from the colourised full photo so body and head agree (`lucid.monochrome` only touches
+   greyscale photos, so it then leaves it alone).
+
+## SECOND (was top): the face pass, so the legends look like themselves
 
 The avatars run now (six fixes, all pushed: env packages, assets on GPU, repo lock, SMPL-X UV mesh, rembg on CPU,
 the weights check counting DINOv3's own file, the rasterizer's four outputs; please review those edits in

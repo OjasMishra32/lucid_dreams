@@ -3,6 +3,31 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## TOP PRIORITY (Sat 1 AM): make them read as real people in the headset
+
+Ojasva's verdict: the people look "creepy, uncanny". Vishal is fixing faces and idle motion at the source; most of
+the rest happens at render time, and that's yours. You have Ojasva's OK to edit `apps/webxr` for these as well as
+the Unity app. Every item gets a before/after passthrough capture.
+
+1. **Match the room's light.** A person brighter or bluer than your room reads as a sticker.
+   - Use Meta's Passthrough Camera API (Quest 3 / 3S, Horizon OS v74+) in Unity: once a second, sample the room's
+     average brightness and white point near the person, and apply a gentle gain and white balance in the splat
+     shader (clamped to ±30%, eased over 1 s).
+   - If the permission flow is too heavy for the demo, ship a "Light" button on the hands bar with three presets
+     (warm room, daylight, dim) instead.
+2. **Resolution where it counts.** Eye-buffer scale 1.3-1.5x (WebXR: `framebufferScaleFactor`), low fixed
+   foveation, splats sorted every frame. Report the highest scale that holds 72 fps with `jump-shot` (121 frames)
+   on the 3S.
+3. **Feet that belong to the floor.** A contact shadow plus a faint ambient-occlusion ring. Then measure foot height
+   across every frame of each replay and report the worst one: a floating or sliding foot is the fastest way to
+   look fake.
+4. **Eye contact.** For avatars in `companion` and `play` modes, the head (joint 15, with the neck, 12, taking 30%)
+   turns toward the viewer's head: ±35° yaw, ±20° pitch, eased over 300 ms. In WebXR, `SkinnedAvatar.pose(t,
+   edit)` in `apps/webxr/src/avatar.ts` lets you change a joint's local rotation before skinning. Chess opponents
+   look up at you after their move, then back down at the board.
+5. **Blinks and breathing** once Vishal ships `expr` / `expr.bin`: apply the 10 expression offsets per head
+   Gaussian on the GPU (one extra buffer, read in the splat vertex stage).
+
 ## TAKEN OVER FROM ATINA (Sat 12:35 AM): the submission is yours too
 
 Atina's remaining work moves to you (she built the capture kit, captions, restoration and drafts; you already
