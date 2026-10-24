@@ -7,9 +7,12 @@ export const needs = ["clock", "video"];
 export default async function cadence(ctx) {
   await ctx.seatHere();
   await ctx.handOver();
-  const first = (await ctx.until("watching", 72 * 8)).at(-1); // the watch's first frame: show frame 0
   const { pass1, pass2 } = ctx.court.video.segments;
-  const log = [first, ...(await ctx.frames(pass2[1] - pass1[0] + 1 + 36))];
+  // the watch's first frame (show frame 0) and every frame after it, in one page call so none slips by unlogged
+  const log = await ctx.page.evaluate(async (n) => {
+    const to = await window.__court.until("watching", 72 * 8);
+    return [to.at(-1), ...(await window.__court.frames(n))];
+  }, pass2[1] - pass1[0] + 1 + 36);
   const watch = log.filter((f) => f.segment === "pass1" || f.segment === "pass2");
   let held = 0;
   let skipped = 0;
