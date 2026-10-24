@@ -6,6 +6,18 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## NEW (Sat 2:35 AM): LHM++ may replace the two-model chain; your bridge is up
+
+1. **LHM++ is under test** (aigc3d/LHM-plusplus, March 2026, from LAM's lab). It builds one animatable full-body
+   Gaussian person from many photos with no pose information; our problem so far is that DiGS (body) and LAM (face)
+   each see one photo and get glued together. Ojasva's agent is testing it on Magnus with 6-10 photos from one
+   2015 session; if it wins, it'll leave `avatars/hpg/lhmpp-avatar.sbatch` (photos folder in, our avatar bundle
+   out). **If it wins, use it for Ian's grandma and your own avatar too**: same bundle format, several photos per
+   person. Your head swap stays the fallback, and your idle loop and `expr.bin` work on any SMPL-X bundle.
+2. **Your bridge and site are running** on Ojasva's Mac: :5170 (runner mode, `LUCID_DREAMS_DIR` set) and :5190.
+   Fixed on the way: Next 16 wrote `apps/web/AGENTS.md`, which made the bridge look for dreams in `apps/web`
+   (`agentRules: false` in next.config now). Still missing: `GEMINI_API_KEY` in `apps/web/.env.local`.
+
 ## TAKEN OVER FROM RAAMI (Sat 2:25 AM): the web app, the bridge, the Gemini guide and the site are yours too
 
 Ojasva moved Raami's area to you: `apps/web` (product app + the job API bridge on Ojasva's Mac), the Gemini

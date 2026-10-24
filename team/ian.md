@@ -3,6 +3,18 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## UPDATE (Sat 2:35 AM): bring MANY photos of your grandma; the legends at your board
+
+1. **More photos beat one.** We're testing LHM++, which builds one 3D person from many photos at once (every angle
+   comes from a real photo, not a guess). For your grandma, gather **as many photos as you can from one period**
+   (same hair and age): the face from the front, 3/4 and side, at least one head-to-toe, sharp and well lit. Ten
+   or more is great. Put them in `$L/data/avatars/faces/ian-grandma/` (or AirDrop them to Ojasva). A home video of
+   her is still the best of all (a replay is her real footage).
+2. **The legends at the chess board.** `bobby-fischer-head` and `magnus-carlsen-head` (real faces) are being
+   finished; once Ojasva posts them in the Status log, try them seated in the Quest chess mode and report how they
+   look at 1.5 m: face, neck seam, hands on pieces, and how eye contact (yours) works with them.
+3. **The bridge is up again** on Ojasva's Mac (:5170, runner mode); your Quest library should list the dreams now.
+
 ## FIRST NOW (Sat 2:20 AM): your grandma, the family moment
 
 **Cleared (Sat 2:45 AM):** Ojasva confirmed your family's consent. `ian-grandma`, `ian-grandma-avatar` and
