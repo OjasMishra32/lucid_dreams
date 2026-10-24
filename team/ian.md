@@ -3,6 +3,16 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## ADDED (Fri 11 PM): props and seated opponents
+
+- **Props (new contract, `props.json`, in AGENTS.md shortly):** the important objects around the person. For
+  basketball: the real ball's path per frame (`kind: basketball`, radius 0.12, `track` of [x,y,z] or null per
+  frame in bundle coordinates) and a regulation hoop (`kind: hoop`, rim at 3.05 m, `facing` toward the shooter).
+  The WebXR viewer renders both procedurally. Do the same in Unity after the avatar player: ball sphere on the
+  track (interpolate between frames), hoop at real size, both children of the person's root, so placement moves them.
+- The chess legends will sit and move their own pieces in WebXR (procedural seated pose + arm IK), so chess stays
+  WebXR-only; nothing for you there.
+
 ## NEXT (Fri 10:45 PM): you're ahead, here's the next big chunk
 
 Teach mode, reality check, SPZ and hands in one evening: excellent. Real bundles start landing in `dreams/` tonight:

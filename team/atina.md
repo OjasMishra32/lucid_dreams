@@ -4,6 +4,12 @@ You own what the judges see and read, and the footage everything is built from. 
 judgment and writing, not heavy AI use, so it fits a small Codex plan: use Codex for the README and Devpost polish,
 not for long coding sessions. Read `AGENTS.md` first.
 
+## ADDED (Fri 11 PM): the lesson has a ball and a hoop now
+
+LeBron's lesson will have the real ball moving with his hands and a regulation hoop in the room (rim 3.05 m), and
+the chess legends will sit at the table and move their own pieces. Plan the video shots around those two moments:
+the ball leaving his hands toward the hoop in your room, and Fischer reaching across the board.
+
 ## NEXT (Fri 10:45 PM): sources, credits, and the three demo moments
 
 What's processing tonight: LeBron's jump shot (a clip Ojasva supplied; demo only, never in the repo), two Pexels jump

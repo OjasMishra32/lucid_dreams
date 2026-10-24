@@ -4,6 +4,13 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## ADDED (Fri 11 PM): props in the plan
+
+When Gemini writes `experience.json`, also ask it which objects matter for the intent (`"objects": ["basketball",
+"hoop"]` for a jump shot, `["guitar"]` for a strum). Put that list in experience.json as `objects`. The pipeline
+(`props.json`) tracks the ones it can see (the ball) and adds the ones it can't (a regulation hoop for a shooting
+lesson). The dream page can show them as small chips under the plan.
+
 ## NEXT (Fri 10:45 PM): real dreams land tonight, give them plans
 
 Three real replays finish tonight and land in `dreams/` on Ojasva's Mac: `jump-shot`, `jump-shot-2` and

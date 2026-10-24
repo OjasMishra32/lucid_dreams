@@ -6,6 +6,17 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## ADDED (Fri 11 PM): one piece only you can do well
+
+- **The ball's 3D path (props).** Ojasva is detecting the basketball in the source clip and lifting it to 3D with
+  its known size (24 cm). The precise version needs GVHMR's camera: the incam SMPL-X (`smpl_params_incam`) and
+  `K_fullimg` in `runs/<id>/views/gvhmr/`, to put the ball in the same frame as the person's pelvis, then into
+  bundle space with the same transform you use in `gvhmr_motion.py`. If you have 30 minutes after the exam, write
+  `lucid_avatars/ball.py: ball_world(K, incam, world, boxes) -> [N,3]` with a test; Ojasva will call it from the
+  export. Until then his estimate uses the person's height in pixels for scale.
+- Chess: a background builder is doing the seated pose + reach procedurally in the WebXR app, so your seated idle
+  and reach-and-place are no longer blocking. Do them only if you have time after the fine-tune table.
+
 ## NEXT (Fri 10:45 PM): once you're back
 
 - HiPerGator is connected and running (your login, thanks). Your `digs-assets` failed: `student.ckpt` has no DINOv3
