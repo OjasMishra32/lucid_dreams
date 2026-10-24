@@ -12,7 +12,8 @@
 # The research claim: a one-photo DiGS avatar of the person in a finished replay run, fine-tuned on that run's
 # 4DAnyone views, with PSNR / SSIM / LPIPS on 4 held-out views before and after. Needs digs-assets first.
 #   sbatch --export=ALL,RUN_ID=<run id> avatars/hpg/digs-finetune.sbatch
-# DETAIL_STEPS=300 adds the hands and face pass (2x face and hand crops) after the fine-tune; off until tried once.
+# The hands and face pass (2x face and hand crops) runs after every fine-tune (DETAIL_STEPS=300); DETAIL_STEPS=0 skips it.
+# If it fails, the fine-tune's own code and numbers are kept.
 # EXPORT_ONLY=1 re-exports dreams/<run>-tuned from an earlier run's code.pt and results.json (minutes, no training).
 # Writes $OUT/: motion_world.json, views/ (8 frames x every view, cut out), photo.jpg, and dreams/<run>-photo and
 # dreams/<run>-tuned (bundles); the numbers are in dreams/<run>-tuned.work/results.md. Only consented people.
@@ -24,7 +25,7 @@ OUT=${OUT:-$L/data/avatars/finetune/$RUN_ID}
 AV=$L/repos/lucid_dreams/avatars
 FRAMES=${FRAMES:-8}
 STEPS=${STEPS:-800}
-DETAIL_STEPS=${DETAIL_STEPS:-0}
+DETAIL_STEPS=${DETAIL_STEPS:-300}
 EXPORT_ONLY=${EXPORT_ONLY:-0}
 mkdir -p "$OUT/dreams"
 flock $L/repos/.lucid_dreams.lock git -C $L/repos/lucid_dreams pull -q --ff-only || echo "repo update skipped"

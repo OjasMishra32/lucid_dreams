@@ -104,7 +104,7 @@ frames composited on white (so absolute PSNR runs high; the before/after change 
 `uv run python -m lucid_avatars results <run>-tuned.work` puts the table and renders (shrunk to 1600 px, in
 `avatars/results/`) into the Results section at the top of this file.
 
-**Hands and face pass** (`DETAIL_STEPS=300`, off until it has run once): after the fine-tune, a short extra
+**Hands and face pass** (on by default, `DETAIL_STEPS=300`; `DETAIL_STEPS=0` skips it): after the fine-tune, a short extra
 optimisation on 2x close-ups of the face and both hands, so close-ups hold up (`lucid_avatars/detail.py`). DiGS needs a
 centred principal point, so each close-up is a camera at the view's own centre turned onto the face or hand (from the
 clip's posed SMPL-X joints) at twice the focal length; the view maps onto it exactly by a homography and is resampled
