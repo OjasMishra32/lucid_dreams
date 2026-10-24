@@ -3,8 +3,8 @@
 // pre-built stream), builds every module, runs the immersive-ar session drawn opaque (required local-floor; optional
 // anchors, hand-tracking, bounded-floor; requested here rather than through SparkXr, which ends a session on
 // `visible-blurred` and would break the headset-off hand-over, P38), and drives the phase machine once per XR frame:
-//   setup (until Seat here) -> arrival (black and room tone until the page is visible and the seated head is still
-//   ~1 s, then 2.5 s of lights-up) -> watching (pass 1, pass 2; Step into the court arms or takes an ease) -> easing
+//   setup (until Seat here) -> arrival (black and room tone until the hand-over, the session not visible and then
+//   visible again, and the seated head still 1 s: seat.arrival; then 2.5 s of lights-up) -> watching (pass 1, pass 2; Step into the court arms or takes an ease) -> easing
 //   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer or standing up: the walking
 //   anchoring; Next view) -> returning (through the room to the chair, re-seat, handback(t)) -> resume (through the
 //   make) -> ended (Replay).
@@ -14,17 +14,16 @@
 // harness (probe.ts). Owned by the integrator only: streams export their pieces and the integrator wires them here.
 import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
-import { WorldLock } from "../xr/anchor";
 import { handSides } from "../xr/menu";
 import { XR_QUALITY } from "../xr/quality";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
-import { BUILT as LIGHT_BUILT, LightField } from "./lightfield";
+import { BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { Probe, viewOf } from "./probe";
 import { BUILT as PROXIES_BUILT, Proxies } from "./proxies";
-import { BUILT as SEAT_BUILT, Seat } from "./seat";
+import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
 import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
@@ -36,9 +35,7 @@ import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
 /** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves a real bundle at /bundle/. */
 const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : "/bundle/";
-/** The arrival: the seated head still this long, then the lights come up over LIGHTS_UP_S (3.2). */
-const STILL_S = 1.0;
-const STILL_SPEED = 0.05; // m/s: slower than this counts as still
+/** The arrival's lights-up, once seat.arrival says the judge is in (3.2). */
 const LIGHTS_UP_S = 2.5;
 /** See my room fades out over 0.6 s and back over 0.8 s (P34). */
 const ROOM_OUT_S = 0.6;
@@ -91,7 +88,6 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // the machine's state, declared before the probe so its snapshot can read it
   let phase: Phase = "arrival";
   let setup = true; // until Seat here
-  let still = 0;
   let lightsUp = -1;
   let tF = 0; // seconds from F (the hand-off's clock)
   let tBack = 0; // seconds from the sit (the hand-back's clock)
@@ -107,7 +103,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const probe = import.meta.env.DEV && params.has("probe")
     ? new Probe(params.get("probe"), {
         snapshot: () => ({
-          phase, setup, still: Number(still.toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
+          phase, setup, still: Number((seat.arrival.waited ?? -1).toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
           world: { position: [...seat.world.position], yaw: seat.world.yaw }, head: { room: [...head.room], court: [...head.court] },
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
@@ -156,7 +152,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const sideOf = handSides(hands);
   const vrHands = new VrHands(hands, scene);
   const ui = new Ui(scene, hands, sideOf, bundle);
-  const seat = new Seat(court, frames, world, new WorldLock(renderer, world), params.has("seat") ? Number(params.get("seat")) : undefined);
+  const seat = new Seat(court, frames, world, new PersistentLock(renderer, world), params.has("seat") ? Number(params.get("seat")) : undefined);
   world.add(proxies.group);
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
   await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
@@ -170,7 +166,6 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let seatedEyeY = 1.15;
   let rushed = false; // the head rose mid-fade: the fade finishes within RISE_FADE_S
   let restored = false; // Back to my seat: the chair reached and the world re-seated
-  let visible = true;
   const flags = () => ({ inRoom, reality, setup, nextView: seat.hasNextView() });
   const go = (next: Phase) => {
     phase = next;
@@ -185,8 +180,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     seat.place(head, head.yaw);
     seatedEyeY = head.room[1];
     setup = false;
-    still = 0;
-    lightsUp = -1;
+    lightsUp = -1; // seat.place re-arms seat.arrival: dark until the next hand-over
     light.set("dark", 0);
     go("arrival");
   });
@@ -215,9 +209,23 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     courtWorld.reality(reality);
     proxies.reality(reality);
     freeze.reality(reality);
+    ui.setPhase(phase, flags());
   });
+  // Replay, on the menu in every phase after the arrival (3.6): back to the dolly seat if the world is open, the
+  // picture back over the 3D, the hush lifted, the watch from pass 1
   on("replay", () => {
-    if (phase !== "ended") return;
+    if (setup || phase === "arrival") return;
+    if (phase === "open" || phase === "walking" || phase === "returning") seat.restore();
+    video.opacity = 1;
+    video.mask(1);
+    freeze.reveal(0);
+    courtWorld.open(0);
+    light.set("watch", 0);
+    sound.release();
+    tF = 0;
+    tBack = 0;
+    rushed = false;
+    restored = false;
     clock.restart();
     go("watching");
   });
@@ -247,14 +255,15 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     sound.room(roomP);
     vrHands.fade(roomP);
     courtWorld.edge(seat.boundsDistance(head));
+    // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
+    const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
+    vrHands.light(arrive * light.at(head.court[0], head.court[2], PART.person));
     if (setup) return;
     switch (phase) {
       case "arrival": {
+        // the hand-over, then a seated head still for 1 s (seat.arrival, P27, P38)
         if (lightsUp < 0) {
-          const speed = headPos.distanceTo(lastHead) / Math.max(dt, 1e-6);
-          const seated = head.room[1] - seatedEyeY <= STAND_RISE; // standing up waits too (P27)
-          still = visible && seated && speed < STILL_SPEED ? still + dt : 0;
-          if (still >= STILL_S) lightsUp = 0;
+          if (seat.arrival.update(dt, head.room)) lightsUp = 0;
         } else lightsUp += dt;
         const p = Math.max(0, Math.min(1, lightsUp / LIGHTS_UP_S));
         light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
@@ -372,7 +381,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       }
     }
     if (renderer.xr.isPresenting) {
-      seat.update(); // the only writer of the world group (seat.ts)
+      seat.update(dt, head); // the only writer of the world group (seat.ts), with the fade-jump veil
       vrHands.update();
       ui.update(head, time, dt);
     }
@@ -413,10 +422,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     });
     session = s;
     // the session is kept through `visible-blurred` and `hidden` (headset off, the system menu): only its end ends it
-    s.addEventListener("visibilitychange", () => {
-      visible = s.visibilityState === "visible";
-      if (!visible) still = 0; // the arrival waits for the judge (P27)
-    });
+    s.addEventListener("visibilitychange", () => seat.arrival.visibility(s.visibilityState)); // the hand-over (P27, P38)
     s.addEventListener("end", () => {
       session = null;
       status.textContent = court.title;

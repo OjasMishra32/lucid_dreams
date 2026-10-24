@@ -10,6 +10,7 @@ const HZ = 72;
 export default async function room(ctx) {
   if (ctx.timing) ctx.skip("capture only");
   await ctx.seatHere();
+  await ctx.handOver();
   for (const phase of ["arrival", "watching"]) {
     if (phase !== "arrival") await ctx.until(phase, HZ * 8);
     const out = await ctx.pressFrames("room", Math.round(0.6 * HZ) + 4);

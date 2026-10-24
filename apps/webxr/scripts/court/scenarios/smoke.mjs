@@ -7,6 +7,7 @@ export default async function smoke(ctx) {
   const first = await ctx.nextFrame();
   ctx.check("session", first.phase === "arrival" && first.setup, `first XR frame in ${first.phase}, setup ${first.setup}`);
   await ctx.seatHere();
+  await ctx.handOver();
   const toWatch = await ctx.until("watching", 72 * 8);
   if (!toWatch.length) throw new Error("no frames rendered after Seat here");
   const last = toWatch[toWatch.length - 1];

@@ -108,7 +108,8 @@ async function loadScenarios() {
  *   truth(view, showFrame) works: the true scene from a captured frame's view, standin.mjs truthAt);
  *   writePng(name, { width, height, rgb | rgba }) (into out/, returns the path);
  *   nextFrame(); frames(n); until(phase, max); save(name) (the next frame as out/<name>.png; resolves with its log,
- *   view included); snapshot(); seatHere(); press(action); pressFrames(action, n) (press, then the next n frames,
+ *   view included); snapshot(); seatHere(); handOver() (the headset off and on again: the session visible-blurred, then
+ *   visible; the arrival waits for it after Seat here, P27, P38); press(action); pressFrames(action, n) (press, then the next n frames,
  *   starting with the frame that acts on the press: frames run freely, so time anything that starts at a press this
  *   way, never with a separate frames() call);
  *   device(fn, arg) (runs fn(window.__xrDevice, arg) in the page: IWER's XRDevice, e.g. position, quaternion, hands,
@@ -148,6 +149,12 @@ function makeContext(page, check, report, bundleJson) {
     save: (n) => page.evaluate((x) => window.__court.save(x), n),
     snapshot: () => page.evaluate(() => window.__court.snapshot()),
     seatHere: () => page.evaluate(() => window.__court.seatHere()),
+    handOver: async () => {
+      await page.evaluate(() => window.__xrDevice.updateVisibilityState("visible-blurred"));
+      await page.evaluate(() => window.__court.frames(20));
+      await page.evaluate(() => window.__xrDevice.updateVisibilityState("visible"));
+      await page.evaluate(() => window.__court.frames(3));
+    },
     press: (action) => page.evaluate((a) => window.__court.press(a), action),
     pressFrames: (action, n) => page.evaluate(([a, m]) => (window.__court.press(a), window.__court.frames(m)), [action, n]),
     device: (fn, arg) => page.evaluate(([src, a]) => new Function("device", "arg", `return (${src})(device, arg)`)(window.__xrDevice, a), [fn.toString(), arg]),

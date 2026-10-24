@@ -14,6 +14,7 @@ export default async function layers(ctx) {
   if (!ctx.standin) ctx.skip("P43 needs the stand-in's truth (run without --bundle)");
   if (ctx.timing) ctx.skip("capture only");
   await ctx.seatHere();
+  await ctx.handOver();
   await ctx.until("watching", 72 * 8);
   const { pass2 } = ctx.court.video.segments;
   const pairs = [];

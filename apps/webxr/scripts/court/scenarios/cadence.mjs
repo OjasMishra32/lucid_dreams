@@ -6,6 +6,7 @@ export const needs = ["clock", "video"];
 
 export default async function cadence(ctx) {
   await ctx.seatHere();
+  await ctx.handOver();
   await ctx.until("watching", 72 * 8);
   const { pass1, pass2 } = ctx.court.video.segments;
   const log = await ctx.frames(pass2[1] - pass1[0] + 1 + 36);

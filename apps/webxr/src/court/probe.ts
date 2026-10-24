@@ -27,7 +27,7 @@ export interface ProbeFrame {
   speed: number;
   /** The show frame actually on the video texture (-1 none). */
   onScreen: number;
-  /** The phase machine's clocks (court.ts): arrival's still time and lights-up (-1 not started), seconds from F, See my room (0-1). */
+  /** The phase machine's clocks (court.ts): how long the head had been seated and still when the lights-up started (-1 before), the lights-up (-1 not started), seconds from F, See my room (0-1). */
   still: number;
   lightsUp: number;
   tF: number;

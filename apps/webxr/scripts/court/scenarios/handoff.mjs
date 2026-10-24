@@ -7,6 +7,7 @@ export const needs = ["clock", "video", "proxies", "handoff", "freeze", "world",
 
 export default async function handoff(ctx) {
   await ctx.seatHere();
+  await ctx.handOver();
   await ctx.until("watching", 72 * 8);
   let f = await ctx.nextFrame();
   while (f.segment !== "pass2") f = await ctx.nextFrame();
