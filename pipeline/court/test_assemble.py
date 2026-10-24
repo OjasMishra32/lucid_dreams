@@ -212,7 +212,7 @@ class RunLayout(unittest.TestCase):
             (r / "recon-000118.json").write_text(json.dumps({"frames": [{"sourcePsnr": 33.1, "facePsnr": 30.2, "gaussians": 299000}],
                                                              "source": {"iou": 0.962, "focal": 22350.0, "focalHeld": True}}))
             (m / "recon-000118.json").write_text(json.dumps({"frames": [{"psnr": 27.4, "ssim": 0.95}], "source": {}}))
-            slot = A.resolve_run({"id": "luka", "run": str(run), "variant": "raw-default-r1", "cap": "300k", "courtRun": "x.json"})
+            slot = A.resolve_run({"id": "holder", "run": str(run), "variant": "raw-default-r1", "cap": "300k", "courtRun": "x.json"})
             self.assertEqual(Path(slot["splats"]), b / "frames/000000.ply")
             self.assertEqual(Path(slot["reality"]), b / "frames/000000.reality.spz")
             self.assertEqual(Path(slot["spz"]), b / "frames/000000.spz")
@@ -368,8 +368,8 @@ class BallMask(unittest.TestCase):
         m = np.zeros((1080, 1920), np.uint8)
         cv2.circle(m, (800, 500), 40, 255, -1)
         with tempfile.TemporaryDirectory() as d:
-            cv2.imwrite(str(Path(d) / "001244.png"), m)
-            u, v = A.mask_centroid(Path(d) / "001244.png", source_width=3840)
+            cv2.imwrite(str(Path(d) / "000100.png"), m)
+            u, v = A.mask_centroid(Path(d) / "000100.png", source_width=3840)
             self.assertAlmostEqual(u, (800 + 0.5) * 2 - 0.5, delta=0.6)
             self.assertAlmostEqual(v, (500 + 0.5) * 2 - 0.5, delta=0.6)
             cv2.imwrite(str(Path(d) / "000001.png"), np.zeros((1080, 1920), np.uint8))
@@ -395,9 +395,9 @@ class Ball(unittest.TestCase):
         u, v, _ = cam.project(ball[None])
         with tempfile.TemporaryDirectory() as tmp:
             w = A.Writer(Path(tmp))
-            got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "luka"}}, {}, [{"id": "luka"}], cam, {"luka": body})
+            got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
         np.testing.assert_allclose(got["centre"], ball, atol=0.03)
-        self.assertEqual(got["erase"], [{"player": "luka", "radius": 0.15}])
+        self.assertEqual(got["erase"], [{"player": "holder", "radius": 0.15}])
 
 
 class Floor(unittest.TestCase):
