@@ -47,7 +47,9 @@ export function tokenGate(token) {
     if (k !== null) {
       if (!same(k)) return { status: 404 };
       url.searchParams.delete("k");
-      return { status: 302, location: `${url.pathname}${url.search}`, cookie: `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE}` };
+      // Lax, not Strict: a link typed as http:// comes back as https (serve.mjs), and that hop is cross-site to the
+      // browser, which would hold back a Strict cookie on the redirect and leave the page a 404
+      return { status: 302, location: `${url.pathname}${url.search}`, cookie: `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}` };
     }
     return same(cookieValue(req.headers?.cookie)) ? null : { status: 404 };
   };

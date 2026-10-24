@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { dyno, SplatMesh, type SparkRenderer } from "@sparkjsdev/spark";
 import type { Capsule, CourtBundle, FloorMap, Quat, Vec3 } from "./format";
 import type { LightField, LightPerson } from "./lightfield";
+import { loads } from "./loading";
 import type { Head } from "./types";
 
 /** True once stream E has built this module. */
@@ -250,6 +251,9 @@ export class Freeze {
   private readonly realityU = { value: 0 };
   private revealP = 0;
   private realityOn = false;
+  /** The loads after load(): the Reality check's splats, started by allLoaded. */
+  private readonly late: (() => Promise<void>)[] = [];
+  private lateLoads: Promise<void> | null = null;
   private roomBounds: [number, number][] | null = null;
 
   /** Splats and maps go in `world` (court space). */
@@ -268,7 +272,13 @@ export class Freeze {
     }
   }
 
-  /** Load every player's splats and reality splats, the extras, the floor maps; build the ball. */
+  /** Start the Reality check's splats (once; after load()), resolving when they are in. */
+  allLoaded(): Promise<void> {
+    this.lateLoads ??= Promise.all(this.late.map((start) => start())).then(() => {});
+    return this.lateLoads;
+  }
+
+  /** Load every player's splats, the extras, the floor maps; build the ball. The reality splats follow (allLoaded). */
   async load(): Promise<void> {
     const light = this.light;
     const { court, frames } = this.bundle;
@@ -284,8 +294,16 @@ export class Freeze {
       }
     };
     const splats = async (path: string): Promise<SplatMesh> => {
-      const mesh = new SplatMesh({ url: this.bundle.file(path) });
-      await mesh.initialized;
+      // Spark fetches in its worker: its progress feeds the loading page's bar (loading.ts)
+      loads.progress(path, 0, 0);
+      const mesh = new SplatMesh({ url: this.bundle.file(path), onProgress: (e) => loads.progress(path, e.loaded, e.lengthComputable ? e.total : 0) });
+      try {
+        await mesh.initialized;
+      } catch (e) {
+        loads.failed(path, e);
+        throw e;
+      }
+      loads.finished(path);
       return mesh;
     };
     const relief = async (path: string): Promise<THREE.Object3D> => {
@@ -337,16 +355,25 @@ export class Freeze {
         return m;
       };
       const normal = await make(p.file);
-      const reality = await make(p.reality).catch(() => null);
-      if (reality) reality.visible = false;
       const person: Person = {
-        id: p.id, pair: p.pair, fromC: p.fromC, normal, reality, splats: meshes, capsules: p.capsules, opacity: 1,
+        id: p.id, pair: p.pair, fromC: p.fromC, normal, reality: null, splats: meshes, capsules: p.capsules, opacity: 1,
         lightPerson, lit, floorK: { value: 0 }, reliefMats, foot: p.foot, inside: inBounds(p.foot[0], p.foot[1], this.roomBounds),
       };
       const sub = new THREE.Group();
       sub.name = `court-freeze-${p.id}`;
       sub.add(normal);
-      if (reality) sub.add(reality);
+      // the Reality check's splats load once the page is ready (allLoaded): only that button needs them, and they are
+      // a quarter of the bundle's bytes, which a slow link would otherwise wait out on the loading page
+      this.late.push(() =>
+        make(p.reality)
+          .then((reality) => {
+            person.reality = reality;
+            sub.add(reality);
+            this.reality(this.realityOn);
+            this.applyOpacity();
+          })
+          .catch(() => {}),
+      );
       const [shadowMap, reflectMap] = await Promise.all([tex(p.shadow.image, false), tex(p.reflection.image, true)]);
       if (reflectMap) {
         const quad = floorQuad(p.reflection.rect, reflectionMaterial(reflectMap, person.floorK, person.lit, light), -11);

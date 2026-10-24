@@ -21,6 +21,7 @@ import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
+import { loads, megabytes } from "./loading";
 import { Probe, viewOf } from "./probe";
 import { judgeRate, wantRate, type XrRate } from "./rate";
 import { BUILT as PROXIES_BUILT, Proxies, layerVisibility } from "./proxies";
@@ -53,9 +54,43 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     <div class="stage" id="court-stage"></div>
     <div class="topbar"><div></div>
       <div class="title"><div>Court Side</div><div class="subtitle" id="court-status">Loading the court</div></div><div></div></div>
-    <div class="controls"><button class="cta" id="court-enter" disabled>Enter</button></div>`;
+    <div class="controls"><div class="court-load" id="court-load"><i></i></div><span class="court-load-text" id="court-load-text"></span><button class="cta" id="court-enter" disabled>Enter</button></div>`;
   const status = root.querySelector<HTMLElement>("#court-status")!;
   const enterButton = root.querySelector<HTMLButtonElement>("#court-enter")!;
+  // the loading page's bar (loading.ts): the big files' bytes, so a slow link shows it moving (~200 MB over a tunnel)
+  const loadBar = root.querySelector<HTMLElement>("#court-load")!;
+  const loadText = root.querySelector<HTMLElement>("#court-load-text")!;
+  // dev only: the loading page posts its progress to serve.mjs --dev's headset sink every 2 s (boot-<id>.jsonl), so a
+  // headset stuck on it can be read from the Mac (its browser has no console to look at). Never from an automated
+  // browser (the e2e's server keeps no records, and its console must stay clean)
+  const bootId = `boot-${Date.now().toString(36)}`;
+  const bootReport = (what: string) => {
+    if (!import.meta.env.DEV || navigator.webdriver) return;
+    const body = JSON.stringify({ session: bootId, kind: "boot", what, t: Number((performance.now() / 1000).toFixed(1)), ua: navigator.userAgent, status: status.textContent, load: loads.snapshot() });
+    void fetch("/__court/headset", { method: "POST", headers: { "Content-Type": "application/json" }, body }).catch(() => {});
+  };
+  // WebXR and WebCodecs need a secure page (https, or localhost): over plain http the show could never start, so say so
+  // here instead of loading (serve.mjs sends a tunnel's http:// visits back out as https)
+  if (!isSecureContext) {
+    status.textContent = `Open this over https:// (the headset needs it): https://${location.host}${location.pathname}${location.search}`;
+    bootReport("insecure");
+    return;
+  }
+  let loadTicks = 0;
+  const showLoad = () => {
+    const s = loads.snapshot();
+    (loadBar.firstElementChild as HTMLElement).style.width = `${s.total ? ((100 * s.loaded) / s.total).toFixed(1) : 0}%`;
+    loadText.textContent = s.total ? megabytes(s) : "";
+    if (s.files && s.done === s.files && status.textContent === "Loading the court") status.textContent = "Setting up the court";
+    if (loadTicks++ % 8 === 0) bootReport("loading");
+  };
+  const loadTimer = setInterval(showLoad, 250);
+  const loadFailed = (msg: string) => {
+    clearInterval(loadTimer);
+    showLoad();
+    status.textContent = `Could not load the court: ${msg}`;
+    bootReport("error");
+  };
   const params = new URLSearchParams(location.search);
 
   // ---------------- three + Spark (antialias off: MSAA + Spark hangs the Quest; no tone mapping: one grade) ----------------
@@ -143,7 +178,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     bundle = await loadCourt(bundleUrl, { fallback });
   } catch (e) {
     const msg = (e as Error).message;
-    status.textContent = `No court bundle at ${bundleUrl}`;
+    loadFailed(`no court bundle at ${bundleUrl} (${msg})`);
     if (probe) probe.api.error = msg;
     console.error(`Court Side: ${msg}${import.meta.env.DEV ? "\n(make the stand-in: node apps/webxr/scripts/court/standin.mjs)" : ""}`);
     return;
@@ -209,7 +244,19 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       })
     : null;
   headset?.start();
-  await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
+  try {
+    await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
+    // the e2e and the ?splats sweep see every splat at once (the Reality check's come after the page is ready otherwise)
+    if (probe || params.has("splats")) await freeze.allLoaded();
+  } catch (e) {
+    loadFailed((e as Error)?.message ?? String(e));
+    throw e;
+  }
+  clearInterval(loadTimer);
+  showLoad();
+  loadBar.hidden = true;
+  loadText.hidden = true;
+  void freeze.allLoaded(); // the Reality check's splats, behind everything the show needs
   // ?splats=<n> (dev only): at most n splats per body, the most important first, to find the frame budget live (splatcap.ts)
   if (import.meta.env.DEV && params.has("splats"))
     await import("./splatcap").then((m) => console.info("Court Side ?splats:", m.capSplats(scene, Number(params.get("splats"))))).catch((e: unknown) => console.error("Court Side ?splats:", e));
@@ -531,6 +578,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const supported = xrSystem ? await xrSystem.isSessionSupported("immersive-ar").catch(() => false) : false;
   enterButton.disabled = !supported;
   status.textContent = supported ? court.title : "This browser has no immersive AR";
+  bootReport("ready");
   if (probe) probe.api.ready = supported;
   let session: XRSession | null = null;
   // the show's own display rate when the headset offers it (rate.ts): the clock shows one show frame per XR frame only

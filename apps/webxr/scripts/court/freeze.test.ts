@@ -2,9 +2,12 @@
 //   node --experimental-transform-types --test apps/webxr/scripts/court/freeze.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FADE_NEAR, FADE_S, FADE_TO, capsuleDistance, fadeStep, inBounds, nearBody, projectUv } from "../../src/court/freeze.ts";
+import "./ts-resolve.mjs";
 import { cameraOf, project } from "../../src/court/camera.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
+
+// freeze.ts imports its siblings the bundler's way ("./loading"): loaded after ts-resolve.mjs
+const { FADE_NEAR, FADE_S, FADE_TO, capsuleDistance, fadeStep, inBounds, nearBody, projectUv } = await import("../../src/court/freeze.ts");
 import { standinBundle } from "./standin.mjs";
 import { openEye } from "./look/proximity.mjs";
 import { boundsCase } from "./look/bounds.mjs";

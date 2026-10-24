@@ -6,15 +6,16 @@
 //   node apps/webxr/src/court/serve.mjs --bundle <bundle folder, outside the repo> [--port 5185] [--dist apps/webxr/dist]
 //   node apps/webxr/src/court/serve.mjs --dev --bundle <folder> [--standin] [--port 0] [--headset-dir <folder>]
 //   either, plus --token <openssl rand -hex 16>: every request needs the cookie that /?k=<token> sets (token-gate.mjs);
-//                       anything else is a 404 with no body
+//                       anything else is a 404 with no body; --defaults "bundle=/bundle/&solo" makes that redirect add
+//                       what a short link leaves out
 // Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/), or with --dev apps/webxr's vite dev
 //                       server as middleware (plain http, HMR on this port; the only way to get IWER's ?emulate, which
 //                       loads in dev only: the e2e runs through this)
 //          /bundle/...  the bundle folder (court.json beside it); CORS only for pages on localhost / 127.0.0.1, so the
 //                       dev page and the e2e runner can read a real bundle without vite ever serving it
 //          /court-sw.js the Service Worker (sw.js), scoped to /
-//          POST /__court/headset (--dev only): `?probe=headset`'s records, appended to --headset-dir (else
-//                       $COURT_DATA/qa/headset)/<session>.jsonl (headset-sink.mjs)
+//          POST /__court/headset (--dev only): `?probe=headset`'s records and the loading page's (boot-<id>),
+//                       appended to --headset-dir (else $COURT_DATA/qa/headset)/<session>.jsonl (headset-sink.mjs)
 // Refuses: any Host but 127.0.0.1 or localhost (DNS rebinding); a bundle inside any checkout of the repo, worktrees
 // included (vite and the tunnel serve apps/webxr/ and dreams/; only the synthetic stand-in may be served from there,
 // with --standin); and any path (symlinks included) that leaves its folder. `--port 0` takes a free port; the first
@@ -37,7 +38,7 @@ const expand = (p) => (p.startsWith("~/") ? join(process.env.HOME ?? "", p.slice
 const DEV = args.includes("--dev");
 const bundleArg = opt("--bundle", null);
 if (!bundleArg) {
-  console.error("usage: node apps/webxr/src/court/serve.mjs [--dev] --bundle <folder with court.json> [--standin] [--port 5185] [--dist <vite build>]");
+  console.error("usage: node apps/webxr/src/court/serve.mjs [--dev] --bundle <folder with court.json> [--standin] [--port 5185] [--dist <vite build>] [--token <t>] [--defaults <query>]");
   process.exit(2);
 }
 const bundlePath = resolve(expand(bundleArg));
@@ -87,6 +88,14 @@ if (args.includes("--token") && !goodToken(TOKEN)) {
   process.exit(2);
 }
 const gate = TOKEN ? tokenGate(TOKEN) : null;
+// --defaults "<query>": what the /?k= redirect adds when the link leaves it out, so a short link typed on the headset
+// gets the real bundle and its flags (e.g. --defaults "bundle=/bundle/&solo"); what the link names itself wins
+const DEFAULTS = new URLSearchParams(opt("--defaults", ""));
+const withDefaults = (location) => {
+  const url = new URL(location, "http://127.0.0.1");
+  for (const [k, v] of DEFAULTS) if (!url.searchParams.has(k)) url.searchParams.set(k, v);
+  return `${url.pathname}${url.search}`;
+};
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
@@ -94,6 +103,11 @@ const TYPES = {
   ".wasm": "application/wasm", ".m4a": "audio/mp4", ".mp4": "video/mp4", ".h264": "video/h264", ".glb": "model/gltf-binary",
   ".ply": "application/octet-stream", ".spz": "application/octet-stream",
 };
+// a tunnel link typed as http:// (the headset's keyboard): WebXR and WebCodecs need a secure page, so a page visit goes
+// back out as https on the same host, which only the page knows (cloudflared hands this server 127.0.0.1). The token's
+// first visit too, before its cookie is set: the https visit sets it. The page never carries the token.
+const overHttp = (req) => req.headers["x-forwarded-proto"] === "http" || /"scheme":"http"/.test(String(req.headers["cf-visitor"] ?? ""));
+const UPGRADE = '<!doctype html><meta charset="utf-8"><title>Court Side</title><script>location.replace("https://" + location.host + location.pathname + location.search)</script>';
 let LOCAL_HOST = null; // set once listening (the real port, when --port 0)
 const LOCAL_ORIGIN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
@@ -126,9 +140,14 @@ server.on("request", (req, res) => {
   };
   if (!LOCAL_HOST?.test(req.headers.host ?? "")) return deny(403);
   const shut = gate?.(req);
+  if (shut?.status !== 404 && req.method === "GET" && (req.url ?? "/").split("?")[0] === "/" && overHttp(req)) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.end(UPGRADE);
+  }
   if (shut) {
     if (shut.cookie) res.setHeader("Set-Cookie", shut.cookie);
-    if (shut.location) res.setHeader("Location", shut.location);
+    if (shut.location) res.setHeader("Location", withDefaults(shut.location));
     return deny(shut.status);
   }
   if (DEV && req.method === "POST" && (req.url ?? "").split("?")[0] === HEADSET_PATH) return headsetSink(req, res, HEADSET_DIR);
@@ -160,10 +179,20 @@ server.on("request", (req, res) => {
   } catch {
     return deny(404); // replaced by a re-sync between the lookup and now
   }
+  // no-cache with validators: a reload asks, and an unchanged file is a bodiless 304 instead of its bytes again (the
+  // show stream and the splats are ~200 MB, minutes over a tunnel)
+  const modified = st.mtime.toUTCString();
+  const etag = `W/"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Last-Modified", modified);
+  res.setHeader("ETag", etag);
+  const match = req.headers["if-none-match"];
+  if (match !== undefined ? match.split(",").some((t) => t.trim() === etag) : req.headers["if-modified-since"] === modified) {
+    res.statusCode = 304;
+    return res.end();
+  }
   res.setHeader("Content-Type", TYPES[extname(file)] ?? "application/octet-stream");
   res.setHeader("Content-Length", String(st.size));
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Last-Modified", st.mtime.toUTCString());
   if (req.method === "HEAD") return res.end();
   createReadStream(file)
     .on("error", () => res.destroy())

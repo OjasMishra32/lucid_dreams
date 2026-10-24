@@ -25,7 +25,8 @@ test("the gate: no token, a wrong one or a wrong cookie is a 404; /?k=<token> se
   const set = gate(req(`/?k=${TOKEN}&mode=court&bundle=/bundle/&stats`));
   assert.equal(set!.status, 302);
   assert.equal(set!.location, "/?mode=court&bundle=%2Fbundle%2F&stats=");
-  assert.match(set!.cookie!, new RegExp(`^${COOKIE}=${TOKEN}; Path=/; HttpOnly; SameSite=Strict; Max-Age=\\d+$`));
+  // Lax: the http:// -> https hop of a typed tunnel link is cross-site, and a Strict cookie would be held back there
+  assert.match(set!.cookie!, new RegExp(`^${COOKIE}=${TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age=\\d+$`));
   assert.equal(gate(req("/bundle/video/show.h264", `a=1; ${COOKIE}=${TOKEN}; b=2`)), null);
   assert.equal(gate(req("/court-sw.js", `${COOKIE}=${TOKEN}`)), null);
   assert.equal(cookieValue(`x=1;${COOKIE}=abc`), "abc");
@@ -36,9 +37,9 @@ test("the gate: no token, a wrong one or a wrong cookie is a 404; /?k=<token> se
 });
 
 /** One request to the server; resolves { status, headers, body }. */
-function get(port: number, path: string, cookie?: string): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
+function get(port: number, path: string, cookie?: string, extra: Record<string, string> = {}): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
   return new Promise((ok, fail) => {
-    const r = request({ host: "127.0.0.1", port, path, headers: { host: `127.0.0.1:${port}`, ...(cookie ? { cookie } : {}) } }, (res) => {
+    const r = request({ host: "127.0.0.1", port, path, headers: { host: `127.0.0.1:${port}`, ...(cookie ? { cookie } : {}), ...extra } }, (res) => {
       let body = "";
       res.on("data", (c) => (body += c));
       res.on("end", () => ok({ status: res.statusCode ?? 0, headers: res.headers, body }));
@@ -94,6 +95,86 @@ test("serve.mjs refuses a weak --token", async () => {
     const code = await new Promise<number | null>((ok) => spawn(process.execPath, [serve, "--bundle", tmp, "--dev", "--token", "abc"], { stdio: "ignore" }).on("exit", ok));
     assert.equal(code, 2);
   } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("serve.mjs --defaults: the /?k= redirect adds what a short link leaves out; a reload of an unchanged file is a 304", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "court-defaults-"));
+  const dist = join(tmp, "dist");
+  const bundle = join(tmp, "bundle");
+  mkdirSync(dist);
+  mkdirSync(bundle);
+  writeFileSync(join(dist, "index.html"), "<!doctype html><title>court</title>");
+  writeFileSync(join(bundle, "court.json"), '{"title":"t"}');
+  const serve = join(dirname(fileURLToPath(import.meta.url)), "../../src/court/serve.mjs");
+  const args = [serve, "--bundle", bundle, "--dist", dist, "--port", "0", "--token", TOKEN, "--defaults", "bundle=/bundle/&solo"];
+  const srv = spawn(process.execPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const port = await new Promise<number>((ok, fail) => {
+      srv.stdout.on("data", (d) => {
+        const m = String(d).match(/127\.0\.0\.1:(\d+)/);
+        if (m) ok(Number(m[1]));
+      });
+      srv.on("exit", (code) => fail(new Error(`serve.mjs exited ${code}`)));
+    });
+    const short = await get(port, `/?k=${TOKEN}&mode=court`);
+    assert.equal(short.status, 302);
+    assert.equal(short.headers.location, "/?mode=court&bundle=%2Fbundle%2F&solo=");
+    // what the link names itself wins
+    assert.equal((await get(port, `/?k=${TOKEN}&mode=court&bundle=/other/`)).headers.location, "/?mode=court&bundle=%2Fother%2F&solo=");
+    const cookie = String((short.headers["set-cookie"] as string[])[0]).split(";")[0];
+    const first = await get(port, "/bundle/court.json", cookie);
+    assert.equal(first.status, 200);
+    const modified = String(first.headers["last-modified"]);
+    const etag = String(first.headers.etag);
+    assert.ok(etag.length > 2, "an ETag");
+    const again = await get(port, "/bundle/court.json", cookie, { "if-none-match": etag });
+    assert.equal(again.status, 304);
+    assert.equal(again.body, "");
+    assert.equal((await get(port, "/bundle/court.json", cookie, { "if-modified-since": modified })).status, 304);
+    assert.equal((await get(port, "/bundle/court.json", cookie, { "if-none-match": '"stale"' })).status, 200);
+  } finally {
+    srv.kill();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("serve.mjs through a tunnel over http://: the token's visit and the page go back out as https (WebXR needs it)", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "court-https-"));
+  const dist = join(tmp, "dist");
+  const bundle = join(tmp, "bundle");
+  mkdirSync(dist);
+  mkdirSync(bundle);
+  writeFileSync(join(dist, "index.html"), "<!doctype html><title>court</title>");
+  writeFileSync(join(bundle, "court.json"), '{"title":"t"}');
+  const serve = join(dirname(fileURLToPath(import.meta.url)), "../../src/court/serve.mjs");
+  const srv = spawn(process.execPath, [serve, "--bundle", bundle, "--dist", dist, "--port", "0", "--token", TOKEN], { stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const port = await new Promise<number>((ok, fail) => {
+      srv.stdout.on("data", (d) => {
+        const m = String(d).match(/127\.0\.0\.1:(\d+)/);
+        if (m) ok(Number(m[1]));
+      });
+      srv.on("exit", (code) => fail(new Error(`serve.mjs exited ${code}`)));
+    });
+    const http = { "x-forwarded-proto": "http" };
+    const up = await get(port, `/?k=${TOKEN}&mode=court`, undefined, http);
+    assert.equal(up.status, 200);
+    assert.match(up.body, /location\.replace\("https:\/\/" \+ location\.host/);
+    assert.ok(!up.body.includes(TOKEN), "the page itself never carries the token");
+    assert.equal(up.headers["set-cookie"], undefined, "the cookie is set by the https visit");
+    // a wrong token over http is still a bodiless 404, and so is no cookie
+    assert.equal((await get(port, "/?k=wrong", undefined, http)).status, 404);
+    assert.equal((await get(port, "/?mode=court", undefined, http)).status, 404);
+    const cookie = String((await get(port, `/?k=${TOKEN}`)).headers["set-cookie"]).split(";")[0];
+    assert.equal((await get(port, "/?mode=court", cookie, http)).status, 200);
+    assert.match((await get(port, "/?mode=court", cookie, http)).body, /location\.replace/);
+    // the bundle's files and an https visit are served as before
+    assert.equal((await get(port, "/bundle/court.json", cookie, http)).body, '{"title":"t"}');
+    assert.equal((await get(port, `/?k=${TOKEN}&mode=court`, undefined, { "x-forwarded-proto": "https" })).status, 302);
+  } finally {
+    srv.kill();
     rmSync(tmp, { recursive: true, force: true });
   }
 });

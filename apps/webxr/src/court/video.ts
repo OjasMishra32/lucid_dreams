@@ -15,6 +15,7 @@
 import * as THREE from "three";
 import { splitAnnexB, spsCodec, type AccessUnit } from "./annexb";
 import type { CourtBundle, Region, ShowSegments } from "./format";
+import { loads } from "./loading";
 
 /** True once stream D has built this module. */
 export const BUILT = true;
@@ -52,11 +53,10 @@ const browserEnv = (): VideoEnv => ({
   decoder: (output, error) => new VideoDecoder({ output, error: (e) => error(e) }),
   chunk: (init) => new EncodedVideoChunk(init),
   supported: async (config) => typeof VideoDecoder !== "undefined" && !!(await VideoDecoder.isConfigSupported(config)).supported,
-  bytes: async (url) => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`show stream ${url}: HTTP ${res.status}`);
-    return new Uint8Array(await res.arrayBuffer());
-  },
+  // streamed, so the loading page's bar can show it coming in (loading.ts): the show stream is most of the bundle
+  bytes: (url) => loads.bytes(url, "the show").catch((e: unknown) => {
+    throw new Error(`show stream ${url}: ${(e as Error).message}`);
+  }),
   now: () => performance.now(),
   element: async (url) => {
     const el = document.createElement("video");

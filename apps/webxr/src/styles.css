@@ -119,6 +119,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 }
 .cta:hover { background: var(--accent-hover); }
 .cta[hidden] { display: none; }
+/* Court Side's loading bar (court/loading.ts): the bundle's bytes coming in, beside Enter */
+.court-load { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.court-load i { display: block; height: 100%; width: 0; background: var(--link); transition: width 0.25s linear; }
+.court-load-text { flex: none; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.court-load[hidden], .court-load-text[hidden] { display: none; }
 
 .hint { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 9; font-size: 13px; color: var(--muted); }
 
