@@ -47,6 +47,7 @@ def compose_matte(live_size: tuple[int, int], box_t: Sequence[float], parts: Seq
 
 # ---------------------------------------------------------------- the footage-side provider
 
+import dataclasses
 import json
 import time
 from dataclasses import dataclass
@@ -236,8 +237,13 @@ def synth_run(work, out, config, opts, bake_fn) -> dict:
     return build_run(cfg, Path(out) if out else work / "show", opts, bake_fn)
 
 
+REAL_FRAMES = Path.home() / "court-side-data" / "luka" / "work" / "layers" / "f1080"
+
+
 def real_run(work, out, config, opts, bake_fn) -> dict:
     cfg = config_mod.load(config)
+    if not cfg.frames_dir:  # the private config may leave the decoded frames' folder out: the 1080p set (jpg) is the default
+        cfg = dataclasses.replace(cfg, frames_dir=str(REAL_FRAMES), frame_pattern="{src:06d}.jpg")
     from pipeline.court.bake import bake as bake_mod
 
     return build_run(cfg, bake_mod.check_out_dir(out) if out else bake_mod.STAGING, opts, bake_fn)
