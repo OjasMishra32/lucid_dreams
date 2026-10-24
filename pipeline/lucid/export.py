@@ -271,6 +271,7 @@ def main(argv=None):
 
     first = read_ply(frame_paths[0])
     rot, t = placement(first, a.result)
+    placed_by = {"rot": rot.round(8).tolist(), "t": t.round(6).tolist()}  # result world -> bundle (props added later)
     cams = front_cameras(a.result) if a.result and (a.result / "cameras.json").exists() else []
     solved = sorted(a.recon.glob("source-camera-*.json"))
     if solved:  # the clip's real camera, solved in reconstruction: it may face the person's back, not their front
@@ -386,6 +387,7 @@ def main(argv=None):
         "source": source,
         "metrics": {"psnr": mean("psnr"), "ssim": mean("ssim"), "lpips": None, "views": views,
                     "seenFraction": round(float(np.mean(seen_fractions)), 3) if seen_fractions else None},
+        "placement": placed_by,
         "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     words = f"{a.intent} {a.name}"
