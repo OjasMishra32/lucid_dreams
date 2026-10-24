@@ -7,7 +7,8 @@ and 121-frame rules by noon, ship one player on the court. Updated Sat 5:35 AM.
 
 ## Asks for Ojasva (newest first)
 
-5. **Open (heads-up, about 7:30-8 AM).** One B200 for about 10 minutes: a **Turbo** views run on one player-only
+5. **Approved (Ojasva, Sat 5:50 AM).** Send the command and clip path and it runs on the next free B200 (I'll hold other queued work for it).
+   Original ask, about 7:30-8 AM: One B200 for about 10 minutes: a **Turbo** views run on one player-only
    portrait clip (121 frames, 1080x1920, cut from the broadcast) to see whether 4DAnyone gives a usable person before
    any full-quality GPU hours. Exact command and clip path come with it.
 4. **Done.** SAM 3? **No** (gated). Use SAM 2.1 (Apache-2.0, not gated).
