@@ -4,6 +4,36 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## BIG CHUNK (Sat 12:20 AM): make the main goal real in the web app
+
+Round two is excellent (guide, window picker, consent, Lighthouse 98-100, the injection fix). Your two notes for
+Ojasva are done: avatars now arrive with `avatar.ply` (the fetch skips only `/frames/*.ply`), and `.gitignore`
+anchors `/dreams/`. Tonight's real dreams land in `dreams/` within the hour: `jump-shot`, `jump-shot-2`,
+`lebron-jumper` (intent "teach me this jump shot"), `piano-han` (Jason Han, "sit next to me and teach me this
+piece"), and avatars `bobby-fischer`, `magnus-carlsen` ("play chess with me") and `juice-wrld` ("I just want to see
+him"). In order:
+
+1. **One Gemini call, two files.** Your guide step writes `guide.json`; the players run `experience.json`
+   (AGENTS.md, Contracts, Experience). Have the same call return both (or derive experience.json from the guide):
+   `mode` from the intent, `steps` = your guide steps with `start`/`end` in the bundle's clip time, `speed` 0.5,
+   `repeat` 2, a short `tip`; `place` (`beside` for instruments, `ahead` for moves you follow, `facing` otherwise);
+   `environment` (concert-hall, court, gym, ring, studio, mountains, or room); `objects` (["basketball", "hoop"]).
+   Write it into the bundle and add `"experience": "experience.json"` to dream.json. Run it on every dream above as
+   it lands. The WebXR viewer and Ian's Quest app pick it up with no other change.
+2. **The intent field in Make a dream** is still missing: one line under the file ("What do you want to do with
+   them?") with tappable suggestions ("Teach me this", "Sit next to me and teach me this piece", "Just be with me",
+   "Play chess with me"), sent as `intent` and passed to the runner as `--intent`.
+3. **Showcase page** (`/showcase`, linked first in the nav): the five moments from `demo/showcase.md` as big,
+   quiet cards with each dream's preview video; each opens the right thing (viewer with `?dream=`, or chess with
+   `?mode=chess&opponent=`). This is what judges see first on the laptop.
+4. **Dream page:** a Places row (Your room, Concert hall, Court, Gym, Ring, Studio, Mountains) that opens the viewer
+   with `?place=<id>`; the plan's steps with times; Reality check's % seen; for avatars, "Play chess with them".
+5. **Jobs:** list runs submitted by hand too (they're in `dreams/.runs.json`) with live status from the runner.
+6. **Open on Quest:** a short, typeable URL on every dream page (the Mac's LAN address + `:5180/?dream=<id>`),
+   large and copyable, because the Quest browser can't scan a QR code.
+7. **Finals kiosk** (`/kiosk`): full-screen previews of the best dreams cycling every 8 s, with the person's name
+   and the one sentence, for the laptop on the demo table.
+
 ## ADDED (Fri 11:40 PM): sentences and places
 
 - Suggestions under the intent field: "Teach me this", "Sit next to me and teach me this piece", "Just be with me",

@@ -6,6 +6,32 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## BIG CHUNK (Sat 12:20 AM): everything avatars, now that they run
+
+`ball.py`, the seated idle and the IK fixes: great, thank you. The avatar chain is finally unblocked: DINOv3 is in,
+the env has mmengine / mmcv-lite / pytz / ipdb, the assets job runs on a GPU node (its NLF load needs CUDA), the
+repo pull holds a lock, and the IDOL cache was missing SMPL-X's `smplx_uv.obj` (installed from the official SMPL-X
+UV download). Building now: `bobby-fischer`, `magnus-carlsen`, `juice-wrld` (CC-licensed photos; Juice WRLD's is
+waist-up, so his legs are imagined). In order:
+
+1. **Watch the three avatar jobs** (`runs/<id>/logs/lucid-avatar-*.log`): if one fails, fix it in your code and tell
+   Ojasva which job to resubmit. When they pass, check each `ref_check.png` (photo vs re-render overlap) and
+   `thumb.jpg` (must show the front), and `seenFraction` (Juice WRLD's should be low: say so in the Status log).
+2. **The fine-tune table:** `digs-finetune` is queued behind both jump-shot exports (~30 min). When `results.md`
+   lands, check the fine-tuned avatar beats the one-photo one on held-out views; if not, tune it and resubmit.
+   Put the table and `compare.png` in `avatars/README.md`.
+3. **Wire `ball.py` into the export (you have Ojasva's OK to edit `pipeline/lucid/export.py`'s props section):**
+   when the run's GVHMR camera exists, add `{"kind": "basketball", "radius": 0.12, "track": [...]}` to
+   `props.json` in bundle coordinates, null where the ball isn't seen. The viewer and Ian's app already draw it.
+   Test on `runs/lebron-jumper` (its views and GVHMR are done).
+4. **You, perfected, for real:** take your head-to-toe photo now (`~/Downloads/lucid-photos/vishal.jpg` on Ojasva's
+   Mac, or `$L/data/avatars/inputs/vishal.jpg`), then `digs-perform.sbatch` with `RUN_ID=lebron-jumper` once your
+   avatar exists: your body doing LeBron's shot. This is a showcase moment.
+5. **Chess legends seated, on their real bodies:** the WebXR chess poses any SMPL-X avatar procedurally
+   (`apps/webxr/src/chess/seated.ts`), so Bobby and Magnus sit and reach as soon as their bundles land. Check their
+   proportions look right seated (shoulder width vs the board), and send Ojasva any fix.
+6. Hands/face pass and the results page, as before.
+
 ## ADDED (Fri 11 PM): one piece only you can do well
 
 - **The ball's 3D path (props).** Ojasva is detecting the basketball in the source clip and lifting it to 3D with

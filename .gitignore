@@ -26,7 +26,7 @@ apps/quest/obj/
 apps/quest/Build*/
 
 # fetched dream bundles (big)
-dreams/
+/dreams/
 apps/webxr/dist/
 .claude/
 

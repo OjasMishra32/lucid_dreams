@@ -3,6 +3,31 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## BIG CHUNK (Sat 12:20 AM): real people land tonight; make the Quest app demo-ready
+
+Avatar player, library, voice and captions, props: outstanding pace. Real bundles land in `dreams/` within the
+hour: `jump-shot`, `jump-shot-2`, `lebron-jumper` (ball + hoop props), `piano-han` (seated, beside you), and
+avatars `bobby-fischer`, `magnus-carlsen`, `juice-wrld`. In order:
+
+1. **Real-bundle pass:** load each one as it lands and fix whatever breaks: scale (life size, never scaled), feet
+   on the floor, facing, the hoop where `props.json` says, the seated tutor not floating. Log what you fixed.
+2. **Frame rate on the Quest 3S with LeBron's real replay** (121 frames x ~285k Gaussians): report fps. If it's
+   under 72, find the Gaussian count that holds 72 and tell Ojasva (he re-exports at that cap); try fixed foveation
+   and a lower sort rate first.
+3. **Places:** the six environments in `apps/webxr/public/places/` (CC0 equirects; ids and per-place rotation in
+   `apps/webxr/src/places.ts`). Skybox swap with passthrough off, a floor at y = 0 for the contact shadow, and a
+   fingertip button that cycles Your room -> places -> back. `experience.json`'s `environment` picks the start.
+4. **Two people at once:** load a second dream next to the first (LeBron, and your own avatar doing his shot
+   1.5 m to his left). The library gets a "Bring in another" action.
+5. **Seated people:** `place: "beside"` with someone seated (piano) should put their hips at bench height, not
+   their feet at the floor; read the bundle's lowest point per frame, and add a simple bench under them if the
+   reconstruction has none.
+6. **Demo capture:** record each showcase moment in passthrough (`demo/showcase.md`) as clean 30 s clips for
+   Atina's video: the piano lesson, LeBron's lesson with the hoop, a legend at chess (WebXR, recorded on the Quest),
+   Juice WRLD standing with you.
+7. **Install story:** a signed APK, a one-command install (`adb install -r`), and a short "run it on the Quest"
+   section in `apps/quest/README.md`.
+
 ## ADDED (Fri 11:40 PM): Places and the piano tutor
 
 - **Places:** the WebXR viewer is getting a "Place" button that swaps your room for a 360-degree environment around
