@@ -1,5 +1,9 @@
 # Raami: the product app, the bridge and the Gemini guide
 
+**HANDED OVER (Sat 2:25 AM): Ojasva moved this whole area to Vishal** (`team/vishal.md`, "Taken over from Raami").
+Thank you, Raami: the realism check, the showcase, private family dreams, the site and Lighthouse 100 all shipped.
+The rest of this file stays as the reference for how the web app and site are built.
+
 You own the product people touch outside the headset, and the API that connects everything. The bar is
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.

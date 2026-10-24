@@ -6,6 +6,28 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+## TAKEN OVER FROM RAAMI (Sat 2:25 AM): the web app, the bridge, the Gemini guide and the site are yours too
+
+Ojasva moved Raami's area to you: `apps/web` (product app + the job API bridge on Ojasva's Mac), the Gemini
+steps, and `apps/site`. Read `team/raami.md` for the design bar (Apple-level, calm, one accent colour) and how
+it's built; his status-log lines (Sat 2:55-4:05 AM) list what's done. **Done by Raami:** Gemini experience
+plans, the realism check with candidate heads ranked by likeness, the legends back on `/showcase` with their
+label on every surface, private family dreams (`"private": true`, `ian-grandma*` private by id), the site's real
+jump-shot hero and reel of real dreams, Lighthouse 100 on mobile. **Open, in order** (Gemini prize work first):
+
+1. **Gemini key on the bridge.** `apps/web/.env.local` doesn't exist on Ojasva's Mac, so no Gemini step runs:
+   put `GEMINI_API_KEY=...` there (ask Ojasva for the key; never commit it). The bridge runs on :5170 in runner
+   mode (`BRIDGE_MODE=runner`), the site on :5190.
+2. **Gemini Live coach in the lesson:** an "Ask" fingertip button in the WebXR viewer opens a Gemini Live audio
+   session about the step on screen; the device's voice, never the person's; a token endpoint in `apps/web` mints
+   short-lived credentials (raami.md, MORE 1).
+3. **"Watch me try":** record an attempt in the browser, Gemini compares it with the teacher's clip and returns
+   timestamped notes, shown side by side and added to the experience as a `feedback` step (raami.md, MORE 2).
+4. **Several photos of one person** in "From a photo" (body + face tags; repeated `file` fields, first = body),
+   which feeds your head swap directly (raami.md, TOP 1).
+5. **`/live`** for the judges: a running job's stages, timings, GPUs and its latest truth-vs-render strip
+   (`runs/<id>/recon/peek-*.jpg`), and the **40-sentence intent test** (raami.md, MORE 3 and 4).
+
 ## CHANGED AGAIN (Sat 2:45 AM): Ojasva's call, Bobby and Magnus are back; you don't have to touch them
 
 Ojasva (project lead) overruled the 2:20 AM line: **Bobby Fischer and Magnus Carlsen sit across the chess board**,
