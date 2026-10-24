@@ -12,7 +12,13 @@ The `.gitignore` admits only `*.py`, `*.sbatch`, `*.sh` and `*.md`. Run Python w
 | `check_prepped.py` | After a run's views: are `prepped.mp4`'s 121 frames ours, in order, at 40 dB or better? |
 | `court-submit.sh` | On HiPerGator: preflight, then one run's chain (views, three freeze caps + a metrics recon, exports, cleanups). K and FOCAL come from the run's `court-run.json` |
 | `court-freeze.sbatch`, `court-export.sbatch`, `court-clean.sbatch` | The jobs it chains |
-| `court-dryrun.sh` | Runs `court-submit.sh` here against a fake `$L` with `sbatch` and `blue_quota` stubbed, and prints the chain |
+| `court-grid.sh` (Mac) + `court-grid-hpg.sh` | The freeze A/B grid in one command: uploads, then per run its views and, per variant (raw views, SeedVR2 2x), a 300k freeze, a held-out metrics recon and an export; waves sized to the group's free space; views dropped as their recons end |
+| `court-winner.sh` | The grid's winner gets its 250k and 200k caps, then its views go |
+| `court-ab.sh` | One labelled A/B freeze (`views`, `up`, `agree`) into `ab-*`; `--source-agree` is refused anywhere else |
+| `court_grid_report.py` | The grid's numbers side by side (held-out PSNR/SSIM, real-frame PSNR, face, IoU, focal) |
+| `court-turbo-clean.sh` | Deletes one Turbo check's run folder by id (never via `$RUN`) |
+| `extra_view.py` | Another calibrated camera's frame of the freeze, cropped natively around one player, with mask, ignore, focal and camera |
+| `court-dryrun.sh` | Runs any of the scripts above here against a fake `$L` with `sbatch` and `blue_quota` stubbed, and prints the chain |
 
 ## Make the clips (Mac)
 
@@ -35,6 +41,12 @@ VIEWS_ONLY=1 bash <L>/code/pipeline/court/court-submit.sh <id>      # the Turbo 
 ```
 `court-submit.sh` submits nothing if a file is missing, the ids or the focal disagree, the run was submitted before,
 or the group quota has less than `MIN_GB` (20) free.
+
+The grid instead (HiPerGator session open with `ssh hpg true`):
+```bash
+PLAN=1 pipeline/court/court-grid.sh <out>/runs     # uploads, shows waves, GPU-hours and peak disk; submits nothing
+pipeline/court/court-grid.sh <out>/runs            # submits everything
+```
 
 ## Tests
 
