@@ -18,6 +18,8 @@ private, outside the repo.
     5 x 5 m, the full walk-around ring about 7 x 7 m. The code picks automatically from the boundary the headset
     reports (as you asked), so the only lever is space: when you ask for the clear corner at check-in, please aim
     for 5 x 5 m or more. OK to ship 3.5 x 3.5 m as one view + free walking if that's all we get?
+    **Yes (Ojasva, 12:20 PM).** Ship 3.5 x 3.5 m as one view plus free walking. Ojasva asks for 5 x 5 m or more at
+    check-in. Make the one view the best one: the chair-corner spot that frames the release.
 18. **Two quality hooks, before gate 2 if you can (Vishal will submit Court Side's HiPerGator grid himself, so
     your session doesn't have to):** (a) can 4DAnyone take our own body motion (SMPL-X per frame, e.g. from GEM-X)
     instead of its built-in GVHMR, in case GVHMR gets the mid-closeout pose wrong? (b) recon with more than one
