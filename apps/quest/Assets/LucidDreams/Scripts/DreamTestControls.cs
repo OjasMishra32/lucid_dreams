@@ -5,7 +5,8 @@ namespace LucidDreams
 {
     // Controller and keyboard playback controls until the in-headset UI lands.
     // Right controller: A play/pause, B speed (0.25 / 0.5 / 1x), thumbstick left/right scrubs, trigger re-places in front of you.
-    // Keyboard (editor): Space play/pause, S speed, arrows step a frame, P re-place.
+    // Left controller: X reality check. Keyboard (editor): Space play/pause, S speed, arrows step a frame, P re-place,
+    // R reality check.
     public class DreamTestControls : MonoBehaviour
     {
         public DreamSequencePlayer player;
@@ -13,13 +14,14 @@ namespace LucidDreams
         [Tooltip("Seconds of footage scrubbed per second at full thumbstick.")]
         public float scrubRate = 1f;
 
-        InputAction playPause, speed, scrub, place;
+        InputAction playPause, speed, scrub, place, reality;
 
         void OnEnable()
         {
             playPause = Bind("<XRController>{RightHand}/primaryButton", "<Keyboard>/space");
             speed = Bind("<XRController>{RightHand}/secondaryButton", "<Keyboard>/s");
             place = Bind("<XRController>{RightHand}/triggerPressed", "<Keyboard>/p");
+            reality = Bind("<XRController>{LeftHand}/primaryButton", "<Keyboard>/r");
             scrub = new InputAction("Scrub", InputActionType.Value, "<XRController>{RightHand}/thumbstick/x");
             scrub.AddCompositeBinding("1DAxis").With("Negative", "<Keyboard>/leftArrow").With("Positive", "<Keyboard>/rightArrow");
             scrub.Enable();
@@ -39,6 +41,7 @@ namespace LucidDreams
             speed?.Dispose();
             scrub?.Dispose();
             place?.Dispose();
+            reality?.Dispose();
         }
 
         void Update()
@@ -48,6 +51,7 @@ namespace LucidDreams
 
             if (playPause.WasPressedThisFrame()) player.TogglePlay();
             if (speed.WasPressedThisFrame()) player.CycleSpeed();
+            if (reality.WasPressedThisFrame()) player.ToggleReality();
 
             float axis = scrub.ReadValue<float>();
             if (Keyboard.current != null && (Keyboard.current.leftArrowKey.wasPressedThisFrame || Keyboard.current.rightArrowKey.wasPressedThisFrame))

@@ -84,6 +84,7 @@ namespace LucidDreams
         public string motion;
         public string skin;
         public string skeleton;
+        public string reality; // same Gaussians, imagined ones tinted blue
     }
 
     [Serializable]

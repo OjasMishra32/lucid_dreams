@@ -97,6 +97,29 @@ namespace LucidDreams.Tests
             var toViewer = Vector3.ProjectOnPlane(eye - root.position, Vector3.up);
             Check(Vector3.Angle(root.forward, toViewer) < 1f, "and they face you");
 
+            // Reality check: a fingertip push loads the reality frames and swaps them in at the same frame.
+            placer.PlaceInFrontOfViewer();
+            player.Pause();
+            player.Scrub(0.4f);
+            int frameBefore = player.Frame;
+            var realityButton = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text == "Reality check");
+            Check(realityButton != null, "reality button shows for a bundle with reality frames");
+            if (realityButton != null)
+            {
+                yield return Push(realityButton);
+                until = Time.realtimeSinceStartup + 60f;
+                while (!player.ShowingReality && player.RealityError == null && Time.realtimeSinceStartup < until) yield return null;
+                yield return Frames(5);
+                Check(player.ShowingReality, $"reality frames load and show ({player.RealityError})");
+                Check(player.Frame == frameBefore, "same moment, just the reality version");
+                var title = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Title");
+                Check(title != null && title.text.StartsWith("50% seen by the camera"), $"bar says how much was seen ({title?.text})");
+                Render(Path.Combine(outputDir, "reality-side-view.png"), root.position + new Vector3(2.4f, 1.1f, 0f), root.position + Vector3.up * 0.9f);
+                yield return Push(realityButton);
+                yield return Frames(3);
+                Check(!player.ShowingReality, "pushing again goes back to the real colours");
+            }
+
             // A finger between your eyes and the person: the person must not draw over it.
             placer.PlaceInFrontOfViewer();
             player.Scrub(0f);
@@ -151,6 +174,21 @@ namespace LucidDreams.Tests
             yield return Frames(3);
         }
 
+        IEnumerator Push(FingertipButton button)
+        {
+            var front = button.transform.TransformPoint(new Vector3(0f, 0f, -30f));
+            var through = button.transform.TransformPoint(new Vector3(0f, 0f, 6f));
+            for (int i = 0; i <= 10; i++)
+            {
+                Point(hands.right, Vector3.Lerp(front, through, i / 10f));
+                yield return null;
+            }
+            Point(hands.right, front);
+            yield return Frames(3);
+            Release(hands.right);
+            yield return Frames(25); // past the button's cooldown
+        }
+
         // An open hand: index tip at the point, thumb well away (no pinch).
         void Point(HandTracker.Hand hand, Vector3 tip) => hands.Simulate(hand, true, tip, tip + new Vector3(0.05f, -0.04f, 0.03f));
 
@@ -165,6 +203,15 @@ namespace LucidDreams.Tests
             hand.joints[XRHandJointID.IndexDistal.ToIndex()] = Vector3.Lerp(knuckle, tip, 0.75f);
             hand.joints[XRHandJointID.IndexTip.ToIndex()] = tip;
             hand.joints[XRHandJointID.ThumbTip.ToIndex()] = knuckle;
+        }
+
+        void Render(string path, Vector3 from, Vector3 lookAt)
+        {
+            var pose = (head.transform.position, head.transform.rotation);
+            head.transform.position = from;
+            head.transform.LookAt(lookAt);
+            Render(path);
+            head.transform.SetPositionAndRotation(pose.position, pose.rotation);
         }
 
         void Render(string path)

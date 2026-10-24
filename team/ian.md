@@ -149,3 +149,11 @@ What makes it simple, and what to do the same way in Unity:
 - Hand occlusion: depth-only spheres and capsules on the tracked joints, drawn before the splats (which depth-test).
 - `HandsCheck` (simulated hands, real scene) passes all gestures; not yet tried with real hands on the Quest.
 
+## Decisions: reality check (Ian, Fri night)
+
+- Loads `frames.reality` on the first push only (playback carries on meanwhile), into a second GPU sequence at the
+  same Gaussian count; the player is the renderer's frame source, so on/off is instant and keeps the moment.
+- Bar title while on: "N% seen by the camera · blue was imagined" from `metrics.seenFraction` (falls back to
+  "Blue was imagined" when the bundle doesn't say). The button only appears for bundles that ship reality frames.
+- Avatar bundles' `avatar.reality` is parsed; it gets used with the avatar player.
+

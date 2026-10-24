@@ -39,12 +39,17 @@ The player refuses bundles over `gpuBudgetMB` and logs the Gaussian count that w
 - **Pinch the person and drag:** they slide along the floor (never lifted, never scaled). **Both hands:** turn them.
 - **Pinch and hold ~1 s pointing at the floor:** they stand there, facing you.
 - **Control bar** (floats low in front of you, follows when you turn): push a fingertip through **Play/Pause**,
-  **speed** (1 / 0.5 / 0.25x) or **Bring here**; pinch the timeline and drag to scrub. Buttons fire once per push.
+  **speed** (1 / 0.5 / 0.25x), **Reality check** or **Bring here**; pinch the timeline and drag to scrub. Buttons fire
+  once per push.
+- **Reality check** (bundles with `frames.reality`): the first push loads the reality frames (same Gaussians, the ones
+  the camera never saw tinted blue) and swaps them in at the same moment; the bar shows `metrics.seenFraction`
+  ("62% seen by the camera · blue was imagined"). Push again for the real colours. It costs one more set of SPZ
+  frames on the GPU (56 B per Gaussian per frame) and counts against the same budget.
 - Your real hands stay in front of the person: depth-only stand-ins (`HandOccluder`) hide what's behind them.
 - A soft contact shadow sits under the feet.
 
 Controllers still work as a fallback (`DreamTestControls`): **A** play/pause, **B** speed, thumbstick scrubs,
-trigger re-places. In the editor: Space, S, arrow keys, P.
+trigger re-places; left **X** toggles the reality check. In the editor: Space, S, arrow keys, P, R.
 
 ## Checking without a headset
 
