@@ -58,7 +58,7 @@ GEMINI_API_KEY=...
 
 | Call | Reply |
 | --- | --- |
-| `POST /api/jobs` | multipart `file`, `name`, `kind` (`replay` or `avatar`), optional `startS` and `intent` -> `201 { "id" }`, or `400 { "error" }` saying what to fix |
+| `POST /api/jobs` | multipart `file`, `name`, `kind` (`replay` or `avatar`), optional `startS` and `intent` -> `201 { "id" }`, or `400 { "error" }` saying what to fix. An avatar may repeat `file` up to 10 times (one person): the first is the body photo (`.data/uploads/<uuid>/input.<ext>`), the rest are face photos in `faces/` beside it (`face-01.jpg`, ...; HEIC becomes JPEG before the runner submits) |
 | `GET /api/jobs/:id` | `{ id, status, stage, progress, etaS, message }` |
 | `GET /api/dreams` | every `dream.json`, newest first |
 | `GET /dreams/<id>/...` | bundle files, with Range support; `/dreams/index.json` mirrors the WebXR viewer's index |

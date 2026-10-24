@@ -14,6 +14,7 @@ export interface JobRecord {
   fileName: string;
   startS: number; // where the 5-second window starts in a long clip
   intent?: string; // what the user wants to do with this person ("teach me this strum")
+  faces?: string[]; // an avatar's other photos of the same person, for the face model: faces/ beside the body photo
   createdAt: number;
   // runner mode
   submit?: "running" | "done" | "failed";

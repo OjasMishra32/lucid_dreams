@@ -6,7 +6,7 @@ import type { NormalizedLandmark, PoseLandmarker } from "@mediapipe/tasks-vision
 import type { Check } from "./clipCheck";
 
 const VERSION = "1.1.1"; // keep in step with @mediapipe/tasks-vision in package.json
-const WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/wasm`;
+export const WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/wasm`;
 const MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
 const HEAD = [0, 2, 5, 7, 8]; // nose, eyes, ears
@@ -48,9 +48,18 @@ function extent(p: NormalizedLandmark[]): number {
 }
 
 export function look(model: PoseLandmarker, image: TexImageSource): Look {
-  const people = model.detect(image).landmarks.filter((p) => extent(p) >= MIN_PERSON);
-  if (!people.length) return { people: 0, head: false, feet: false, height: 0, centre: [0, 0], confidence: 0 };
-  const main = people.reduce((a, b) => (extent(b) > extent(a) ? b : a));
+  return summarize(model.detect(image).landmarks);
+}
+
+/** The people in a pose result (big enough to count), and the biggest of them. */
+export function people(all: NormalizedLandmark[][]): { people: NormalizedLandmark[][]; main: NormalizedLandmark[] | null } {
+  const found = all.filter((p) => extent(p) >= MIN_PERSON);
+  return { people: found, main: found.length ? found.reduce((a, b) => (extent(b) > extent(a) ? b : a)) : null };
+}
+
+export function summarize(all: NormalizedLandmark[][]): Look {
+  const { people: found, main } = people(all);
+  if (!main) return { people: 0, head: false, feet: false, height: 0, centre: [0, 0], confidence: 0 };
   const inFrame = (i: number) => {
     const v = main[i];
     return !!v && v.visibility > 0.5 && v.x >= 0 && v.x <= 1 && v.y >= 0 && v.y <= 1;
@@ -58,7 +67,7 @@ export function look(model: PoseLandmarker, image: TexImageSource): Look {
   const seen = main.filter((v) => v.visibility > 0.5);
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(xs.length, 1);
   return {
-    people: people.length,
+    people: found.length,
     head: HEAD.some(inFrame),
     feet: FEET.some(inFrame),
     height: extent(main),

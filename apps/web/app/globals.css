@@ -277,6 +277,35 @@ img, video { display: block; max-width: 100%; }
 .trim-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 13px; }
 .trim-foot .muted { text-align: center; }
 
+/* several photos of one person */
+.shots { margin-top: 14px; }
+.shots ul { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 8px; list-style: none; margin: 0; padding: 0; }
+.shots li { position: relative; }
+.shot { display: block; width: 100%; text-align: center; }
+.shot:disabled { cursor: default; }
+.shot-img {
+  position: relative; display: block; aspect-ratio: 3 / 4; border-radius: 10px; overflow: hidden; background: var(--surface);
+}
+.shot-img img { width: 100%; height: 100%; object-fit: cover; transition: opacity 0.2s ease; }
+.shot-img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: 0 0 0 1px var(--hairline) inset; transition: box-shadow 0.2s ease; }
+.shots li.on .shot-img::after { box-shadow: 0 0 0 2px var(--link) inset; }
+.shots li.out .shot-img img { opacity: 0.3; }
+.shot-raw { position: absolute; inset: 0; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: var(--muted); }
+.shot-tag { display: block; font-size: 12px; font-weight: 500; color: var(--muted); padding-top: 6px; line-height: 1.2; }
+.shots li.on .shot-tag { color: var(--link); font-weight: 600; }
+.shots li.out .shot-tag { color: var(--warn); }
+.shot-add { display: grid; place-items: center; color: var(--muted); transition: color 0.2s ease, background 0.2s ease; }
+.shot:hover .shot-add { color: var(--text); background: var(--surface-2); }
+.shot-add svg { width: 20px; height: 20px; }
+.shot-x {
+  position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.66); color: var(--text); opacity: 0; transition: opacity 0.2s ease;
+}
+.shot-x svg { width: 10px; height: 10px; }
+.shots li:hover .shot-x, .shot-x:focus-visible { opacity: 1; }
+@media (hover: none) { .shot-x { opacity: 1; } }
+.shots-note { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+
 /* the old footage picker */
 .finder { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 13px; flex-wrap: wrap; }
 .finder-bar { flex: 1 1 100%; }

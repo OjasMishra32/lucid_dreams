@@ -7,6 +7,7 @@ import WindowFinder from "@/components/WindowFinder";
 import type { JobKind } from "@/lib/dream";
 import { WINDOW_S, formatBytes, inspect, mediaOf, nameFromFile, type Check, type Inspected } from "@/lib/clipCheck";
 import { personChecks } from "@/lib/personCheck";
+import { MAX_PHOTOS, bodyScore, leftOut, lookAt, type PhotoLook } from "@/lib/photoSet";
 
 const ICONS: Record<Check["level"], React.ReactNode> = {
   ok: (
@@ -38,12 +39,35 @@ const SUGGESTIONS = {
   photo: ["Just be with me", "Play chess with me"],
 };
 
+/** One photo in a set: the file, what the browser could read of it, and what the models saw (null: they couldn't run). */
+type Shot = { key: string; file: File; info: Inspected; look: PhotoLook | null | "looking" };
+
+/** Why a photo is left out, or null. "No face" is the models' word against yours: a tap uses it anyway (forced). */
+const verdict = (s: Shot, forced: Set<string>) => {
+  const why = s.look && s.look !== "looking" ? leftOut(s.look) : null;
+  return why === "No face" && forced.has(s.key) ? null : why;
+};
+
+/** The body photo: the one tapped, else the best head-to-toe one; never one that's left out (unless they all are). */
+function bodyOf(shots: Shot[], pick: string | null, forced: Set<string>): Shot | null {
+  const usable = shots.filter((s) => !verdict(s, forced));
+  const picked = usable.find((s) => s.key === pick);
+  if (picked) return picked;
+  const score = (s: Shot) => (s.look && s.look !== "looking" ? bodyScore(s.look) : s.info.readable ? 0 : -0.5);
+  return usable.reduce<Shot | null>((best, s) => (!best || score(s) > score(best) ? s : best), null) ?? shots[0] ?? null;
+}
+
 export default function MakeDream() {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
+  const more = useRef<HTMLInputElement>(null);
   const preview = useRef<HTMLVideoElement>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [info, setInfo] = useState<Inspected | null>(null);
+  const urls = useRef(new Set<string>()); // every preview URL made, revoked on reset and on the way out
+  const nextKey = useRef(0);
+  const [video, setVideo] = useState<{ file: File; info: Inspected } | null>(null);
+  const [shots, setShots] = useState<Shot[]>([]); // a photo set: one person, the body photo and their face photos
+  const [pick, setPick] = useState<string | null>(null);
+  const [forced, setForced] = useState<Set<string>>(new Set()); // photos used although no face was found in them
   const [name, setName] = useState("");
   const [typed, setTyped] = useState(false); // a name the person typed survives choosing another file
   const [kind, setKind] = useState<JobKind>("replay");
@@ -55,7 +79,14 @@ export default function MakeDream() {
   const [sent, setSent] = useState<number | null>(null); // upload progress 0-1 while sending
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => () => void (info && URL.revokeObjectURL(info.url)), [info]);
+  useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
+
+  const photos = shots.length > 0;
+  const body = photos ? bodyOf(shots, pick, forced) : null;
+  const file = body?.file ?? video?.file ?? null;
+  const info = body?.info ?? video?.info ?? null;
+  const usable = shots.filter((s) => !verdict(s, forced));
+  const looking = shots.some((s) => s.look === "looking");
 
   // a finite length only: browser-recorded WebM often reports Infinity until it's played through
   const lengthS = info?.durationS ?? NaN;
@@ -105,22 +136,89 @@ export default function MakeDream() {
     };
   }, [startS, trimmable]);
 
-  async function choose(f: File | undefined) {
-    if (!f) return;
+  async function choose(list: ArrayLike<File> | null | undefined) {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
     setError(null);
-    if (!mediaOf(f)) return setError("Use a video (MP4, MOV) or a photo (JPG, PNG).");
-    const inspected = await inspect(f);
-    setFile(f);
-    setInfo(inspected);
+    const media = mediaOf(files[0]);
+    if (!media) return setError("Use a video (MP4, MOV) or photos (JPG, PNG).");
+    if (media === "photo") return addPhotos(files, true);
+    const inspected = await inspect(files[0]);
+    forget();
+    urls.current.add(inspected.url);
+    setVideo({ file: files[0], info: inspected });
     setStartS(0);
     setConsent(false);
-    if (!typed) setName(nameFromFile(f));
-    setKind(inspected.media === "photo" ? "avatar" : "replay");
+    if (!typed) setName(nameFromFile(files[0]));
+    setKind("replay");
+  }
+
+  /** Photos of one person, up to ten: each is checked as it arrives (one person, their face, head to toe or not). */
+  async function addPhotos(files: File[], fresh: boolean) {
+    const all = files.filter((f) => mediaOf(f) === "photo");
+    const room = MAX_PHOTOS - (fresh ? 0 : shots.length);
+    const take = all.slice(0, Math.max(room, 0));
+    if (all.length > take.length) setError(`Up to ${MAX_PHOTOS} photos of one person, so ${all.length - take.length} ${all.length - take.length === 1 ? "wasn't" : "weren't"} added.`);
+    else setError(null);
+    if (!take.length) return;
+    const before = fresh ? [...urls.current] : [];
+    const added: Shot[] = [];
+    for (const f of take) {
+      const inspected = await inspect(f);
+      urls.current.add(inspected.url);
+      added.push({ key: String(nextKey.current++), file: f, info: inspected, look: inspected.readable ? "looking" : null });
+    }
+    if (fresh) {
+      for (const u of before) {
+        URL.revokeObjectURL(u); // only what was there before: the new photos' previews stay
+        urls.current.delete(u);
+      }
+      setVideo(null);
+      setPick(null);
+      setForced(new Set());
+      setStartS(0);
+      setShots(added);
+      if (!typed) setName(nameFromFile(take[0]));
+    } else setShots((s) => [...s, ...added]);
+    setConsent(false); // the tick covers the photos that were there when it was ticked
+    setKind("avatar");
+    for (const s of added) {
+      if (s.look !== "looking") continue;
+      lookAt(s.info.url)
+        .catch(() => null)
+        .then((look) => setShots((prev) => prev.map((p) => (p.key === s.key ? { ...p, look } : p))));
+    }
+  }
+
+  function toggle(key: string) {
+    setForced((f) => {
+      const next = new Set(f);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }
+
+  function remove(key: string) {
+    const gone = shots.find((s) => s.key === key);
+    if (!gone) return;
+    if (shots.length === 1) return reset();
+    URL.revokeObjectURL(gone.info.url);
+    urls.current.delete(gone.info.url);
+    setShots((s) => s.filter((p) => p.key !== key));
+    if (pick === key) setPick(null);
+  }
+
+  function forget() {
+    urls.current.forEach((u) => URL.revokeObjectURL(u));
+    urls.current.clear();
   }
 
   function reset() {
-    setFile(null);
-    setInfo(null);
+    forget();
+    setVideo(null);
+    setShots([]);
+    setPick(null);
+    setForced(new Set());
     setError(null);
     if (input.current) input.current.value = "";
   }
@@ -129,12 +227,13 @@ export default function MakeDream() {
     if (!file || !info) return;
     setError(null);
     setSent(0);
-    const body = new FormData();
-    body.append("name", name.trim());
-    body.append("kind", kind);
-    if (intent.trim()) body.append("intent", intent.trim());
-    if (trimmable) body.append("startS", startS.toFixed(2));
-    body.append("file", file);
+    const form = new FormData();
+    form.append("name", name.trim());
+    form.append("kind", kind);
+    if (intent.trim()) form.append("intent", intent.trim());
+    if (trimmable) form.append("startS", startS.toFixed(2));
+    // a photo set: the body photo first, then every face photo (the bridge keeps those in faces/ beside it)
+    for (const f of photos && body ? [body, ...usable.filter((s) => s !== body)].map((s) => s.file) : [file]) form.append("file", f);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/jobs");
     xhr.upload.onprogress = (e) => e.lengthComputable && setSent(e.loaded / e.total);
@@ -151,7 +250,7 @@ export default function MakeDream() {
       setSent(null);
       setError("Couldn't reach the bridge. Is it running on Ojasva's Mac?");
     };
-    xhr.send(body);
+    xhr.send(form);
   }
 
   if (!file || !info) {
@@ -171,7 +270,7 @@ export default function MakeDream() {
           onDrop={(e) => {
             e.preventDefault();
             setOver(false);
-            choose(e.dataTransfer.files[0]);
+            choose(e.dataTransfer.files);
           }}
         >
           <div>
@@ -179,10 +278,10 @@ export default function MakeDream() {
               <rect x="6" y="9" width="32" height="26" rx="6" />
               <path d="M22 28V16M17 21l5-5 5 5" />
             </svg>
-            <h2>Drop a video or a photo</h2>
-            <p>or click to choose one</p>
+            <h2>Drop a video, or photos of one person</h2>
+            <p>or click to choose. A few photos, close-ups of the face among them, make the most lifelike face.</p>
           </div>
-          <input ref={input} type="file" accept="video/*,image/*" hidden onChange={(e) => choose(e.target.files?.[0])} />
+          <input ref={input} type="file" accept="video/*,image/*" multiple hidden onChange={(e) => choose(e.target.files)} />
         </div>
         {error && <p className="form-error">{error}</p>}
         <ul className="rules">
@@ -201,8 +300,9 @@ export default function MakeDream() {
     ...(people === "looking"
       ? [{ level: "wait" as const, title: "Looking for the person", detail: "Checking they're alone in frame, head to toe." }]
       : people ?? []),
+    ...(photos ? setChecks(shots, forced, usable.length, looking) : []),
   ];
-  const blocked = checks.some((c) => c.level === "bad");
+  const blocked = checks.some((c) => c.level === "bad") || looking;
   const needsConsent = photo && !consent;
   const sending = sent !== null;
 
@@ -214,16 +314,79 @@ export default function MakeDream() {
             {photo ? <img src={info.url} alt="" /> : <video ref={preview} src={info.url} autoPlay muted loop={!trimmable} playsInline />}
           </div>
         )}
+        {photos && (
+          <div className="shots">
+            <ul aria-label="Photos of this person">
+              {shots.map((s, i) => {
+                const out = verdict(s, forced);
+                const isBody = s === body;
+                const tag = s.look === "looking" ? "Checking" : out ?? (isBody ? "Body" : "Face");
+                // a photo with no face found: a tap uses it anyway, and another tap leaves it out again
+                const unconfirmed = s.look && s.look !== "looking" && leftOut(s.look) === "No face";
+                const tap = () => (unconfirmed && (out || !isBody) ? toggle(s.key) : setPick(s.key));
+                return (
+                  <li key={s.key} className={isBody ? "on" : out ? "out" : undefined}>
+                    <button
+                      type="button"
+                      className="shot"
+                      onClick={tap}
+                      disabled={sending || out === "Two people" || s.look === "looking"}
+                      aria-pressed={isBody}
+                      aria-label={`Photo ${i + 1}: ${tag}${out === "No face" ? ". Use it anyway" : !out && !isBody ? ". Build the body from this one" : ""}`}
+                    >
+                      <span className="shot-img">
+                        {s.info.readable ? <img src={s.info.url} alt="" /> : <span className="shot-raw">{s.file.name.split(".").pop()?.toUpperCase()}</span>}
+                      </span>
+                      <span className="shot-tag">{tag}</span>
+                    </button>
+                    {!sending && (
+                      <button type="button" className="shot-x" onClick={() => remove(s.key)} aria-label={`Remove photo ${i + 1}`}>
+                        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+              {shots.length < MAX_PHOTOS && !sending && (
+                <li>
+                  <button type="button" className="shot" onClick={() => more.current?.click()}>
+                    <span className="shot-img shot-add">
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                    </span>
+                    <span className="shot-tag">Add</span>
+                  </button>
+                </li>
+              )}
+            </ul>
+            <input
+              ref={more}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                addPhotos(Array.from(e.target.files ?? []), false);
+                e.target.value = "";
+              }}
+            />
+            <p className="shots-note">
+              Up to {MAX_PHOTOS} photos of the same person. The head-to-toe one builds the body, the rest go to the face.
+              Tap a photo to build the body from it instead.
+            </p>
+          </div>
+        )}
         {trimmable && (
           <TrimPicker url={info.url} durationS={lengthS} windowS={WINDOW_S} startS={startS} onChange={setStartS} />
         )}
         {trimmable && lengthS >= 12 && <WindowFinder url={info.url} durationS={lengthS} startS={startS} onPick={setStartS} disabled={sending} />}
         <p className="muted" style={{ fontSize: 14, margin: "14px 0 0" }}>
-          {file.name} · {formatBytes(file.size)}
+          {photos && shots.length > 1
+            ? `${shots.length} photos · ${formatBytes(shots.reduce((n, s) => n + s.file.size, 0))}`
+            : `${file.name} · ${formatBytes(file.size)}`}
         </p>
         {!sending && (
           <button className="swap" onClick={reset}>
-            Choose another
+            {photos && shots.length > 1 ? "Start over" : "Choose another"}
           </button>
         )}
       </div>
@@ -300,7 +463,7 @@ export default function MakeDream() {
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} disabled={sending} />
             <span>
               <b>I have permission to bring this person in.</b>
-              They, or their family, said yes to being rebuilt in 3D.
+              They, or their family, said yes to being rebuilt in 3D{shots.length > 1 ? ", from every photo here" : ""}.
             </span>
           </label>
         )}
@@ -323,6 +486,31 @@ export default function MakeDream() {
       </div>
     </div>
   );
+}
+
+/** What the set as a whole needs: photos left out and why, and whether there's anything for the face model. */
+function setChecks(shots: Shot[], forced: Set<string>, usable: number, looking: boolean): Check[] {
+  const out: Check[] = [];
+  if (looking) out.push({ level: "wait", title: "Checking each photo", detail: "One person in every one, and their face." });
+  const count = (why: string) => shots.filter((s) => verdict(s, forced) === why).length;
+  const photos = (n: number) => `${n} photo${n === 1 ? "" : "s"}`;
+  const two = count("Two people");
+  const noFace = count("No face");
+  const anyway = shots.filter((s) => forced.has(s.key) && s.look && s.look !== "looking" && leftOut(s.look) === "No face").length;
+  if (two) out.push({ level: "warn", title: `${photos(two)} with two people, left out`, detail: "Every photo has to be just them. Crop it, or use another." });
+  if (noFace) {
+    out.push({ level: "warn", title: `No face found in ${photos(noFace)}, left out`, detail: "Use one where they look toward the camera, or tap it to use it anyway if it's really just them." });
+  }
+  if (anyway) out.push({ level: "warn", title: `${photos(anyway)} used without a face found`, detail: "We couldn't confirm their face there. Make sure it's them, alone." });
+  if (looking) return out;
+  if (!usable) {
+    out.push({ level: "bad", title: "None of these photos can be used", detail: "Add a photo of just them, head to toe, with their face showing." });
+  } else if (usable > 1) {
+    out.push({ level: "ok", title: `${photos(usable - 1)} for the face`, detail: "Each one goes to the face model, and the closest likeness is the one you get." });
+  } else if (shots.length < MAX_PHOTOS) {
+    out.push({ level: "warn", title: "Add a close-up of their face", detail: "A second photo, looking at the camera, makes the face far more like them." });
+  }
+  return out;
 }
 
 function safeJson(text: string): { id?: string; error?: string } | null {

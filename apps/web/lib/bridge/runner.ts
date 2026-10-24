@@ -1,6 +1,6 @@
 import "server-only";
 import { execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Dream, JobStatus } from "../dream";
@@ -59,8 +59,30 @@ export function startRunnerJob(job: JobRecord) {
     .finally(() => state.submitting.delete(job.id));
 }
 
-/** iPhone photos arrive as HEIC, which the avatar stage can't open: hand it a JPEG made on the Mac instead. */
+/**
+ * iPhone photos arrive as HEIC, which the avatar stage can't open: hand it a JPEG made on the Mac instead. The face
+ * photos in faces/ (beside the body photo, where lucid_runner.py picks them up) become JPEGs in place, so that folder
+ * only ever holds files the face model can read.
+ */
 async function submitInput(job: JobRecord): Promise<string> {
+  if (job.faces?.some((f) => /\.heic$/i.test(f))) {
+    const faces: string[] = [];
+    for (const face of job.faces) {
+      const jpg = face.replace(/\.heic$/i, ".jpg");
+      if (jpg === face || !existsSync(face)) {
+        faces.push(face);
+        continue;
+      }
+      try {
+        await run("sips", ["-s", "format", "jpeg", face, "--out", jpg], { timeout: 60_000 });
+        rmSync(face);
+        faces.push(jpg);
+      } catch {
+        faces.push(face); // one this Mac can't convert: the others still go
+      }
+    }
+    updateJob(job.id, { faces });
+  }
   if (!/\.heic$/i.test(job.file)) return job.file;
   const jpg = job.file.replace(/\.heic$/i, ".jpg");
   if (!existsSync(jpg)) await run("sips", ["-s", "format", "jpeg", job.file, "--out", jpg], { timeout: 60_000 });
