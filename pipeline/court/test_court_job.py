@@ -332,6 +332,15 @@ class Submit(unittest.TestCase):
         self.assertIn("PREFLIGHT FAIL: this login can't read the 4DAnyone stack", out)
         self.assertEqual(calls(out), [])
 
+    def test_free_space_of_the_named_group(self):
+        a = make_data(self.root, "court-main-s2")
+        rc, out = dryrun(a, QUOTA_OTHER_FIRST="1")  # another group, full, listed first
+        self.assertNotEqual(rc, 0)
+        self.assertIn("group quota has 0 GB free", out)
+        rc, out = dryrun(a, QUOTA_OTHER_FIRST="1", QUOTA_GROUP="iruchkin")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("204 GB free", out)
+
     def test_same_id_twice(self):
         a = make_data(self.root, "court-main-s2")
         rc, out = dryrun(a, a)
@@ -443,6 +452,10 @@ class GridDry(unittest.TestCase):
         self.assertIn("ACCOUNT=grp2", lines[-1])
         self.assertIn("QOS=grp2-b", lines[-1])
         self.assertIn("L=/blue/grp2/user2/lucid", lines[-1])
+        lines = self.grid(HOST="hpg2", COURT_HPG_L="/blue/grp2/user2/lucid", ENV_SH="/blue/grp2/user2/lucid/env.sh",
+                          QUOTA_GROUP="grp2")
+        self.assertIn("ENV_SH=/blue/grp2/user2/lucid/env.sh", lines[-1])
+        self.assertIn("QUOTA_GROUP=grp2", lines[-1])
         self.assertIn("bash /blue/grp2/user2/lucid/code/pipeline/court/court-job-submit.sh court-a-r2", lines[-1])
 
 

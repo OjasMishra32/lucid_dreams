@@ -4,7 +4,7 @@
 # Usage: court-dryrun.sh <run folder>... [more args]   (each folder's name is a run id; other args follow the ids)
 # The folders go to $L/data/court/<id> (or INTO=runs: $L/runs/<id>, as after a submit).
 # Env: FREE_T (the stub quota's free space in TB, default 0.2), NO_PYTHON=1 (fail on any python call), SEEDVR2=0
-# (its weights absent), STACK=0 (no 4DAnyone stack where env.sh points), plus anything the
+# (its weights absent), QUOTA_OTHER_FIRST=1 (a full group listed before ours), STACK=0 (no 4DAnyone stack where env.sh points), plus anything the
 # script reads (VARIANTS, NGPU, DRY...). The stub sbatch refuses a script that doesn't exist in this checkout.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -39,6 +39,7 @@ echo "$n"
 SH
 cat > "$T/bin/blue_quota" <<SH
 #!/bin/bash
+[ "\${QUOTA_OTHER_FIRST:-0}" = 1 ] && printf "Storage quotas for group 'other':\nFilesystem Use Quota Limit Grace Files\nblue2 5T 5T 5T - 1\n\n"
 cat <<EOF
 Storage quotas for group 'iruchkin':
 Filesystem    Use     Quota    Limit    Grace       Files

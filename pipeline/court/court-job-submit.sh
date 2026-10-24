@@ -8,7 +8,8 @@
 # (e.g. winner) for one more job per id into $L/runs/<id>/<name>/. Env passed to the jobs: VARIANTS, REALS, CAPS,
 # METRICS, ITERS, FACE, SEED, SEED_FLAG; NGPU (GPUs per job, default 4), MEM and TIME (sbatch overrides); DRY=1.
 # Another allocation: ACCOUNT, QOS, PARTITION override the job script's own #SBATCH lines; L (its /blue base, holding
-# code/, data/ and runs/ and what env.sh points at) reaches the jobs too.
+# code/, data/ and runs/ and what env.sh points at) and ENV_SH (the environment script the jobs source) reach the jobs
+# too; QUOTA_GROUP picks whose /blue space is checked.
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 source "$(dirname "$0")/court-lib.sh"
