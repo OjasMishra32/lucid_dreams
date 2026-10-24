@@ -1,5 +1,6 @@
-// The arena around the footage: the court floor (the footage's own floor inside floor-seen, the rendered rulebook
-// court elsewhere: hardwood from court.json, navy three-point and halfcourt lines, dark beyond the apron), falling to
+// The arena around the footage: the court floor (the footage's own floor where floor-seen marks it filmed, seen from
+// the dolly seat; the rendered rulebook court elsewhere and wherever you walk: the real floor's median wood and lane
+// paint (floortone.ts), boards, navy three-point and halfcourt lines, dark beyond the apron), falling to
 // dark outside the camera's frame during the watch and lit afterwards only where the light field's pool reaches; it
 // writes no depth, so reflections show. Around it structured darkness (a dim seating bowl, never filmed), house-light
 // glows that ignite in sequence at the arrival and take the players' white point (P13), and the 3D hoop at
@@ -14,6 +15,7 @@ import { cameraOf, type PinholeCamera } from "./camera";
 import type { CourtBundle } from "./format";
 import { PART, REACH_GLSL, edgeLevel, fixtureGlow, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
 import type { Proxies } from "./proxies";
+import { TONE_DEFAULT, floorTones } from "./floortone";
 import { EDGE_FADE } from "./seatmath";
 import type { Head } from "./types";
 
@@ -50,7 +52,6 @@ varying vec3 vLightCourt;
 REACH
 uniform sampler2D uFloorMap;
 uniform sampler2D uSeenMap;
-uniform sampler2D uFloorLow; // the real floor low-passed (rgb premultiplied by alpha = how much of it was seen)
 uniform float uHasFloor;
 uniform float uTone;        // the boards' tone spread, measured across them on the real floor
 uniform vec4 uCourt;    // half length, half width, apron, basket from the baseline
@@ -136,12 +137,11 @@ void main() {
   vec3 plain = rulebookBase(p, court);
   vec2 uv = vec2((p.x + uCourt.x) / (2.0 * uCourt.x), 1.0 - (p.y + uCourt.y) / (2.0 * uCourt.y));
   float seen = texture2D(uSeenMap, uv).r * court * uHasFloor;
-  // the clean floor: the real floor's own colour where it was seen (low-passed: no streak survives), the rulebook's
-  // elsewhere, softly across the seen edge; boards on it; the lines crisp where the court model puts them
-  vec4 low = texture2D(uFloorLow, uv);
-  vec3 base = mix(plain, low.rgb / max(low.a, 1e-3), smoothstep(0.15, 0.85, low.a) * court * uHasFloor);
+  // the clean floor: the rulebook court in the real floor's own colours (its median wood and lane paint, floortone.ts:
+  // one colour each, so no logo, sign or streak of the footage shows), boards on it, the lines crisp where the court
+  // model puts them
   vec2 lines = rulebookLines(p) * court;
-  vec3 clean = base * boards(p);
+  vec3 clean = plain * boards(p);
   clean = mix(clean, uWhite, lines.x);
   clean = mix(clean, uNavy, lines.y);
   // the footage where it was filmed and you see it near its own camera's ray (lightFilmedFloor: all of it from the seat)
@@ -215,116 +215,17 @@ function glowTexture(): THREE.Texture {
   return t;
 }
 
-/** The clean floor's colour texels: the real floor low-passed to this, metres (no streak along the camera's ray survives). */
-const LOW_M = 0.12;
-/** The rulebook's board width, metres (2.25 in): the tone is measured one board apart. */
-const BOARD_M = 0.057;
-
 type Pixels = { width: number; height: number } & CanvasImageSource;
 
-/**
- * The real floor for the clean floor (world.ts's floor shader): floor.jpg averaged over the seen texels into LOW_M
- * texels and blurred, premultiplied by how much of each was seen (its alpha), and the boards' tone spread measured
- * across them (rows one board apart: the footage is sharp across the camera's ray, which runs along the boards).
- * Without a seen floor: an empty texel and the rulebook's spread.
- */
-function lowFloor(floor: Pixels | undefined, seen: Pixels | undefined, length: number, width: number): { texture: THREE.DataTexture; tone: number } {
-  const empty = () => {
-    const t = new THREE.DataTexture(new Uint8Array(4), 1, 1);
-    t.needsUpdate = true;
-    return { texture: t, tone: 0.05 };
-  };
-  if (!floor || !seen || typeof document === "undefined") return empty();
-  const W = floor.width;
-  const H = floor.height;
-  const read = (img: Pixels) => {
-    const cv = document.createElement("canvas");
-    cv.width = W;
-    cv.height = H;
-    const g = cv.getContext("2d", { willReadFrequently: true })!;
-    g.drawImage(img, 0, 0, W, H);
-    return g.getImageData(0, 0, W, H).data;
-  };
-  const rgb = read(floor);
-  const mask = read(seen);
-  const lin = (v: number) => {
-    const c = v / 255;
-    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  };
-  const LUT = Float32Array.from({ length: 256 }, (_, i) => lin(i));
-  const nx = Math.max(2, Math.round(length / LOW_M));
-  const nz = Math.max(2, Math.round(width / LOW_M));
-  const acc = new Float32Array(nx * nz * 4);
-  const cnt = new Float32Array(nx * nz);
-  for (let y = 0; y < H; y++) {
-    const j = Math.min(nz - 1, Math.floor((y / H) * nz));
-    for (let x = 0; x < W; x++) {
-      const i = Math.min(nx - 1, Math.floor((x / W) * nx));
-      const o = (y * W + x) * 4;
-      const s = mask[o] / 255;
-      const k = (j * nx + i) * 4;
-      acc[k] += LUT[rgb[o]] * s;
-      acc[k + 1] += LUT[rgb[o + 1]] * s;
-      acc[k + 2] += LUT[rgb[o + 2]] * s;
-      acc[k + 3] += s;
-      cnt[j * nx + i]++;
-    }
-  }
-  for (let k = 0; k < nx * nz; k++) for (let c = 0; c < 4; c++) acc[k * 4 + c] /= Math.max(1, cnt[k]);
-  // two passes of a 3 x 3 box: the texels' own edges gone too
-  let cur = acc;
-  for (let pass = 0; pass < 2; pass++) {
-    const nxt = new Float32Array(cur.length);
-    for (let j = 0; j < nz; j++)
-      for (let i = 0; i < nx; i++)
-        for (let c = 0; c < 4; c++) {
-          let sum = 0;
-          let n = 0;
-          for (let dj = -1; dj <= 1; dj++)
-            for (let di = -1; di <= 1; di++) {
-              const a = i + di;
-              const b = j + dj;
-              if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
-              sum += cur[(b * nx + a) * 4 + c];
-              n++;
-            }
-          nxt[(j * nx + i) * 4 + c] = sum / n;
-        }
-    cur = nxt;
-  }
-  // stored sRGB-encoded (the GPU decodes before it filters), the seen share linear in alpha
-  const enc = (l: number) => Math.round(255 * Math.min(1, l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055));
-  const out = new Uint8Array(nx * nz * 4);
-  for (let k = 0; k < nx * nz; k++) {
-    for (let c = 0; c < 3; c++) out[k * 4 + c] = enc(cur[k * 4 + c]);
-    out[k * 4 + 3] = Math.round(255 * Math.min(1, cur[k * 4 + 3]));
-  }
-  const texture = new THREE.DataTexture(out, nx, nz);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.flipY = true; // rows along +z, like floor.jpg as the TextureLoader uploads it
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
-  // the boards' tone: luma one board apart across them, on seen texels, as a share of the mean (median |d| / 0.954 /
-  // sqrt(2) is the std of one board's tone when boards are independent)
-  const step = Math.max(1, Math.round((BOARD_M / width) * H));
-  const ds: number[] = [];
-  let sumY = 0;
-  for (let y = 0; y + step < H; y += 2)
-    for (let x = 0; x < W; x += 2) {
-      const o = (y * W + x) * 4;
-      const o2 = ((y + step) * W + x) * 4;
-      if (mask[o] < 250 || mask[o2] < 250) continue;
-      const y1 = 0.2126 * LUT[rgb[o]] + 0.7152 * LUT[rgb[o + 1]] + 0.0722 * LUT[rgb[o + 2]];
-      const y2 = 0.2126 * LUT[rgb[o2]] + 0.7152 * LUT[rgb[o2 + 1]] + 0.0722 * LUT[rgb[o2 + 2]];
-      ds.push(Math.abs(y1 - y2));
-      sumY += y1;
-    }
-  if (ds.length < 100) return { texture, tone: 0.05 };
-  ds.sort((a, b) => a - b);
-  const tone = ds[ds.length >> 1] / 0.954 / Math.SQRT2 / (sumY / ds.length);
-  return { texture, tone: Math.min(0.12, Math.max(0.02, tone)) };
+/** An image's RGBA bytes (a canvas read), or null outside a page. */
+function bytesOf(img: Pixels | undefined, w: number, h: number): Uint8ClampedArray | null {
+  if (!img || typeof document === "undefined") return null;
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const g = cv.getContext("2d", { willReadFrequently: true })!;
+  g.drawImage(img, 0, 0, w, h);
+  return g.getImageData(0, 0, w, h).data;
 }
 
 /** The seating bowl's tiers round the court (one merged geometry, court space). */
@@ -456,10 +357,16 @@ export class CourtWorld {
       seenMap.colorSpace = THREE.NoColorSpace;
       seenMap.anisotropy = aniso;
     }
-    const wood = new THREE.Color().setRGB(c.hardwood[0], c.hardwood[1], c.hardwood[2], THREE.SRGBColorSpace);
+    // the clean floor's colours from the real floor where it was filmed (else the bundle's hardwood, the rulebook's paint)
+    const fw = (floorMap?.image as Pixels | undefined)?.width ?? 0;
+    const fh = (floorMap?.image as Pixels | undefined)?.height ?? 0;
+    const rgb = bytesOf(floorMap?.image as Pixels | undefined, fw, fh);
+    const mask = bytesOf(seenMap?.image as Pixels | undefined, fw, fh);
+    const tones = rgb && mask ? floorTones(rgb, mask, fw, fh, c.length, c.width) : { wood: null, paint: null, tone: TONE_DEFAULT };
+    const woodRgb = tones.wood ?? c.hardwood;
+    const wood = new THREE.Color().setRGB(woodRgb[0], woodRgb[1], woodRgb[2], THREE.SRGBColorSpace);
+    const paint = tones.paint ? new THREE.Color().setRGB(tones.paint[0], tones.paint[1], tones.paint[2], THREE.SRGBColorSpace) : LANE_PAINT;
     const light = this.light;
-    const low = lowFloor(floorMap?.image, seenMap?.image, c.length, c.width);
-    this.textures.push(low.texture);
 
     // the floor: court, apron and the dark arena floor out to the bowl
     const size = 2 * (halfL + BOWL.end + 1);
@@ -472,15 +379,14 @@ export class CourtWorld {
         uFloorMap: { value: floorMap },
         uSeenMap: { value: seenMap },
         uHasFloor: { value: floorMap && seenMap ? 1 : 0 },
-        uFloorLow: { value: low.texture },
-        uTone: { value: low.tone },
+        uTone: { value: tones.tone },
         uCourt: { value: new THREE.Vector4(halfL, halfW, APRON_M, halfL - Math.abs(c.rim[0])) },
         uWood: { value: new THREE.Vector3(wood.r, wood.g, wood.b) },
         uApron: { value: new THREE.Vector3(wood.r, wood.g, wood.b).multiplyScalar(APRON_STAIN) },
         uDark: { value: new THREE.Vector3(ARENA_FLOOR.r, ARENA_FLOOR.g, ARENA_FLOOR.b) },
         uWhite: { value: new THREE.Vector3(LINE_WHITE.r, LINE_WHITE.g, LINE_WHITE.b) },
         uNavy: { value: new THREE.Vector3(LINE_NAVY.r, LINE_NAVY.g, LINE_NAVY.b) },
-        uPaint: { value: new THREE.Vector3(LANE_PAINT.r, LANE_PAINT.g, LANE_PAINT.b) },
+        uPaint: { value: new THREE.Vector3(paint.r, paint.g, paint.b) },
         uBlue: this.blueU,
         uReality: this.realityU,
       },
