@@ -125,7 +125,10 @@ export class ChessClock {
         this.local.copy(tip);
         this.group.worldToLocal(this.local);
         const b = this.buttons.near.position;
-        inside = Math.abs(this.local.x - b.x) < BUTTON.x / 2 + 0.016 && Math.abs(this.local.z - b.z) < BUTTON.z / 2 + 0.014 && this.local.y < BODY.y + BUTTON.y + UP + 0.01 && this.local.y > BODY.y - 0.012;
+        // in: the zone; out again: a centimetre and a half clear of it, so a hand resting on the button, shaking with
+        // tracking jitter at the edge, never presses it again and again
+        const m = this.wasInside[i] ? 0.015 : 0;
+        inside = Math.abs(this.local.x - b.x) < BUTTON.x / 2 + 0.016 + m && Math.abs(this.local.z - b.z) < BUTTON.z / 2 + 0.014 + m && this.local.y < BODY.y + BUTTON.y + UP + 0.01 + m && this.local.y > BODY.y - 0.012 - m;
       }
       if (inside && !this.wasInside[i] && nowMs > this.cooldownUntil) {
         this.cooldownUntil = nowMs + 350;

@@ -40,8 +40,10 @@ export function wantsClub(dream: Dream, experience: Experience | null, search = 
   const q = new URLSearchParams(search).get("club");
   if (q !== null) return q !== "0" && q !== "false";
   const objects = (experience as { objects?: unknown } | null)?.objects;
-  const text = [dream.intent, dream.name, experience?.intent, experience?.title, objects ? JSON.stringify(objects) : ""].join(" ");
-  return /golf|club|swing/i.test(text);
+  const text = [dream.intent, dream.name, experience?.intent, experience?.title].join(" ");
+  // golf words only: a dance's "swing" or a night at the "club" doesn't put an iron in your hands
+  if (/golf|\bputt(?:s|er|ing)?\b|\b(?:\d|three|four|five|six|seven|eight|nine)[- ]?iron\b|\bfairway\b|\btee (?:shot|box)\b/i.test(text)) return true;
+  return /golf|"club"/i.test(objects ? JSON.stringify(objects) : "");
 }
 
 // ---------------------------------------------------------------- the club, built from code
