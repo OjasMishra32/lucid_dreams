@@ -60,7 +60,7 @@ def _flat_hand():
 
 def test_hand_shading_parts_the_fingers_and_finds_the_nails():
     p, n, joints = _flat_hand()
-    shade, nail, palm = C.hand_shading(p, n, p, joints, "left")
+    shade, nail, palm = C.hand_shading(p, n, p, joints, "left", mottle_amp=0.035)
     middle = np.abs(p[:, 2] - 0.0085) < 0.009
     facing_ring = middle & (n[:, 2] < -0.9)  # the middle finger's side next to the ring finger
     top = middle & (n[:, 1] > 0.9)

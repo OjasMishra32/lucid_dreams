@@ -130,7 +130,7 @@ def disc_quats(normals: np.ndarray) -> np.ndarray:
 
 
 def hand_shading(p: np.ndarray, n: np.ndarray, hand_v: np.ndarray, joints: np.ndarray, side: str,
-                 seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 seed: int = 0, strength: float = 1.0, mottle_amp: float = 0.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """What makes a hand read as a hand at arm's length, measured in the rest pose (palms down, fingers straight):
     (shade multiplier, nail mask, palm mask) per surface point p with unit normal n. Shade darkens where the hand
     hides from the light (a finger's side next to the next finger, the webbing between them: the share of the hand's
@@ -142,7 +142,7 @@ def hand_shading(p: np.ndarray, n: np.ndarray, hand_v: np.ndarray, joints: np.nd
     for k, nb in enumerate(cKDTree(hand_v).query_ball_point(p, 0.012)):
         if nb:
             occ[k] = np.mean((hand_v[nb] - p[k]) @ n[k] > 0.0015)
-    shade = 1 - 0.42 * np.clip(occ / 0.35, 0, 1) ** 1.2
+    shade = 1 - 0.42 * strength * np.clip(occ / 0.35, 0, 1) ** 1.2
 
     dorsal, palm_n = n[:, 1], -n[:, 1]  # T-pose, palms down: the back of the hand faces +Y
     crease = np.zeros(m)
@@ -177,7 +177,7 @@ def hand_shading(p: np.ndarray, n: np.ndarray, hand_v: np.ndarray, joints: np.nd
         up = n @ (np.array([0.0, 1.0, 0.0]) if f != "thumb" else np.array([0.0, 0.7, 0.7]) / math.sqrt(0.98))
         nail |= tipm & (along > 0.35 * reach) & (along < 0.97 * reach) & (up > 0.55)
     depth = np.where(dorsal > 0.3, 0.13, np.where(palm_n > 0.3, 0.24, 0.17))
-    shade *= 1 - depth * crease
+    shade *= 1 - strength * depth * crease
 
     rng = np.random.default_rng(seed)
     mottle = np.zeros(m)
@@ -185,12 +185,13 @@ def hand_shading(p: np.ndarray, n: np.ndarray, hand_v: np.ndarray, joints: np.nd
         k = rng.normal(size=3)
         k *= 2 * math.pi / (rng.uniform(0.002, 0.005) * np.linalg.norm(k))
         mottle += np.cos(p @ k + rng.uniform(0, 2 * math.pi))
-    shade *= 1 + 0.035 * mottle / math.sqrt(8 / 2)
+    shade *= 1 + mottle_amp * mottle / math.sqrt(8 / 2)
     return shade, nail, palm_n > 0.35
 
 
 def hand_gaussians(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, joints: np.ndarray, skin_xyz: np.ndarray,
-                   skin_rgb: np.ndarray, per_hand: int, seed: int = 0, tone: np.ndarray | None = None) -> dict:
+                   skin_rgb: np.ndarray, per_hand: int, seed: int = 0, tone: np.ndarray | None = None,
+                   shading: float = 1.0) -> dict:
     """Fresh hands on the SMPL-X hand surface (both, from just behind the wrist to the fingertips): flat opaque
     discs on the skin, coloured from the nearest Gaussians of the person's own skin (skin_xyz/skin_rgb, k = 12),
     moved to `tone` (the face's skin, so hands and face match) when given, then shaded as a hand (hand_shading:
@@ -214,20 +215,22 @@ def hand_gaussians(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, joints
         tri = verts[faces[fids]]
         area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1).sum()
         spacing = math.sqrt(area / per_hand)
-        d, i = cKDTree(skin_xyz).query(p, k=min(12, len(skin_xyz)))
+        d, i = cKDTree(skin_xyz).query(p, k=min(24, len(skin_xyz)))
         w = 1 / (d + 0.003)
         rgb = (skin_rgb[i] * w[..., None]).sum(1) / w.sum(1, keepdims=True)
-        # one skin tone (the face's, or the hand's own median), with only the sampled skin's gentle light and shade
-        # (within 8%): the old hands' speckles (cuff, background, blur) never come through
-        base = np.asarray(tone, dtype=np.float64) if tone is not None else np.median(rgb, axis=0)
         lum_s = rgb @ LUM
-        rgb = base[None] * np.clip(lum_s / max(float(np.median(lum_s)), 1e-3), 0.92, 1.08)[:, None]
-        shade, nail, palm = hand_shading(p, n, verts[ok_v], joints, side, seed=seed)
+        ratio = lum_s / max(float(np.median(lum_s)), 1e-3)
+        if tone is not None:  # one skin tone (e.g. the face's), only the sampled skin's gentle light and shade (8%)
+            rgb = np.asarray(tone, dtype=np.float64)[None] * np.clip(ratio, 0.92, 1.08)[:, None]
+        else:  # the person's own hand skin, its photo light kept (within 20%), its median hue (no cuff or room in it)
+            hue = np.median(rgb / np.maximum(lum_s, 1e-3)[:, None], axis=0)
+            rgb = hue[None] * (float(np.median(lum_s)) * np.clip(ratio, 0.8, 1.2))[:, None]
+        shade, nail, palm = hand_shading(p, n, verts[ok_v], joints, side, seed=seed, strength=shading)
         lum = (rgb @ LUM)[:, None]
         rgb[palm] = lum[palm] + 0.8 * (rgb[palm] - lum[palm])  # palms: less pigment
         rgb[palm] *= 1.07
         nail_rgb = np.clip(lum[nail] * np.array([1.18, 1.0, 0.97]) + 0.12, 0, 1)  # pale, a little pink
-        rgb[nail] = 0.55 * nail_rgb + 0.45 * rgb[nail]
+        rgb[nail] = 0.55 * min(shading, 1.0) * nail_rgb + (1 - 0.55 * min(shading, 1.0)) * rgb[nail]
         rgb = rgb * shade[:, None]
         h_idx, h_q = face_skin(fid, bary, faces, lbs)
         for depth, width, dim in ((0.0003, 0.7, 1.0), (-0.0012, 1.15, 0.9)):
@@ -270,6 +273,7 @@ def main(argv=None) -> None:
     p.add_argument("--relight-legs", type=float, default=None, help="the trousers shaded by a soft key light from above and in front, this strong (knees, shins)")
     p.add_argument("--skin-consistent", action="store_true", help="a Gaussian whose joint differs from its neighbours' takes their weights (no floaters when posed)")
     p.add_argument("--drop-lonely", type=float, default=None, help="drop clothes Gaussians whose 8 nearest are on average further than this (m)")
+    p.add_argument("--hand-shading", type=float, default=1.0, help="with --rebuild-hands: strength of the shading between the fingers, the creases and the nails (0-1)")
     p.add_argument("--hand-rgb", type=str, default=None, help="with --rebuild-hands: the hands' skin colour R,G,B or R:G:B (0-1), e.g. the face's, so they match")
     p.add_argument("--keep-colours", action="store_true", help="skip the suit-minded colour passes (specks, sleeve logos, back smears, trouser blobs): a white kit keeps its colours for lhmpp_avatar.py whites")
     p.add_argument("--back-collar-m", type=float, default=None, help="the back pass reaches up to this far above the neck joint (m; the shirt collar's band above it stays); default 5 cm below it")
@@ -661,7 +665,7 @@ def main(argv=None) -> None:
         if tone is not None and tone.shape != (3,):
             raise SystemExit(f"--hand-rgb wants R,G,B (or R:G:B), not {a.hand_rgb}")
         new_hands = hand_gaussians(verts, faces, np.asarray(lbs), joints, xyz[skin_like], out[skin_like],
-                                   a.rebuild_hands, tone=tone)
+                                   a.rebuild_hands, tone=tone, shading=a.hand_shading)
         keep &= ~old_hand
 
     g_out = replace(g, xyz=xyz, f_dc=(np.clip(out, 0, 1) - 0.5) / SH_C0, scale=scale, rotation=rotation, opacity=opacity)
@@ -690,7 +694,7 @@ def main(argv=None) -> None:
               "feetLum": a.feet_lum, "clothHue": a.cloth_hue, "hued": hued, "reskinnedHips": int(reskinned.sum()),
               "droppedFaint": int(faint.sum()), "madeSolid": int(firm.sum()), "widened": widened,
               "lightStreaks": int(streaks.sum()), "needlesCapped": needled, "legsRelit": relit, "skinConsistent": consistent,
-              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "backCollarM": a.back_collar_m, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
+              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "backCollarM": a.back_collar_m, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "handShading": a.hand_shading, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
               "of": len(g), "kept": int(keep.sum()) + (len(new_hands["xyz"]) if new_hands else 0)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
