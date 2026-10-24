@@ -14,6 +14,10 @@ const config: NextConfig = {
   // Next 16 writes an AGENTS.md here by default; the bridge finds the repo root by the first AGENTS.md above it,
   // so that file made it read apps/web/dreams (empty) instead of the repo's dreams/.
   agentRules: false,
+  // One website: the home page shows every scene, so the old showcase page sends you there
+  async redirects() {
+    return [{ source: "/showcase", destination: "/#scenes", permanent: false }];
+  },
 };
 
 export default config;

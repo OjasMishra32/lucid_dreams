@@ -120,13 +120,6 @@ npm --prefix apps/webxr run dev          # https://<this Mac's IP>:5180 (self-si
 adb shell "echo http://<mac-ip>:5170 > /sdcard/Android/data/com.luciddreams.quest/files/bridge.txt"
 ```
 
-**Site** ([apps/site](apps/site)), port 5190:
-
-```bash
-npm --prefix apps/site install
-npm --prefix apps/site run dev
-```
-
 **Pipeline** ([pipeline](pipeline)): GPU jobs run on UF's HiPerGator. From the Mac that holds the connection:
 
 ```bash
@@ -152,10 +145,9 @@ lets every player run without a GPU. The caption and old-footage restoration too
 ```text
 AGENTS.md      the plan, the shared contracts (dream bundle, job API, experience, props) and the build log
 team/          one brief per person
-apps/web/      web app and the job bridge (Next.js), Gemini plan
+apps/web/      the website (home, library, make a dream) and the job bridge (Next.js), Gemini plan
 apps/webxr/    WebXR viewer and chess (three.js + Spark)
 apps/quest/    Quest 3S app (Unity, OpenXR, Unity Gaussians)
-apps/site/     the public page
 pipeline/      reconstruction, export, captions, restoration (Python), HiPerGator jobs, the Mac runner
 avatars/       DiGS-Avatar fitting, fine-tuning, motion, skinning
 demo/          showcase, credits, consent process, Devpost and video drafts

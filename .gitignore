@@ -35,4 +35,3 @@ apps/webxr/dist/
 !samples/**
 
 # raw site media before it's re-encoded for the web (big files stay out of git)
-/apps/site/public/media-staging/

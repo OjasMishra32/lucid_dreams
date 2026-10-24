@@ -155,7 +155,7 @@ export default function Kiosk({ slides }: { slides: KioskSlide[] }) {
 
       <div className="kiosk-controls">
         <button className="btn secondary btn-sm" onClick={toggleFull}>{full ? "Exit full screen" : "Full screen"}</button>
-        <Link href="/showcase" className="btn secondary btn-sm">Done</Link>
+        <Link href="/" className="btn secondary btn-sm">Done</Link>
       </div>
     </div>
   );

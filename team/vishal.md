@@ -88,7 +88,7 @@ pages and `?place=` from every link; the viewer ignores places now (`PLACES = fa
    2015 session; if it wins, it'll leave `avatars/hpg/lhmpp-avatar.sbatch` (photos folder in, our avatar bundle
    out). **If it wins, use it for Ian's grandma and your own avatar too**: same bundle format, several photos per
    person. Your head swap stays the fallback, and your idle loop and `expr.bin` work on any SMPL-X bundle.
-2. **Your bridge and site are running** on Ojasva's Mac: :5170 (runner mode, `LUCID_DREAMS_DIR` set) and :5190.
+2. **Your bridge is running** on Ojasva's Mac: :5170 (runner mode, `LUCID_DREAMS_DIR` set). It is the one website (the old `apps/site` on :5190 is retired, Sat 6:30 PM).
    Fixed on the way: Next 16 wrote `apps/web/AGENTS.md`, which made the bridge look for dreams in `apps/web`
    (`agentRules: false` in next.config now). Still missing: `GEMINI_API_KEY` in `apps/web/.env.local`.
 
@@ -103,7 +103,7 @@ jump-shot hero and reel of real dreams, Lighthouse 100 on mobile. **Open, in ord
 
 1. **Gemini key on the bridge.** `apps/web/.env.local` doesn't exist on Ojasva's Mac, so no Gemini step runs:
    put `GEMINI_API_KEY=...` there (ask Ojasva for the key; never commit it). The bridge runs on :5170 in runner
-   mode (`BRIDGE_MODE=runner`), the site on :5190.
+   mode (`BRIDGE_MODE=runner`).
 2. **Gemini Live coach in the lesson:** an "Ask" fingertip button in the WebXR viewer opens a Gemini Live audio
    session about the step on screen; the device's voice, never the person's; a token endpoint in `apps/web` mints
    short-lived credentials (raami.md, MORE 1).

@@ -103,7 +103,7 @@ craft and the tooling.
 | 0:00-0:12 | **Hook** | Black screen and one line of voice-over (Ojasva's own voice). Cut to the single most magical shot: a real person appearing life-size in a real room, the camera walking around them. No logo yet. |
 | 0:12-0:30 | **Why** | Someone you can't be in a room with: a teacher, a legend, someone you lost. One sentence: "Any photo or video, plus one sentence, and they're here." |
 | 0:30-1:50 | **Three moments, each a 20-25 s mini story** | **Learn:** follow a dance or tai chi teacher, glowing targets, the score climbing, a chime. **Play:** Magnus shakes your hand, then moves his own piece; a Federer rally. **Connect:** the family moment (below). |
-| 1:50-2:30 | **How it works, 30-40 s** | One phone clip, then 4DAnyone's 48 generated views flying into a ring (apps/site has this animation), then 4D Gaussians, then life-size on your floor. Say what's new (4DAnyone, Aug 2026; LHM++ / UIKA 2026) and one honest number from `team/ian.md`. |
+| 1:50-2:30 | **How it works, 30-40 s** | One phone clip, then 4DAnyone's 48 generated views flying into a ring (the website's home page has this animation, from 4DAnyone's real `cameras.json`), then 4D Gaussians, then life-size on your floor. Say what's new (4DAnyone, Aug 2026; LHM++ / UIKA 2026) and one honest number from `team/ian.md`. |
 | 2:30-2:55 | **Close** | Back to the most emotional shot, quiet. Tagline: "Anyone from any video, standing in your room." Logo, team names. |
 
 **The family moment** (Ian's grandma, Talk with them) only if Ian confirms the family agreed to it being shown.
@@ -130,7 +130,7 @@ Otherwise use a teammate's own photo or clip, or cut it. Talk replies are always
   WebXR recordings. Or mirror it live to the Mac with `scrcpy` over adb (USB) and screen-record that.
 - **Third person:** a phone on a tripod filming the wearer, plus the in-headset view, cut together.
 - **Clean renders:** QuickTime screen recordings of the WebXR desktop view (`http://localhost:5181/?dream=…`;
-  `?mode=chess…`, `?mode=tennis`), the public site (`:5190`) for the how-it-works animation, and each bundle's
+  `?mode=chess…`, `?mode=tennis`), the website's home page (`:5170`) for the how-it-works animation, and each bundle's
   `preview.mp4` orbit.
 - Keep raw files in `~/Movies/LucidDreams-video/{raw,music,vo,export}`, never in the repo.
 
@@ -167,8 +167,8 @@ clear over the music.
   - `:5170` web app + bridge (`apps/web`, runner mode);
   - `:5175` Talk (`apps/talk`, keys in its git-ignored `.env`);
   - `:5180` WebXR, https (what the headset uses);
-  - `:5181` WebXR over plain http (working tree, for desktop checks);
-  - `:5190` public site (`apps/site`).
+  - `:5181` WebXR over plain http (working tree, for desktop checks).
+  - There is one website: `apps/web` on `:5170` (public at https://getluciddreams.vercel.app). The old `apps/site` (:5190) is retired.
 - **Cloudflare quick tunnels** (campus Wi-Fi blocks the Quest from the Mac):
   - WebXR: `cloudflared tunnel --url https://localhost:5180 --no-tls-verify`;
   - the bridge and Talk URLs are in `~/LucidDreams-held/{bridge,talk}-tunnel.txt`.

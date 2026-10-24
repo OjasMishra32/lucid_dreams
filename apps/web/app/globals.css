@@ -637,43 +637,6 @@ main:focus, .compose:focus { outline: none; }
 .quest-scheme { color: var(--muted); } /* --faint fails 4.5:1 on the surface */
 .quest-url .btn { flex: none; }
 
-/* ---------- showcase ---------- */
-.showcase-head { padding-bottom: 56px; }
-.showcase-head .display { font-size: clamp(44px, 8vw, 104px); line-height: 1; letter-spacing: -0.045em; }
-.moments { padding-bottom: 80px; }
-.moment {
-  display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: clamp(40px, 7vw, 104px); align-items: center;
-  padding: 88px 0; border-top: 1px solid var(--hairline);
-}
-.moment:nth-child(even) { grid-template-columns: minmax(0, 1fr) minmax(0, 420px); }
-.moment:nth-child(even) .moment-media { order: 2; }
-.moment-media { width: 100%; border-radius: var(--radius-lg); color: var(--text); }
-.moment-media:hover { text-decoration: none; }
-a.moment-media:hover::after { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
-/* the moments still on their way: one quiet list, not empty frames */
-.waiting { padding: 72px 0 0; border-top: 1px solid var(--hairline); }
-.waiting > h2 { font-size: clamp(28px, 3.4vw, 40px); line-height: 1.1; font-weight: 700; letter-spacing: -0.032em; margin: 0; }
-.waiting > p { font-size: 17px; color: var(--muted); margin: 10px 0 0; }
-.waiting ol { list-style: none; margin: 32px 0 0; padding: 0; }
-.waiting li { display: grid; grid-template-columns: 56px minmax(0, 1.1fr) minmax(0, 1fr); gap: 8px 32px; align-items: baseline; padding: 28px 0; border-top: 1px solid var(--hairline); }
-.waiting li:last-child { border-bottom: 1px solid var(--hairline); }
-.waiting-n { font-size: 15px; font-weight: 600; color: var(--muted); margin: 0; }
-.waiting h3 { font-size: 24px; line-height: 1.2; font-weight: 700; letter-spacing: -0.022em; margin: 0; }
-.waiting .said { font-size: 21px; line-height: 1.3; color: var(--text); margin: 6px 0 0; }
-.waiting-what p { font-size: 17px; line-height: 1.45; color: var(--muted); margin: 0; }
-.waiting-what .status { color: var(--text); font-weight: 600; margin-top: 10px; }
-.waiting-what .more { display: inline-block; margin-top: 10px; }
-.waiting-what .more + p { font-size: 13px; margin-top: 6px; }
-.moment-empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 32px; text-align: center; font-size: 15px; color: var(--muted); background: var(--surface); }
-.moment-n { font-size: 15px; font-weight: 600; color: var(--muted); margin: 0 0 14px; }
-.moment-said { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.12; color: var(--text); margin: 22px 0 0; }
-.moment-line { font-size: 19px; line-height: 1.45; color: var(--muted); margin: 18px 0 0; max-width: 520px; }
-.moment-where { font-size: 15px; color: var(--muted); margin: 14px 0 0; }
-.moment-actions { display: flex; align-items: center; gap: 28px; margin-top: 36px; flex-wrap: wrap; }
-.moment-wait { font-size: 15px; color: var(--muted); }
-.moment-credit { font-size: 13px; color: var(--muted); margin: 20px 0 0; }
-.moment-credit + .moment-credit { margin-top: 6px; }
-
 /* ---------- kiosk ---------- */
 .kiosk { position: fixed; inset: 0; z-index: 100; background: #000; color: var(--text); overflow: hidden; }
 .kiosk.asleep { cursor: none; }
@@ -770,9 +733,6 @@ a.moment-media:hover::after { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.
   .hero { padding-top: 84px; }
   .choice { grid-template-columns: 1fr; }
   .quest-url { flex-direction: column; align-items: stretch; gap: 14px; padding: 18px; }
-}
-@media (max-width: 420px) {
-  .nav-showcase { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }

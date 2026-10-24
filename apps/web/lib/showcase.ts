@@ -1,4 +1,4 @@
-// The five demo moments (demo/showcase.md): what judges see first on the laptop, at /showcase and on the kiosk.
+// The five demo moments (demo/showcase.md): their labels, and the kiosk on the demo laptop.
 // Each lists the dreams that can play it, best first; the first one that's ready in the library is shown.
 
 export interface Moment {
