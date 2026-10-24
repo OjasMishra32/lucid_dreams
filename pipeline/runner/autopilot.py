@@ -122,8 +122,11 @@ def main():
                     state["failed"].remove(run_id)
                     log(f"{run_id} is running again")
             # photos -> avatars (Vishal's DiGS job needs its assets first)
+            runs_file = runner.DEFAULT_DEST / ".runs.json"  # submitted by hand under the same id: never twice
+            known = set(state["submitted"]) | set(json.loads(runs_file.read_text()) if runs_file.exists() else [])
             photos = [f for f in sorted(PHOTOS.iterdir()) if f.suffix.lower() in PHOTO
-                      and str(f) not in [v["clip"] for v in state["submitted"].values()]]
+                      and str(f) not in [v["clip"] for v in state["submitted"].values()]
+                      and runner.slug(f.stem) not in known]
             settled = []
             for f in photos:
                 size = f.stat().st_size
