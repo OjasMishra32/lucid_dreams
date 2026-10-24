@@ -50,7 +50,9 @@ varying vec3 vLightCourt;
 REACH
 uniform sampler2D uFloorMap;
 uniform sampler2D uSeenMap;
+uniform sampler2D uFloorLow; // the real floor low-passed (rgb premultiplied by alpha = how much of it was seen)
 uniform float uHasFloor;
+uniform float uTone;        // the boards' tone spread, measured across them on the real floor
 uniform vec4 uCourt;    // half length, half width, apron, basket from the baseline
 uniform vec3 uWood;
 uniform vec3 uApron;
@@ -61,6 +63,11 @@ uniform vec3 uPaint;
 uniform vec3 uBlue;
 uniform float uReality;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
 float lineMask(float d, float hw) {
   float aa = max(fwidth(d), 1e-4);
   return 1.0 - smoothstep(hw - aa, hw + aa, d);
@@ -73,26 +80,27 @@ float segment(vec2 p, vec2 a, vec2 b) {
   vec2 pa = p - a, ba = b - a;
   return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0));
 }
-// the rulebook court (NBA): boards along x, the lines, the lane paint; 1 = inside the court in w
-vec3 rulebook(vec2 p, out float court) {
-  float board = floor(p.y / 0.057);
-  float plank = floor((p.x + hash(vec2(board, 1.0)) * 2.4) / 2.4);
-  float grain = (hash(vec2(board, plank)) - 0.5) * 0.12 * (1.0 - smoothstep(0.01, 0.06, fwidth(p.y)));
-  vec3 wood = uWood * (1.0 + grain);
+// the rulebook court's flat colours (NBA): hardwood, the apron's stain, the arena floor, the lane's paint; 1 = inside
+// the court in \`court\`
+vec3 rulebookBase(vec2 p, out float court) {
   vec2 a = abs(p);
   court = step(a.x, uCourt.x) * step(a.y, uCourt.y);
   float apron = step(a.x, uCourt.x + uCourt.z) * step(a.y, uCourt.y + uCourt.z);
-  vec3 col = mix(uDark, mix(uApron * (1.0 + grain), wood, court), apron);
+  vec3 col = mix(uDark, mix(uApron, uWood, court), apron);
+  vec2 q = vec2(a.x, p.y);
+  float lane = box(q - vec2(uCourt.x - 2.895, 0.0), vec2(2.895, 2.44));
+  return mix(col, uPaint, step(lane, 0.0) * court);
+}
+// the rulebook's lines where the court model puts them: white (boundary, lane, circles), navy (halfcourt, three)
+vec2 rulebookLines(vec2 p) {
+  vec2 a = abs(p);
   float hw = 0.0254;
   vec2 q = vec2(a.x, p.y); // each end mirrored onto +x
   vec2 c = vec2(uCourt.x - uCourt.w, 0.0); // the basket
   float zc = uCourt.y - 0.91;
   float R = 7.24;
   float xa = c.x - sqrt(max(R * R - zc * zc, 0.0));
-  // the lane and its paint
-  vec2 laneC = vec2(uCourt.x - 2.895, 0.0);
-  float lane = box(q - laneC, vec2(2.895, 2.44));
-  col = mix(col, uPaint, step(lane, 0.0) * court);
+  float lane = box(q - vec2(uCourt.x - 2.895, 0.0), vec2(2.895, 2.44));
   float white = lineMask(abs(box(p, vec2(uCourt.x, uCourt.y) - hw)), hw);  // sidelines and baselines
   white = max(white, lineMask(abs(lane), hw) * step(q.x, uCourt.x));
   white = max(white, lineMask(abs(length(p) - 1.83), hw));                  // centre circle
@@ -103,19 +111,44 @@ vec3 rulebook(vec2 p, out float court) {
   float three = min(segment(q, vec2(xa, zc), vec2(uCourt.x, zc)), segment(q, vec2(xa, -zc), vec2(uCourt.x, -zc)));
   if (q.x <= xa) three = min(three, abs(length(q - c) - R));
   navy = max(navy, lineMask(three, hw));
-  col = mix(col, uWhite, white * court);
-  col = mix(col, uNavy, navy * court);
-  return col;
+  return vec2(white, navy);
+}
+// the clean floor's boards, as a multiplier near 1: 57 mm boards along x in staggered 2.4 m planks, each its own tone
+// (spread uTone), hairline seams and joints, a little grain; all of it fades to its mean once a board is under ~2 px
+float boards(vec2 p) {
+  float zb = p.y / 0.057;
+  float board = floor(zb);
+  float off = hash(vec2(board, 1.0)) * 2.4;
+  float xb = (p.x + off) / 2.4;
+  float plank = floor(xb);
+  float fz = fwidth(zb);
+  float near = 1.0 - smoothstep(0.25, 0.6, fz);
+  float tone = (hash(vec2(board, plank)) - 0.5) * 3.4641 * uTone; // uniform, std uTone
+  float ez = min(fract(zb), 1.0 - fract(zb));
+  float ex = min(fract(xb), 1.0 - fract(xb));
+  float seam = 0.08 * (1.0 - smoothstep(0.0, max(fz, 0.02), ez)) + 0.06 * (1.0 - smoothstep(0.0, max(fwidth(xb), 4e-4), ex));
+  float grain = (vnoise(vec2(p.x * 4.0 + plank * 13.0, zb * 6.0)) - 0.5) * 0.05 * (1.0 - smoothstep(0.1, 0.4, fwidth(p.x * 4.0)));
+  return 1.0 + (tone + grain - seam) * near;
 }
 void main() {
   vec2 p = vLightCourt.xz;
   float court;
-  vec3 col = rulebook(p, court);
+  vec3 plain = rulebookBase(p, court);
   vec2 uv = vec2((p.x + uCourt.x) / (2.0 * uCourt.x), 1.0 - (p.y + uCourt.y) / (2.0 * uCourt.y));
   float seen = texture2D(uSeenMap, uv).r * court * uHasFloor;
-  col = mix(col, texture2D(uFloorMap, uv).rgb, seen);
+  // the clean floor: the real floor's own colour where it was seen (low-passed: no streak survives), the rulebook's
+  // elsewhere, softly across the seen edge; boards on it; the lines crisp where the court model puts them
+  vec4 low = texture2D(uFloorLow, uv);
+  vec3 base = mix(plain, low.rgb / max(low.a, 1e-3), smoothstep(0.15, 0.85, low.a) * court * uHasFloor);
+  vec2 lines = rulebookLines(p) * court;
+  vec3 clean = base * boards(p);
+  clean = mix(clean, uWhite, lines.x);
+  clean = mix(clean, uNavy, lines.y);
+  // the footage where it was filmed and you see it near its own camera's ray (lightFilmedFloor: all of it from the seat)
+  float filmed = seen * lightFilmedFloor(vLightCourt);
+  vec3 col = mix(clean, texture2D(uFloorMap, uv).rgb, filmed);
   col *= lightFloor(p, lightReach(vLightCourt));
-  col = mix(col, uBlue * (0.04 + dot(col, vec3(0.2126, 0.7152, 0.0722))), (1.0 - seen) * 0.75 * uReality);
+  col = mix(col, uBlue * (0.04 + dot(col, vec3(0.2126, 0.7152, 0.0722))), (1.0 - filmed) * 0.75 * uReality);
   gl_FragColor = vec4(col, lightRoomFloor());
   #include <colorspace_fragment>
   gl_FragColor.rgb = lightDither(gl_FragColor.rgb);
@@ -180,6 +213,118 @@ function glowTexture(): THREE.Texture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
+}
+
+/** The clean floor's colour texels: the real floor low-passed to this, metres (no streak along the camera's ray survives). */
+const LOW_M = 0.12;
+/** The rulebook's board width, metres (2.25 in): the tone is measured one board apart. */
+const BOARD_M = 0.057;
+
+type Pixels = { width: number; height: number } & CanvasImageSource;
+
+/**
+ * The real floor for the clean floor (world.ts's floor shader): floor.jpg averaged over the seen texels into LOW_M
+ * texels and blurred, premultiplied by how much of each was seen (its alpha), and the boards' tone spread measured
+ * across them (rows one board apart: the footage is sharp across the camera's ray, which runs along the boards).
+ * Without a seen floor: an empty texel and the rulebook's spread.
+ */
+function lowFloor(floor: Pixels | undefined, seen: Pixels | undefined, length: number, width: number): { texture: THREE.DataTexture; tone: number } {
+  const empty = () => {
+    const t = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+    t.needsUpdate = true;
+    return { texture: t, tone: 0.05 };
+  };
+  if (!floor || !seen || typeof document === "undefined") return empty();
+  const W = floor.width;
+  const H = floor.height;
+  const read = (img: Pixels) => {
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext("2d", { willReadFrequently: true })!;
+    g.drawImage(img, 0, 0, W, H);
+    return g.getImageData(0, 0, W, H).data;
+  };
+  const rgb = read(floor);
+  const mask = read(seen);
+  const lin = (v: number) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const LUT = Float32Array.from({ length: 256 }, (_, i) => lin(i));
+  const nx = Math.max(2, Math.round(length / LOW_M));
+  const nz = Math.max(2, Math.round(width / LOW_M));
+  const acc = new Float32Array(nx * nz * 4);
+  const cnt = new Float32Array(nx * nz);
+  for (let y = 0; y < H; y++) {
+    const j = Math.min(nz - 1, Math.floor((y / H) * nz));
+    for (let x = 0; x < W; x++) {
+      const i = Math.min(nx - 1, Math.floor((x / W) * nx));
+      const o = (y * W + x) * 4;
+      const s = mask[o] / 255;
+      const k = (j * nx + i) * 4;
+      acc[k] += LUT[rgb[o]] * s;
+      acc[k + 1] += LUT[rgb[o + 1]] * s;
+      acc[k + 2] += LUT[rgb[o + 2]] * s;
+      acc[k + 3] += s;
+      cnt[j * nx + i]++;
+    }
+  }
+  for (let k = 0; k < nx * nz; k++) for (let c = 0; c < 4; c++) acc[k * 4 + c] /= Math.max(1, cnt[k]);
+  // two passes of a 3 x 3 box: the texels' own edges gone too
+  let cur = acc;
+  for (let pass = 0; pass < 2; pass++) {
+    const nxt = new Float32Array(cur.length);
+    for (let j = 0; j < nz; j++)
+      for (let i = 0; i < nx; i++)
+        for (let c = 0; c < 4; c++) {
+          let sum = 0;
+          let n = 0;
+          for (let dj = -1; dj <= 1; dj++)
+            for (let di = -1; di <= 1; di++) {
+              const a = i + di;
+              const b = j + dj;
+              if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
+              sum += cur[(b * nx + a) * 4 + c];
+              n++;
+            }
+          nxt[(j * nx + i) * 4 + c] = sum / n;
+        }
+    cur = nxt;
+  }
+  // stored sRGB-encoded (the GPU decodes before it filters), the seen share linear in alpha
+  const enc = (l: number) => Math.round(255 * Math.min(1, l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055));
+  const out = new Uint8Array(nx * nz * 4);
+  for (let k = 0; k < nx * nz; k++) {
+    for (let c = 0; c < 3; c++) out[k * 4 + c] = enc(cur[k * 4 + c]);
+    out[k * 4 + 3] = Math.round(255 * Math.min(1, cur[k * 4 + 3]));
+  }
+  const texture = new THREE.DataTexture(out, nx, nz);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.flipY = true; // rows along +z, like floor.jpg as the TextureLoader uploads it
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  // the boards' tone: luma one board apart across them, on seen texels, as a share of the mean (median |d| / 0.954 /
+  // sqrt(2) is the std of one board's tone when boards are independent)
+  const step = Math.max(1, Math.round((BOARD_M / width) * H));
+  const ds: number[] = [];
+  let sumY = 0;
+  for (let y = 0; y + step < H; y += 2)
+    for (let x = 0; x < W; x += 2) {
+      const o = (y * W + x) * 4;
+      const o2 = ((y + step) * W + x) * 4;
+      if (mask[o] < 250 || mask[o2] < 250) continue;
+      const y1 = 0.2126 * LUT[rgb[o]] + 0.7152 * LUT[rgb[o + 1]] + 0.0722 * LUT[rgb[o + 2]];
+      const y2 = 0.2126 * LUT[rgb[o2]] + 0.7152 * LUT[rgb[o2 + 1]] + 0.0722 * LUT[rgb[o2 + 2]];
+      ds.push(Math.abs(y1 - y2));
+      sumY += y1;
+    }
+  if (ds.length < 100) return { texture, tone: 0.05 };
+  ds.sort((a, b) => a - b);
+  const tone = ds[ds.length >> 1] / 0.954 / Math.SQRT2 / (sumY / ds.length);
+  return { texture, tone: Math.min(0.12, Math.max(0.02, tone)) };
 }
 
 /** The seating bowl's tiers round the court (one merged geometry, court space). */
@@ -313,6 +458,8 @@ export class CourtWorld {
     }
     const wood = new THREE.Color().setRGB(c.hardwood[0], c.hardwood[1], c.hardwood[2], THREE.SRGBColorSpace);
     const light = this.light;
+    const low = lowFloor(floorMap?.image, seenMap?.image, c.length, c.width);
+    this.textures.push(low.texture);
 
     // the floor: court, apron and the dark arena floor out to the bowl
     const size = 2 * (halfL + BOWL.end + 1);
@@ -325,6 +472,8 @@ export class CourtWorld {
         uFloorMap: { value: floorMap },
         uSeenMap: { value: seenMap },
         uHasFloor: { value: floorMap && seenMap ? 1 : 0 },
+        uFloorLow: { value: low.texture },
+        uTone: { value: low.tone },
         uCourt: { value: new THREE.Vector4(halfL, halfW, APRON_M, halfL - Math.abs(c.rim[0])) },
         uWood: { value: new THREE.Vector3(wood.r, wood.g, wood.b) },
         uApron: { value: new THREE.Vector3(wood.r, wood.g, wood.b).multiplyScalar(APRON_STAIN) },

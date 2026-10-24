@@ -9,6 +9,7 @@ import * as THREE from "three";
 import { dyno } from "@sparkjsdev/spark";
 import {
   BACK_DONE_S, LEVEL_S, LightField, OPEN_DONE_S, PART, POOL_START_S, SAFE_GREY, ARRIVAL_S, changeS, fixtureGlow,
+  FILMED_NEAR, FILMED_FAR,
   REACH_FALLOFF_M, VEIL, VEIL_S, edgeLevel, lightLevels, perceived, reachAt, reachPlanes, roomCurves, veil, whitePoint,
   type Beat,
 } from "../../src/court/lightfield.ts";
@@ -569,4 +570,24 @@ test("courtLight's parts: floor, crowd and stands, a person by the floor under t
   close(f.levels.crowd, f.crowd(), 1e-12, "levels.crowd");
   close(f.levels.pair, 1, 1e-12, "levels.pair");
   assert.ok(f.levels.pool.radius > 0 && f.levels.pool.penumbra >= 1.5, `pool ${JSON.stringify(f.levels.pool)}`);
+});
+
+test("the filmed floor (lightFilmedFloor): the footage from the dolly seat and a seated lean, the clean floor once you walk", () => {
+  const b = bundleOf();
+  const f = new LightField(b);
+  const [cx, , cz] = b.court.seat.pairCentre;
+  const seat = f.seatFloor;
+  close(f.filmedAt([seat[0], 1.15, seat[2]]), 1, 0, "at the seat");
+  close(f.filmedAt([seat[0] + 0.3, 1.15, seat[2] - 0.2]), 1, 0, "leaning 0.36 m");
+  // every walk stop, 1.5 m round the pair: the clean floor
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4;
+    close(f.filmedAt([cx + 1.5 * Math.cos(a), 1.6, cz + 1.5 * Math.sin(a)]), 0, 0, `walk stop at ${k * 45} deg`);
+  }
+  // and it moves smoothly: a 1 cm step changes it by under 2%
+  let worst = 0;
+  for (let d = 0; d < 2; d += 0.01) worst = Math.max(worst, Math.abs(f.filmedAt([seat[0] + d, 1.6, seat[2]]) - f.filmedAt([seat[0] + d + 0.01, 1.6, seat[2]])));
+  assert.ok(worst < 0.02, `largest change for a 1 cm step: ${worst.toFixed(4)}`);
+  assert.ok(FILMED_NEAR > 0.3 && FILMED_FAR > FILMED_NEAR + 0.5, "a lean keeps it, a step starts the fade");
+  assert.ok(f.glsl.includes("float lightFilmedFloor(vec3 p)") && f.glsl.includes("uLightFilmed"), "the GLSL names it");
 });

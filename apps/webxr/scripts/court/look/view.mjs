@@ -30,6 +30,43 @@ export async function sitAtSeat(ctx, eye = 1.15) {
   await ctx.frames(2);
 }
 
+/** Put the IWER head at court-space `eye`, looking at court-space `target` (no roll). */
+export async function lookFrom(ctx, eye, target) {
+  await ctx.page.evaluate(
+    ([e, t]) => {
+      const g = window.__courtLook.world.group.parent;
+      g.updateWorldMatrix(true, false);
+      const m = g.matrixWorld.elements;
+      const toRoom = ([x, y, z]) => [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
+      const a = toRoom(e);
+      const b = toRoom(t);
+      const f = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const yaw = Math.atan2(-f[0], -f[2]);
+      const pitch = Math.asin(f[1] / Math.hypot(...f));
+      const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2), cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
+      const d = window.__xrDevice;
+      d.position.set(a[0], a[1], a[2]);
+      d.quaternion.set(cy * sp, sy * cp, -sy * sp, cy * cp);
+    },
+    [eye, target],
+  );
+  await ctx.frames(2);
+}
+
+/**
+ * The walk-around's stops (stream D's walk sheet): a ring 1.5 m round the pair's centre every 45 deg, 0 deg toward
+ * camera F (the filmed side), eye 1.6 m, each looking at the pair's centre 1.0 m up. Stop k is ring (k - 1) x 45 deg.
+ */
+export function walkStops(court) {
+  const [px, , pz] = court.seat.pairCentre;
+  const c = court.camera.centre;
+  const a0 = Math.atan2(c[2] - pz, c[0] - px);
+  return Array.from({ length: 8 }, (_, i) => {
+    const a = a0 + (i * Math.PI) / 4;
+    return { stop: i + 1, deg: i * 45, eye: [px + 1.5 * Math.cos(a), 1.6, pz + 1.5 * Math.sin(a)], target: [px, 1.0, pz] };
+  });
+}
+
 /** Put the IWER head at a court-space point (through the world group), keeping its orientation. */
 export async function headAt(ctx, court) {
   await ctx.page.evaluate((p) => {
