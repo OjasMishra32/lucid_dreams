@@ -1,53 +1,81 @@
 # Court Side (`?mode=court`)
 
-> Being updated to the final plan's format (stacked live/plate/matte stream, cards.json, the light field):
-> `format.ts` and `scripts/court/fixtures/court.json` are the current truth until this file catches up.
-
 One real NBA moment at life size: watch it from a courtside seat, step into the frozen frame as 3D, walk around the
-players, sit back down and watch the make. The plan is `docs/plans/court-side.md` (sections 0-6); this folder is the
-WebXR module, `apps/webxr/scripts/court/` holds its tests, the stand-in bundle generator and the e2e harness.
+players, sit back down and watch the make. The plan is `docs/plans/court-side.md`. This folder is the WebXR module;
+`apps/webxr/scripts/court/` holds its tests, the stand-in bundle generator and the e2e harness. Everything committed
+here is synthetic: no frames, masks, 3D, calibration or numbers from the broadcast.
 
-## Commands (run from the repo root; no npm install needed beyond `apps/webxr/node_modules`)
+## Commands (from the repo root; nothing to install beyond `apps/webxr/node_modules`)
 
 | What | Command | Done means |
 | --- | --- | --- |
-| Stand-in bundle (~1 min, once per checkout) | `node apps/webxr/scripts/court/standin.mjs` | `STANDIN OK <dir>`; writes `apps/webxr/scripts/court/out/standin/` (git-ignored) |
-| Unit tests | `node --experimental-transform-types --test 'apps/webxr/scripts/court/*.test.ts'` | `fail 0` (one file: `... --test apps/webxr/scripts/court/clock.test.ts`) |
+| Stand-in bundle (~1.5 min, once per checkout) | `node apps/webxr/scripts/court/standin.mjs` | `STANDIN OK <dir>`: writes `apps/webxr/scripts/court/out/standin/` (git-ignored) and checks it (validator, AU count, IDRs, SPS codec) |
+| The committed fixture | `node apps/webxr/scripts/court/standin.mjs --fixture` | rewrites `scripts/court/fixtures/court.json` (the stand-in's court.json) |
+| Unit tests | `npm --prefix apps/webxr run test:court` | `fail 0` (one file: `node --experimental-transform-types --test apps/webxr/scripts/court/clock.test.ts`) |
 | Build | `npm --prefix apps/webxr run build` | `tsc --noEmit` clean and `vite build` done |
-| e2e (stepped capture) | `node apps/webxr/scripts/court/e2e.mjs [--only smoke,...]` | `E2E OK`; reports and PNGs in `apps/webxr/scripts/court/out/e2e/` |
+| e2e | `node apps/webxr/scripts/court/e2e.mjs [--only smoke,arrival,...\|all]` | `E2E OK`; reports and PNGs in `scripts/court/out/e2e/` |
+| e2e of a scenario whose modules aren't built yet | `... e2e.mjs --only layers --force` | runs it against the stubs (it skips otherwise) |
+| e2e on a real bundle | `node apps/webxr/scripts/court/e2e.mjs --bundle <bundle folder outside the repo>` | the bundle comes from `serve.mjs`, never from vite |
 | Timing pass (alone, never in parallel) | `node apps/webxr/scripts/court/e2e.mjs --timing` | `TIME` lines per phase (CPU and GPU ms); informational on desktop |
 | Screenshot diff | `node apps/webxr/scripts/court/diff.mjs a.png b.png --px-per-deg 19.5 --max-deg 0.05 --min-psnr 30 --min-ssim 0.95 [--mask m.png]` | every line `PASS`; exit 0 |
-| Demo server (the real bundle, 127.0.0.1 only; refuses a bundle inside any checkout; `--standin` serves the stand-in) | `npm --prefix apps/webxr run build && node apps/webxr/src/court/serve.mjs --bundle <bundle folder outside the repo>` | open `http://127.0.0.1:5185/?mode=court&bundle=/bundle/` (Quest: `adb reverse tcp:5185 tcp:5185`) |
-| e2e on the real bundle | serve.mjs as above, then `node apps/webxr/scripts/court/e2e.mjs --bundle http://127.0.0.1:5185/bundle/court.json` | the bundle comes from serve.mjs (CORS for local pages only), never from vite |
+| Demo server (127.0.0.1 only) | `npm --prefix apps/webxr run build && node apps/webxr/src/court/serve.mjs --bundle <bundle folder outside the repo>` | open `http://127.0.0.1:5185/?mode=court&bundle=/bundle/` (Quest: `adb reverse tcp:5185 tcp:5185`) |
+| Dev server with IWER (127.0.0.1 only) | `node apps/webxr/src/court/serve.mjs --dev --bundle apps/webxr/scripts/court/out/standin --standin` | open the printed URL (`...&emulate`); vite runs as middleware, HMR on the same port |
 
-Notes: Node 25 runs the `.ts` tests with `--experimental-transform-types`; a folder argument to `--test` does not
-work there (it is loaded as a module), so quote the glob. The e2e uses Chrome (system) through an installed
-playwright-core (`apps/webxr/node_modules`, `$PLAYWRIGHT_CORE`, or the npx cache); it never downloads a browser.
+Notes: Node 25 runs the `.ts` tests with `--experimental-transform-types`; a folder argument to `--test` doesn't work
+there (it is loaded as a module), so the glob is quoted in the script. `serve.mjs` refuses a bundle inside this
+checkout or the main one (vite and the tunnel serve those folders); only the synthetic stand-in passes, with
+`--standin`. `--port 0` takes a free port and the first line printed names it. The e2e drives system Chrome through
+an installed playwright-core (`apps/webxr/node_modules`, `$PLAYWRIGHT_CORE`, or the npx cache); it never downloads a
+browser.
 
-### How the e2e works
+## The e2e
 
-`e2e.mjs` starts Vite on plain http, opens `/?mode=court&emulate&probe=capture` in headless Chrome, clicks Enter (a
-real click) and drives the page through `window.__court` (`probe.ts`): `seatHere()`, `press(action)`,
-`frames(n)`, `until(phase, max)`, `save(name)`, `snapshot()`, plus `ctx.device(fn)` for IWER's `XRDevice` (head
-and hand poses, `updateVisibilityState`). With `?probe` every XR frame advances the show by exactly 1/72 s (IWER runs
-on the host's ~120 Hz rAF, so e2e never measures timing) and in capture mode every frame is read back in the page
-right after `renderer.render` (`readPixels` on IWER's default framebuffer): alpha min/mean, mean luma and a 16 x 9
-luma grid per frame, full frames as PNG on `save()`. `--timing` swaps the read-back for CPU ms per frame and GPU ms
-per `renderer.render` (`EXT_disjoint_timer_query_webgl2`). A scenario is one entry in `SCENARIOS` in `e2e.mjs`; add
-yours there (`cadence`, `ease`, `handoff`, `room`, `controls`, `walk`, `arrival` per the plan's section 6).
+`e2e.mjs` starts `serve.mjs --dev` (the page from vite in dev, so IWER's `?emulate` loads; the bundle at `/bundle/`),
+opens `/?mode=court&emulate&probe=capture&bundle=/bundle/` in headless Chrome, clicks Enter (a real click) and drives
+the page through `window.__court` (`probe.ts`). With `?probe` every XR frame advances the show by exactly 1/72 s
+(IWER runs on the host's rAF, so the e2e never measures wall-clock timing) and in capture mode every frame is read
+back in the page right after `renderer.render`: alpha min/mean, mean luma, a 16 x 9 luma grid, the phase machine's
+clocks (`still`, `lightsUp`, `tF`, `roomP`) and the **view** it was drawn from, as a pinhole camera in court space
+(OpenCV axes, the same convention as the bundle's cameras). `--timing` swaps the read-back for CPU ms per frame and
+GPU ms per `renderer.render` (`EXT_disjoint_timer_query_webgl2`).
+
+**Scenarios are files**, one per check family, each owned by one stream: `scripts/court/scenarios/<name>.mjs`
+exports `owner`, `needs` (the court.ts modules whose `BUILT` must be true; until then the scenario prints `SKIP` and
+runs nothing) and a default `async (ctx) => {}`. Change only your own scenario file; the runner is the integrator's.
+Exit 0 when every check that ran passed, 1 on a failure, 3 when every scenario asked for was skipped.
+
+| Scenario | Owner | Checks | State |
+| --- | --- | --- | --- |
+| `smoke` | integrator | loads, Seat here, reaches the watch, opaque (P33), the view is logged, clean console (P25) | runs on the stubs |
+| `arrival` | integrator | P27: black while hidden, standing or moving; the lights-up within 1.1 s of a still, seated head | runs on the stubs |
+| `cadence` | D | P4: no held or skipped show frames through both passes; P5: on screen = asked for | written; waits on clock, video |
+| `ease` | C | a press in pass 2 lands on F (`freezeSource`); no change spike (max/median <= 2.5) | written; waits on clock, video |
+| `layers` | D | P43 on the stand-in: no doubled or torn body > 0.1 deg; P9's held frame | captures frames + their truth; the judge is D's to write |
+| `handoff` | D | P8 per eye, P9 mid-fade SSIM, P10 rise, P44 light steps | drives to the open world; the checks are D's |
+| `room` | E | P33-P35: fades 0.6 s out / 0.8 s back, the room shows, opaque again; the edge | timing and alpha written; P35 is E's |
+| `controls` | C | P21, P32 through IWER's hands | C's to write |
+| `walk` | C (P17: E) | no drift over a 17-pose walk; P17 once the freeze is built | drift written |
+
+`ctx` (see the top of `e2e.mjs`): `nextFrame()`, `frames(n)`, `until(phase, max)`, `save(name)` (the next frame as a
+PNG; resolves with its log, view included), `pressFrames(action, n)` (press and the next n frames in one go: frames
+run freely, so time anything that starts at a press this way), `seatHere()`, `press(action)`, `snapshot()` (the
+world's placement and the head included), `device(fn, arg)` (IWER's `XRDevice`: `position`, `quaternion`, hands,
+`updateVisibilityState`), `court` and `showFrames` (the bundle's JSON), `modules`, and on the stand-in
+`truth(view, showFrame)`: the true scene from that exact view (`standin.mjs` `truthAt`: RGB plus a kind per pixel,
+10 + i for person i, 6 the ball), the ground truth for P8 and P43; `writePng(name, image)` saves it beside the capture.
 
 ## The court bundle format
 
 The only new data format, read only by `?mode=court`; additive to every other contract. **`format.ts` is the source of
-truth**: every field has its JSDoc (units, frames, coordinate space) and `validateCourt` / `validateFrames` name every
-bad field in one readable line (`seat.distance: expected a distance inside distanceRange [4, 7], got 9`).
-`loadCourt(url, { fallback })` fetches court.json and the chosen stream's frames.json, validates both, and returns
-`{ base, court, frames, file(path) }`; `fallback` (`"p1080"` for `?show=1080`, `"hz90"` for `?hz=90`) swaps that
+truth**: every field has its JSDoc (units, frames, coordinate space) and the validators name every bad field in one
+readable line (`seat.distance: expected a distance inside distanceRange [4, 7], got 9`). `loadCourt(url, { fallback })`
+fetches court.json, the chosen stream's frames.json and cards.json, validates all three and returns
+`{ base, court, frames, cards, file(path) }`; `fallback` (`"small"` for `?show=small`, `"hz90"` for `?hz=90`) swaps that
 pre-built stream into `court.video` (`chooseStream`), so every module reads one view of the show.
 
-Where it lives: the real bundle outside the repo, never under `dreams/` (vite
-and the tunnel serve that folder); only `serve.mjs` serves it, on 127.0.0.1. The synthetic stand-in lives in
-`apps/webxr/scripts/court/out/standin/` (git-ignored, no broadcast data) and the dev page loads it by default.
+Where it lives: the real bundle outside the repo, never under `dreams/` (vite and the tunnel serve that folder); only
+`serve.mjs` serves it, on 127.0.0.1. The synthetic stand-in lives in `apps/webxr/scripts/court/out/standin/`
+(git-ignored) and the dev page loads it by default.
 
 ### Conventions
 
@@ -56,31 +84,42 @@ and the tunnel serve that folder); only `serve.mjs` serves it, on 127.0.0.1. The
 - **Show frames:** the baked stream's frames, 0-based; show frame i is displayed at t = i / `video.displayHz`.
   Segments are inclusive ranges, never overlap, and each starts with an IDR.
 - **Source frames:** the source clip's own numbering (`src`, fractional for an in-between). One second of real action
-  is `sourceFps x slow` source frames; `captureFps` is the capture's own rate, which says which display frames can be
-  real.
+  is `sourceFps x slow` source frames; `captureFps` says which display frames can be real.
 - **Cameras:** OpenCV axes (+x right, +y down, +z forward); `q` is world-from-camera; `f`, `cx`, `cy` in source
   pixels (`camera.width` x `camera.height`), pixel centres at whole numbers; one fixed `camera.centre`. For an image
-  of width w, s = w / camera.width and u' = (u + 0.5) s - 0.5 (`camera.ts` `scaled`). k1 is 0 (the bake undistorts).
-- **Paths** are relative to court.json's folder: no leading slash, no `..`, no URL.
-- **Unknown fields are ignored**, so the format can grow.
+  of width w (the live or plate region, freeze.png), s = w / camera.width and u' = (u + 0.5) s - 0.5
+  (`camera.ts` `scaled`). k1 is 0 (the bake undistorts).
+- **The stacked stream:** every show frame is one picture of three regions (`video.regions`, stream pixels
+  `[x, y, width, height]`): `live` (what the camera filmed, at the source's aspect), `plate` (the same frame with
+  every person replaced from a fixed-centre pan mosaic, the live region's size) and `mattes` (the matte atlas: each
+  card's matte, white = the person, in its own tile). A fallback stream keeps the layout, scaled by its width.
+- **Cards** (`video/cards.json`, one entry per show frame): every person in the lit region gets a card standing at
+  their `foot` (court space, y = 0), cut from the live region by `box` and matted by `tile` (both `[x0, y0, x1, y1]` in
+  their region's pixels), drawn front to back by `order`; the ball gets the card `"ball"` from the release to the make.
+  The plate is what shows between and behind the cards, so nobody shows twice through a gap (P43).
+- **Paths** are relative to court.json's folder: no leading slash, no `..`, no URL. **Unknown fields are ignored**, so
+  the format can grow.
 
 ### Files
 
 ```
 court.json
-video/show.h264            the whole show at displayHz: raw H.264 Annex B, -bf 0, AUD per frame, IDR per segment
-video/show-1080.h264       fallbacks.p1080 (same frames); show-90.h264 + its own frames.json for fallbacks.hz90
-video/frames.json          per show frame: { src, interp, q, f }
-video/freeze.png           frame F; freeze-clean.png (players and watermark painted out); stands-mask.png; inpaint-mask.png
-players/<id>/freeze.ply    the freeze Gaussians (3DGS PLY, SH1, court space); reality.ply (same order, unseen in blue)
-players/<id>/proxy.glb     the splat-depth proxy (depth mesh of the splats from camera F); shadow.png, reflection.png
-others/<id>/...            extras: freeze.ply | body.ply | relief.glb, reality, shadow, reflection
-stands/<id>.png            depth cards (front row, photographers, the ref)
-court/floor.jpg            the floor from above (the whole court); floor-seen.png (white where the camera filmed it)
-audio/bed.m4a              the crowd bed (looped, -23 LUFS); swell.m4a (one-shot); sfx/*.m4a (only with approval)
+video/show.h264          the whole show at displayHz: raw H.264 Annex B, avc1.640033, stacked live + plate + mattes,
+                         -bf 0, an AUD per frame, an IDR at every segment start
+video/show-small.h264    fallbacks.small (the same frames, smaller); fallbacks.hz90 has its own stream, frames.json and
+                         cards.json; fallbacks.element is pass 1 as an MP4 for a <video> element
+video/frames.json        per show frame: { src, interp, q, f }
+video/cards.json         per show frame: { cards: [{ id, foot, box, tile, order }] }
+video/freeze.png         frame F; freeze-clean.png (F's plate); stands-mask.png; inpaint-mask.png (optional)
+players/<id>/freeze.ply  the freeze Gaussians (3DGS PLY, SH1, court space); reality.ply (same order, unseen in blue)
+players/<id>/proxy.glb   the splat-depth proxy (depth mesh of the splats from camera F); shadow.png, reflection.png
+others/<id>/...          other players: freeze.ply | body.ply | relief.glb, reality, shadow, reflection
+stands/<id>.png          depth cards (front row, photographers, the ref)
+court/floor.jpg          the floor from above (the whole court); floor-seen.png (white where the camera filmed it)
+audio/bed.m4a            the crowd bed (looped, -23 LUFS); swell.m4a (one-shot); sfx/*.m4a (only with approval)
 ```
 
-### court.json, a worked example (the stand-in's, trimmed)
+### court.json, a worked example (the stand-in's, trimmed; synthetic numbers)
 
 ```jsonc
 {
@@ -90,38 +129,41 @@ audio/bed.m4a              the crowd bed (looped, -23 LUFS); swell.m4a (one-shot
   "label": "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.", // exactly this (P22)
   "credit": "Synthetic stand-in bundle: no broadcast footage.",
   "court": { "length": 28.65, "width": 15.24, "rim": [12.73, 3.05, 0],
+             "backboard": [[13.105, 2.9, -0.915], [13.105, 2.9, 0.915], [13.105, 3.97, 0.915], [13.105, 3.97, -0.915]],
              "floor": "court/floor.jpg", "floorSeen": "court/floor-seen.png", "hardwood": [0.71, 0.52, 0.33] },
-  "camera": { "centre": [-22, 1, -9], "width": 3840, "height": 2160, "cx": 1919.5, "cy": 1079.5, "k1": 0,
-              "sourceFps": 120, "captureFps": 120, "slow": 1 },
+  "camera": { "centre": [-14, 1.35, -10.5], "width": 3840, "height": 2160, "cx": 1919.5, "cy": 1079.5, "k1": 0,
+              "sourceFps": 180, "captureFps": 180, "slow": 1 },
   "video": {
-    "file": "video/show.h264", "codec": "avc1.640034", "width": 2560, "height": 1440, "displayHz": 72,
-    "fallbacks": { "p1080": { "file": "video/show-1080.h264", "codec": "avc1.640032", "width": 1920, "height": 1080 } },
-    "frames": "video/frames.json",
-    "segments": { "pass1": [0, 194], "pass2": [195, 495], "resume": [712, 896],
-                  "eases": [{ "start": 296, "frames": [496, 581], "seconds": 1.1944 },   // 86 frames from 0.6x to F
-                            { "start": 303, "frames": [582, 653], "seconds": 1 },
-                            { "start": 310, "frames": [654, 711], "seconds": 0.8056 }] },
-    "cutoff": 310,                       // the last ease start: a later press stops on the next pass
+    "file": "video/show.h264", "codec": "avc1.640033", "width": 1536, "height": 2160,
+    "regions": { "live": [0, 0, 1536, 864], "plate": [0, 864, 1536, 864], "mattes": [0, 1728, 1536, 432] },
+    "displayHz": 72, "pass2Speed": 0.4,
+    "fallbacks": { "small": { "file": "video/show-small.h264", "codec": "avc1.640033", "width": 1280, "height": 1800 } },
+    "frames": "video/frames.json", "cards": "video/cards.json",
+    "segments": { "pass1": [0, 194], "pass2": [195, 645], "resume": [862, 1124],
+                  "eases": [{ "start": 368, "frames": [646, 731], "seconds": 1.1944 },   // pass2Speed -> 0, ends on F
+                            { "start": 375, "frames": [732, 803], "seconds": 1 },
+                            { "start": 382, "frames": [804, 861], "seconds": 0.8056 }] },
+    "cutoff": 382,                       // the last ease start: a later press stops on the next pass
     "freezeSource": 600, "makeSource": 780,
-    "freeze": "video/freeze.png", "freezeClean": "video/freeze-clean.png",
-    "standsMask": "video/stands-mask.png", "inpaintMask": "video/inpaint-mask.png"
+    "freeze": "video/freeze.png", "freezeClean": "video/freeze-clean.png", "standsMask": "video/stands-mask.png"
   },
-  "seat": { "ray": "freeze", "distance": 5, "distanceRange": [4, 7], "pairCentre": [6, 0, 1], "closer": 2.5,
-            "clear": 1, "spots": [[4.446, 0, 0.445], [4.742, 0, 2.068], [5.704, 0, -0.623]], "ringArea": [4.5, 5.5] },
+  "light": { "crowd": 0.45, "floor": 0.3, "pair": 1, "stands": 0.6, "penumbra": 1.5,
+             "alternative": { "crowd": 0.16, "floor": 0.14 } },
+  "seat": { "ray": "freeze", "distance": 5, "distanceRange": [4, 7], "pairCentre": [6, 0, 1], "clear": 1 },
   "freeze": {
     "players": [{ "id": "shooter", "name": "Shooter (stand-in)",
                   "splats": "players/shooter/freeze.ply", "reality": "players/shooter/reality.ply",
                   "proxy": "players/shooter/proxy.glb",
-                  "bounds": { "min": [5.5692, 0, 0.4469], "max": [6.0339, 1.7993, 1.0037] }, "seenFraction": 0.496,
-                  "capsules": [{ "a": [5.8016, 0.9951, 0.6637], "b": [5.8016, 1.4418, 0.6637], "r": 0.1574 },  // torso
-                               { "a": [5.8119, 1.6855, 0.6812], "b": [5.8119, 1.6855, 0.6812], "r": 0.1137 }], // head
-                  "shadow": { "image": "players/shooter/shadow.png", "rect": [4.92, 0.07, 6.52, 1.67] },
-                  "reflection": { "image": "players/shooter/reflection.png", "rect": [4.92, 0.07, 6.52, 1.67] } } /* , defender */],
-    "ball": { "centre": [5.803, 0.9951, 0.9458], "radius": 0.1195, "erase": [{ "player": "shooter", "radius": 0.15 }] },
-    "others": [{ "id": "ref", "kind": "splats", "file": "others/ref/freeze.ply", "reality": "others/ref/reality.ply",
-                 "pose": "A", "foot": [10.6, 0, 4.8], "height": 1.85, "maxRayAngle": 25.21,
-                 "shadow": { "image": "others/ref/shadow.png", "rect": [9.8, 4, 11.4, 5.6] },
-                 "reflection": { "image": "others/ref/reflection.png", "rect": [9.8, 4, 11.4, 5.6] } }],
+                  "bounds": { "min": [5.7307, 0, 0.3419], "max": [6.2546, 1.7993, 0.8279] }, "seenFraction": 0.491,
+                  "capsules": [{ "a": [5.9926, 0.9951, 0.5113], "b": [5.9926, 1.4418, 0.5113], "r": 0.1574 },  // torso
+                               { "a": [5.9929, 1.6855, 0.5316], "b": [5.9929, 1.6855, 0.5316], "r": 0.1137 }], // head
+                  "shadow": { "image": "players/shooter/shadow.png", "rect": [5.193, -0.289, 6.793, 1.311] },
+                  "reflection": { "image": "players/shooter/reflection.png", "rect": [5.193, -0.289, 6.793, 1.311] } }
+                /* , the defender */],
+    "ball": { "centre": [5.8542, 0.9951, 0.7571], "radius": 0.1195, "erase": [{ "player": "shooter", "radius": 0.15 }] },
+    "others": [{ "id": "trailer", "name": "Trailer (stand-in)", "kind": "splats", "file": "others/trailer/freeze.ply",
+                 "reality": "others/trailer/reality.ply", "pose": "A", "foot": [8.4566, 0, 0.7399], "height": 2.05,
+                 "maxRayAngle": 42.82 /* , shadow and reflection as the players' */ }],
     "stands": { "proxy": [{ "kind": "plane", "points": [[16, 0, -16], [16, 0, 16], [16, 9, 16], [16, 9, -16]] }],
                 "cards": [{ "id": "front-row", "image": "stands/front-row.png",
                             "quad": [[15.2, 0, -4], [15.2, 0, 10], [15.2, 1.35, 10], [15.2, 1.35, -4]] }] }
@@ -130,76 +172,94 @@ audio/bed.m4a              the crowd bed (looped, -23 LUFS); swell.m4a (one-shot
              "sources": [{ "at": [16, 3, -8], "offsetS": 0 } /* , 4 or more (P31) */],
              "oneShots": [{ "file": "audio/swell.m4a", "at": "make", "gainDb": 0 }, { "file": "audio/swell.m4a", "at": "stepIn", "gainDb": -12 }],
              "events": [] },
-  "metrics": { "reprojDeg": { "median": 0, "p95": 0 }, "heldOutPsnrVsGenerated": {}, "seatPsnr": {}, "interpShare": 0.33 }
+  "metrics": { "reprojDeg": { "median": null, "p95": null }, "heldOutPsnrVsGenerated": {}, "seatPsnr": {}, "interpShare": 0.2338 }
 }
 ```
 
-`video/frames.json` (one entry per show frame): `[{ "src": 956, "interp": false, "q": [0.6012, 0.0021, 0.7991, -0.0016], "f": 25988.4 }, ...]`.
-`q`, `f` are that frame's own solved camera (never smoothed; an in-between gets the slerp of its two real frames').
-A display frame shows the real frame when one lies within 0.1 frame of its real-time position, else an in-between
-(`interp: true`). Every ease's last frame is F (`src == freezeSource`, `interp: false`, one camera).
+`video/frames.json` (one entry per show frame): `[{ "src": 168, "interp": false, "q": [0.5349, -0.0034, 0.8449, 0.0022], "f": 20790.7 }, ...]`.
+`q`, `f` are that frame's own camera (never smoothed; an in-between gets the slerp of its two real frames'). Every
+ease's last frame is F (`src == freezeSource`, `interp: false`).
+
+`video/cards.json` (one entry per show frame):
+`[{ "cards": [{ "id": "shooter", "foot": [5.99, 0, 0.51], "box": [543, 193, 741, 827], "tile": [0, 0, 135, 432], "order": 0 }, ...] }, ...]`.
+
+The stand-in's people at F: the shooter and the defender with ~0.5 m of clear floor between their bodies (the
+defender's arm reaches across the gap), and a third person trailing behind and to the left: the layered watch must
+show nobody twice through the gap and tear nobody at a card's edge (P43).
 
 ### What the validator enforces (besides types, ranges and paths)
 
-The exact label; rim at 3.05 +/- 0.03 m; k1 = 0; principal point inside the image; codec strings `avc1.xxxxxx`;
-segments ordered, non-overlapping, eases inside pass 2 in order of start, each ease's `seconds` within one frame of
-its frame count; `cutoff` inside pass 2 and no later than the last ease start; `seat.distance` inside
-`distanceRange`; `pairCentre` on the floor; unique ids across players and others; `ball.erase` names a real player;
-a relief only below 15 deg (`maxRayAngle`, P16); at least 4 crowd sources (P31); `video.makeSource` present when a
-one-shot is cued on the make; frames.json long enough for every segment, unit quaternions, whole `src` for real
-frames, and every ease ending on F with camera F.
+The exact label; rim at 3.05 +/- 0.03 m; the backboard a quad; k1 = 0; principal point inside the image; codec
+strings `avc1.xxxxxx`; the regions inside the stream, not overlapping, live and plate the same size, live at the
+source's aspect; a fallback's shape the main stream's; `pass2Speed` in (0, 1); the light levels in 0-1 and the
+penumbra >= 1.5 m; segments ordered, non-overlapping, eases inside pass 2 in order of start, each ease's `seconds`
+within one frame of its frame count; `cutoff` inside pass 2 and no later than the last ease start; `seat.distance`
+inside `distanceRange`; `pairCentre` on the floor; unique ids across players and others, none of them `"ball"`;
+`ball.erase` names a real player; a relief only below 15 deg (`maxRayAngle`, P16); at least 4 crowd sources (P31);
+`video.makeSource` present when a one-shot is cued on the make. frames.json: long enough for every segment, unit
+quaternions, whole `src` for real frames, every ease ending on F. cards.json: one entry per show frame, ids unique
+per frame, each order and tile once per frame, every box inside the live region, every tile inside the atlas, every
+foot on the floor.
 
-### Changes from the plan's sketch (4.2)
+### Changes from the plan's sketch (4.2, 4.3)
 
-- `video.fallbacks.p1080` and `.hz90` are objects, not paths: the 1080p copy needs its own codec (High 5.0) and the
-  90 Hz bake has its own frames.json, segments and cutoff (its show frames differ).
-- Added `video.makeSource` (when the `make` one-shot fires) and `video.inpaintMask` (the Reality check's "inpainted
-  plate behind the players").
-- `loadCourt` returns the bundle (`{ base, court, frames, file(path) }`), since every module needs frames.json and
-  file URLs, not only court.json; it takes `{ fallback }` and returns that stream's view (`chooseStream`).
-- Every stream keeps the source's aspect (checked), metrics may be `null` until measured, and the JSDoc states which
-  numbers turn real time into source frames.
+- `video.fallbacks.small`, `.hz90`, `.element` are objects (or a path for `element`), not paths: the 90 Hz bake has
+  its own frames.json, cards.json, segments and cutoff; `chooseStream` swaps one in.
+- `video.pass2Speed` is in the bundle (the bake's choice, not a constant in code); `video.makeSource` (when the make
+  one-shot fires) and `video.inpaintMask` (the Reality check's inpainted plate) are optional.
+- `seat` keeps only Decision W's watch seat and `clear`: the walking layout is derived (`seatmath.ts`, 3.4).
+- `loadCourt` returns the bundle (`{ base, court, frames, cards, file(path) }`), not only court.json.
+- `ClockState.nextJump` is what the second decoder primes; `handback(t, parts)` is the hand-back beside `handoff`.
+- `ui.ts`'s `HoldButton` extends `xr/hands.ts`'s `XrButton` (Seat here's 2 s hold); `xr/hands.ts` is unchanged.
+- court.ts requests the immersive-ar session itself (not through `SparkXr`, which ends a session on
+  `visible-blurred`), with the viewer's `XR_QUALITY` scale and foveation.
+- `serve.mjs` listens on 5185 by default (5190 is `apps/site`).
 
 ## The modules (4.3) and who builds them
 
-Each module exports `BUILT` (false while it is a stub); the e2e report lists them. Stubs called every frame are
-no-ops; one-off actions that aren't built throw `"<what> is not built yet (stream X)"`.
+Each module exports `BUILT` (false while it is a stub); the e2e report lists them and the scenarios wait on them.
+Stubs called every frame are no-ops; one-off actions that aren't built throw `"<what> is not built yet (stream X)"`.
 
-| File | Stream | What it owns | Status |
-| --- | --- | --- | --- |
-| `format.ts` | integrator | court.json / frames.json types, validator, `loadCourt` | built, tested |
-| `camera.ts` | integrator | pinhole maths for the bundle's cameras (project, rays, scaling) | built, tested |
-| `annexb.ts` | integrator | H.264 Annex B access units, IDRs, SPS codec string | built, tested |
-| `types.ts` | integrator | `Phase`, `Head`, `WorldPose`, `Polygon` | built |
-| `clock.ts` | C `core` | the show clock (`ClockState.nextJump` is what the second decoder primes); its curve functions are the bake's contract | curves built and tested; `Clock` stub |
-| `seat.ts` | C `core` | seat on F's ray, Seat here, Walk closer, spots, ring, bounds, anchor; the only writer of the world group | `toRoom`/`toCourt`, `update`/`apply` built; rest stub |
-| `ui.ts` | C `core` | caption, label, palm menu, Seat here hold, presenter keys; `on`/`press` dispatch | dispatch built; rest stub |
-| `vrhands.ts` | C `core` | drawn hands in the arena | stub |
-| `video.ts` | D `handoff` | two-decoder WebCodecs player, `show`, `prime`, `feather`, `depth`, `wipe`, `opacity` | stub |
-| `proxies.ts` | D `handoff` | projection surfaces, `project(camera)`, `depth`, `dimStands`; owns the video texture | stub |
-| `handoff.ts` | D `handoff` | `handoff(p, parts: HandoffParts)`, the chosen direction (3.3a) | stub |
-| `world.ts` | E `look` | floor, darkness, pools, dome, `arrive`, `open`, `pools`, `room`, `edge`, `reality`, `frustum` | stub (opaque dome only) |
-| `freeze.ts` | E `look` | splats, extras, ball, shadows, reflections, capsule fade, Reality | stub |
-| `sound.ts` | F `sound` | HRTF crowd, arrival swell, time stop, room murmur, one-shots, events | stub |
-| `court.ts` | integrator | `renderCourt`, the phase machine, the session, the frame loop | skeleton |
-| `probe.ts`, `stats.ts` | integrator | the e2e's in-page half; the frame log (`?stats`) | built |
-| `serve.mjs`, `sw.js` | integrator | the 127.0.0.1 demo server; the Service Worker (cable-off reload) | built (untested on the Quest) |
+| File | Stream | What it owns |
+| --- | --- | --- |
+| `format.ts` | integrator | court.json / frames.json / cards.json types, validators, `chooseStream`, `loadCourt` (built, tested) |
+| `camera.ts` | integrator | pinhole maths for the bundle's cameras (built, tested) |
+| `annexb.ts` | integrator | H.264 Annex B access units, IDRs, SPS codec string (built, tested) |
+| `types.ts` | integrator | `Phase`, `Head`, `WorldPose`, `Polygon` |
+| `court.ts` | integrator | `renderCourt`, the phase machine, the session, the frame loop |
+| `probe.ts`, `stats.ts` | integrator | the e2e's in-page half (`viewOf`); the frame log (`?stats`) |
+| `serve.mjs`, `sw.js` | integrator | the 127.0.0.1 demo server (`--dev` for the e2e); the Service Worker (cable-off reload) |
+| `clock.ts` | C `core` | the show clock (curve functions built and tested: the bake's contract) |
+| `seatmath.ts` | C `core` | the pure seat maths: seat on F's ray, the walking anchoring, Next view, ring, bounds (`toRoom`/`toCourt` built) |
+| `seat.ts` | C `core` | Seat here, the fade-jumps, chair, anchor; the only writer of the world group (`update`/`apply` built) |
+| `ui.ts` | C `core` | caption, label, palm menu, `HoldButton`; `on`/`press` dispatch built |
+| `vrhands.ts` | C `core` | drawn hands in the arena |
+| `video.ts` | D `handoff` | two-decoder WebCodecs player, `regions` (mipmapped textures), `show`, `prime`, `mask(p)`, `opacity` |
+| `proxies.ts` | D `handoff` | the plate, cards, ball card, backboard and stands proxies, `project(frame)`, `dim(p)`, `reality(on)` |
+| `handoff.ts` | D `handoff` | `handoff(t, parts)` and `handback(t, parts)`, the beats as functions of time |
+| `lightfield.ts` | E `look` | the world-space light field: `set(beat, t)`, `levels`, `glsl`, `modifier()`, `at(x, z, part)` |
+| `world.ts` | E `look` | floor, rendered court, the hoop (`props.ts` `standaloneHoop` at `court.rim`), darkness, dome, `room`, `edge` |
+| `freeze.ts` | E `look` | splats, extras, ball, shadows, reflections, capsule fade, Reality |
+| `sound.ts` | F `sound` | HRTF crowd, arrival, time stop, room murmur, one-shots, events |
 
-Rules: every button, presenter key and probe action is queued to the top of the next XR frame (anchors need the
-XRFrame). Seat is the only writer of the world group. `ShowVideo.opacity` is the video layer's opacity (it reaches
-the proxies); Depth Grows calls `video.depth(p)`. Pure modules (`format`, `camera`, `annexb`, `clock`, `seat`'s maths, `handoff`) use `import type` for siblings
-and never import `xr/quality.ts` (it reads `location`), so `node --test` can load them. A stream changes only its own
-files; `format.ts`, `court.ts`, `types.ts` and `main.ts` change through the integrator. Test first.
+Rules: every button, presenter key and probe action is queued to the next XR frame, right after its head pose is
+read (anchors need the XRFrame; Seat here takes that head); one action's throw is logged once and never costs the
+frame its step. Seat is the only writer of the world group. `ShowVideo` owns the region textures and the video
+layer's `opacity`; `Proxies` reads them. Pure modules (`format`, `camera`, `annexb`, `clock`, `seatmath`, `handoff`,
+`lightfield`'s maths) use `import type` for siblings and never import `xr/quality.ts` (it reads `location`), so
+`node --test` can load them. A stream changes only its own files; `format.ts`, `court.ts`, `types.ts`, `main.ts`,
+`e2e.mjs` and `standin.mjs` change through the integrator. Test first.
 
 ## What each stream reads first
 
-- **C `core`:** plan 3.1-3.6 and section 6's clock and seat rows; `clock.ts` (the curve functions and `ClockState`),
-  `seat.ts` (`toRoom`/`toCourt`, the constants), `types.ts`, `court.ts` (how the machine calls you), `clock.test.ts`;
-  `xr/menu.ts` and `xr/hands.ts` for the menu.
-- **D `handoff`:** plan 3.2-3.3a, P4-P10; `video.ts`, `proxies.ts`, `handoff.ts`, `camera.ts`, `annexb.ts`;
-  `court-spikes/s6-quest/spike6/webcodecs.ts` (the decoder and layer); the stand-in's `video/` and `players/*/proxy.glb`.
-- **E `look`:** plan 3.3 step 3, 3.4-3.6, P11-P17, P23, P30, P33-P35; `world.ts` (the dome note), `freeze.ts`,
-  `court-spikes/ground/`; the stand-in's `players/`, `others/`, `court/`, `stands/`.
+- **C `core`:** plan 3.1-3.6 and section 6's clock and seat rows; `clock.ts`, `seatmath.ts` (the constants, the
+  WorldPose convention), `seat.ts`, `types.ts`, `court.ts` (how the machine calls you), `clock.test.ts`; `xr/menu.ts`
+  and `xr/hands.ts` for the menu; your scenarios `ease`, `controls`, `walk`.
+- **D `handoff`:** plan 3.2-3.3a, 3.5, P4-P10, P43, P44; `video.ts`, `proxies.ts`, `handoff.ts`, `camera.ts`,
+  `annexb.ts`, `format.ts` (regions, cards); the stand-in's `video/` and `players/*/proxy.glb`; your scenarios
+  `cadence`, `layers` (with `truth()`), `handoff`.
+- **E `look`:** plan 3.3, 3.4-3.6, P11-P17, P23, P28, P30, P33-P35, P44; `lightfield.ts`, `world.ts` (the dome note),
+  `freeze.ts`; the stand-in's `players/`, `others/`, `court/`, `stands/`; your scenario `room` (and P17 in `walk`).
 - **F `sound`:** plan 2 (Sound), 3.2, 3.3, 3.5, P19-P20, P31; `sound.ts`; the stand-in's `audio/`.
-- **G `assemble`:** this README's format section and `format.ts` (write what `validateCourt` accepts);
-  `scripts/court/standin.mjs` is a complete writer of every file to copy from.
+- **G `assemble`:** this format section and `format.ts` (write what the validators accept);
+  `scripts/court/standin.mjs` writes every file and is the reference writer.
