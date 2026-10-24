@@ -102,6 +102,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let clockState: ClockState | null = null;
   let videoRef: ShowVideo | null = null;
   let lightRef: LightField | null = null;
+  let clockRef: Clock | null = null;
   // the headset's display rate (rate.ts): what the session runs at and offers, what court.ts asked for, the verdict
   const xr: XrRate = { rate: null, supported: [], requested: null, showHz: 0, verdict: "unknown" };
   // every button, key and probe action waits for the top of the next XR frame (anchors need the XRFrame; one order)
@@ -118,7 +119,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
           fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)), mask: videoRef?.maskLevel ?? -1,
-          xr: { ...xr, supported: [...xr.supported] },
+          xr: { ...xr, supported: [...xr.supported] }, xrHz: xr.rate ?? xr.showHz, clockHz: clockRef?.outputHz() ?? 0,
         }),
         seatHere: () => actions.get("seatHere")?.(),
         press: (action) => actions.get(action)?.(),
@@ -154,6 +155,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
 
   // ---------------- the modules ----------------
   const clock = new Clock(court, frames);
+  clockRef = clock;
   clockState = clock.state;
   const light = new LightField(court);
   lightRef = light;
@@ -500,11 +502,14 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // there. A headset that can't run it takes the 90 Hz bake when the bundle has one (a reload on the setup page);
   // otherwise the clock's cadence keeps the show's time, and the console and ?stats say so
   const hz90 = fallback === "hz90" ? null : court.video.fallbacks?.hz90?.displayHz ?? null;
+  // at the session's start (after the request) and on every frameratechange: the clock's cadence takes the session's
+  // rate at once (clock.ts setOutputHz), so the show keeps real time through any change
   const judge = (s: XRSession) => {
     xr.rate = s.frameRate ?? null;
     xr.verdict = judgeRate(hz, xr.rate, xr.supported, hz90);
+    clock.setOutputHz(xr.rate);
     if (stats) stats.xr = { ...xr, supported: [...xr.supported] };
-    if (xr.verdict === "mismatch") console.error(`Court Side: the headset runs at ${xr.rate} Hz, the show is baked for ${hz} Hz (offered: ${xr.supported.join(", ") || "none"}): some show frames are held for two XR frames`);
+    if (xr.verdict === "mismatch") console.warn(`Court Side: the headset runs at ${xr.rate} Hz, the show is baked for ${hz} Hz (offered: ${xr.supported.join(", ") || "none"}): the clock's cadence holds some show frames for two XR frames`);
   };
   const matchRate = async (s: XRSession) => {
     xr.supported = s.supportedFrameRates ? Array.from(s.supportedFrameRates) : [];

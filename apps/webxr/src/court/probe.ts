@@ -37,6 +37,9 @@ export interface ProbeFrame {
   /** The light field's last beat and its t (lightfield.ts `beat`, `t`). */
   lightBeat: string;
   lightT: number;
+  /** The headset's rate this frame stepped at (the session's frameRate, else the show's) and the clock's output rate, Hz. */
+  xrHz: number;
+  clockHz: number;
   /** capture only: read-back alpha (0-255) min and mean, mean luma (0-255), 16 x 9 luma grid (row-major, top first). */
   alphaMin?: number;
   alphaMean?: number;
@@ -67,7 +70,7 @@ export interface ProbeView {
 
 /** What court.ts gives the probe. */
 export interface ProbeHooks {
-  snapshot(): { phase: Phase; setup: boolean; clock: ClockState; onScreen: number; still: number; lightsUp: number; tF: number; roomP: number; fed: number; lightBeat: string; lightT: number; [k: string]: unknown };
+  snapshot(): { phase: Phase; setup: boolean; clock: ClockState; onScreen: number; still: number; lightsUp: number; tF: number; roomP: number; fed: number; lightBeat: string; lightT: number; xrHz: number; clockHz: number; [k: string]: unknown };
   seatHere(): void;
   press(action: UiAction): void;
   modules: Record<string, boolean>;
@@ -167,6 +170,7 @@ export class Probe {
     const f: ProbeFrame = {
       n: this.n++, phase: s.phase, setup: s.setup, frame: s.clock.frame, segment: s.clock.segment, speed: s.clock.speed, onScreen: s.onScreen,
       still: s.still, lightsUp: s.lightsUp, tF: s.tF, roomP: s.roomP, fed: s.fed, lightBeat: s.lightBeat, lightT: s.lightT,
+      xrHz: s.xrHz, clockHz: s.clockHz,
     };
     if (this.mode === "timing") f.cpuMs = Number(cpuMs.toFixed(3));
     else {

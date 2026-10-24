@@ -125,7 +125,10 @@ export interface ShowVideoInfo {
     /** The matte atlas: each card's matte (white = the person) in its own tile (cards.json `tile`). */
     mattes: Region;
   };
-  /** The display rate the show is baked for, Hz (72). The clock steps round(dt x displayHz) show frames per XR frame. */
+  /**
+   * The display rate the show is baked for, Hz (72). At this XR rate the clock steps round(dt x displayHz) show frames
+   * per XR frame (one); at any other, clock.ts's Cadence keeps real time (displayHz / the session's rate per frame).
+   */
   displayHz: number;
   /** Pass 2's playback speed, x real time (below 1): every display frame of pass 2 is a real captured frame. Every ease starts at it; the resume ramps up to it. */
   pass2Speed: number;
