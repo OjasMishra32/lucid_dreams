@@ -7,6 +7,7 @@ import { SkinnedAvatar } from "../avatar";
 import { loadDream } from "../dream";
 import { fingertips, handOccluder, XrButton } from "../xr/hands";
 import { Engine, STRENGTHS, type Strength } from "./engine";
+import { bookMove } from "./repertoire";
 import { board, localToSquare, pieceGeometries, pieceHeight, pieceMaterials, type PieceType, SQUARE, squareToLocal } from "./pieces";
 import { ChessClock } from "./clock";
 import { hashSeed } from "./person";
@@ -270,6 +271,7 @@ export async function renderChess(root: HTMLElement) {
     $("#status").textContent = text;
     drawPanel(text);
   };
+  let opening = ""; // the legend's own line while they're in it
   const updateStatus = () => {
     const who = strength.legend ? `${strength.legend} (engine, ${strength.elo})` : opponentName ? `${opponentName} (${strength.label})` : strength.label;
     if (reaching) return setStatus(`${who} is moving…`);
@@ -277,7 +279,8 @@ export async function renderChess(root: HTMLElement) {
     if (chess.isCheckmate()) return setStatus(chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.");
     if (chess.isDraw()) return setStatus("Draw");
     if (thinking) return setStatus(`${who} is thinking…`);
-    setStatus(chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`);
+    const line = opening ? `  ·  ${opening}` : "";
+    setStatus((chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`) + line);
   };
 
   const engineMove = async () => {
@@ -294,7 +297,20 @@ export async function renderChess(root: HTMLElement) {
       judged = true;
       if (lastEval !== null && lastEval - cp > 150) seated?.nod();
     };
-    const uci = await engine.bestMove(chess.fen(), strength, (depth, cp, pv) => {
+    // a legend opens with his own lines (Fischer's 1.e4 and Najdorf, Carlsen's Catalan and Sveshnikov), then the engine
+    let bookUci: string | null = null;
+    const book = strength.legend ? bookMove(strength.id, chess.history()) : null;
+    if (book) {
+      try {
+        const m = new Chess(chess.fen()).move(book.san);
+        bookUci = m.from + m.to + (m.promotion ?? "");
+        // named only once both sides are in the line (after 1.e4 alone it could still become anything)
+        if (chess.history().length >= 3) opening = `${strength.legend?.split(" ").pop()}'s ${book.name}`;
+      } catch {
+        bookUci = null;
+      }
+    }
+    const uci = bookUci ?? await engine.bestMove(chess.fen(), strength, (depth, cp, pv) => {
       if (depth >= deepest.depth) deepest = { depth, cp };
       if (!judged && depth >= 10) judge(cp);
       if (pv && depth >= 8 && pv !== bests[bests.length - 1]) {
@@ -472,6 +488,7 @@ export async function renderChess(root: HTMLElement) {
     seated?.cancel();
     if (seated && opponentShownId) seated.reseed(hashSeed(opponentShownId, gameNumber));
     engine.newGame();
+    opening = "";
     await engine.setStrength(strength);
     boardGroup.rotation.y = side === "w" ? 0 : Math.PI;
     sync();
