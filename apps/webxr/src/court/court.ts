@@ -9,9 +9,9 @@
 //   anchoring; Next view) -> returning (through the room to the chair, re-seat, handback(t)) -> resume (through the
 //   make) -> ended (Replay).
 // See my room works in every phase; the edge fade runs every frame; every button, key and probe action is queued to
-// the top of the next frame. A throw inside the frame is logged once and the loop keeps going (a stopped loop freezes
-// the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e harness (probe.ts). Owned
-// by the integrator only: streams export their pieces and the integrator wires them here.
+// the next frame, right after its head pose is read. A throw inside the frame is logged once and the loop keeps going
+// (a stopped loop freezes the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e
+// harness (probe.ts). Owned by the integrator only: streams export their pieces and the integrator wires them here.
 import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { WorldLock } from "../xr/anchor";
@@ -251,7 +251,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "arrival": {
         if (lightsUp < 0) {
           const speed = headPos.distanceTo(lastHead) / Math.max(dt, 1e-6);
-          still = visible && speed < STILL_SPEED ? still + dt : 0;
+          const seated = head.room[1] - seatedEyeY <= STAND_RISE; // standing up waits too (P27)
+          still = visible && seated && speed < STILL_SPEED ? still + dt : 0;
           if (still >= STILL_S) lightsUp = 0;
         } else lightsUp += dt;
         const p = Math.max(0, Math.min(1, lightsUp / LIGHTS_UP_S));
@@ -338,10 +339,16 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
 
   // ---------------- the frame loop ----------------
   const loopErrors = new Set<string>();
+  const logOnce = (e: unknown) => {
+    const msg = String(e);
+    if (loopErrors.has(msg)) return;
+    loopErrors.add(msg);
+    probe?.api.errors.push(msg);
+    console.error("Court Side frame:", e);
+  };
   let lastTime = -1;
   let frameStart = 0;
   const onFrame = (time: number) => {
-    for (const fn of queue.splice(0)) fn();
     const dt = probe ? probe.dt(hz) : lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000);
     const interval = lastTime < 0 ? 0 : time - lastTime;
     lastTime = time;
@@ -354,6 +361,15 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     head.court = toCourt(seat.world, head.room);
     head.yaw = euler.y;
     head.quaternion = [headQ.x, headQ.y, headQ.z, headQ.w];
+    // the queued actions, with this frame's head (Seat here takes it); one action's throw never costs the frame its
+    // step (the fades and the clock keep their display-frame timing)
+    for (const fn of queue.splice(0)) {
+      try {
+        fn();
+      } catch (e) {
+        logOnce(e);
+      }
+    }
     if (renderer.xr.isPresenting) {
       seat.update(); // the only writer of the world group (seat.ts)
       vrHands.update();
@@ -371,12 +387,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     try {
       onFrame(time);
     } catch (e) {
-      const msg = String(e);
-      if (!loopErrors.has(msg)) {
-        loopErrors.add(msg);
-        probe?.api.errors.push(msg);
-        console.error("Court Side frame:", e);
-      }
+      logOnce(e);
     } finally {
       // even after a throw, so the e2e sees the frame (and the error) instead of waiting for it
       if (renderer.xr.isPresenting) probe?.afterRender(gl, performance.now() - frameStart);
