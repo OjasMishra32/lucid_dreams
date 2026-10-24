@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import type { Dream, JobStatus } from "../dream";
 import { REPO, avatarComplete, bundleComplete as complete, isRunId, readDream } from "./dreams";
 import { fetches, fetching } from "./fetches";
-import { ensureGuide } from "./guide";
+import { ensureExperience } from "./experience";
 import { getJob, updateJob, type JobRecord } from "./store";
 
 // Real jobs: every call goes through Ojasva's pipeline/runner/lucid_runner.py, which prints one JSON object.
@@ -51,6 +51,7 @@ export function startRunnerJob(job: JobRecord) {
       // --name=<value> in one token, so a name starting with "-" can't read as an option
       const args = ["submit", file, `--name=${job.name}`, `--id=${job.id}`, `--kind=${job.kind}`];
       if (job.kind === "replay" && job.startS > 0) args.push(`--start-s=${job.startS.toFixed(2)}`);
+      if (job.intent) args.push(`--intent=${job.intent}`);
       return runner(args);
     })
     .then(() => updateJob(job.id, { submit: "done" }))
@@ -166,7 +167,7 @@ function startFetch(id: string) {
       }
       fetches.delete(id);
       if (getJob(id)) updateJob(id, { fetch: "done" });
-      ensureGuide(id);
+      ensureExperience(id);
     })
     .catch((e: Error) => {
       fetches.set(id, { state: "failed", tries, at: Date.now(), error: e.message });

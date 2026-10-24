@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFil
 import { join } from "node:path";
 import type { JobStatus, Stage } from "../dream";
 import { DREAMS_DIR, listDreams, readDream } from "./dreams";
-import { ensureGuide } from "./guide";
+import { ensureExperience } from "./experience";
 import { allJobs, type JobRecord } from "./store";
 
 // Same weights and words as pipeline/lucid/status.py, so the mock feels exactly like a real run, only faster.
@@ -44,7 +44,7 @@ export function mockStatus(job: JobRecord): JobStatus {
 
 function finish(job: JobRecord): JobStatus {
   let made = readDream(job.id);
-  if (!made && (made = standIn(job))) ensureGuide(job.id);
+  if (!made && (made = standIn(job))) ensureExperience(job.id);
   if (!made) {
     return {
       id: job.id, status: "failed", stage: "export", progress: 0.9, etaS: null,
@@ -65,11 +65,11 @@ function standIn(job: JobRecord) {
   const dst = join(DREAMS_DIR, job.id);
   mkdirSync(dst, { recursive: true });
   for (const entry of readdirSync(src)) {
-    // the guide is written for each dream from its own clip, never inherited from the sample
-    if (entry === "dream.json" || entry.startsWith("guide.") || existsSync(join(dst, entry))) continue;
+    // the plan is written for each dream from its own clip and intent, never inherited from the sample
+    if (entry === "dream.json" || entry.startsWith("experience.") || existsSync(join(dst, entry))) continue;
     symlinkSync(join(src, entry), join(dst, entry));
   }
-  const dream = { ...sample, id: job.id, name: job.name, guide: null, createdAt: new Date().toISOString() };
+  const dream = { ...sample, id: job.id, name: job.name, intent: job.intent ?? null, experience: null, createdAt: new Date().toISOString() };
   writeFileSync(join(dst, "dream.json"), JSON.stringify(dream, null, 2));
   return dream;
 }

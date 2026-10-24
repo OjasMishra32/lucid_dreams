@@ -15,7 +15,7 @@ const MIN_PERSON = 0.15; // ignore detections shorter than this share of the fra
 const SMALL = 0.4; // nose-to-heel under this share of the frame height: they should move closer
 
 let loading: Promise<PoseLandmarker> | null = null;
-function landmarker(): Promise<PoseLandmarker> {
+export function landmarker(): Promise<PoseLandmarker> {
   if (!loading) {
     loading = (async () => {
       const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
@@ -33,11 +33,13 @@ function landmarker(): Promise<PoseLandmarker> {
   return loading;
 }
 
-interface Look {
+export interface Look {
   people: number;
   head: boolean;
   feet: boolean;
   height: number; // the biggest person's nose-to-heel span, as a share of the frame height
+  centre: [number, number]; // where the biggest person is, as shares of the frame (a cut or a pan moves it at once)
+  confidence: number; // how sure the model is it's a person (mean landmark visibility)
 }
 
 function extent(p: NormalizedLandmark[]): number {
@@ -45,15 +47,24 @@ function extent(p: NormalizedLandmark[]): number {
   return ys.length ? Math.min(1, Math.max(...ys)) - Math.max(0, Math.min(...ys)) : 0;
 }
 
-function look(model: PoseLandmarker, image: TexImageSource): Look {
+export function look(model: PoseLandmarker, image: TexImageSource): Look {
   const people = model.detect(image).landmarks.filter((p) => extent(p) >= MIN_PERSON);
-  if (!people.length) return { people: 0, head: false, feet: false, height: 0 };
+  if (!people.length) return { people: 0, head: false, feet: false, height: 0, centre: [0, 0], confidence: 0 };
   const main = people.reduce((a, b) => (extent(b) > extent(a) ? b : a));
   const inFrame = (i: number) => {
     const v = main[i];
     return !!v && v.visibility > 0.5 && v.x >= 0 && v.x <= 1 && v.y >= 0 && v.y <= 1;
   };
-  return { people: people.length, head: HEAD.some(inFrame), feet: FEET.some(inFrame), height: extent(main) };
+  const seen = main.filter((v) => v.visibility > 0.5);
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(xs.length, 1);
+  return {
+    people: people.length,
+    head: HEAD.some(inFrame),
+    feet: FEET.some(inFrame),
+    height: extent(main),
+    centre: [mean(seen.map((v) => v.x)), mean(seen.map((v) => v.y))],
+    confidence: mean(main.map((v) => v.visibility)),
+  };
 }
 
 /** Pose checks for a photo, or for three frames across the chosen 5-second window of a clip. Null if the model can't load. */

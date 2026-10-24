@@ -6,7 +6,7 @@ const SPEEDS: [number, string][] = [[1, "1×"], [0.5, "½×"], [0.25, "¼×"]];
 
 /**
  * The 360 preview, with the speeds you'd use to learn a move, and the person's words when the bundle has captions
- * (captions.vtt, Atina's step). The guide drives this same video (id dream-preview).
+ * (captions.vtt, Atina's step). The plan's steps drive this same video (id dream-preview).
  */
 export default function DreamStage({
   src,

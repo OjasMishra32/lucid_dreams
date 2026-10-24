@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SiteLink from "@/components/SiteLink";
 import { leadDream, listReady } from "@/lib/bridge/dreams";
 import { dreamFile, formatCount, heightM } from "@/lib/dream";
 import { seenPercent } from "@/lib/format";
@@ -26,12 +27,12 @@ export default function Home() {
           standing in your room.
         </h1>
         <p className="lede">
-          One clip becomes a photoreal, life-size person you can walk all the way around. Freeze them, slow them
-          down, and learn the move from them.
+          A photo or a few seconds of video, plus one sentence of what you want, and they&apos;re in your room doing
+          it with you: teaching you the move, keeping you company, or sitting across a chess board.
         </p>
         <div className="hero-actions">
           <Link href="/new" className="btn">Make a dream</Link>
-          {dreams.length > 0 && <Link href="/library" className="more">See the library</Link>}
+          <SiteLink className="more">See what it does</SiteLink>
         </div>
       </section>
 
@@ -64,8 +65,8 @@ export default function Home() {
         <div className="wrap steps">
           <div className="step">
             <p className="step-n">1</p>
-            <h3>Drop in a clip.</h3>
-            <p>Five seconds of one person, head to toe, with the camera held still. Or a single photo.</p>
+            <h3>Drop in a clip, and say what you want.</h3>
+            <p>Five seconds of one person, head to toe, or a single photo. Then one sentence: &ldquo;teach me this strum,&rdquo; &ldquo;just be with me.&rdquo;</p>
           </div>
           <div className="step">
             <p className="step-n">2</p>
@@ -79,8 +80,8 @@ export default function Home() {
             <p className="step-n">3</p>
             <h3>They stand in your room.</h3>
             <p>
-              Life size on your real floor in Quest passthrough{frames ? `, all ${frames} frames of the move` : ""}. Walk
-              around them, freeze them, play them at quarter speed.
+              Life size on your real floor in Quest passthrough{frames ? `, all ${frames} frames of the move` : ""}. Gemini
+              turns your sentence into what happens next: a lesson step by step, slowed down, with your turn after each.
             </p>
           </div>
         </div>

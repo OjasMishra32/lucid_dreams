@@ -3,11 +3,9 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import DreamStage from "@/components/DreamStage";
-import GuidePanel from "@/components/GuidePanel";
-import ShareButton from "@/components/ShareButton";
-import ViewInRoom, { ViewerLink } from "@/components/ViewInRoom";
+import DreamExperience from "@/components/DreamExperience";
 import { readDream } from "@/lib/bridge/dreams";
-import { ensureGuide } from "@/lib/bridge/guide";
+import { ensureExperience } from "@/lib/bridge/experience";
 import { publicOrigin } from "@/lib/bridge/http";
 import { dreamFile, formatCount, heightM, type Dream } from "@/lib/dream";
 import { formatDate, seenPercent } from "@/lib/format";
@@ -36,7 +34,7 @@ export default async function DreamPage({ params }: Props) {
   const d = readDream((await params).id);
   if (!d) notFound();
 
-  const guide = ensureGuide(d.id);
+  const experience = ensureExperience(d.id);
   const shareUrl = `${publicOrigin(await headers())}/library/${encodeURIComponent(d.id)}`;
   const seen = seenPercent(d);
   const facts = basics(d);
@@ -59,17 +57,7 @@ export default async function DreamPage({ params }: Props) {
           <p className="detail-kind">{d.kind === "avatar" ? "Avatar · can do any move" : "Replay · moves exactly like the clip"}</p>
           <h1 className="page-title">{d.name}</h1>
           {d.createdAt && <p className="detail-date">Made {formatDate(d.createdAt)}</p>}
-          <div className="detail-actions">
-            <ViewInRoom id={d.id} />
-            {d.kind === "avatar" && (
-              <ViewerLink query={`mode=chess&opponent=${encodeURIComponent(d.id)}`} className="btn secondary">
-                Play chess with them
-              </ViewerLink>
-            )}
-            <ShareButton title={d.name} url={shareUrl} />
-          </div>
-
-          <GuidePanel id={d.id} durationS={d.durationS} initial={guide} />
+          <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl} initial={experience} />
 
           {facts.length > 0 && (
             <>

@@ -33,31 +33,46 @@ export interface Dream {
     views: number | null;
     seenFraction?: number | null;
   } | null;
-  guide?: string | null; // "guide.json": the Gemini guide, written by the bridge (see Guide below)
+  intent?: string | null; // what the user wants to do with this person ("teach me this strum")
+  experience?: string | null; // "experience.json": the plan written from the intent (see Experience below)
   captions?: string | null; // "captions.vtt": WebVTT of what the person says, on the clip's own clock
   createdAt?: string;
 }
 
-/** guide.json in a bundle. Step times are seconds into the motion: the same clock as the frames and preview.mp4. */
-export interface Guide {
-  move: string;
-  category: string;
+export type ExperienceMode = "teach" | "companion" | "watch" | "play";
+export const STRENGTHS = ["club", "expert", "master", "gm", "fischer", "carlsen", "max"] as const;
+export type Strength = (typeof STRENGTHS)[number];
+// Places around the person instead of your room (AGENTS.md, Experience, "environment"); "room" is your own room.
+export const ENVIRONMENTS = ["concert-hall", "court", "gym", "ring", "studio", "mountains", "room"] as const;
+export type Environment = (typeof ENVIRONMENTS)[number];
+
+/**
+ * experience.json (AGENTS.md, Contracts, "Experience"): what happens when they're in your room. Written by the bridge
+ * with Gemini from the intent and the clip; the WebXR viewer and the Quest app run it. Step times are seconds in the
+ * bundle's own clip time (0 = its first frame). Fields after `play` are extras for the web page; players ignore them.
+ */
+export interface Experience {
+  intent: string | null;
+  mode: ExperienceMode;
+  title: string;
   summary: string;
-  steps: { t: number; title: string; cue: string }[];
-  tips: string[];
-  narration: string;
-  audio: string | null; // "guide.m4a": the narration, spoken
-  durationS?: number; // the clock the step times are on (the motion's length)
-  source: "clip" | "preview"; // what Gemini watched
-  model: string;
-  createdAt: string;
+  place: "facing" | "beside" | "ahead";
+  steps?: { start: number; end: number; title: string; tip?: string; speed?: number; repeat?: number }[];
+  play?: { game: "chess"; strength: Strength };
+  environment?: Environment; // only when the activity clearly has a home (piano: concert hall, basketball: court)
+  objects?: string[]; // the objects that matter for the intent ("basketball", "hoop"); the pipeline's props.json builds them
+  category?: string;
+  durationS?: number; // the clip length the steps are timed on
+  source?: "clip" | "preview" | "photo" | "intent"; // what Gemini looked at
+  model?: string;
+  createdAt?: string;
 }
 
-export type GuideState =
-  | { state: "ready"; guide: Guide }
+export type ExperienceState =
+  | { state: "ready"; experience: Experience }
   | { state: "working" }
   | { state: "failed"; message: string }
-  | { state: "off" }; // no Gemini key, or nothing to watch
+  | { state: "off" }; // no Gemini key, or nothing to plan from
 
 export type JobKind = "replay" | "avatar";
 export type JobState = "queued" | "running" | "done" | "failed";

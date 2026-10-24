@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import TrimPicker from "@/components/TrimPicker";
+import WindowFinder from "@/components/WindowFinder";
 import type { JobKind } from "@/lib/dream";
 import { WINDOW_S, formatBytes, inspect, mediaOf, nameFromFile, type Check, type Inspected } from "@/lib/clipCheck";
 import { personChecks } from "@/lib/personCheck";
@@ -30,6 +31,13 @@ const ICONS: Record<Check["level"], React.ReactNode> = {
   wait: <span className="check-wait" aria-hidden="true"><span className="pulse" /></span>,
 };
 
+// One sentence of what you want to do with them: the intent Gemini plans the experience from. A replay can teach or
+// keep you company; only an avatar (from a photo) can sit across a chess board.
+const SUGGESTIONS = {
+  video: ["Teach me this", "Sit next to me and teach me this piece", "Just be with me"],
+  photo: ["Just be with me", "Play chess with me"],
+};
+
 export default function MakeDream() {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
@@ -39,6 +47,7 @@ export default function MakeDream() {
   const [name, setName] = useState("");
   const [typed, setTyped] = useState(false); // a name the person typed survives choosing another file
   const [kind, setKind] = useState<JobKind>("replay");
+  const [intent, setIntent] = useState("");
   const [startS, setStartS] = useState(0);
   const [people, setPeople] = useState<Check[] | "looking" | null>(null); // null: the pose model couldn't run here
   const [consent, setConsent] = useState(false);
@@ -123,6 +132,7 @@ export default function MakeDream() {
     const body = new FormData();
     body.append("name", name.trim());
     body.append("kind", kind);
+    if (intent.trim()) body.append("intent", intent.trim());
     if (trimmable) body.append("startS", startS.toFixed(2));
     body.append("file", file);
     const xhr = new XMLHttpRequest();
@@ -207,6 +217,7 @@ export default function MakeDream() {
         {trimmable && (
           <TrimPicker url={info.url} durationS={lengthS} windowS={WINDOW_S} startS={startS} onChange={setStartS} />
         )}
+        {trimmable && lengthS >= 12 && <WindowFinder url={info.url} durationS={lengthS} startS={startS} onPick={setStartS} disabled={sending} />}
         <p className="muted" style={{ fontSize: 14, margin: "14px 0 0" }}>
           {file.name} · {formatBytes(file.size)}
         </p>
@@ -234,6 +245,26 @@ export default function MakeDream() {
             {`We can't check the rest from here: ${people === null ? "one person, head to toe, " : ""}${photo ? "bright, even light." : "camera still, bright even light."}`}
           </p>
         )}
+
+        <div className="field">
+          <label htmlFor="intent">What do you want to do with them?</label>
+          <input
+            id="intent"
+            className="input"
+            value={intent}
+            maxLength={200}
+            placeholder={photo ? "I just want to sit with her" : "Teach me this strum"}
+            onChange={(e) => setIntent(e.target.value)}
+            disabled={sending}
+          />
+          <div className="suggestions">
+            {SUGGESTIONS[photo ? "photo" : "video"].map((s) => (
+              <button key={s} type="button" className={intent === s ? "on" : ""} onClick={() => setIntent(s)} disabled={sending}>
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <label className="field">
           <span>Name</span>

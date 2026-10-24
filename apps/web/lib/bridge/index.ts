@@ -3,7 +3,7 @@ import type { JobKind, JobStatus } from "../dream";
 import { slug } from "../dream";
 import type { Dream } from "../dream";
 import { isRunId } from "./dreams";
-import { sweepGuides } from "./guide";
+import { sweepExperiences } from "./experience";
 import { mockStatus } from "./mock";
 import { repairAvatars, runnerStatus, startRunnerJob } from "./runner";
 import { allJobs, getJob, putJob, type JobRecord } from "./store";
@@ -41,9 +41,9 @@ export async function activeJobs(): Promise<{ job: JobRecord; status: JobStatus 
   return out.filter((x): x is { job: JobRecord; status: JobStatus } => !!x.status && x.status.status !== "done");
 }
 
-/** Whenever the library is listed: start missing guides, and (runner mode) finish avatars that arrived without .ply. */
+/** Whenever the library is listed: plan dreams that have no plan yet, and (runner mode) finish avatars missing .ply. */
 export function tend(dreams: Dream[]) {
-  sweepGuides(dreams);
+  sweepExperiences(dreams);
   if (MODE === "runner") repairAvatars(dreams);
 }
 

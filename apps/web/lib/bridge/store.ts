@@ -13,6 +13,7 @@ export interface JobRecord {
   file: string; // the uploaded clip or photo on this Mac
   fileName: string;
   startS: number; // where the 5-second window starts in a long clip
+  intent?: string; // what the user wants to do with this person ("teach me this strum")
   createdAt: number;
   // runner mode
   submit?: "running" | "done" | "failed";

@@ -35,8 +35,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     ...CORS,
     "Content-Type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
     "Accept-Ranges": "bytes",
-    // dream.json and the guide change in place (the guide is added later, and can be rewritten): never cache them
-    "Cache-Control": /(^|\/)(dream|guide|captions)\.[a-z0-9]+$/.test(file) ? "no-store" : "public, max-age=3600",
+    // files that change in place (the plan is added later and can be rewritten; captions arrive late): never cache
+    "Cache-Control": /(^|\/)(dream|experience|captions)\.[a-z0-9]+$/.test(file) ? "no-store" : "public, max-age=3600",
   };
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");

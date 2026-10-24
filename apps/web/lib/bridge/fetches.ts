@@ -1,6 +1,6 @@
 import "server-only";
 
-// Bundles being copied back from HiPerGator right now. Shared by the runner (which starts the copies) and the guide
+// Bundles being copied back from HiPerGator right now. Shared by the runner (which starts the copies) and the experience step
 // (which must not start on a half-arrived bundle): rsync lands dream.json first and preview.mp4 after it.
 export type Fetch = { state: "running" | "failed"; tries: number; at?: number; error?: string };
 

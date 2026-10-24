@@ -24,33 +24,37 @@ npm --prefix apps/web run demo
 Bundles live in `<repo>/dreams/` (git-ignored), shared with the runner and the WebXR viewer. For mock mode on your
 own laptop, start from the committed sample: `cp -R samples/synthetic-test dreams/`.
 
-## The Gemini guide
+## The experience step (Gemini)
 
-For every replay, the bridge asks Gemini to watch the move and write a guide: the move's name, its steps with the
-second each begins, tips, and a narration that a TTS voice speaks into `guide.m4a` for the headset. It runs once per
-dream, in the background, as soon as the dream lands (or when its page is first opened), and is kept in the bundle
-as `guide.json` with `"guide": "guide.json"` added to `dream.json`.
+The main goal is one sentence: any photo or video, plus what you want to do with that person, and they're in your
+room doing it with you. Make a dream asks "What do you want to do with them?" (the `intent`); it goes to the runner as
+`--intent` and lands in `dream.json`. When the dream arrives, the bridge asks Gemini to turn intent + person into
+`experience.json` (AGENTS.md, Contracts, "Experience"): `teach` (steps with times, speed, repeats and a tip each),
+`companion`, `watch` or `play` (chess, at a strength), and where they stand (`facing`, `beside`, `ahead`). The WebXR
+viewer and the Quest app run it; the dream page shows the plan and names the main action by it.
 
-- Gemini watches the original clip (trimmed on the Mac to the 5 seconds that were rebuilt, location metadata
-  stripped) together with `preview.mp4`, and times every step on the preview's clock, so tapping a step on the dream
-  page lands on the right pose. In runner mode, clips that only live on HiPerGator come back as the run's `prepped.mp4`.
-- Uploaded videos are deleted from Gemini as soon as the guide is written. Gemini never names the person or speaks
-  as them: it is a coach talking to you.
+- Gemini watches the clip window the person was built from: the upload cut on the Mac to `[startS, startS + durationS]`
+  (location metadata stripped). Step times are seconds in the bundle's clip time. Clips that only live on HiPerGator
+  come back as the run's `prepped.mp4` (runner mode); `preview.mp4` is used only when there's no clip at all. Avatars
+  send their photo; with no picture, the plan comes from the sentence alone.
+- Once per dream and intent: a copy is cached in `.data/experiences/`, so a re-fetched bundle never asks again.
+- Uploads are deleted from Gemini as soon as the plan is written. Gemini never names the person or speaks as them;
+  tips are read by the device's own voice.
 - Needs a key from https://aistudio.google.com/apikey in `apps/web/.env.local` (git-ignored):
 
 ```bash
 GEMINI_API_KEY=...
-# optional: GEMINI_MODEL, GEMINI_TTS_MODEL (comma-separated fallbacks), GEMINI_VOICE (default Sulafat)
+# optional: GEMINI_MODEL (comma-separated fallbacks)
 ```
 
-`GET /api/dreams/<id>/guide` says where a guide stands (`ready`, `working`, `failed` with the reason, or `off`);
+`GET /api/dreams/<id>/experience` says where a plan stands (`ready`, `working`, `failed` with the reason, or `off`);
 `POST` to the same path writes it again.
 
 ## API (contract in AGENTS.md)
 
 | Call | Reply |
 | --- | --- |
-| `POST /api/jobs` | multipart `file`, `name`, `kind` (`replay` or `avatar`), optional `startS` -> `201 { "id" }`, or `400 { "error" }` saying what to fix |
+| `POST /api/jobs` | multipart `file`, `name`, `kind` (`replay` or `avatar`), optional `startS` and `intent` -> `201 { "id" }`, or `400 { "error" }` saying what to fix |
 | `GET /api/jobs/:id` | `{ id, status, stage, progress, etaS, message }` |
 | `GET /api/dreams` | every `dream.json`, newest first |
 | `GET /dreams/<id>/...` | bundle files, with Range support; `/dreams/index.json` mirrors the WebXR viewer's index |
