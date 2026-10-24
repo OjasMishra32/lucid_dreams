@@ -7,7 +7,7 @@
 import type { Court, ShowFrame } from "./format";
 
 /** True once stream C has built the Clock class (the e2e report lists the modules still stubbed). */
-export const BUILT = false;
+export const BUILT = true;
 
 /** Pass 1 plays at real speed. (Pass 2's speed is the bundle's: court.video.pass2Speed; every ease starts at it.) */
 export const PASS1_SPEED = 1;
@@ -74,6 +74,11 @@ export function resumeSpeed(k: number, n: number, speed: number): number {
   return speed * smootherstep(k / n);
 }
 
+/** `to` when it doesn't follow `from` in the stream (a jump the second decoder must prime), else null. */
+function jumpTo(from: number, to: number): number | null {
+  return to === from + 1 ? null : to;
+}
+
 /** Which part of the show is on screen. "freeze" holds F (after an ease lands, until resume()). */
 export type Segment = "pass1" | "pass2" | "ease" | "freeze" | "resume" | "ended";
 
@@ -103,42 +108,192 @@ export interface ClockState {
 
 /**
  * The show clock. Construct from the bundle; call update(dt) once per XR frame with the frame's own dt (never wall
- * time between frames: the e2e steps it at a fixed 1/72 s), then show `state.frame`.
+ * time between frames: the e2e steps it at a fixed 1/72 s), then show `state.frame`. Presses and the resume only change
+ * what the next steps do, so every show frame comes from the stream in order except at a jump, and every jump is named
+ * in `state.nextJump` before it happens.
  */
 export class Clock {
   readonly state: ClockState;
   private readonly court: Court;
   private readonly frames: readonly ShowFrame[];
+  /** The ease pass 2 takes at its start frame (a press before the cutoff, or the armed stop carried into this pass). */
+  private take: number | null = null;
+  /** A press in pass 1 or after the cutoff: the next pass 2 takes the first ease. */
+  private armNext = false;
+  /** resume() was called in the freeze: the next step enters the resume. */
+  private resuming = false;
 
   constructor(court: Court, frames: readonly ShowFrame[]) {
     this.court = court;
     this.frames = frames;
     const first = court.video.segments.pass1[0];
     this.state = { frame: first, segment: "pass1", ease: null, speed: PASS1_SPEED, nextEase: 0, nextJump: null, armed: false, pass: 0, segmentFrame: 0 };
+    this.restart();
   }
 
-  /** Advance by round(dt x displayHz) show frames across segment edges; returns the new state. Stub: holds pass 1's first frame. */
+  /** Advance by round(dt x displayHz) show frames across segment edges, one frame at a time; returns the state. */
   update(dt: number): ClockState {
+    for (let n = stepFrames(dt, this.court.video.displayHz); n > 0; n--) this.step();
+    this.refresh();
     return this.state;
   }
 
   /** Step into the court: take the next ease still ahead, arm it in pass 1, or arm the next pass after the cutoff. */
   press(): void {
-    throw new Error("Clock.press is not built yet (stream C)");
+    const s = this.state;
+    if (s.segment === "pass1") this.armNext = true;
+    else if (s.segment === "pass2" && this.take === null) {
+      const k = this.easeAhead(s.frame);
+      if (k === null) this.armNext = true;
+      else this.take = k;
+    }
+    this.refresh();
   }
 
   /** From the freeze, play on through the make (the resume segment). */
   resume(): void {
-    throw new Error("Clock.resume is not built yet (stream C)");
+    if (this.state.segment !== "freeze") return;
+    this.resuming = true;
+    this.refresh();
   }
 
   /** Back to pass 1's first frame (See my room during the watch restarts it; Replay). */
   restart(): void {
-    throw new Error("Clock.restart is not built yet (stream C)");
+    Object.assign(this.state, { frame: this.court.video.segments.pass1[0], segment: "pass1", ease: null, speed: PASS1_SPEED, pass: 0, segmentFrame: 0 });
+    this.take = null;
+    this.armNext = false;
+    this.resuming = false;
+    this.refresh();
   }
 
   /** Straight to F, frozen (See my room mid-ease finishes the hand-off under the fade). */
   jumpToFreeze(): void {
-    throw new Error("Clock.jumpToFreeze is not built yet (stream C)");
+    const eases = this.court.video.segments.eases;
+    const k = this.state.ease ?? this.take ?? this.state.nextEase ?? 0;
+    this.take = null;
+    this.armNext = false;
+    this.resuming = false;
+    Object.assign(this.state, { frame: eases[k].frames[1], segment: "freeze", ease: null, speed: 0, segmentFrame: 0 });
+    this.refresh();
+  }
+
+  /** The first ease whose start is still ahead of (or on) pass-2 frame `frame`, if it is not past the cutoff. */
+  private easeAhead(frame: number): number | null {
+    const v = this.court.video;
+    if (frame > v.cutoff) return null;
+    const eases = v.segments.eases;
+    for (let k = 0; k < eases.length; k++) if (eases[k].start >= frame) return k;
+    return null;
+  }
+
+  private enter(segment: Segment, frame: number): void {
+    this.state.segment = segment;
+    this.state.frame = frame;
+    this.state.segmentFrame = 0;
+  }
+
+  /** One show frame on. */
+  private step(): void {
+    const s = this.state;
+    const seg = this.court.video.segments;
+    switch (s.segment) {
+      case "pass1":
+        if (s.frame < seg.pass1[1]) {
+          s.frame++;
+          s.segmentFrame++;
+        } else this.startPass2();
+        break;
+      case "pass2":
+        if (this.take !== null && s.frame === seg.eases[this.take].start) {
+          s.ease = this.take;
+          this.take = null;
+          this.enter("ease", seg.eases[s.ease].frames[0]);
+        } else if (s.frame < seg.pass2[1]) {
+          s.frame++;
+          s.segmentFrame++;
+        } else this.startPass2();
+        break;
+      case "ease":
+        s.frame++;
+        s.segmentFrame++;
+        if (s.frame >= seg.eases[s.ease!].frames[1]) {
+          s.ease = null;
+          this.enter("freeze", s.frame);
+        }
+        break;
+      case "freeze":
+        if (this.resuming) {
+          this.resuming = false;
+          this.enter("resume", seg.resume[0]);
+        }
+        break;
+      case "resume":
+        if (s.frame < seg.resume[1]) {
+          s.frame++;
+          s.segmentFrame++;
+        } else this.enter("ended", s.frame);
+        break;
+      case "ended":
+        break;
+    }
+  }
+
+  /** Pass 2 from its first frame (after pass 1, and every repeat); an armed stop becomes this pass's first ease. */
+  private startPass2(): void {
+    const s = this.state;
+    s.segment = "pass2";
+    s.frame = this.court.video.segments.pass2[0];
+    s.segmentFrame = 0;
+    s.pass++;
+    if (this.armNext) {
+      this.armNext = false;
+      this.take = 0;
+    }
+  }
+
+  /** speed, nextEase, nextJump and armed for the state as it now stands. */
+  private refresh(): void {
+    const s = this.state;
+    const v = this.court.video;
+    const seg = v.segments;
+    const ramp = easeFrameCount(RESUME_RAMP_S, v.displayHz);
+    s.armed = this.armNext || this.take !== null;
+    switch (s.segment) {
+      case "pass1":
+        s.speed = PASS1_SPEED;
+        s.nextEase = 0;
+        // a press now (or the armed stop) takes the first ease in pass 2: prime it once pass 2's start needs no priming
+        s.nextJump = jumpTo(seg.pass1[1], seg.pass2[0]) ?? seg.eases[0].frames[0];
+        break;
+      case "pass2": {
+        s.speed = v.pass2Speed;
+        s.nextEase = this.take ?? (this.armNext ? 0 : this.easeAhead(s.frame));
+        const easeNow = this.take ?? (this.armNext ? null : this.easeAhead(s.frame));
+        s.nextJump = easeNow !== null ? seg.eases[easeNow].frames[0] : seg.pass2[0];
+        break;
+      }
+      case "ease": {
+        const [e0, e1] = seg.eases[s.ease!].frames;
+        s.speed = easeSpeed(s.frame - e0 + 1, e1 - e0 + 1, v.pass2Speed);
+        s.nextEase = null;
+        s.nextJump = jumpTo(e1, seg.resume[0]);
+        break;
+      }
+      case "freeze":
+        s.speed = 0;
+        s.nextEase = null;
+        s.nextJump = jumpTo(s.frame, seg.resume[0]);
+        break;
+      case "resume":
+        s.speed = resumeSpeed(s.segmentFrame + 1, ramp, v.pass2Speed);
+        s.nextEase = null;
+        s.nextJump = null;
+        break;
+      case "ended":
+        s.speed = 0;
+        s.nextEase = null;
+        s.nextJump = seg.pass1[0]; // Replay
+        break;
+    }
   }
 }
