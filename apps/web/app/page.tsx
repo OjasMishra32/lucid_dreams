@@ -1,162 +1,145 @@
-import Image from "next/image";
 import Link from "next/link";
-import SiteLink from "@/components/SiteLink";
-import { listReady } from "@/lib/bridge/dreams";
-import { intentOf } from "@/lib/bridge/experience";
-import { formatCount, type Dream } from "@/lib/dream";
-import { seenPercent } from "@/lib/format";
-import { MODE_LABEL, asSentence, displayName, heroOrder, legendNote, mediaUrl, modeOf } from "@/lib/present";
+import HomeStory from "@/components/home/HomeStory";
+import SceneGallery, { type GroupCopy } from "@/components/home/SceneGallery";
+import { MeasuredTable, TruthSlider } from "@/components/home/Measured";
+import { ViewerLink } from "@/components/ViewInRoom";
+import { heroFrames, measured, rigCameras, scenes } from "@/lib/scenes";
+import type { RigCamera } from "@/lib/three/story";
+import "./home.css";
 
 export const dynamic = "force-dynamic";
 
-export default function Home() {
-  const dreams = listReady();
-  // The lineup: the best real people, the best in the middle and in motion, the rest standing either side.
-  const best = heroOrder(dreams).slice(0, 5);
-  const lineup = [best[3], best[1], best[0], best[2], best[4]].filter((d): d is Dream => Boolean(d));
-  const lead = best[0] ?? null;
-  const seen = lead ? seenPercent(lead) : null;
-  // Real numbers for "How it works", from the people in the library.
-  const views = best.find((d) => d.metrics?.views)?.metrics?.views ?? null;
-  const gaussians = best.find((d) => d.frames?.gaussiansPerFrame)?.frames?.gaussiansPerFrame ?? null;
-  const frames = best.find((d) => d.frameCount > 1)?.frameCount ?? null;
+// What the people are built on, and when it became public (the theme: fresh off the frontier).
+const BUILT_ON = [
+  { name: "4DAnyone", when: "August 2026 · Ant Research", what: "Turns one casual video into consistent 360-degree video from 48 cameras. The heart of every replay." },
+  { name: "LHM++", when: "March 2026", what: "Builds an animatable full-body person from many photos. The chess and tennis legends." },
+  { name: "UIKA", when: "CVPR 2026", what: "Rebuilds a head from a photo collection, so a face holds up at arm's length." },
+  { name: "GVHMR", when: "2024", what: "Reads real human motion from footage: the joints you follow, every tennis stroke." },
+  { name: "Gemini", when: "Google", what: "Turns your one sentence into a plan: a lesson, a game, company." },
+  { name: "Spark and WebXR", when: "Quest 3S browser", what: "Draws hundreds of thousands of Gaussians a frame, life size, in passthrough." },
+];
 
-  // "Say what you want": real sentences from the library, one per kind of thing you can do
-  const said = (["teach", "play", "companion"] as const)
-    .map((mode) => {
-      const d = dreams.find((x) => modeOf(x, intentOf(x)) === mode && intentOf(x));
-      return d ? { mode, d, sentence: asSentence(intentOf(d)!) } : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+export default function Home() {
+  const hero = heroFrames();
+  const cards = scenes();
+  const rows = measured();
+  const cams = rigCameras() as RigCamera[];
+  const lead = rows.find((r) => r.id === "dance-01") ?? rows[0];
+  const card = (key: string) => cards.find((c) => c.key === key);
+
+  const groups: GroupCopy[] = [
+    {
+      key: "learn",
+      eyebrow: "Lessons",
+      headline: "A teacher who waits for you.",
+      intro: "Every lesson slows the move down, one step at a time, then holds still while you try it. Follow along and you are scored against the clip's own joints.",
+      banner: { video: card("dance")?.video ?? null },
+    },
+    {
+      key: "play",
+      eyebrow: "Games",
+      headline: "Your move.",
+      intro: "Real games at real size: chess at the peak ratings of two legends, and a set of tennis on full-size grass. Every legend is a likeness, labelled as one, and never speaks.",
+      banner: { image: card("chess-carlsen")?.image ?? null },
+    },
+    {
+      key: "relive",
+      eyebrow: "Moments",
+      headline: "Stop time. Walk around it.",
+      intro: "A replay is the moment itself, life size on your floor. Freeze it at the top of the jump and see what the one camera never could.",
+      banner: null,
+    },
+    {
+      key: "talk",
+      eyebrow: "Company",
+      headline: "Someone real, answering you.",
+      intro: "He stands in your room and looks at you. Ask him anything, and he answers in his own voice, cloned with his permission. Every reply is labelled as AI.",
+      banner: card("vishal")?.video ? { video: card("vishal")!.video } : null,
+    },
+  ];
 
   return (
-    <>
-      <section className="home-hero">
-        <p className="eyebrow">Lucid Dreams</p>
-        <h1 className="display">
-          Anyone from any video,
-          <br />
-          standing in your room.
-        </h1>
-        <p className="lede">
-          One clip or photo, and one sentence of what you want. They arrive life size in your headset, doing it with you.
+    <div className="home">
+      <HomeStory
+        frame={hero?.frame ?? null}
+        reality={hero?.reality ?? null}
+        cameras={cams}
+        seen={hero?.seen ?? null}
+        views={hero?.views ?? null}
+        poster="/media/hero-dance.jpg"
+      />
+
+      <section className="intro">
+        <p>
+          Drop in a video of anyone and say what you want to do with them. Minutes later they are standing in your room,
+          life size and in 3D.
         </p>
-        <div className="hero-actions">
-          <Link href="/new" className="btn">Make a dream</Link>
-          <Link href="/library" className="more">Meet them</Link>
-        </div>
+        <p>
+          Learn their move. Play them at their game. <span>Or simply spend time with them.</span>
+        </p>
       </section>
 
-      {lineup.length > 0 && (
-        <section className="lineup" aria-label="People in the library">
-          <div className="lineup-row">
-            {lineup.map((d) => {
-              const role = d === lead ? "lead" : d === best[1] || d === best[2] ? "near" : "";
-              const poster = mediaUrl(d, d.thumb);
-              return (
-                <Link key={d.id} href={`/library/${encodeURIComponent(d.id)}`} className={`person lineup-person ${role}`} aria-label={displayName(d)}>
-                  {poster && (
-                    <Image src={poster} alt="" fill priority={role === "lead"} sizes={role === "lead" ? "(max-width: 860px) 42vw, 370px" : "(max-width: 860px) 31vw, 290px"} />
-                  )}
-                  {role === "lead" && d.preview && (
-                    <video src={mediaUrl(d, d.preview)!} autoPlay muted loop playsInline preload="auto" aria-hidden="true" className="ready" />
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-          <div className="lineup-floor" aria-hidden="true" />
-          <p className="lineup-caption">
-            {lineup.length > 1
-              ? `${["", "", "Two", "Three", "Four", "Five"][lineup.length]} people, each rebuilt from a single video.`
-              : "Rebuilt from a single video."}
-          </p>
-        </section>
-      )}
+      <div id="scenes" className="scenes">
+        <SceneGallery groups={groups} cards={cards} />
+      </div>
 
-      {said.length > 0 && (
-        <section className="band says-band" aria-labelledby="says-title">
-          <div className="band-head">
-            <h2 className="section-title" id="says-title">Say what you want.</h2>
-            <p>One sentence decides what happens when they arrive.</p>
-          </div>
-          <ul className="says">
-            {said.map(({ mode, d, sentence }) => (
-              <li key={mode}>
-                <p className="said">&ldquo;{sentence.replace(/\.$/, "")}.&rdquo;</p>
-                <div className="says-what">
-                  <b>{MODE_LABEL[mode]}</b>
-                  <p>{WHAT[mode]}</p>
-                  {legendNote(d) && <small>{legendNote(d)}</small>}
-                  <Link href={`/library/${encodeURIComponent(d.id)}`} className="more">{displayName(d)}</Link>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section className="band">
-        <div className="band-head">
-          <h2 className="section-title">From one clip to your room.</h2>
-          <p>No studio, no camera rig. A phone video is enough.</p>
+      <section className="how">
+        <h2 className="section-head">How a video becomes a person.</h2>
+        <div className="how-tiles">
+          <figure className="tile">
+            <div className="tile-media"><video src="/media/input-dance.mp4" poster="/media/input-dance.jpg" muted loop playsInline autoPlay preload="none" aria-hidden="true" /></div>
+            <figcaption><b>One video.</b> Five seconds of one person, head to toe, from a single camera. A phone is enough.</figcaption>
+          </figure>
+          <figure className="tile tile-wide">
+            <div className="tile-media"><video src="/media/wall-dance.mp4" poster="/media/wall-dance.jpg" muted loop playsInline autoPlay preload="none" aria-hidden="true" /></div>
+            <figcaption><b>Forty-eight views.</b> 4DAnyone imagines the same moment from a dome of cameras around her, every frame in step.</figcaption>
+          </figure>
         </div>
-        <div className="wrap steps">
-          <div className="step">
-            <p className="step-n">1</p>
-            <h3>Drop in a clip, and say what you want.</h3>
-            <p>Five seconds of one person, head to toe, or a single photo. Then one sentence: &ldquo;teach me this strum,&rdquo; &ldquo;just be with me.&rdquo;</p>
-          </div>
-          <div className="step">
-            <p className="step-n">2</p>
-            <h3>We imagine every angle.</h3>
-            <p>
-              4DAnyone turns your one video into {views ? `${views}` : "dozens of"} synchronized views, then we rebuild
-              the person in 3D, frame by frame{gaussians ? `: ${formatCount(gaussians)} Gaussians in every one` : ""}.
+        <ul className="stats">
+          <li><b>1</b><span>video in</span></li>
+          <li><b>{hero?.views ?? 48}</b><span>views imagined</span></li>
+          <li><b>{lead?.gaussians ? lead.gaussians.toLocaleString("en-US") : "289,466"}</b><span>Gaussians a frame</span></li>
+          <li><b>{lead?.frames ?? 121}</b><span>frames, about a minute each on a B200</span></li>
+        </ul>
+        <p className="how-foot"><Link href="/live" className="link-x">Watch a run on HiPerGator</Link></p>
+      </section>
+
+      <section className="truth-section">
+        <h2 className="section-head">Measured, not claimed.</h2>
+        <p className="section-sub">The same camera at the same instant. Drag between the real frame and our render.</p>
+        <TruthSlider real="/media/truth-dance-real.jpg" render="/media/truth-dance-render.jpg" />
+        {rows.length > 0 && (
+          <div className="measured-wrap">
+            <MeasuredTable rows={rows} />
+            <p className="fine">
+              Views PSNR and SSIM compare our render with the 4DAnyone views it was fitted to (every eighth of 48 cameras,
+              the median over the frames; none held out). Seen is the share of Gaussians the real camera could see. The rest
+              is imagined, and the Reality check shows it in blue.
             </p>
           </div>
-          <div className="step">
-            <p className="step-n">3</p>
-            <h3>They stand in your room.</h3>
-            <p>
-              Life size on your real floor in Quest passthrough{frames ? `, all ${frames} frames of the move` : ""}. Gemini
-              turns your sentence into what happens next: a lesson step by step, slowed down, with your turn after each.
-            </p>
-          </div>
-        </div>
+        )}
       </section>
 
-      <section className="band">
-        <div className="wrap honest">
-          <div>
-            <h2 className="section-title">Seen, and imagined.</h2>
-            <p>
-              A camera only ever sees one side of a person. Lucid Dreams imagines the rest, and never pretends
-              otherwise: every dream can show you exactly which parts the camera saw.
-            </p>
-          </div>
-          {seen !== null && lead && (
-            <div>
-              <p className="big-num">{seen}%</p>
-              <p className="big-num-label">of {displayName(lead)} was seen by the camera. The other {100 - seen}% is imagined, and shown in blue when you ask.</p>
-            </div>
-          )}
-        </div>
+      <section className="built">
+        <h2 className="section-head">Built on this year&rsquo;s research.</h2>
+        <ul className="built-grid">
+          {BUILT_ON.map((b) => (
+            <li key={b.name}>
+              <h3>{b.name}</h3>
+              <p className="built-when">{b.when}</p>
+              <p>{b.what}</p>
+            </li>
+          ))}
+        </ul>
       </section>
 
-      <section className="closer">
-        <h2 className="section-title">Who will you bring into the room?</h2>
-        <div className="hero-actions">
-          <Link href="/new" className="btn">Make a dream</Link>
-          <SiteLink className="more">See what it does</SiteLink>
+      <section className="closer-x">
+        <h2>Who will you bring into the room?</h2>
+        <div className="closer-buttons">
+          <Link href="/new" className="pill">Make a dream</Link>
+          <ViewerLink query="mode=tennis" className="pill pill-quiet">Play Federer</ViewerLink>
         </div>
       </section>
-    </>
+    </div>
   );
 }
-
-const WHAT: Record<"teach" | "play" | "companion", string> = {
-  teach: "A lesson. Each step slowed down, then they hold still while you try it.",
-  play: "A game of chess across a real-size board on your table. They move their own pieces.",
-  companion: "Company. Someone you miss, simply with you, their voice from where they sit.",
-};

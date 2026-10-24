@@ -8,7 +8,7 @@ export default function Nav() {
   const path = usePathname();
   const on = (href: string) => (path === href || path.startsWith(href + "/") ? "nav-link on" : "nav-link");
   return (
-    <nav className="nav">
+    <nav className={path === "/" ? "nav nav-light" : "nav"}>
       <div className="nav-inner">
         <Link href="/" className="wordmark">Lucid Dreams</Link>
         <Link href="/showcase" className={`${on("/showcase")} nav-showcase`}>Showcase</Link>

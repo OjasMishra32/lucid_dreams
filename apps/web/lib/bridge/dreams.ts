@@ -90,7 +90,39 @@ export function heldIds(): Set<string> {
  */
 export function listReady(dreams: Dream[] = listDreams(), opts: { withPrivate?: boolean } = {}): Dream[] {
   const held = heldIds();
-  return dreams.filter((d) => !held.has(d.id) && (opts.withPrivate || !isPrivate(d)) && !fetching(d.id) && bundleComplete(d));
+  return onePerPerson(dreams.filter((d) => !held.has(d.id) && (opts.withPrivate || !isPrivate(d)) && !fetching(d.id) && bundleComplete(d)));
+}
+
+// The same person under another run id (a rebuilt head, a cleanup pass, a sharper rerun) is still one person: every
+// list shows one of each, the one the demo uses, else the newest.
+const PREFERRED = ["magnus-carlsen-uika-360", "bobby-fischer-uika", "roger-federer-uika", "lebron-shot", "jump-shot-hq"];
+
+/** Who a run is, whatever pass made it: "magnus-carlsen-uika-360aa" and "magnus-carlsen-lhm" are both Magnus. */
+export function personKey(id: string): string {
+  const legend = /^(magnus-carlsen|bobby-fischer|roger-federer|lebron|juice-wrld)/.exec(id);
+  if (legend) return legend[1];
+  let k = id;
+  for (let prev = ""; prev !== k; ) {
+    prev = k;
+    k = k.replace(/-(uika|lhm\+*|head(-\d+)?|hq|turbo|tuned|360[a-z]*|v\d+|prev)$/, "");
+  }
+  return k;
+}
+
+function onePerPerson(dreams: Dream[]): Dream[] {
+  const rank = (d: Dream) => {
+    const i = PREFERRED.indexOf(d.id);
+    if (i >= 0) return Number.MAX_SAFE_INTEGER - i;
+    const t = (d as Dream & { updatedAt?: string }).updatedAt ?? d.createdAt;
+    return (t && Date.parse(t)) || 0;
+  };
+  const best = new Map<string, Dream>();
+  for (const d of dreams) {
+    const k = personKey(d.id);
+    const cur = best.get(k);
+    if (!cur || rank(d) > rank(cur)) best.set(k, d);
+  }
+  return dreams.filter((d) => best.get(personKey(d.id)) === d);
 }
 
 /** The dream a page should lead with: newest real person with a 360 preview (test bundles last). */
