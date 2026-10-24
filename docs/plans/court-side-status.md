@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 12:07 PM. Court Side's GPU work moved off the TEA Lab account at 12:06 (all its jobs cancelled, so the lab's GPUs are free for Ojasva); it now runs on a second lab allocation Vishal is approved for.
+Updated Sat 1:10 PM. Court Side's GPU work runs mostly on a second lab allocation Vishal is approved for; on the TEA Lab account it stays at 6 GPUs or fewer, so the rest are free for Ojasva.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -145,14 +145,18 @@ private, outside the repo.
 
 ## Now
 
-- **Gate 2:** the first fast views of both players are back (stride 1). They're being laid out on one sheet now.
-- **GPU:** all Court Side jobs on the TEA Lab account were cancelled at 12:06 to free it for Ojasva. The software stack is being
-  installed on Vishal's second allocation. After that, the full-quality runs for both players (best of 3), the other
-  players and the final winner runs all go there.
-- **Build:** interfaces, sound, harness, stand-in and the QA runner are merged. Core, look and video + hand-off are each
-  done and in review or fixes; the integrator merges each one once its review is clean. The private-data assembler
-  takes the real show (frames A921-1360 baked and validated); the full show re-bakes on the final camera solve.
-- **Camera:** the full-show solve v2 has landed (median 0.42 px). Waiting on the final sign-off.
+- **Gate 2: passed for both players (12:09)**, so both get full-quality runs and there's no "main player alone" fallback.
+  Every full run must also pass a back-view check before its score counts: no face painted on the back of a head and
+  no doubled figure in any view of the frozen frame.
+- **GPU (1:10 PM):**
+  - TEA Lab account, 6 GPUs: main player seed 1 at full quality (4 GPUs; views due ~2 PM), plus both players' first
+    end-to-end fast freeze frames (1 GPU each; training done 12:58, being scored).
+  - Second allocation: the defender's seeds 1-2 at full quality (views due ~2:05 PM). Main player seeds 2-3, defender
+    seed 3 and one defender hedge are queued for free 4-GPU nodes; more cores free up ~2 PM.
+  - Other players: 5 fast 3D builds, 3 mask preps and 2 full-body builds, queued behind the two main players.
+- **Build:** interfaces, sound, harness, stand-in, the QA runner, core, look and assembly are merged on `court-side`.
+  Video + hand-off is finishing its review fixes; the integrator merges it once the review is clean.
+- **Camera:** the full-show solve is final (12:02).
 
 ## Verdict so far
 
