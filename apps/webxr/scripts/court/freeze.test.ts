@@ -6,6 +6,7 @@ import { FADE_NEAR, FADE_S, FADE_TO, capsuleDistance, fadeStep, inBounds, nearBo
 import { cameraOf, project } from "../../src/court/camera.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
 import { standinBundle } from "./standin.mjs";
+import { openEye } from "./look/proximity.mjs";
 
 const { court, frames } = structuredClone(standinBundle()) as { court: Court; frames: ShowFrame[] };
 const HZ = 72;
@@ -87,4 +88,24 @@ test("bounds (P34): an extra stays in the room only with its feet inside the bou
   assert.ok(inBounds(0.5, 2.5, [...ell].reverse()), "clockwise too");
   assert.ok(!inBounds(1, 1, null), "no bounds: nothing is inside");
   assert.ok(!inBounds(1, 1, [[0, 0], [2, 0]]), "fewer than 3 corners: nothing is inside");
+});
+
+test("P17's ball check leans in from the open side: a ball held at the hip, inside the torso's radius, still has room", () => {
+  // a held ball as real bodies have it: centre 0.19 m from the torso's axis, the capsule 0.22 m round, at the hip
+  const torso = { a: [0, 0.95, 0] as Vec3, b: [0, 1.45, 0] as Vec3, r: 0.22 };
+  const head = { a: [0, 1.62, 0] as Vec3, b: [0, 1.72, 0] as Vec3, r: 0.11 };
+  const other = { a: [1.1, 0.95, 0.3] as Vec3, b: [1.1, 1.45, 0.3] as Vec3, r: 0.2 };
+  const players = [{ capsules: [torso, head] }, { capsules: [other] }];
+  const ball = { centre: [0.0, 1.0, 0.19] as Vec3, radius: 0.12 };
+  const { eye, gap } = openEye(ball, players, 0.3);
+  close(Math.hypot(...eye.map((v: number, i: number) => v - ball.centre[i])), ball.radius + 0.3, 1e-9, "0.3 m from the ball's surface");
+  close(gap, Math.min(...[torso, head, other].map((c) => capsuleDistance(eye, c))), 1e-9, "the gap is freeze.ts's own distance");
+  assert.ok(gap > FADE_NEAR, `the open side clears every capsule: ${gap.toFixed(3)} m`);
+  assert.ok(eye[1] > 0, "above the floor");
+  // the old aim (away from the pair's centre, which here runs along his side, 20 deg back toward him) lands 0.176 m
+  // from his torso: inside the fade, rightly
+  const a = (20 * Math.PI) / 180;
+  const side: Vec3 = [ball.centre[0] - 0.42 * Math.cos(a), ball.centre[1], ball.centre[2] - 0.42 * Math.sin(a)];
+  close(capsuleDistance(side, torso), 0.176, 2e-3, "the review's 0.176 m");
+  assert.ok(nearBody(side, [torso, head]), "along his side the holder fades");
 });
