@@ -84,16 +84,36 @@ interface World {
   delay: number;
 }
 
-function setup(delay = 0) {
+/** A <video> element as the fallback sees it (pass 1 at 1x). */
+interface FakeElement {
+  readyState: number;
+  currentTime: number;
+  paused: boolean;
+  play(): Promise<void>;
+  pause(): void;
+  removeAttribute(name: string): void;
+}
+
+function setup(delay = 0, opts: { element?: boolean; bytes?: () => Promise<Uint8Array> } = {}) {
   const world: World = { decoders: [], frames: [], delay };
+  const element: FakeElement = {
+    readyState: 4,
+    currentTime: 0,
+    paused: true,
+    play: async () => void (element.paused = false),
+    pause: () => void (element.paused = true),
+    removeAttribute: () => {},
+  };
+  const elementUploads: number[] = [];
   // a fake Annex B stream: an access unit delimiter, then an IDR or a P slice, per show frame
   const bytes = new Uint8Array(Array.from({ length: N }, (_, i) => [0, 0, 0, 1, 0x09, 0xf0, 0, 0, 1, KEYS.has(i) ? 0x65 : 0x41, 0x88, i & 255]).flat());
   const env: VideoEnv = {
     decoder: (output) => new FakeDecoder(output, world),
     chunk: (init) => init as unknown as EncodedVideoChunk,
     supported: async () => true,
-    bytes: async () => bytes,
+    bytes: opts.bytes ?? (async () => bytes),
     now: () => 0,
+    element: async () => element as unknown as HTMLVideoElement,
   };
   const uploads: { index: number; frame: FakeFrame }[] = [];
   /** The renderer: initTexture uploads the show frame; each region is blitted into its own target. */
@@ -106,6 +126,7 @@ function setup(delay = 0) {
     setRenderTarget: (t: unknown) => void (bound = t),
     render: () => void blits.push({ target: bound, xr: renderer.xr.enabled }),
     initTexture: (t: { image: unknown }) => {
+      if (t.image === element) return void elementUploads.push(element.currentTime);
       const f = t.image as FakeFrame;
       const index = Math.round((f.timestamp * HZ) / 1e6);
       assert.ok(!f.closed, `frame ${index} uploaded after it was closed`);
@@ -119,14 +140,14 @@ function setup(delay = 0) {
     court: {
       video: {
         file: "video/show.h264", codec: "avc1.640033", width: 1536, height: 2160, displayHz: HZ, segments: SEGMENTS,
-        regions: { live: [0, 0, 1536, 864], plate: [0, 864, 1536, 864], mattes: [0, 1728, 1536, 432] }, fallbacks: {},
+        regions: { live: [0, 0, 1536, 864], plate: [0, 864, 1536, 864], mattes: [0, 1728, 1536, 432] }, fallbacks: opts.element ? { element: "video/pass1.mp4" } : {},
       },
     },
     frames: Array.from({ length: N }, () => ({ src: 0, interp: false, q: [0, 0, 0, 1], f: 1 })),
     cards: Array.from({ length: N }, () => ({ cards: [] })),
     file: (p: string) => p,
   } as unknown as CourtBundle;
-  const video = new ShowVideo(renderer as never, bundle, { env });
+  const video = new ShowVideo(renderer as never, bundle, { env, element: opts.element });
   /** One display frame: the decoders run between frames (as they do on a real device), then show(). */
   const display = (frame: number, prime: number | null = null) => {
     for (const d of world.decoders) d.drain();
@@ -137,7 +158,7 @@ function setup(delay = 0) {
   const warm = (n = 8) => {
     for (let k = 0; k < n; k++) for (const d of world.decoders) d.drain();
   };
-  return { world, video, uploads, display, warm, blits, renderer, bound: () => bound };
+  return { world, video, uploads, display, warm, blits, renderer, bound: () => bound, element, elementUploads };
 }
 
 test("runEnd: a run decodes to its segment's end, pass 1 on through pass 2, an ease stops on F", () => {
@@ -326,4 +347,35 @@ test("in the headset nothing is uploaded from the decoder's callback: only show(
   assert.equal(uploads.length, 0);
   display(0);
   assert.equal(video.stats.onScreen, 0);
+});
+
+test("?video=element plays pass 1 from the <video> itself: no WebCodecs anywhere (no VideoFrame), each new frame uploaded once", async () => {
+  assert.equal(typeof (globalThis as { VideoFrame?: unknown }).VideoFrame, "undefined", "node has no WebCodecs, as the fallback's browser");
+  const { video, element, elementUploads, world } = setup(0, { element: true });
+  await video.load();
+  assert.equal(world.decoders.length, 0, "no decoder");
+  video.show(0);
+  assert.equal(element.paused, false, "it plays");
+  assert.equal(video.stats.onScreen, 0);
+  video.show(1); // the element hasn't moved on: nothing new to upload
+  element.currentTime = 10 / HZ;
+  video.show(10);
+  assert.equal(video.stats.onScreen, 10);
+  assert.deepEqual(elementUploads, [0, 10 / HZ]);
+  assert.deepEqual(video.stats.errors, []);
+  video.dispose();
+  assert.equal(element.paused, true);
+});
+
+test("dispose() while the stream is still loading: the load ends there, no decoder is ever made", async () => {
+  let release: (b: Uint8Array) => void = () => {};
+  const pending = new Promise<Uint8Array>((ok) => (release = ok));
+  const { video, world } = setup(0, { bytes: () => pending });
+  const loading = video.load();
+  video.dispose();
+  release(new Uint8Array(Array.from({ length: N }, (_, i) => [0, 0, 0, 1, 0x09, 0xf0, 0, 0, 1, KEYS.has(i) ? 0x65 : 0x41, 0x88, i & 255]).flat()));
+  await loading;
+  assert.equal(world.decoders.length, 0);
+  video.show(0);
+  assert.equal(video.stats.onScreen, -1);
 });
