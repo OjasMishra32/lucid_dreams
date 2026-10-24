@@ -501,6 +501,31 @@ class Ball(unittest.TestCase):
         np.testing.assert_allclose(got["centre"], ball, atol=0.03)
         self.assertEqual(got["erase"], [{"player": "holder", "radius": 0.15}])
 
+    def test_a_hand_beside_the_ray_does_not_pull_the_ball_forward(self):
+        """The ball held out in front of the body: an arm 8 cm to the side of the ball's ray and 0.4 m nearer the
+        camera is in a ball-wide tube round the ray but isn't what the ray sees; the ball's own surface on the ray is."""
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        rng = np.random.default_rng(7)
+        cam = look(np.array([-16.0, 0.8, 2.5]), [6.0, 1.0, 1.5], w=3840, h=2160, f=22000.0)
+        ball = np.array([6.2, 1.0, 1.5])
+        d = rng.normal(size=(4000, 3))
+        shell = ball + d / np.linalg.norm(d, axis=1, keepdims=True) * A.BALL_RADIUS
+        toward = (cam.C - ball) / np.linalg.norm(cam.C - ball)
+        front = shell[(shell - ball) @ toward > 0.05]
+        side = np.cross(toward, [0.0, 1.0, 0.0])
+        side /= np.linalg.norm(side)
+        arm = ball + 0.4 * toward + 0.08 * side + rng.normal(scale=0.02, size=(1500, 3))
+        body = np.concatenate([front, arm])
+        u, v, _ = cam.project(ball[None])
+        with tempfile.TemporaryDirectory() as tmp:
+            w = A.Writer(Path(tmp))
+            got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
+        np.testing.assert_allclose(got["centre"], ball, atol=0.03)
+
 
 class Floor(unittest.TestCase):
     def test_top_down_floor_from_a_still_camera_mosaic(self):

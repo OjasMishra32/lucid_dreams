@@ -195,6 +195,34 @@ class Proxy(unittest.TestCase):
         two = sp.Splats(np.concatenate([s.table, self.one([0.0, 1.0, 0.5], [0.04, 0.01, 0.001], alpha=0.5).table]))
         self.assertAlmostEqual(sp.coverage_image(two, cam, box, 400, 400)[c, c], 1 - 0.1 * 0.5, delta=0.01)
 
+    def test_render_composites_front_to_back(self):
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=200, h=200, f=20000.0)
+        near = self.one([0.0, 1.0, 0.0], [0.01, 0.01, 0.01], alpha=0.6)
+        far = self.one([0.0, 1.0, 0.5], [0.01, 0.01, 0.01], alpha=0.9)
+        red, green = np.float32([(1 - 0.5) / sp.C0, (0 - 0.5) / sp.C0, (0 - 0.5) / sp.C0]), np.float32([(0 - 0.5) / sp.C0, (1 - 0.5) / sp.C0, (0 - 0.5) / sp.C0])
+        near.table["f_dc_0"], near.table["f_dc_1"], near.table["f_dc_2"] = red
+        far.table["f_dc_0"], far.table["f_dc_1"], far.table["f_dc_2"] = green
+        for both in (np.concatenate([near.table, far.table]), np.concatenate([far.table, near.table])):
+            rgb, alpha = sp.render(sp.Splats(both), cam)
+            np.testing.assert_allclose(rgb[100, 100], [0.6, 0.4 * 0.9, 0.0], atol=0.01)
+            self.assertAlmostEqual(float(alpha[100, 100]), 1 - 0.4 * 0.1, delta=0.01)
+        self.assertLess(float(alpha[0, 0]), 1e-6)
+
+    def test_cap_keeps_the_largest_contributions(self):
+        rng = np.random.default_rng(12)
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=20000.0)
+        n = 1000
+        P = rng.normal(scale=0.1, size=(n, 3)) + [0.0, 1.0, 0.0]
+        sc = np.full((n, 3), math.log(0.002))
+        sc[:100] = math.log(0.02)  # the hundred that matter: ten times wider
+        logit = np.full(n, 2.0)
+        logit[100:200] = 4.0  # opaque but tiny: alpha alone would keep these
+        s = sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), sc.astype(np.float32), logit.astype(np.float32), np.zeros((n, 3), np.float32))
+        keep = sp.cap(s, cam, 150)
+        self.assertEqual(int(keep.sum()), 150)
+        self.assertTrue(keep[:100].all())
+        np.testing.assert_array_equal(sp.cap(s, cam, 5000), np.ones(n, bool))
+
     def test_proxy_is_fine_at_the_silhouette_and_open_where_no_body_is(self):
         # two 0.3 m balls of splats 1 m apart, 20 m from the camera: the mesh covers each ball's front, nothing between
         rng = np.random.default_rng(11)

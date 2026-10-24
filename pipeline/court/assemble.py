@@ -569,6 +569,46 @@ def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
     return src, dst
 
 
+def look_from(C, target, f: float, w: int, h: int) -> geo.Cam:
+    """A level camera at C looking at target (OpenCV axes, no roll)."""
+    fwd = np.asarray(target, float) - np.asarray(C, float)
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, geo.UP)
+    right /= np.linalg.norm(right)
+    return geo.Cam(np.asarray(C, float), np.stack([right, np.cross(fwd, right), fwd], 1), f, (w - 1) / 2, (h - 1) / 2, w, h)
+
+
+def seat_floor(camF: geo.Cam, pair_centre, distance: float) -> np.ndarray:
+    """The seat's floor point as seatmath.ts's seatPoint finds it: on camera F's floor ray, `distance` from the pair."""
+    d = np.array([camF.axis[0], 0.0, camF.axis[2]])
+    d /= np.linalg.norm(d)
+    o = np.array([camF.C[0] - pair_centre[0], 0.0, camF.C[2] - pair_centre[2]])
+    b = float(o @ d)
+    disc = b * b - (float(o @ o) - distance * distance)
+    if disc < 0:
+        raise ValueError(f"camera F's ray passes more than {distance} m from the pair's centre")
+    return np.array([camF.C[0], 0.0, camF.C[2]]) + (-b - math.sqrt(disc)) * d
+
+
+def cap_cost(whole: sp.Splats, kept: sp.Splats, camF: geo.Cam, pair_centre, distance: float, w: int = 384, h: int = 512) -> dict:
+    """What a pair body's cut costs: the PSNR of the cut body's render against the whole one's (sp.render, each alone
+    over black, over the pixels either covers), from the seat (eye 1.2 m up over seat_floor, looking at the body) and
+    from 8 views round the body (3 m out, 1.4 m up)."""
+    P = whole.pos[whole.alpha > 0.3].astype(float)
+    c = np.array([np.median(P[:, 0]), 0.5 * float(np.percentile(P[:, 1], 99)), np.median(P[:, 2])])
+
+    def psnr(C) -> float:
+        cam = look_from(C, c, h * float(np.linalg.norm(c - C)) / 2.6, w, h)
+        (ra, aa), (rb, ab) = sp.render(whole, cam), sp.render(kept, cam)
+        roi = (aa > 0.02) | (ab > 0.02)
+        mse = float(np.mean((ra[roi] - rb[roi]) ** 2)) if roi.any() else 0.0
+        return round(10 * math.log10(1 / mse), 2) if mse > 0 else 99.0
+
+    seat = seat_floor(camF, pair_centre, distance) + [0.0, 1.2, 0.0]
+    ring = [c + [3 * math.cos(k * math.pi / 4), 1.4 - c[1], 3 * math.sin(k * math.pi / 4)] for k in range(8)]
+    return {"seat": psnr(seat), "orbit": [psnr(C) for C in ring]}
+
+
 def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: geo.Cam, camF_standin: geo.Cam) -> dict:
     """One main player: their Gaussians placed in court space, the reality copy, the splat-depth proxy from camera F,
     capsules, bounds, floor maps. Returns the court.json entry plus private diagnostics under "_"."""
@@ -614,6 +654,15 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
                        same_space=slot.get("splatsSpace", "bundle") == "bundle")
     else:
         seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
+    cut = None
+    if slot.get("capPair") and len(s) > int(slot["capPair"]):
+        # the pair's budget (plan 8): keep the largest contributions seen from camera F, the reality copy alike
+        whole = s.transformed(sim)
+        keep = sp.cap(whole, camF, int(slot["capPair"]))
+        cut = {"from": len(s), "kept": int(keep.sum()), "by": "alpha x projected footprint area at F"}
+        if slot.get("capPsnr"):
+            cut["_whole"], cut["_kept"] = whole, whole.subset(keep)
+        s, seen = s.subset(keep), seen[keep]
     b = body_files(w, base, s, sim, seen, camF)
     Pp, rect = b["P"], b["rect"]
     contact = sp.contact_points_xz(Pp)
@@ -622,7 +671,7 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         "bounds": sp.bounds(Pp), "seenFraction": round(float(seen.mean()), 3),
         "capsules": [{k: c[k] for k in ("a", "b", "r")} for c in sp.body_capsules(Pp)],
         "shadow": {"image": f"{base}/shadow.png", "rect": rect}, "reflection": {"image": f"{base}/reflection.png", "rect": rect},
-        "_": {"sim": sim, "contact": contact, "count": b["count"], "proxy": b["proxy"], "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
+        "_": {"sim": sim, "contact": contact, "count": b["count"], "proxy": b["proxy"], "cap": cut, "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
               "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
     }
     if slot.get("run_report"):
@@ -680,7 +729,9 @@ def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, spla
         P = splats_by_id[holder]
         t = (P - camF.C) @ ray
         off = np.linalg.norm((P - camF.C) - np.outer(t, ray), axis=1)
-        near = t[off < BALL_RADIUS]
+        # what the ray itself meets: the narrowest tube round it with enough points (a hand or hip beside the ray, in
+        # a ball-wide tube, would pull the ball forward of its own surface)
+        near = next((t[off < r] for r in (0.25 * BALL_RADIUS, 0.5 * BALL_RADIUS, BALL_RADIUS) if (off < r).sum() >= 10), t[off < BALL_RADIUS])
         real_body = w.pieces.get(f"player:{holder}", {}).get("source") == "real"
         if len(near) >= 10:
             centre = camF.C + (np.percentile(near, 10) + BALL_RADIUS) * ray
@@ -963,6 +1014,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         fill_plates(w, video, camF)
         court = court_piece(w, cfg, standin, S)
         slots = cfg.get("players") or [{} for _ in S["freeze"]["players"]]
+        slots = [{**sl, "capPair": cfg.get("capPair"), "capPsnr": cfg.get("capPsnr")} for sl in slots]
         players = [place_player(w, slot, i % len(S["freeze"]["players"]), standin, S, camF, camF_standin) for i, slot in enumerate(slots)]
         splats_by_id = {p["id"]: sp.solid(sp.read_ply(tmp / p["splats"])) for p in players}
         k1F = 0.0
@@ -974,6 +1026,11 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         seat_cfg = {**SEAT, **(cfg.get("seat") or {})}
         pair = np.mean([p["_"]["contact"] for p in players], 0)
         pair_centre = [round(float(pair[0]), 3), 0.0, round(float(pair[1]), 3)]
+        seat_cfg_ = {**SEAT, **(cfg.get("seat") or {})}
+        for p in players:
+            c = p["_"].get("cap")
+            if c and "_whole" in c:
+                c["psnr"] = cap_cost(c.pop("_whole"), c.pop("_kept"), camF, pair_centre, seat_cfg_["distance"])
         # the walking spots are the runtime's (seatmath.ts); these approximations only size the extras' maxRayAngle
         spots = geo.viewing_spots(pair_centre, camF.C, [(p["bounds"]["min"], p["bounds"]["max"]) for p in players], seat_cfg["clear"])
         seat = {"ray": "freeze", "distance": seat_cfg["distance"], "distanceRange": seat_cfg["distanceRange"],
@@ -1000,6 +1057,8 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
                        "others": others, "stands": stands},
             "audio": audio, "metrics": metrics,
         }
+        if cfg.get("waivers"):
+            court_json["waivers"] = sorted(cfg["waivers"])  # a gate waived for a test build: never shippable
         w.json("court.json", court_json, indent=1)
         diag = {
             "assembledAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "generator": "court-side assemble.py",
@@ -1010,6 +1069,8 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
             "splats": {"players": sum(p["_"]["count"] for p in players)},
             "cameraF": {"centre": rnd(camF.C), "axis": rnd(camF.axis, 6), "f": round(camF.f, 2)},
         }
+        if cfg.get("waivers"):
+            diag["waivers"] = dict(cfg["waivers"])
         w.json("assembly.json", diag, indent=1)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1301,6 +1362,17 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         for k, pc_ in json.loads(asm.read_text())["pieces"].items():
             if pc_["source"] != "real":
                 pending.append(f"{k}: {pc_['detail']}")
+    waived = set(court.get("waivers") or [])
+    if waived:
+        why = (json.loads(asm.read_text()).get("waivers") or {}) if asm.exists() else {}
+        kept = []
+        for e in errs:
+            m = re.search(r"\((P\d+)\)", e)
+            if m and m.group(1) in waived:
+                info.append(f"WAIVED {m.group(1)} ({why.get(m.group(1), 'no reason recorded')}): {e}")
+            else:
+                kept.append(e)
+        errs = kept
     if strict and pending:
         errs += [f"pending: {x}" for x in pending]
     return errs, pending, info
@@ -1482,12 +1554,16 @@ def main(argv=None) -> int:
     ap.add_argument("--webxr", default=str(WEBXR), help="the apps/webxr checkout whose format.ts validates the bundle")
     ap.add_argument("--validate", action="store_true", help="check the assembled bundle (no assembly)")
     ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
+    ap.add_argument("--cap-pair", type=int, default=None, help="cut each pair body to this many Gaussians by contribution at F (plan 8: 200000)")
+    ap.add_argument("--cap-psnr", action="store_true", help="with --cap-pair: measure the cut's cost (PSNR, seat view and an 8-view orbit)")
     ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
     ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
     ap.add_argument("--check-frames", default=None, help="write small JPEGs of the assembled show (watch, mid-ease, F, the make) to this folder")
     ap.add_argument("--check-at", default="", help="with --check-frames: also these source frames, comma-separated")
     a = ap.parse_args(argv)
     cfg = json.loads(expand(a.config).read_text())
+    if a.cap_pair:
+        cfg = {**cfg, "capPair": a.cap_pair, "capPsnr": a.cap_psnr or cfg.get("capPsnr")}
     if not (a.out or cfg.get("out")):
         ap.error("no bundle folder: give --out or the config's `out`")
     out = expand(a.out or cfg["out"])
@@ -1505,12 +1581,14 @@ def main(argv=None) -> int:
         if a.validate:
             errs, pending, info = validate(out, expand(a.webxr), a.strict)
             for x in info:
-                print(f"INFO {x}")
+                print(x if x.startswith("WAIVED ") else f"INFO {x}")
             for x in pending:
                 print(f"PENDING {x}")
             for x in errs:
                 print(f"FAIL {x}")
-            print(f"VALIDATE {'OK' if not errs else 'FAILED'} {out} ({len(errs)} errors, {len(pending)} pending)")
+            waived = sorted({x.split()[1] for x in info if x.startswith("WAIVED ")})
+            note = f", waived {', '.join(waived)}: NOT SHIPPABLE" if waived else ""
+            print(f"VALIDATE {'OK' if not errs else 'FAILED'} {out} ({len(errs)} errors, {len(pending)} pending{note})")
             return 0 if not errs else 1
         return 0
     if not (expand(a.standin) / "court.json").exists():

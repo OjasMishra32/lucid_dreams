@@ -389,16 +389,16 @@ def bilinear(img: np.ndarray, x, y) -> np.ndarray:
     return (img[y0, x0] * (1 - fx) * (1 - fy) + img[y0, x1] * fx * (1 - fy) + img[y1, x0] * (1 - fx) * fy + img[y1, x1] * fx * fy)
 
 
-def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, budget: int = 4_000_000) -> np.ndarray:
-    """How much of each texel of `box` (W x H over source pixels) the splats cover as a splat renderer composites
-    them: 1 - prod(1 - alpha_i G_i) (the order doesn't matter for coverage), each Gaussian's footprint its EWA
-    projection through `cam` (plus 3DGS's 0.3 px^2 low-pass), out to 3 sigma (at most max_r texels)."""
+def ewa(s: Splats, cam: Cam, min_alpha: float = 1 / 255) -> dict:
+    """Each Gaussian's footprint through `cam` as a splat renderer projects it (EWA, plus 3DGS's 0.3 px^2 low-pass), in
+    source pixels: for the ones in front of the camera with alpha >= min_alpha, their index `i`, centre (u, v), depth
+    z, alpha `a` and 2D covariance (A, B, C) = [[A, B], [B, C]]."""
     a = s.alpha
-    keep = a >= 1 / 255
-    t = (s.pos[keep].astype(float) - cam.C) @ cam.R  # camera coordinates (R is world-from-camera)
+    i = np.flatnonzero(a >= min_alpha)
+    t = (s.pos[i].astype(float) - cam.C) @ cam.R  # camera coordinates (R is world-from-camera)
     front = t[:, 2] > 1e-3
-    t, a = t[front], a[keep][front]
-    M = quat_matrices(s.quats[keep][front]) * np.exp(s.scales[keep][front].astype(float))[:, None, :]
+    i, t = i[front], t[front]
+    M = quat_matrices(s.quats[i]) * np.exp(s.scales[i].astype(float))[:, None, :]
     Sc = np.einsum("ij,njk,kl->nil", cam.R.T, M @ np.swapaxes(M, 1, 2), cam.R)
     tz = t[:, 2]
     J = np.zeros((len(t), 2, 3))
@@ -406,28 +406,90 @@ def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, bu
     J[:, 0, 2] = -cam.f * t[:, 0] / tz ** 2
     J[:, 1, 2] = -cam.f * t[:, 1] / tz ** 2
     S2 = J @ Sc @ np.swapaxes(J, 1, 2) + 0.3 * np.eye(2)
+    return {"i": i, "u": cam.cx + cam.f * t[:, 0] / tz, "v": cam.cy + cam.f * t[:, 1] / tz, "z": tz, "a": a[i],
+            "A": S2[:, 0, 0], "B": S2[:, 0, 1], "C": S2[:, 1, 1]}
+
+
+def _footprints(e: dict, box, W: int, H: int, max_r: int, budget: int, sel=None):
+    """Per group of Gaussians (index arrays into e), the texels of their footprints over `box` out to 3 sigma: yields
+    (g, flat texel index, alpha there) with every sample inside the grid and >= 1/255."""
     sx, sy = (box[2] - box[0]) / W, (box[3] - box[1]) / H
-    A, B, C = S2[:, 0, 0] / sx ** 2, S2[:, 0, 1] / (sx * sy), S2[:, 1, 1] / sy ** 2  # texel units
+    A, B, C = e["A"] / sx ** 2, e["B"] / (sx * sy), e["C"] / sy ** 2  # texel units
     det = A * C - B * B
     iA, iB, iC = C / det, -B / det, A / det
-    tu, tv = texel_of(cam.cx + cam.f * t[:, 0] / tz, cam.cy + cam.f * t[:, 1] / tz, box, W, H)
-    r = np.clip(np.ceil(3 * np.sqrt(0.5 * (A + C) + np.sqrt(0.25 * (A - C) ** 2 + B * B))), 1, max_r).astype(int)
+    tu, tv = texel_of(e["u"], e["v"], box, W, H)
+    # out to 3 sigma, or only as far as alpha G stays >= 1/255 for a faint one (nothing past that is ever drawn)
+    reach = np.minimum(3.0, np.sqrt(2 * np.log(np.maximum(255 * e["a"], 1.0))))
+    r = np.clip(np.ceil(reach * np.sqrt(0.5 * (A + C) + np.sqrt(0.25 * (A - C) ** 2 + B * B))), 1, max_r).astype(int)
     inside = (tu + r >= 0) & (tu - r < W) & (tv + r >= 0) & (tv - r < H)
-    logT = np.zeros(W * H)
+    if sel is not None:
+        inside &= sel
     for rad in np.unique(r[inside]):
-        sel = np.flatnonzero(inside & (r == rad))
+        grp = np.flatnonzero(inside & (r == rad))
         dy, dx = np.mgrid[-rad:rad + 1, -rad:rad + 1]
         dx, dy = dx.ravel(), dy.ravel()
         step = max(1, budget // len(dx))
-        for k in range(0, len(sel), step):
-            g = sel[k:k + step]
+        for k in range(0, len(grp), step):
+            g = grp[k:k + step]
             ix = np.rint(tu[g])[:, None].astype(int) + dx
             iy = np.rint(tv[g])[:, None].astype(int) + dy
             ex, ey = ix - tu[g][:, None], iy - tv[g][:, None]
-            alpha = np.minimum(0.99, a[g][:, None] * np.exp(-0.5 * (iA[g][:, None] * ex * ex + 2 * iB[g][:, None] * ex * ey + iC[g][:, None] * ey * ey)))
+            alpha = np.minimum(0.99, e["a"][g][:, None] * np.exp(-0.5 * (iA[g][:, None] * ex * ex + 2 * iB[g][:, None] * ex * ey + iC[g][:, None] * ey * ey)))
             ok = (ix >= 0) & (ix < W) & (iy >= 0) & (iy < H) & (alpha >= 1 / 255)
-            logT += np.bincount((iy * W + ix)[ok], np.log1p(-alpha[ok]), minlength=W * H)
+            yield np.broadcast_to(g[:, None], ix.shape)[ok], (iy * W + ix)[ok], alpha[ok]
+
+
+def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, budget: int = 4_000_000) -> np.ndarray:
+    """How much of each texel of `box` (W x H over source pixels) the splats cover as a splat renderer composites
+    them: 1 - prod(1 - alpha_i G_i) (the order doesn't matter for coverage), each Gaussian's footprint its EWA
+    projection through `cam` (ewa), out to 3 sigma (at most max_r texels)."""
+    logT = np.zeros(W * H)
+    for _, pix, alpha in _footprints(ewa(s, cam), box, W, H, max_r, budget):
+        logT += np.bincount(pix, np.log1p(-alpha), minlength=W * H)
     return 1 - np.exp(logT).reshape(H, W)
+
+
+def render(s: Splats, cam: Cam, max_r: int = 64, budget: int = 4_000_000) -> tuple[np.ndarray, np.ndarray]:
+    """A plain CPU splat render through `cam` (its own size): each Gaussian's EWA footprint, base colour (SH degree
+    0), composited front to back by depth as 3DGS does (alpha capped at 0.99, under 1/255 skipped). Returns (rgb over
+    black, alpha), H x W. For measuring (a cut's cost), not for looks: slow, no view-dependent colour."""
+    e = ewa(s, cam)
+    rank = np.empty(len(e["z"]), np.int64)
+    rank[np.argsort(e["z"], kind="stable")] = np.arange(len(e["z"]))
+    rgb = s.rgb[e["i"]].astype(np.float64)
+    W, H = cam.w, cam.h
+    box = (0.0, 0.0, float(W), float(H))  # texel i is pixel i
+    gs, ps, als = [], [], []
+    for g, pix, alpha in _footprints(e, box, W, H, max_r, budget):
+        gs.append(g.astype(np.int64)), ps.append(pix.astype(np.int64)), als.append(alpha)
+    out, acc = np.zeros((W * H, 3)), np.zeros(W * H)
+    if gs:
+        g, pix, alpha = np.concatenate(gs), np.concatenate(ps), np.concatenate(als)
+        order = np.argsort(pix * len(rank) + rank[g])  # by pixel, then front to back (one unique key)
+        g, pix, alpha = g[order], pix[order], alpha[order]
+        logs = np.log1p(-alpha)
+        cs = np.cumsum(logs)
+        start = np.r_[True, pix[1:] != pix[:-1]]
+        base = np.maximum.accumulate(np.where(start, np.arange(len(pix)), 0))
+        before = cs - logs - (cs[base] - logs[base])  # log transmittance in front of each sample, within its pixel
+        wgt = np.exp(before) * alpha
+        for c in range(3):
+            out[:, c] = np.bincount(pix, wgt * rgb[g, c], minlength=W * H)
+        acc = np.bincount(pix, wgt, minlength=W * H)
+    return out.reshape(H, W, 3), acc.reshape(H, W)
+
+
+def cap(s: Splats, cam: Cam, n: int) -> np.ndarray:
+    """Which Gaussians to keep for a budget of n: the n with the largest contribution seen from `cam`, alpha times
+    the area of its projected footprint (pi sqrt(det) of its EWA covariance). All of them when there are n or fewer."""
+    if len(s) <= n:
+        return np.ones(len(s), bool)
+    e = ewa(s, cam, min_alpha=0.0)
+    score = np.zeros(len(s))
+    score[e["i"]] = e["a"] * np.pi * np.sqrt(np.maximum(e["A"] * e["C"] - e["B"] ** 2, 0))
+    keep = np.zeros(len(s), bool)
+    keep[np.argsort(-score, kind="stable")[:n]] = True
+    return keep
 
 
 def proxy_mesh(s: Splats, cam: Cam, cell_m: float = 0.004, cover: float = 0.5, depth_cells: int = 4, pct: float = 10.0):

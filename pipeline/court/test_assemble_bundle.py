@@ -386,6 +386,50 @@ class Bundle(unittest.TestCase):
         errs, _, _ = A.validate(bad, A.WEBXR, strict=True)
         self.assertTrue(any("P42" in e for e in errs), errs)
 
+    def test_a_waived_gate_is_reported_and_not_counted(self):
+        """A recorded waiver (config `waivers`, court.json's list) turns that gate's failures into WAIVED lines with
+        their numbers; anything else still fails."""
+        bad = self.copy_bad("waived")
+        asm = json.loads((bad / "assembly.json").read_text())
+        asm["pieces"]["player:a"]["source"] = "real"
+        asm["players"]["a"]["run"] = {"variant": "v", "cap": "1k", "iou": 0.8123, "focal": 100.0, "focalHeld": True, "FOCAL": 100.0}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("(P42)" in e and "0.8123" in e for e in errs), errs)
+        court = json.loads((bad / "court.json").read_text())
+        court["waivers"] = ["P42"]
+        (bad / "court.json").write_text(json.dumps(court))
+        asm["waivers"] = {"P42": "turbo test"}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, info = A.validate(bad, A.WEBXR)
+        self.assertFalse(any("P42" in e for e in errs), errs)
+        self.assertTrue(any(x.startswith("WAIVED P42 (turbo test)") and "0.8123" in x for x in info), info)
+        court["seat"]["distance"] = 9  # an unwaived failure still fails
+        (bad / "court.json").write_text(json.dumps(court))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("seat.distance" in e for e in errs), errs)
+
+    def test_a_waiver_in_the_config_lands_in_court_json(self):
+        code, out = self.assemble_with("waiver-cfg", waivers={"P42": "turbo test"})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((out / "court.json").read_text())["waivers"], ["P42"])
+        self.assertEqual(json.loads((out / "assembly.json").read_text())["waivers"], {"P42": "turbo test"})
+
+    def test_the_pair_is_cut_to_its_budget_by_contribution(self):
+        """capPair: each pair body keeps its largest contributions seen from camera F; the reality copy keeps the same
+        Gaussians; capPsnr measures what the cut costs (seat view and an 8-view orbit, cut vs whole)."""
+        code, out = self.assemble_with("capped", capPair=8000, capPsnr=True)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        for pid in ("a", "b"):
+            c = asm["players"][pid]["cap"]
+            self.assertEqual(c["kept"], 8000)
+            self.assertGreater(c["from"], 8000)
+            self.assertEqual(len(sp.read_ply(out / f"players/{pid}/freeze.ply")), 8000)
+            self.assertEqual(len(sp.read_ply(out / f"players/{pid}/reality.ply")), 8000)
+            self.assertEqual(len(c["psnr"]["orbit"]), 8)
+            self.assertTrue(all(x > 10 for x in [c["psnr"]["seat"], *c["psnr"]["orbit"]]), c["psnr"])
+
     def test_a_coarse_proxy_fails_p8s_sampling(self):
         """P8 needs the pair's proxies sampled at about half a centimetre at the silhouettes: a 5 cm grid fails."""
         court = json.loads((self.out / "court.json").read_text())
