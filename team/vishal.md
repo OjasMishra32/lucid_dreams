@@ -41,6 +41,14 @@ This is the hardest and most important avatar work left. In order:
    `bobby-fischer`'s body from the colourised full photo so body and head agree (`lucid.monochrome` only touches
    greyscale photos, so it then leaves it alone).
 
+**Your fine-tune landed (Sat 1:45 AM), and the claim holds.** On jump-shot's held-out views, fine-tuning on
+4DAnyone's views beats one photo by +3.09 dB PSNR (17.12 -> 20.22) and +0.028 SSIM (person crop: +3.09 dB, +0.076
+SSIM). LPIPS didn't move (0.104 -> 0.105), so it's more right, not yet sharper: your hands and face pass is the
+next lever. **One bug before it ships:** the job log says `height 4.52 m, stand_y 1.608` for `jump-shot-tuned`.
+A person is about 1.8 m, so either floaters stretch the bounds or the scale is off. Check the bounds on the
+opacity > 0.5 Gaussians, and look at the bundle in the viewer, before Ojasva fetches it. Table:
+`$L/data/avatars/finetune/jump-shot/dreams/jump-shot-tuned.work/results.md`.
+
 ## SECOND (was top): the face pass, so the legends look like themselves
 
 The avatars run now (six fixes, all pushed: env packages, assets on GPU, repo lock, SMPL-X UV mesh, rembg on CPU,
