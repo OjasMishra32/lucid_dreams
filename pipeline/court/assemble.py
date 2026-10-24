@@ -1296,14 +1296,25 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
     return errs, pending, info
 
 
-def check_frames(bundle: Path, out_dir: Path, width: int = 768) -> list[Path]:
+def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None = None) -> list[Path]:
     """Small JPEGs of the assembled show to look at by eye: the live region at the middle of pass 1 (the watch), the
-    middle of the first ease, its last frame (F), and freeze.png. Decoded by ffmpeg from the bundle's own stream."""
+    middle of the first ease, its last frame (F), the make (the first show frame nearest makeSource), the first show
+    frame nearest each source frame in `at`, and freeze.png. Decoded by ffmpeg from the bundle's own stream."""
     court = json.loads((bundle / "court.json").read_text())
     v = court["video"]
     seg = v["segments"]
     e0 = seg["eases"][0]["frames"]
     picks = {"watch": (seg["pass1"][0] + seg["pass1"][1]) // 2, "mid-ease": (e0[0] + e0[1]) // 2, "at-F": e0[1]}
+    if at or v.get("makeSource") is not None:
+        srcs = [fr["src"] for fr in json.loads((bundle / v["frames"]).read_text())]
+
+        def nearest(src: float) -> int:
+            return min(range(len(srcs)), key=lambda i: (abs(srcs[i] - src), i))
+
+        if v.get("makeSource") is not None:
+            picks["make"] = nearest(v["makeSource"])
+        for src in at or []:
+            picks[f"src{int(src):04d}"] = nearest(src)
     x, y, rw, rh = v["regions"]["live"]
     out_dir.mkdir(parents=True, exist_ok=True)
     made = []
@@ -1344,14 +1355,15 @@ def main(argv=None) -> int:
     ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
     ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
     ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
-    ap.add_argument("--check-frames", default=None, help="write small JPEGs of the assembled show (watch, mid-ease, F) to this folder")
+    ap.add_argument("--check-frames", default=None, help="write small JPEGs of the assembled show (watch, mid-ease, F, the make) to this folder")
+    ap.add_argument("--check-at", default="", help="with --check-frames: also these source frames, comma-separated")
     a = ap.parse_args(argv)
     cfg = json.loads(expand(a.config).read_text())
     if not (a.out or cfg.get("out")):
         ap.error("no bundle folder: give --out or the config's `out`")
     out = expand(a.out or cfg["out"])
     if a.check_frames:
-        for p in check_frames(out, expand(a.check_frames)):
+        for p in check_frames(out, expand(a.check_frames), at=[float(x) for x in a.check_at.split(",") if x.strip()]):
             print(f"FRAME {p}")
         return 0
     if a.make_stands:

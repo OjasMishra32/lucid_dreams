@@ -165,6 +165,18 @@ class Bundle(unittest.TestCase):
         self.assertEqual([p.name.split("-show")[0] for p in made[:3]], ["watch", "mid-ease", "at-F"])
         self.assertTrue(all(p.stat().st_size > 1000 for p in made))
 
+    def test_check_frames_at_source_frames_and_the_make(self):
+        """Frames to look at by source frame: the first show frame nearest each asked one, and the make's."""
+        court = json.loads((self.out / "court.json").read_text())
+        frames = json.loads((self.out / court["video"]["frames"]).read_text())
+        made = A.check_frames(self.out, self.tmp / "frames-at", at=[300])
+        names = [p.name for p in made]
+        n = min(range(len(frames)), key=lambda i: (abs(frames[i]["src"] - 300), i))
+        self.assertIn(f"src0300-show{n:04d}.jpg", names)
+        m = min(range(len(frames)), key=lambda i: (abs(frames[i]["src"] - court["video"]["makeSource"]), i))
+        self.assertIn(f"make-show{m:04d}.jpg", names)
+        self.assertTrue(all(p.stat().st_size > 1000 for p in made))
+
     def staged_show(self, name: str) -> tuple[Path, dict]:
         S = json.loads((STANDIN / "court.json").read_text())
         show = self.tmp / name
