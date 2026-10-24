@@ -18,11 +18,15 @@ export class ChessClock {
   running: Half | null = null;
   flagged: Half | null = null;
   onFlag: ((h: Half) => void) | null = null;
+  /** Your button glows softly while it's waiting for you to press it. */
+  prompt = false;
   private buttons: Record<Half, THREE.Mesh>;
   private displays: Record<Half, { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; shown: string }>;
-  private wasInside = [false, false];
+  private wasInside: boolean[] = [];
   private cooldownUntil = 0;
   private local = new THREE.Vector3();
+  private glow = 0;
+  private phase = 0;
 
   constructor(private initial = 600) {
     this.time = { near: initial, far: initial };
@@ -34,7 +38,7 @@ export class ChessClock {
     const buttonGeo = new RoundedBoxGeometry(BUTTON.x, BUTTON.y, BUTTON.z, 3, 0.0045);
     const make = (h: Half) => {
       const sz = h === "near" ? 1 : -1;
-      const b = new THREE.Mesh(buttonGeo, buttonMat);
+      const b = new THREE.Mesh(buttonGeo, h === "near" ? buttonMat.clone() : buttonMat);
       b.position.set(BUTTON.at, BODY.y + BUTTON.y / 2 - 0.004, sz * HALF_Z);
       this.group.add(b);
       const canvas = document.createElement("canvas");
@@ -87,6 +91,10 @@ export class ChessClock {
       const want = BODY.y + BUTTON.y / 2 - 0.004 + (this.running === null ? UP / 2 : this.running === h ? UP : 0);
       b.position.y += (want - b.position.y) * Math.min(1, dt * 30);
     }
+    this.phase += dt;
+    this.glow += ((this.prompt ? 1 : 0) - this.glow) * Math.min(1, dt * 6);
+    const mat = this.buttons.near.material as THREE.MeshPhysicalMaterial;
+    mat.emissive.setRGB(0, 0.44, 0.89).multiplyScalar(this.glow * (0.28 + 0.22 * Math.sin(this.phase * 4)));
     this.draw();
   }
 
@@ -107,16 +115,17 @@ export class ChessClock {
     return ray.intersectObject(this.buttons.near, false).length > 0;
   }
 
-  /** Fingertips in world space: true once each time a tip pushes down onto the near button. */
-  touch(tips: (THREE.Vector3 | null)[], nowMs: number): boolean {
+  /** Points in world space (fingertips, a palm, a piece in your hand): true once each time one comes down onto the
+   * near button. The zone is a little bigger than the button: you hit a clock, you don't aim at it. */
+  touch(points: (THREE.Vector3 | null)[], nowMs: number): boolean {
     let pressed = false;
-    tips.forEach((tip, i) => {
+    points.forEach((tip, i) => {
       let inside = false;
       if (tip) {
         this.local.copy(tip);
         this.group.worldToLocal(this.local);
         const b = this.buttons.near.position;
-        inside = Math.abs(this.local.x - b.x) < BUTTON.x / 2 + 0.006 && Math.abs(this.local.z - b.z) < BUTTON.z / 2 + 0.006 && this.local.y < BODY.y + BUTTON.y + UP + 0.004 && this.local.y > BODY.y - 0.01;
+        inside = Math.abs(this.local.x - b.x) < BUTTON.x / 2 + 0.016 && Math.abs(this.local.z - b.z) < BUTTON.z / 2 + 0.014 && this.local.y < BODY.y + BUTTON.y + UP + 0.01 && this.local.y > BODY.y - 0.012;
       }
       if (inside && !this.wasInside[i] && nowMs > this.cooldownUntil) {
         this.cooldownUntil = nowMs + 350;

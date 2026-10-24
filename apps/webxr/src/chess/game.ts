@@ -5,25 +5,32 @@ import { Chess, type Move, type Square } from "chess.js";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "../avatar";
 import { loadDream } from "../dream";
-import { fingertips, handOccluder, XrButton } from "../xr/hands";
+import { handOccluder, XrButton } from "../xr/hands";
+import { HandMenu, handIndex, handSides } from "../xr/menu";
+import { WorldLock } from "../xr/anchor";
 import { Engine, STRENGTHS, type Strength } from "./engine";
 import { bookMove } from "./repertoire";
 import { board, localToSquare, pieceGeometries, pieceHeight, pieceMaterials, type PieceType, SQUARE, squareToLocal } from "./pieces";
 import { ChessClock } from "./clock";
 import { hashSeed } from "./person";
-import { FloatingNote, LegendCard } from "./room";
+import { FloatingNote } from "./room";
 import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
 import { TableSounds } from "./sound";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
-// you at the strength you choose, with a real clock (10 + 0) at your right. On a laptop it's the same game with a
-// mouse. Someone sits across the table (seated.ts): a legend's strength brings their avatar, otherwise ?opponent=<avatar
+// you at the strength you choose, with a real clock (10 + 0) at your right. Hands only, and nothing moves unless you
+// mean it: the board is pinned to your real room (a WebXR anchor), the controls live on your left palm (turn it up),
+// a piece you take goes into your hand so you hit your clock with it and set it down beside the board. On a laptop
+// it's the same game with a mouse. Someone sits across the table (seated.ts): a legend's strength brings their avatar, otherwise ?opponent=<avatar
 // dream id>, otherwise nobody. They think, move their own pieces with either hand, press their clock, set captured
 // pieces aside, and shake your hand at the end. They never speak: a legend is always labelled as Stockfish at that
 // player's rating.
 
 const PINCH_ON = 0.018; // meters between thumb and index tips
 const PINCH_OFF = 0.03;
+const PINCH_LET_GO_MS = 70; // fingers apart this long before a pinch ends: tracking jitter never drops a piece
+const PINCH_LOST_MS = 300; // a hand lost to tracking keeps hold of its piece this long
+const PINCH_FIRM = 0.024; // fingers opening past this: what they hold stays where it is (it lands where you let go)
 const GRAB_RADIUS = 0.055;
 
 export async function renderChess(root: HTMLElement) {
@@ -196,6 +203,10 @@ export async function renderChess(root: HTMLElement) {
   let thinking = false;
   const meshes = new Map<string, THREE.Object3D>(); // square -> piece
   const tweens: { obj: THREE.Object3D; from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number; onDone?: () => void }[] = [];
+  // a piece you took, in your hand (the headset): you hit your clock with it, then set it down beside the board. It's
+  // your index-th capture; `armed` once you're pinching it, so letting go sets it down
+  let inHand: { obj: THREE.Object3D; index: number; hand: number; armed: boolean; pressedAt: number; lostSince: number } | null = null;
+  const takenSpots = new Map<number, THREE.Vector3>(); // where you set your captures down yourself (board space)
   let gameId = 0; // bumped by a new game or an undo: an engine answer for an older position is dropped
   let gameNumber = 0; // bumped by a new game only: the opponent's habits are seeded by it
   let lastEval: number | null = null; // the opponent's view of the position after its last move, centipawns
@@ -256,14 +267,23 @@ export async function renderChess(root: HTMLElement) {
       }
     taken.clear();
     const t = takenPieces();
+    for (const k of takenSpots.keys()) if (k >= t.byPlayer.length) takenSpots.delete(k);
     const place = (list: typeof t.byPlayer, byPlayer: boolean) =>
       list.map((c, i) => {
         const m = makePiece(c.type, c.color);
-        m.position.copy(slot(byPlayer, i));
+        m.position.copy((byPlayer && takenSpots.get(i)) || slot(byPlayer, i));
         taken.add(m);
         return m;
       });
     takenMeshes = { byPlayer: place(t.byPlayer, true), byOpponent: place(t.byOpponent, false) };
+    if (inHand) {
+      // the piece in your hand is rebuilt with the rest: the new one stays in your hand
+      const m = takenMeshes.byPlayer[inHand.index];
+      if (m) {
+        m.position.copy(inHand.obj.position);
+        inHand.obj = m;
+      } else inHand = null;
+    }
     showHints(null);
     updateStatus();
   };
@@ -288,6 +308,8 @@ export async function renderChess(root: HTMLElement) {
     if (thinking) return setStatus(`${who} is thinking…`);
     if (awaitingPress) return setStatus(pressedOnce ? "Your clock is running" : clockHint());
     const line = opening ? `  ·  ${opening}` : "";
+    // new to the room: how it works, until it's been a moment or you've used it
+    if (renderer.xr.isPresenting && hintUntil > performance.now() && chess.turn() === side) return setStatus("Pinch a piece to move it  ·  Left palm up for the menu");
     setStatus((chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`) + line);
   };
 
@@ -434,7 +456,8 @@ export async function renderChess(root: HTMLElement) {
     seated.endGame({ obj: k, base: k.position.clone(), fall, height: k.userData.height as number, shadow: k.children[1], onTipped: () => sounds.clack(k.getWorldPosition(new THREE.Vector3()), true) });
   };
 
-  const tryMove = (from: Square, to: Square | null): boolean => {
+  // `hand`: the headset hand that moved it (a capture goes into that hand)
+  const tryMove = (from: Square, to: Square | null, hand?: number): boolean => {
     if (!to || to === from || isOver()) return false;
     let mv: Move | null = null;
     try {
@@ -443,13 +466,24 @@ export async function renderChess(root: HTMLElement) {
       mv = null;
     }
     if (!mv) return false;
+    putAside(); // still holding your last capture: it goes beside the board first
+    const takenOn = mv.flags.includes("e") ? mv.to[0] + mv.from[1] : mv.to;
+    // a piece you'd lifted with your other hand: it's yours now if this took it, else it's back on its square
+    const lifted = handHold.findIndex((h) => h?.victim && h.square === takenOn);
+    handHold.forEach((h, i) => h?.victim && (handHold[i] = null));
     sync();
     sounds.clack(worldAt(squareToLocal(mv.to)));
     if (mv.captured) {
-      // your capture goes beside the board, to the end of your row
-      const m = takenMeshes.byPlayer[takenMeshes.byPlayer.length - 1];
-      const takenOn = mv.flags.includes("e") ? mv.to[0] + mv.from[1] : mv.to;
-      if (m) {
+      const index = takenMeshes.byPlayer.length - 1;
+      const m = takenMeshes.byPlayer[index];
+      const by = lifted >= 0 ? lifted : hand;
+      if (m && by !== undefined) {
+        // in the headset it's in your hand: hit your clock with it, then set it down beside the board
+        takenSpots.delete(index);
+        m.position.copy(squareToLocal(takenOn));
+        inHand = { obj: m, index, hand: by, armed: lifted >= 0, pressedAt: 0, lostSince: 0 };
+      } else if (m) {
+        // with a mouse your capture goes beside the board, to the end of your row
         const dest = m.position.clone();
         m.position.copy(squareToLocal(takenOn));
         tweens.push({ obj: m, from: m.position.clone(), to: dest, t0: performance.now(), dur: 620, onDone: () => sounds.clack(worldAt(dest), true) });
@@ -491,6 +525,8 @@ export async function renderChess(root: HTMLElement) {
     lastEval = null;
     chess.reset();
     clock.reset();
+    inHand = null;
+    takenSpots.clear();
     seated?.cancel();
     if (seated && opponentShownId) seated.reseed(hashSeed(opponentShownId, gameNumber));
     engine.newGame();
@@ -502,37 +538,49 @@ export async function renderChess(root: HTMLElement) {
   };
 
   // ---------------- picking up pieces (mouse, hands, controllers) ----------------
-  type Hold = { square: Square; obj: THREE.Object3D; offset: THREE.Vector3 };
+  // `victim`: one of their pieces you lifted first, to take it with your other hand (or put it back)
+  type Hold = { square: Square; obj: THREE.Object3D; offset: THREE.Vector3; victim?: boolean; legal?: Set<string> };
   const canTouch = (sq: string) => !thinking && !reaching && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === side;
-  const nearestPiece = (worldPoint: THREE.Vector3): string | null => {
-    let best: string | null = null;
-    let bestD = GRAB_RADIUS;
+  // one of theirs that a move of yours can take
+  const canLift = (sq: string) =>
+    !thinking && !reaching && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === other(side) &&
+    chess.moves({ verbose: true }).some((m) => m.captured && (m.flags.includes("e") ? m.to[0] + m.from[1] : m.to) === sq);
+  const nearestPiece = (worldPoint: THREE.Vector3, lift = false, radius = GRAB_RADIUS): { sq: string; victim: boolean } | null => {
+    let best: { sq: string; victim: boolean } | null = null;
+    let bestD = radius;
     const p = new THREE.Vector3();
     for (const [sq, obj] of meshes) {
-      if (!canTouch(sq)) continue;
+      const victim = !canTouch(sq);
+      if (victim && !(lift && canLift(sq))) continue;
       obj.getWorldPosition(p);
       p.y += (obj.userData.height as number) * 0.6;
       const d = p.distanceTo(worldPoint);
       if (d < bestD) {
         bestD = d;
-        best = sq;
+        best = { sq, victim };
       }
     }
     return best;
   };
   const toBoardLocal = (world: THREE.Vector3) => boardGroup.worldToLocal(world.clone());
-  const grab = (sq: string, worldPoint: THREE.Vector3): Hold => {
+  const grab = (sq: string, worldPoint: THREE.Vector3, victim = false): Hold => {
     const obj = meshes.get(sq)!;
-    showHints(sq as Square);
-    return { square: sq as Square, obj, offset: toBoardLocal(worldPoint).sub(obj.position).setY(0) };
+    if (!victim) showHints(sq as Square);
+    const legal = victim ? undefined : new Set(chess.moves({ square: sq as Square, verbose: true }).map((m) => m.to as string));
+    return { square: sq as Square, obj, offset: toBoardLocal(worldPoint).sub(obj.position).setY(0), victim, legal };
+  };
+  // a lifted piece of theirs you didn't take goes back where it stood
+  const putBack = (h: Hold) => {
+    const back = squareToLocal(h.square);
+    tweens.push({ obj: h.obj, from: h.obj.position.clone(), to: back, t0: performance.now(), dur: 260, onDone: () => sounds.clack(worldAt(back), true) });
   };
   const moveHeld = (h: Hold, worldPoint: THREE.Vector3) => {
     const local = toBoardLocal(worldPoint).sub(h.offset);
     h.obj.position.set(local.x, Math.max(0.012, local.y - (h.obj.userData.height as number) * 0.6), local.z);
   };
-  const release = (h: Hold) => {
+  const release = (h: Hold, hand?: number) => {
     const local = h.obj.position.clone();
-    if (!tryMove(h.square, localToSquare(local) as Square | null)) {
+    if (!tryMove(h.square, localToSquare(local) as Square | null, hand)) {
       const back = squareToLocal(h.square);
       tweens.push({ obj: h.obj, from: h.obj.position.clone(), to: back, t0: performance.now(), dur: 260, onDone: () => sounds.clack(worldAt(back), true) });
       showHints(null);
@@ -598,40 +646,150 @@ export async function renderChess(root: HTMLElement) {
   const ctrls = [0, 1].map((i) => renderer.xr.getController(i));
   hands.forEach((h) => scene.add(h));
   ctrls.forEach((c) => scene.add(c));
+  const sideOf = handSides(hands);
   const handHold: (Hold | null)[] = [null, null];
-  const pinching = [false, false];
   const ctrlDown = [false, false];
   ctrls.forEach((c, i) => {
     c.addEventListener("selectstart", () => (ctrlDown[i] = true));
     c.addEventListener("selectend", () => (ctrlDown[i] = false));
   });
   const occluders = hands.map((h) => handOccluder(h, scene));
+  const jointsOf = (i: number) => (hands[i] as unknown as { joints?: Record<string, THREE.Object3D> }).joints ?? {};
+  // a pinch is thumb and index tips together. It lasts through a few frames of jitter or lost tracking, so a piece
+  // never drops out of your fingers on its own
+  const pinch = [0, 1].map(() => ({ down: false, offSince: 0, lostSince: 0, point: new THREE.Vector3() }));
   const tip = new THREE.Vector3();
   const thumb = new THREE.Vector3();
-  const pinchPoint = (i: number): { point: THREE.Vector3; down: boolean } | null => {
-    const joints = (hands[i] as unknown as { joints: Record<string, THREE.Object3D> }).joints;
-    const idx = joints?.["index-finger-tip"];
-    const th = joints?.["thumb-tip"];
-    if (idx && th && idx.visible !== false && th.visible !== false) {
+  const pinchPoint = (i: number, now: number): { point: THREE.Vector3; down: boolean; firm: boolean } | null => {
+    const joints = jointsOf(i);
+    const s = pinch[i];
+    const idx = joints["index-finger-tip"];
+    const th = joints["thumb-tip"];
+    if (idx?.visible && th?.visible) {
       idx.getWorldPosition(tip);
       th.getWorldPosition(thumb);
       const d = tip.distanceTo(thumb);
-      if (pinching[i] ? d < PINCH_OFF : d < PINCH_ON) pinching[i] = true;
-      else pinching[i] = false;
-      return { point: tip.clone().add(thumb).multiplyScalar(0.5), down: pinching[i] };
+      if (!s.down) s.down = d < PINCH_ON;
+      else if (d > PINCH_OFF) {
+        s.offSince ||= now;
+        if (now - s.offSince > PINCH_LET_GO_MS) s.down = false;
+      } else s.offSince = 0;
+      if (!s.down) s.offSince = 0;
+      s.lostSince = 0;
+      s.point.copy(tip).add(thumb).multiplyScalar(0.5);
+      return { point: s.point, down: s.down, firm: d < PINCH_FIRM };
     }
-    if (ctrls[i]) return { point: ctrls[i].getWorldPosition(new THREE.Vector3()), down: ctrlDown[i] };
+    if (Object.keys(joints).length) {
+      // a hand that tracking lost this frame: whatever it holds stays held for a moment
+      if (s.down && now - (s.lostSince ||= now) < PINCH_LOST_MS) return { point: s.point, down: true, firm: false };
+      s.down = false;
+      return null;
+    }
+    if (ctrls[i]?.visible) return { point: ctrls[i].getWorldPosition(new THREE.Vector3()), down: ctrlDown[i], firm: true };
     return null;
   };
 
-  // long pinch on empty space re-places the board right there (pinch your real table)
-  const longPinchSince = [0, 0];
-  const LONG_PINCH_MS = 900;
+  // the board is pinned to your real room where it's placed (an anchor: no recenter or drift slides it). It moves only
+  // by its handle: a bar on your side, like the one under a Quest window. Pinch it, drag the board anywhere (onto your
+  // real table), let go and it's pinned there
+  const lock = new WorldLock(renderer, table);
+  let boardDrag: { hand: number; offset: THREE.Vector3 } | null = null;
+  const HANDLE_Z = SQUARE * 4 + 0.058;
+  const handleMat = new THREE.MeshBasicMaterial({ color: 0xf5f5f7, transparent: true, opacity: 0.55, depthWrite: false });
+  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.0055, 0.11, 6, 16), handleMat);
+  handle.rotation.z = Math.PI / 2; // lying along the board's edge
+  handle.position.set(0, 0.012, HANDLE_Z);
+  handle.visible = false;
+  table.add(handle);
+  const handleLabel = (() => {
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 96;
+    const g = c.getContext("2d")!;
+    g.fillStyle = "#f5f5f7";
+    g.font = '600 46px -apple-system, "SF Pro Text", "Inter", sans-serif';
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("Pinch to move the board", 256, 50);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.0225), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }));
+    m.position.set(0, 0.032, HANDLE_Z + 0.004);
+    m.rotation.x = -0.9; // tilted up toward your eyes
+    table.add(m);
+    return m;
+  })();
+  const handleLocal = new THREE.Vector3();
+  const nearHandle = (world: THREE.Vector3, slack = 0) => {
+    table.worldToLocal(handleLocal.copy(world));
+    return Math.abs(handleLocal.x) < 0.07 + slack && Math.abs(handleLocal.y - 0.012) < 0.03 + slack && Math.abs(handleLocal.z - HANDLE_Z) < 0.03 + slack;
+  };
+  // a pinch takes hold of something only as it starts (a pinch already held never picks up what it passes over)
+  const pinchStarted = [0, 0];
+  const PINCH_TAKES_MS = 160;
   const placeBoardAt = (p: THREE.Vector3) => {
     const cam = renderer.xr.getCamera();
     const head = cam.getWorldPosition(new THREE.Vector3());
     table.position.set(p.x, p.y, p.z);
-    table.rotation.y = Math.atan2(head.x - p.x, head.z - p.z); // your side of the board faces you
+    table.rotation.set(0, Math.atan2(head.x - p.x, head.z - p.z), 0); // your side of the board faces you
+  };
+
+  // a piece you took: in your hand until you set it down (let go of it, or lower it to the table beside the board
+  // after hitting your clock), else it goes beside the board on its own
+  const tableLocal = new THREE.Vector3();
+  const onClock = (local: THREE.Vector3) => Math.abs(local.x - clock.group.position.x) < 0.075 && Math.abs(local.z - clock.group.position.z) < 0.12;
+  const putAside = () => {
+    if (!inHand) return;
+    const { obj, index } = inHand;
+    inHand = null;
+    takenSpots.delete(index);
+    const dest = slot(true, index);
+    tweens.push({ obj, from: obj.position.clone(), to: dest, t0: performance.now(), dur: 420, onDone: () => sounds.clack(worldAt(dest), true) });
+  };
+  const setDown = () => {
+    if (!inHand) return;
+    const { obj, index } = inHand;
+    table.worldToLocal(obj.getWorldPosition(tableLocal));
+    const offBoard = Math.max(Math.abs(tableLocal.x), Math.abs(tableLocal.z)) > SQUARE * 4 + 0.02;
+    if (!offBoard || tableLocal.y > 0.12 || onClock(tableLocal)) return putAside(); // over the board, in the air or on the clock
+    inHand = null;
+    const at = obj.position.clone().setY(0);
+    takenSpots.set(index, at);
+    tweens.push({ obj, from: obj.position.clone(), to: at, t0: performance.now(), dur: 140, onDone: () => sounds.clack(worldAt(at), true) });
+  };
+  const follow = new THREE.Vector3();
+  const followHand = (point: THREE.Vector3) => {
+    if (!inHand) return;
+    follow.copy(point);
+    follow.y -= (inHand.obj.userData.height as number) * 0.55; // held near its top, between thumb and finger
+    inHand.obj.position.copy(taken.worldToLocal(follow));
+  };
+
+  // what a pinch would take: a ring under it (blue for yours, orange for one of theirs you can take), and the square a
+  // held piece would land on (green when it's a legal move)
+  const ring = new THREE.Mesh(new THREE.RingGeometry(SQUARE * 0.36, SQUARE * 0.45, 40), new THREE.MeshBasicMaterial({ color: 0x64d2ff, transparent: true, opacity: 0.9, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.visible = false;
+  boardGroup.add(ring);
+  const landing = new THREE.Mesh(new THREE.PlaneGeometry(SQUARE * 0.96, SQUARE * 0.96), new THREE.MeshBasicMaterial({ color: 0x30d158, transparent: true, opacity: 0.32, depthWrite: false }));
+  landing.rotation.x = -Math.PI / 2;
+  landing.visible = false;
+  boardGroup.add(landing);
+
+  // everything that can hit your clock: every fingertip and the palm of both hands, and a piece in your hand
+  const CLOCK_JOINTS = ["thumb-tip", "index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip", "middle-finger-metacarpal"];
+  const clockPoints: (THREE.Vector3 | null)[] = Array.from({ length: CLOCK_JOINTS.length * 2 + 1 }, () => new THREE.Vector3());
+  const clockPointVecs = clockPoints.map((v) => v!);
+  const fillClockPoints = () => {
+    [0, 1].forEach((i) => {
+      const joints = jointsOf(i);
+      CLOCK_JOINTS.forEach((n, k) => {
+        const at = i * CLOCK_JOINTS.length + k;
+        clockPoints[at] = joints[n]?.visible ? joints[n].getWorldPosition(clockPointVecs[at]) : null;
+      });
+    });
+    const last = clockPoints.length - 1;
+    clockPoints[last] = inHand ? inHand.obj.getWorldPosition(clockPointVecs[last]) : null;
   };
 
   // ---------------- floating status panel in the room ----------------
@@ -653,7 +811,9 @@ export async function renderChess(root: HTMLElement) {
     c.roundRect(8, 8, 1008, 144, 72);
     c.fill();
     c.fillStyle = "#f5f5f7";
-    c.font = '600 64px -apple-system, "SF Pro Display", "Inter", sans-serif';
+    let size = 64;
+    do c.font = `600 ${size}px -apple-system, "SF Pro Display", "Inter", sans-serif`;
+    while (c.measureText(text).width > 940 && (size -= 4) > 28); // a long line gets smaller, never cut off
     c.textAlign = "center";
     c.textBaseline = "middle";
     c.fillText(text, 512, 84);
@@ -665,6 +825,7 @@ export async function renderChess(root: HTMLElement) {
   const pressClock = () => {
     sounds.click(clock.worldPosition("near"));
     if (!awaitingPress || isOver()) return;
+    if (inHand) inHand.pressedAt = performance.now(); // the piece you took: now set it down
     awaitingPress = false;
     pressedOnce = true;
     clock.run("far");
@@ -690,58 +851,63 @@ export async function renderChess(root: HTMLElement) {
     sync();
   };
 
-  // ---------------- buttons you press with a fingertip (no controllers needed) ----------------
-  const xrButtons: XrButton[] = [];
-  const addButton = (id: string, label: string, x: number, onPress: () => void) => {
-    const b = new XrButton(id, label, onPress);
-    b.mesh.position.set(x, 0.035, SQUARE * 4 + 0.075); // your side of the board, a little above the table
-    b.mesh.rotation.x = -0.9;
-    table.add(b.mesh);
-    xrButtons.push(b);
+  // ---------------- controls on your left palm (turn it up; press with your right index fingertip) ----------------
+  // nothing sits on the table for a hand to brush against while it moves pieces or sets a capture down
+  const menu = new HandMenu(hands, sideOf, scene);
+  const setSide = (s: "w" | "b") => {
+    side = s;
+    root.querySelectorAll<HTMLButtonElement>("#sides button").forEach((x) => x.classList.toggle("on", x.dataset.side === s));
+    sideButton.setLabel(s === "w" ? "Play black" : "Play white");
+    void newGame();
   };
-  addButton("new", "New game", -0.15, () => void newGame());
-  addButton("undo", "Undo", -0.05, () => undo());
-  addButton("strength", strength.label, 0.065, () => {
+  const sideButton = new XrButton("side", "Play black", () => setSide(other(side)));
+  const strengthButton = new XrButton("strength", `Level · ${strength.label}`, () => {
     const i = STRENGTHS.findIndex((s) => s.id === strength.id);
     selectStrength(STRENGTHS[(i + 1) % STRENGTHS.length].id);
     void newGame();
   });
-  addButton("move", "Move board", 0.175, () => {
-    movingBoard = true;
-    setStatus("Pinch where the board should go");
-  });
-  xrButtons.forEach((b) => (b.mesh.visible = false));
-  let movingBoard = false;
-  // pick a legend in the room: a card each, floating at your left; the chosen one takes the seat
-  const cards = STRENGTHS.filter((st) => st.legend).map((st, i) => {
-    const c = new LegendCard(st.id, st.legend!, `${st.elo} peak rating`, () => {
-      if (strength.id === st.id) return;
-      selectStrength(st.id);
-      void newGame();
-    });
-    c.mesh.position.set(-(SQUARE * 4 + 0.1) - i * 0.122, 0.15, 0.04);
-    c.mesh.rotation.set(-0.35, 0.45, 0, "YXZ"); // turned toward your chair
-    c.mesh.visible = false;
-    table.add(c.mesh);
-    return c;
-  });
+  // the legends, one button each: the chosen one takes the seat
+  const legendButtons = STRENGTHS.filter((st) => st.legend).map(
+    (st) =>
+      new XrButton(st.id, st.legend!, () => {
+        if (strength.id === st.id) return;
+        selectStrength(st.id);
+        void newGame();
+      }),
+  );
+  menu.add(
+    new XrButton("new", "New game", () => void newGame()),
+    new XrButton("undo", "Undo", () => undo()),
+    ...legendButtons,
+    strengthButton,
+    sideButton,
+  );
 
   // ---------------- XR session ----------------
   let placed = false;
+  let hintUntil = 0; // how to play, on the status panel for your first moments in the room
   if (navigator.xr && (await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))) $("#room").hidden = false;
   $("#room").addEventListener("click", async () => {
-    const session = await navigator.xr!.requestSession("immersive-ar", { requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking"] });
+    const session = await navigator.xr!.requestSession("immersive-ar", { requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "anchors"] });
     await renderer.xr.setSession(session);
     placed = false;
     panel.visible = true;
-    xrButtons.forEach((b) => (b.mesh.visible = true));
-    cards.forEach((c) => (c.mesh.visible = true));
+    hintUntil = performance.now() + 20000;
+    updateStatus();
     session.addEventListener("end", () => {
       panel.visible = false;
-      xrButtons.forEach((b) => (b.mesh.visible = false));
-      cards.forEach((c) => (c.mesh.visible = false));
+      menu.group.visible = menu.open = false;
+      lock.release();
+      boardDrag = null;
+      handle.visible = false;
+      (handleLabel.material as THREE.MeshBasicMaterial).opacity = 0;
+      handHold.forEach((h, i) => {
+        if (h) h.victim ? putBack(h) : release(h);
+        handHold[i] = null;
+      });
+      putAside();
       table.position.set(0, 0.75, 0);
-      table.rotation.y = 0;
+      table.rotation.set(0, 0, 0);
       frameView(); // the headset's projection was the camera's while presenting
     });
   });
@@ -750,21 +916,15 @@ export async function renderChess(root: HTMLElement) {
   const selectStrength = (id: string) => {
     strength = STRENGTHS.find((s) => s.id === id)!;
     $("#legend-note").textContent = strength.legend ? `Stockfish at ${strength.legend}'s peak rating (${strength.elo}). Not affiliated.` : "";
-    xrButtons.find((b) => b.id === "strength")?.setLabel(strength.label);
-    cards.forEach((c) => c.setOn(c.id === id));
+    strengthButton.setLabel(`Level · ${strength.label}`);
+    legendButtons.forEach((b) => b.setOn(b.id === id));
     root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
     void engine.setStrength(strength);
     setOpponent([...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
     updateStatus();
   };
   root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => selectStrength(b.dataset.id!)));
-  root.querySelectorAll<HTMLButtonElement>("#sides button").forEach((b) =>
-    b.addEventListener("click", () => {
-      side = b.dataset.side as "w" | "b";
-      root.querySelectorAll("#sides button").forEach((x) => x.classList.toggle("on", x === b));
-      void newGame();
-    }),
-  );
+  root.querySelectorAll<HTMLButtonElement>("#sides button").forEach((b) => b.addEventListener("click", () => setSide(b.dataset.side as "w" | "b")));
   $("#new").addEventListener("click", () => void newGame());
   $("#undo").addEventListener("click", () => undo());
   selectStrength(strength.id);
@@ -782,6 +942,7 @@ export async function renderChess(root: HTMLElement) {
     if (!reaching) ending(); // mid-move, their hand finishes first
   };
   const shakeRay = new THREE.Raycaster();
+  const headPos = new THREE.Vector3();
   const handJoints = ["wrist", "index-finger-tip", "middle-finger-metacarpal", "thumb-tip"];
   const frame = (time: number) => {
     const dt = lastTime ? Math.min(0.1, (time - lastTime) / 1000) : 0;
@@ -794,46 +955,112 @@ export async function renderChess(root: HTMLElement) {
       $("#status").animate([{ transform: "scale(1)" }, { transform: "scale(1.12)" }, { transform: "scale(1)" }], { duration: 900, easing: "ease-in-out" });
     }
     if (renderer.xr.isPresenting) {
+      const cam = renderer.xr.getCamera();
+      const head = cam.getWorldPosition(headPos);
       if (!placed) {
-        const cam = renderer.xr.getCamera();
-        const head = cam.getWorldPosition(new THREE.Vector3());
         const fwd = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
         placeBoardAt(new THREE.Vector3(head.x + fwd.x * 0.5, Math.min(1.0, Math.max(0.62, head.y - 0.5)), head.z + fwd.z * 0.5));
         placed = true;
+        lock.lock();
       }
+      if (!boardDrag) lock.update();
       occluders.forEach((o) => o());
-      const tips = fingertips(hands);
-      for (const b of xrButtons) b.touch(tips, time);
-      for (const c of cards) c.touch(tips, time);
-      if (clock.touch(tips, time)) pressClock();
+      const menuOpen = menu.update(head, time, dt);
+      const menuHand = handIndex(sideOf, "left");
+      fillClockPoints();
+      if (clock.touch(clockPoints, time)) pressClock();
+      if (hintUntil && time > hintUntil) {
+        hintUntil = 0;
+        updateStatus();
+      }
+      let hover: { sq: string; victim: boolean } | null = null;
+      let handleHover = false;
       for (const i of [0, 1]) {
-        const p = pinchPoint(i);
-        if (!p) continue;
-        if (movingBoard && p.down) {
-          placeBoardAt(p.point); // pinch your real table: the board lands there
-          movingBoard = false;
-          updateStatus();
-          continue;
-        }
+        const p = pinchPoint(i, time);
         const held = handHold[i];
-        if (p.down && !held) {
-          const sq = nearestPiece(p.point);
-          if (sq) handHold[i] = grab(sq, p.point);
-          else if (!longPinchSince[i]) longPinchSince[i] = time;
-          else if (time - longPinchSince[i] > LONG_PINCH_MS) {
-            placeBoardAt(p.point); // about a second of pinching empty air: the board moves there
-            longPinchSince[i] = 0;
-          }
-        } else if (p.down && held) moveHeld(held, p.point);
-        else {
-          longPinchSince[i] = 0;
+        if (p?.down && !pinchStarted[i]) pinchStarted[i] = time;
+        else if (!p?.down) pinchStarted[i] = 0;
+        const fresh = !!p?.down && time - pinchStarted[i] < PINCH_TAKES_MS;
+        if (!p) {
+          // a hand tracking lost for good: what it held goes back (or beside the board)
           if (held) {
-            release(held);
+            held.victim ? putBack(held) : release(held);
             handHold[i] = null;
           }
+          if (inHand?.hand === i && time - (inHand.lostSince ||= time) > 800) putAside();
+          if (boardDrag?.hand === i) boardDrag = null;
+          continue;
+        }
+        if (inHand?.hand === i) inHand.lostSince = 0;
+        // the board's handle in your fingers: the board follows, turned to face you; let go and it's pinned there
+        if (boardDrag) {
+          if (boardDrag.hand === i) {
+            if (p.down && p.firm) placeBoardAt(p.point.clone().add(boardDrag.offset));
+            else {
+              boardDrag = null;
+              lock.lock();
+              sounds.clack(table.getWorldPosition(new THREE.Vector3()), true);
+            }
+          }
+          continue;
+        }
+        if (menuOpen && i === menuHand && !held) continue; // the hand holding the menu up picks nothing up
+        if (inHand?.hand === i) {
+          // the piece you took: pinch it and let go to set it down
+          if (p.down) inHand.armed = true;
+          else if (inHand.armed) setDown();
+          if (inHand?.hand === i && (p.firm || !inHand.armed)) followHand(p.point);
+          continue;
+        }
+        if (p.down && !held) {
+          if (!fresh) continue;
+          const hit = nearestPiece(p.point, true);
+          if (hit) handHold[i] = grab(hit.sq, p.point, hit.victim);
+          else if (nearHandle(p.point)) {
+            lock.release();
+            boardDrag = { hand: i, offset: table.position.clone().sub(p.point) };
+            if (hintUntil) hintUntil = 1; // you've found it: the hint can go
+          }
+        } else if (p.down && held) {
+          if (p.firm) moveHeld(held, p.point);
+        } else if (held) {
+          handHold[i] = null;
+          if (held.victim) putBack(held);
+          else release(held, i);
+        }
+        if (!p.down && !handHold[i]) {
+          hover ??= nearestPiece(p.point, true, GRAB_RADIUS * 1.2);
+          handleHover ||= !hover && nearHandle(p.point, 0.025);
         }
       }
-    } else controls.update();
+      // the handle: brighter under your fingers, blue while it's carrying the board; its label while you're new here
+      handle.visible = true;
+      handleMat.color.set(boardDrag ? 0x0a84ff : 0xf5f5f7);
+      handleMat.opacity += ((boardDrag || handleHover ? 0.95 : 0.5) - handleMat.opacity) * Math.min(1, dt * 12);
+      const labelMat = handleLabel.material as THREE.MeshBasicMaterial;
+      labelMat.opacity += ((handleHover || boardDrag || hintUntil > time ? 0.9 : 0) - labelMat.opacity) * Math.min(1, dt * 8);
+      // after hitting your clock with it: lower it to the table beside the board and it's set down there; otherwise it
+      // goes beside the board on its own
+      if (inHand?.pressedAt) {
+        table.worldToLocal(inHand.obj.getWorldPosition(tableLocal));
+        const offBoard = Math.max(Math.abs(tableLocal.x), Math.abs(tableLocal.z)) > SQUARE * 4 + 0.02;
+        if (offBoard && tableLocal.y < 0.03 && !onClock(tableLocal)) setDown();
+        else if (performance.now() - inHand.pressedAt > 3000) putAside();
+      }
+      ring.visible = !!hover;
+      if (hover) {
+        ring.position.copy(meshes.get(hover.sq)!.position).setY(0.0014);
+        (ring.material as THREE.MeshBasicMaterial).color.set(hover.victim ? 0xff9f0a : 0x64d2ff);
+      }
+      const holding = handHold.find((h) => h && !h.victim);
+      const to = holding ? localToSquare(holding.obj.position) : null;
+      landing.visible = !!(holding && to && holding.legal?.has(to));
+      if (landing.visible) landing.position.copy(squareToLocal(to!, 0.0011));
+    } else {
+      controls.update();
+      ring.visible = landing.visible = false;
+    }
+    clock.prompt = awaitingPress && !isOver();
     if (opponent && seated) {
       placeOpponent();
       if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(viewer);
@@ -883,7 +1110,7 @@ export async function renderChess(root: HTMLElement) {
   };
   renderer.setAnimationLoop(frame);
   if (import.meta.env.DEV)
-    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame() };
+    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame(), hands, jointsOf, handHold, inHand: () => inHand, sync: () => sync(), awaiting: (on: boolean) => (awaitingPress = on), menu, handle, lock, pressed: () => !awaitingPress };
 }
 
 function contactShadowTexture(): THREE.Texture {

@@ -101,15 +101,18 @@ export class XrButton {
     this.on = on;
     this.draw(false);
   }
+  private hover = false;
   private draw(pressed: boolean) {
     const c = this.canvas.getContext("2d")!;
     c.clearRect(0, 0, 512, 160);
-    c.fillStyle = pressed || this.on ? "rgba(0,113,227,0.95)" : "rgba(44,44,46,0.82)";
+    c.fillStyle = pressed || this.on ? "rgba(0,113,227,0.95)" : this.hover ? "rgba(99,99,102,0.92)" : "rgba(44,44,46,0.82)";
     c.beginPath();
     c.roundRect(6, 6, 500, 148, 74);
     c.fill();
     c.fillStyle = "#f5f5f7";
-    c.font = '600 58px -apple-system, "SF Pro Text", "Inter", sans-serif';
+    let size = 58;
+    do c.font = `600 ${size}px -apple-system, "SF Pro Text", "Inter", sans-serif`;
+    while (c.measureText(this.label).width > 450 && (size -= 3) > 30); // a long label gets smaller, never cut off
     c.textAlign = "center";
     c.textBaseline = "middle";
     c.fillText(this.label, 256, 84);
@@ -118,12 +121,15 @@ export class XrButton {
   /** Both index fingertips in world space (null when not tracked). Fires once each time a tip pushes into the face. */
   touch(fingertips: (THREE.Vector3 | null)[], now: number) {
     if (!this.mesh.visible) return;
+    let hover = false;
     fingertips.forEach((tip, h) => {
       let inside = false;
       if (tip) {
         this.local.copy(tip);
         this.mesh.worldToLocal(this.local);
-        inside = Math.abs(this.local.x) < 0.045 && Math.abs(this.local.y) < 0.014 && this.local.z < 0.004 && this.local.z > -0.02;
+        const over = Math.abs(this.local.x) < 0.045 && Math.abs(this.local.y) < 0.014;
+        inside = over && this.local.z < 0.004 && this.local.z > -0.02;
+        hover ||= over && this.local.z >= 0.004 && this.local.z < 0.04; // a fingertip just in front: it lights up
       }
       if (inside && !this.wasInside[h] && now > this.cooldownUntil) {
         this.cooldownUntil = now + 300;
@@ -133,6 +139,10 @@ export class XrButton {
       }
       this.wasInside[h] = inside;
     });
+    if (hover !== this.hover) {
+      this.hover = hover;
+      if (!this.pressedUntil) this.draw(false);
+    }
     if (this.pressedUntil && now > this.pressedUntil) {
       this.pressedUntil = 0;
       this.draw(false);
