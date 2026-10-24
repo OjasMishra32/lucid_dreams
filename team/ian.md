@@ -3,6 +3,39 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## TAKEN OVER FROM ATINA (Sat 12:35 AM): the submission is yours too
+
+Atina's remaining work moves to you (she built the capture kit, captions, restoration and drafts; you already
+built her headset UI). Her drafts are in `demo/`: start from them, don't redo them. Deadlines are hard: Devpost
+**submitted by Sun 3 PM** (late entries aren't accepted). Do these between the Quest items below, in this order:
+
+1. **Credits, complete** (`demo/credits.md`, then the README): every source with link and license. Jason Han's
+   piano videos (Wikimedia Commons, CC BY-SA 4.0, "JMC, Han (Jason)"); Bobby Fischer (W. Punt / Anefo, Nationaal
+   Archief, CC0); Magnus Carlsen (Wikimedia user Autopilot, CC BY-SA 3.0); Juice WRLD (Lexiou WesCudi, CC BY-SA 2.0);
+   the Pexels jump-shot clips (Pexels license); LeBron's clip (supplied for a non-commercial demo, not
+   redistributed); Poly Haven places (CC0, `apps/webxr/public/places/CREDITS.md`) and chess set (CC0); every model
+   and library (4DAnyone, DiGS-Avatar, gsplat, Spark, three.js, Unity Gaussian Splatting, NLF, rembg, GVHMR,
+   BiRefNet, SMPL-X, DINOv3, Stockfish (GPL-3.0, separate file), Gemini, whisper.cpp, Real-ESRGAN, Demucs).
+2. **Root `README.md`** (Sat 8 PM): turn `demo/README-draft.md` into the public README: one line of what it is, a
+   GIF or still of a real person in a room, how it works (the five steps), the five showcase moments
+   (`demo/showcase.md`), how to run each app, real numbers, credits, MIT license. MLH Open Source prize reads this.
+3. **Devpost** (`demo/devpost.md`; draft by Sat noon, final Sun 1 PM): fill every blank with measured numbers from
+   the Status log: held-out PSNR 26-28 dB and SSIM 0.96-0.97 on real clips, ~285k Gaussians per frame, 48 views
+   per clip, 12 GPUs per person, minutes per dream, and Vishal's fine-tune table once it lands. Tracks: overall,
+   Best AI Hack, Best Design, Best Social Impact, MLH Gemini, MLH Open Source (not Twinly). Say why the tech is
+   recent (4DAnyone Aug 2026, DiGS-Avatar Jun 2026).
+4. **The video** (3 min max, edited by Sun 1 PM): `demo/video.md` is the script. You're already capturing the
+   passthrough clips (item 6 below), so you edit: the five moments ~30 s each, then how it works with the real
+   numbers, then the team. Screen-record the WebXR viewer on a laptop for anything the headset can't capture.
+5. **Slides** (Sat 8 PM, 6-8 slides): problem, the one sentence, the five moments, how it works, numbers, honesty
+   (seen vs imagined, consent, public figures labelled), team.
+6. **Judge Q&A** (`demo/judges.md`): add "Why are there public figures?" (demo only, from real footage or freely
+   licensed photos, never their voice, always labelled, no endorsement implied), "What's real vs imagined?"
+   (Reality check, % seen), "What runs where?" (HiPerGator for reconstruction, Mac bridge, Quest/WebXR to view).
+7. **Family moment** (if a teammate's family agrees in writing): a photo or video in `~/Downloads/lucid-photos/`
+   or `lucid-clips/` on Ojasva's Mac with a `.txt` "I just want to sit with her". Consent record in
+   `demo/consent.md`. Skip it if there's no written yes; the demo works without it.
+
 ## BIG CHUNK (Sat 12:20 AM): real people land tonight; make the Quest app demo-ready
 
 Avatar player, library, voice and captions, props: outstanding pace. Real bundles land in `dreams/` within the

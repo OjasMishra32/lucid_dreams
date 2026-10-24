@@ -17,6 +17,12 @@ LeBron's lesson will have the real ball moving with his hands and a regulation h
 the chess legends will sit at the table and move their own pieces. Plan the video shots around those two moments:
 the ball leaving his hands toward the hoop in your room, and Fischer reaching across the board.
 
+## HANDED OVER (Sat 12:35 AM)
+
+Thank you: the capture kit, captions, restoration and the demo drafts are all in. Your remaining items (credits,
+README, Devpost, video edit, slides, judge Q&A, family moment) moved to Ian so you can rest; his brief lists them.
+If you're still around, the most useful single thing is reviewing his Devpost and README for clarity before Sunday.
+
 ## NEXT (Fri 10:45 PM): sources, credits, and the three demo moments
 
 What's processing tonight: LeBron's jump shot (a clip Ojasva supplied; demo only, never in the repo), two Pexels jump
