@@ -4,7 +4,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import DreamStage from "@/components/DreamStage";
 import DreamExperience from "@/components/DreamExperience";
-import PlacesRow from "@/components/PlacesRow";
 import QuestUrl from "@/components/QuestUrl";
 import RealismPanel from "@/components/RealismPanel";
 import { heldIds, readDream } from "@/lib/bridge/dreams";
@@ -140,7 +139,6 @@ export default async function DreamPage({ params }: Props) {
             tryOn={GEMINI_ON && !hidden && d.kind === "replay"}
             teacherSrc={d.preview ? dreamFile(d.id, d.preview) : null}
           />
-          <PlacesRow id={d.id} planned={experience.state === "ready" ? experience.experience.environment : null} />
           {!hidden && <QuestUrl url={questUrl} />}
           {realism && <RealismPanel id={d.id} initial={realism} />}
 

@@ -7,10 +7,6 @@ import WatchMeTry from "./WatchMeTry";
 import { ViewerLink } from "./ViewInRoom";
 
 const MODE: Record<string, string> = { teach: "Lesson", companion: "Companion", watch: "Watch", play: "Play" };
-const PLACE: Record<string, string> = {
-  "concert-hall": "In a concert hall", court: "On a court", gym: "In a gym", ring: "In a boxing ring",
-  studio: "In a studio", mountains: "In the mountains", room: "In your room",
-};
 
 /** Video seconds per plan second: 1, unless the video is shorter than the clip the steps were timed on (a mock stand-in). */
 export function span(v: HTMLVideoElement, clockS: number): number {
@@ -126,9 +122,8 @@ export default function DreamExperience({
           <h2>{e.title}</h2>
           {e.summary && <p className="plan-summary">{e.summary}</p>}
           {e.intent && <p className="plan-intent">&ldquo;{e.intent}&rdquo;</p>}
-          {(e.environment || e.objects?.length) && (
+          {!!e.objects?.length && (
             <ul className="plan-chips" aria-label="Around them">
-              {e.environment && <li className="place">{PLACE[e.environment] ?? e.environment}</li>}
               {e.objects?.map((o) => <li key={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</li>)}
             </ul>
           )}

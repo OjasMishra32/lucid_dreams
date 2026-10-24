@@ -286,7 +286,6 @@ main:focus, .compose:focus { outline: none; }
 .plan-intent { font-size: 15px; color: var(--faint); margin: 10px 0 0; }
 .plan-chips { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 16px 0 0; padding: 0; }
 .plan-chips li { font-size: 13px; font-weight: 500; padding: 5px 11px; border-radius: 980px; background: rgba(255, 255, 255, 0.08); color: var(--text); }
-.plan-chips li.place { background: rgba(41, 151, 255, 0.14); color: var(--link); }
 .plan-steps { list-style: none; margin: 28px 0 0; padding: 0; border-top: 1px solid var(--hairline); }
 .plan-steps button {
   width: 100%; display: grid; grid-template-columns: 76px 1fr auto; gap: 12px; text-align: left; padding: 14px 10px;
@@ -471,21 +470,8 @@ main:focus, .compose:focus { outline: none; }
 .submit-row .bar { flex: 1; min-width: 160px; }
 .form-error { color: var(--bad); font-size: 15px; margin: 16px 0 0; }
 
-/* ---------- places (dream page) ---------- */
-.detail > div { min-width: 0; } /* the places row scrolls on phones; it must not widen the page */
-.places-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 16px 12px; list-style: none; margin: 0; padding: 0; }
-.place-tile { display: block; color: var(--muted); transition: color 0.2s ease; }
-.place-tile:hover { color: var(--text); text-decoration: none; }
-.place-img {
-  display: grid; place-items: center; aspect-ratio: 16 / 10; border-radius: 12px; overflow: hidden; background: var(--surface);
-  box-shadow: 0 0 0 1px var(--hairline) inset; transition: box-shadow 0.2s ease;
-}
-.place-img img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s var(--ease); }
-.place-tile:hover .place-img img { transform: scale(1.04); }
-.place-img svg { width: 78%; color: var(--muted); }
-.place-tile.on .place-img { box-shadow: 0 0 0 2px var(--link); }
-.place-name { display: flex; align-items: baseline; gap: 6px; font-size: 14px; font-weight: 500; margin-top: 8px; color: var(--text); }
-.place-tag { font-size: 12px; font-weight: 600; color: var(--link); }
+/* ---------- dream page ---------- */
+.detail > div { min-width: 0; } /* wide rows inside scroll on phones; they must not widen the page */
 
 /* ---------- open on quest ---------- */
 .quest-how { font-size: 15px; color: var(--muted); margin: 0 0 10px; }
@@ -589,9 +575,6 @@ main:focus, .compose:focus { outline: none; }
   .nav-inner { gap: 18px; }
   .hero { padding-top: 84px; }
   .choice { grid-template-columns: 1fr; }
-  .places-row { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 136px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 0 22px; margin: 0 -22px; padding: 0 22px 4px; scrollbar-width: none; }
-  .places-row::-webkit-scrollbar { display: none; }
-  .places-row li { scroll-snap-align: start; }
   .quest-url { flex-direction: column; align-items: stretch; gap: 14px; padding: 18px; }
 }
 @media (max-width: 420px) {
