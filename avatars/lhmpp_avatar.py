@@ -24,6 +24,9 @@ Subcommands, in three environments (avatars/hpg/lhmpp-avatar.sbatch runs the fir
   polish  any numpy env      close-range finish: marks off light clothes, a clean headband, even limb skin, a clean
                              collar-to-jaw band, a tidy hair outline (see polish())
   audit   envs/lhmpp, GPU    0-315 degrees full body and head, plus tennis-like poses, one sheet per bundle
+  headband any numpy env     a clean terry headband as fresh Gaussians on a smooth ring round the head (last step)
+  likeness envs/uika, GPU    identity against held-out photos at every yaw, with the photos' own ceiling
+  project  envs/uika, GPU    his own face from his photos onto the head model's face (see project())
 
 crops.json (optional, next to the photos): {"<photo>": [x0, y0, x1, y1]} as fractions of the photo, the region that
 holds only this person (no neighbour, no opponent); the matte finds the person inside it.
@@ -1309,6 +1312,378 @@ def likeness(args) -> None:
     print("LIKENESS_OK", out / "likeness.jpg")
 
 
+def headband(args) -> None:
+    """A clean terry headband: fresh Gaussians laid on a smooth ring round the head (its radius the hair's own,
+    smoothed all the way round), a few millimetres thick, lower at the back as a band sits, skinned to the head. Hair
+    that stands out through the band fades; hair above it stays, so strands can fall over its top edge. Appends to
+    avatar.ply and skin.bin (avatar.raw.ply no longer matches it, so run whites and polish before this)."""
+    from scipy.spatial.transform import Rotation
+
+    from lucid_avatars import skinning as S
+    from lucid_avatars.gaussian_ply import SH_C0, Gaussians, read_ply, write_ply
+    from lucid_avatars.smplx_layout import J
+
+    b = Path(args.bundle)
+    av = json.loads((b / "dream.json").read_text())["avatar"]
+    g = read_ply(b / av["file"])
+    idx, q = S.read_skin_bin(b / av["skin"])
+    dom = idx[np.arange(len(idx)), np.argmax(q, 1)].astype(int)
+    rest = np.asarray(json.loads((b / av["skeleton"]).read_text())["rest"], dtype=np.float64)
+    xyz = np.asarray(g.xyz, dtype=np.float64)
+    alpha = 1 / (1 + np.exp(-np.asarray(g.opacity, dtype=np.float64)))
+    head = np.isin(dom, [J["head"], J["jaw"], J["left_eye"], J["right_eye"]])
+    uika = b / "uika_head.json"
+    if uika.is_file():
+        head[int(json.loads(uika.read_text())["head"]["first"]):] = True
+    eye_y = 0.5 * (rest[J["left_eye"], 1] + rest[J["right_eye"], 1])
+    centre = rest[J["head"]] + np.array([0.0, 0.07, -0.01])
+    y_front = eye_y + args.above_eyes  # the band's lower edge at the forehead
+
+    def lower(theta):
+        return y_front - args.drop * (1 - np.cos(theta)) / 2
+
+    hd = head & (alpha > 0.3)
+    d = xyz[hd] - centre
+    th = np.arctan2(d[:, 0], d[:, 2])
+    rho = np.hypot(d[:, 0], d[:, 2])
+    inb = (xyz[hd, 1] >= lower(th)) & (xyz[hd, 1] <= lower(th) + args.width)
+    bins = 72
+    k = np.floor((th + np.pi) / (2 * np.pi) * bins).astype(int) % bins
+    radius = np.full(bins, np.nan)
+    for i in range(bins):
+        m = inb & (k == i)
+        if m.sum() >= 5:
+            radius[i] = np.percentile(rho[m], args.radius_pct)
+    ok = ~np.isnan(radius)
+    if ok.sum() < bins // 2:
+        raise SystemExit("headband: too little head at band height to fit a ring")
+    idxs = np.arange(bins)
+    radius = np.interp(idxs, idxs[ok], radius[ok], period=bins)
+    kern = np.ones(9) / 9  # +-20 degrees
+    radius = np.convolve(np.r_[radius[-4:], radius, radius[:4]], kern, mode="valid")
+    centres = (idxs + 0.5) / bins * 2 * np.pi - np.pi
+
+    def r_at(theta):
+        return np.interp(theta, centres, radius, period=2 * np.pi) + args.thickness
+
+    # hair poking out through the band fades (hair above the band stays)
+    ext = np.exp(np.asarray(g.scale, dtype=np.float64)[hd]).max(1)
+    poke = np.flatnonzero(hd)[inb & (rho + 1.5 * ext > r_at(th) - args.thickness)]
+    g.opacity[poke] = np.minimum(g.opacity[poke], -7.0)
+
+    # the band: rows across its width, Gaussians every few millimetres round it
+    pts, rots, cols, scs = [], [], [], []
+    rng = np.random.default_rng(0)
+    rows = int(round(args.width / 0.004)) + 1
+    for row in range(rows):
+        v = row / (rows - 1)  # 0 lower edge, 1 upper edge
+        edge = min(v, 1 - v)
+        inset = 0.0015 * (1 - min(edge / 0.15, 1.0))  # rounded edges
+        n_round = int(2 * np.pi * float(radius.mean()) / 0.0025)
+        for t in np.linspace(-np.pi, np.pi, n_round, endpoint=False):
+            r = r_at(t) - inset
+            y = lower(t) + v * args.width
+            p = centre + np.array([r * np.sin(t), 0.0, r * np.cos(t)])
+            p[1] = y
+            tang = np.array([np.cos(t), 0.0, -np.sin(t)])
+            up = np.array([0.0, 1.0, 0.0])
+            nrm = np.cross(tang, up)
+            pts.append(p)
+            rots.append(np.stack([tang, up, nrm], axis=1))
+            shade = 0.94 + 0.06 * min(edge / 0.25, 1.0)
+            cols.append(np.clip(np.array(args.colour) * shade + rng.normal(0, 0.01), 0, 1))
+            scs.append([0.0022, 0.0024, 0.0009])  # small across its width: a crisp edge, no blur
+    pts, cols = np.array(pts), np.array(cols)
+    quat = Rotation.from_matrix(np.array(rots)).as_quat()[:, [3, 0, 1, 2]]
+    n_new = len(pts)
+    band = Gaussians(xyz=pts.astype(g.xyz.dtype), f_dc=((cols - 0.5) / SH_C0).astype(g.f_dc.dtype),
+                     f_rest=np.zeros((n_new, g.f_rest.shape[1]), g.f_rest.dtype),
+                     opacity=np.full(n_new, 3.5, g.opacity.dtype), scale=np.log(np.array(scs)).astype(g.scale.dtype),
+                     rotation=quat.astype(g.rotation.dtype))
+    out = Gaussians(xyz=np.concatenate([g.xyz, band.xyz]), f_dc=np.concatenate([g.f_dc, band.f_dc]),
+                    f_rest=np.concatenate([g.f_rest, band.f_rest]), opacity=np.concatenate([g.opacity, band.opacity]),
+                    scale=np.concatenate([g.scale, band.scale]), rotation=np.concatenate([g.rotation, band.rotation]))
+    write_ply(b / av["file"], out)
+    bi = np.zeros((n_new, 4), idx.dtype)
+    bi[:, 0] = J["head"]
+    bq = np.zeros((n_new, 4), q.dtype)
+    bq[:, 0] = 255
+    S.write_skin_bin(b / av["skin"], np.concatenate([idx, bi]), np.concatenate([q, bq]))
+    rep = {"added": int(n_new), "hairFaded": int(len(poke)), "lowerEdgeFrontY": round(float(y_front), 3),
+           "widthM": args.width, "thicknessM": args.thickness, "radiusM": [round(float(radius.min()), 3), round(float(radius.max()), 3)]}
+    (b / "headband.json").write_text(json.dumps(rep, indent=1) + "\n")
+    print(f"[headband] {rep}")
+
+
+def face(args) -> None:
+    """Small, measured shape corrections to a head model's face, in the rest pose (judge them with likeness against
+    held-out photos, never by eye alone): --nose-m moves the nose's protruding part down by up to that much (longer
+    nose; the bridge and the lip stay), --mouth widens the mouth by that factor. Positions only; colours stay."""
+    from lucid_avatars import skinning as S
+    from lucid_avatars.gaussian_ply import read_ply, write_ply
+    from lucid_avatars.smplx_layout import J
+
+    b = Path(args.bundle)
+    av = json.loads((b / "dream.json").read_text())["avatar"]
+    g = read_ply(b / av["file"])
+    idx, q = S.read_skin_bin(b / av["skin"])
+    dom = idx[np.arange(len(idx)), np.argmax(q, 1)].astype(int)
+    rest = np.asarray(json.loads((b / av["skeleton"]).read_text())["rest"], dtype=np.float64)
+    head = np.isin(dom, [J["head"], J["jaw"], J["left_eye"], J["right_eye"]])
+    uika = b / "uika_head.json"
+    if uika.is_file():
+        head[int(json.loads(uika.read_text())["head"]["first"]):] = True
+    xyz = np.asarray(g.xyz, dtype=np.float64).copy()
+    eye = 0.5 * (rest[J["left_eye"]] + rest[J["right_eye"]])
+    x, y, z = xyz[:, 0] - eye[0], xyz[:, 1] - eye[1], xyz[:, 2] - eye[2]
+
+    def bump(v, lo, peak, hi):
+        return np.clip(np.where(v > peak, (hi - v) / (hi - peak), (v - lo) / (peak - lo)), 0, 1)
+
+    moved = {}
+    if args.nose_m:
+        wx = np.exp(-(x / 0.016) ** 2)
+        wy = bump(y, -0.07, -0.045, -0.004)
+        wz = np.clip((z - 0.012) / 0.015, 0, 1)
+        w = head * wx * wy * wz
+        xyz[:, 1] -= args.nose_m * w
+        moved["nose"] = int((w > 0.05).sum())
+    if args.mouth != 1.0:
+        wy = bump(y, -0.095, -0.075, -0.058)
+        w = head * wy * (np.abs(x) < 0.04) * np.clip((z - 0.0) / 0.01, 0, 1)
+        xyz[:, 0] = eye[0] + x * (1 + (args.mouth - 1) * w)
+        moved["mouth"] = int((w > 0.05).sum())
+    g.xyz[:] = xyz.astype(g.xyz.dtype)
+    write_ply(b / av["file"], g)
+    (b / "face.json").write_text(json.dumps({"noseM": args.nose_m, "mouth": args.mouth, "moved": moved}) + "\n")
+    print(f"[face] {moved}")
+
+
+def hair(args) -> None:
+    """More of his hair: the head model's hair above the brows stands a little further off the scalp (--volume of its
+    distance from the head's centre, more on top), with a slow wave in it (--wave metres), and sun-lightened strands
+    (--highlights: a share of the hair lifted toward a warm light brown along a striped field). Positions, sizes and
+    colours of the hair only; run before headband."""
+    from lucid_avatars import skinning as S
+    from lucid_avatars.gaussian_ply import SH_C0, read_ply, write_ply
+    from lucid_avatars.smplx_layout import J
+
+    b = Path(args.bundle)
+    av = json.loads((b / "dream.json").read_text())["avatar"]
+    g = read_ply(b / av["file"])
+    idx, q = S.read_skin_bin(b / av["skin"])
+    dom = idx[np.arange(len(idx)), np.argmax(q, 1)].astype(int)
+    rest = np.asarray(json.loads((b / av["skeleton"]).read_text())["rest"], dtype=np.float64)
+    head = np.isin(dom, [J["head"], J["jaw"], J["left_eye"], J["right_eye"]])
+    uika = b / "uika_head.json"
+    if uika.is_file():
+        head[int(json.loads(uika.read_text())["head"]["first"]):] = True
+    xyz = np.asarray(g.xyz, dtype=np.float64)
+    rgb = np.clip(0.5 + SH_C0 * np.asarray(g.f_dc, dtype=np.float64), 0, 1)
+    lum = rgb @ np.array([0.299, 0.587, 0.114])
+    eye_y = 0.5 * (rest[J["left_eye"], 1] + rest[J["right_eye"], 1])
+    centre = rest[J["head"]] + np.array([0.0, 0.07, -0.01])
+    # hair: dark, on the head, above the brows (skin is lighter and warmer; the band is white)
+    sat = rgb.max(1) - rgb.min(1)
+    is_hair = head & (xyz[:, 1] > eye_y + 0.02) & (lum < 0.42) & ~((rgb[:, 0] > rgb[:, 2] + 0.12) & (lum > 0.3))
+    is_hair &= ~((xyz[:, 2] - centre[2] > 0.06) & (xyz[:, 1] < eye_y + 0.045))  # not the brows / forehead
+    hi = np.flatnonzero(is_hair)
+    v = xyz[hi] - centre
+    r = np.linalg.norm(v, axis=1)
+    u = v / np.maximum(r, 1e-6)[:, None]
+    top = np.clip(u[:, 1], 0, 1)  # 1 on the crown
+    rng = np.random.default_rng(1)
+    phase = rng.uniform(0, 2 * np.pi, 3)
+    wave = np.sin(14 * u[:, 0] + phase[0]) * np.sin(11 * u[:, 2] + phase[1]) + 0.5 * np.sin(23 * u[:, 1] + phase[2])
+    grow = args.volume * (0.4 + 0.6 * top) * r + args.wave * wave
+    xyz[hi] = centre + u * (r + grow)[:, None]
+    g.scale[hi] = (np.asarray(g.scale[hi], dtype=np.float64) + np.log1p(np.clip(grow / np.maximum(r, 1e-3), 0, 0.3))[:, None]).astype(g.scale.dtype)
+    stripe = 0.5 + 0.5 * np.sin(40 * (u[:, 0] * 0.6 + u[:, 2] * 0.8) + 9 * u[:, 1] + phase[0])
+    light = np.array(args.highlight_colour)
+    k = args.highlights * stripe[:, None] * (0.5 + 0.5 * top)[:, None]
+    rgb[hi] = (1 - k) * rgb[hi] + k * light
+    g.xyz[:] = xyz.astype(g.xyz.dtype)
+    g.f_dc[hi] = ((rgb[hi] - 0.5) / SH_C0).astype(g.f_dc.dtype)
+    write_ply(b / av["file"], g)
+    rep = {"hairGaussians": int(len(hi)), "volume": args.volume, "waveM": args.wave, "highlights": args.highlights}
+    (b / "hair.json").write_text(json.dumps(rep) + "\n")
+    print(f"[hair] {rep}")
+
+
+def project(args) -> None:
+    """His own face from his photos onto the head model's face (a head model averages many photos into a face that
+    can read as someone else). For each photo (only ones the head was built from; held-out photos stay held out for
+    likeness): the render whose 68 landmarks match the photo's best (yaw from -60 to 60 degrees) gives the landmarks
+    in 3D (its depth), the photo's camera is fitted to them (affine: sports photos are long lenses), and each face
+    Gaussian the render sees, inside the photo's landmark outline (fading out at it) and facing the camera, takes the
+    photo's colour there, shifted to the head's own mean tone (no sunlight or white balance baked in). Each Gaussian
+    takes mostly its best photo (weights to the power --power: an even average of slightly misregistered photos is a
+    blur), best meaning sharpest (the most pixels between the eyes), the closest camera fit and the squarest view;
+    then its broad shading (over --shade-k neighbours, a few centimetres: a sunlit cheek, a cap's shadow) is set to
+    the head's own, so no photo's light is baked in while its features (eyes, brows, the nose's own shadow) stay; then
+    the result is blended in by --strength. Colours of the face only; hair, ears and everything else stay. Writes
+    project.json (per photo: the yaw, the fit's error in eye distances, how many Gaussians it coloured)."""
+    import cv2
+    import torch
+    from gsplat import rasterization
+    from insightface.app import FaceAnalysis
+    from PIL import Image, ImageOps
+
+    from lucid_avatars.gaussian_ply import SH_C0, read_ply, write_ply
+
+    b = Path(args.bundle)
+    av = json.loads((b / "dream.json").read_text())["avatar"]
+    g = read_ply(b / av["file"])
+    first = int(json.loads((b / "uika_head.json").read_text())["head"]["first"])
+    gs = posed_gaussians(b)
+    means = gs["means"].cpu().numpy().astype(np.float64)
+    head = gs["head"] + np.array([0.0, 0.07, 0.0])
+    old = np.clip(0.5 + SH_C0 * np.asarray(g.f_dc, dtype=np.float64), 0, 1)
+    face_ids = np.arange(first, len(g))
+    import os
+
+    import onnxruntime as ort
+    from insightface.model_zoo import model_zoo as mz
+
+    threads = int(os.environ.get("SLURM_CPUS_PER_TASK", "3"))  # (as likeness: not the whole node's 96 threads)
+
+    def _init(self, model_path, **kw):
+        so = ort.SessionOptions()
+        so.intra_op_num_threads, so.inter_op_num_threads = threads, 1
+        ort.InferenceSession.__init__(self, model_path, sess_options=so, **kw)
+        self.model_path = model_path
+
+    mz.PickableInferenceSession.__init__ = _init
+    app = FaceAnalysis(name="buffalo_l", root=args.insightface_root, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    app.prepare(ctx_id=0, det_size=(640, 640))
+
+    def detect(rgb):
+        fs = app.get(np.ascontiguousarray(np.asarray(rgb)[..., ::-1]))
+        return max(fs, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])) if fs else None
+
+    W, H = PORTRAIT["size"]
+    fpx = (H / 2) / math.tan(math.radians(PORTRAIT["fov"]) / 2)
+    K = np.array([[fpx, 0, W / 2], [0, fpx, H / 2], [0, 0, 1.0]])
+
+    def render_rgbd(yaw):
+        eye = orbit_eye(head, PORTRAIT["distance"], yaw)
+        V = look_at(eye, head)
+        with torch.no_grad():
+            img, _, _ = rasterization(gs["means"], gs["quats"], gs["scales"], gs["opacities"], gs["colors"],
+                                      torch.as_tensor(V, dtype=torch.float32, device="cuda")[None],
+                                      torch.as_tensor(K, dtype=torch.float32, device="cuda")[None], W, H,
+                                      near_plane=0.05, sh_degree=gs["sh_degree"], render_mode="RGB+ED",
+                                      backgrounds=torch.ones(1, 3, device="cuda"))  # (gsplat adds the depth's)
+        a = img[0].cpu().numpy()
+        return (a[..., :3].clip(0, 1) * 255).astype(np.uint8), a[..., 3], V, eye
+
+    def procrustes_err(a, c):  # landmarks a vs c after the best similarity, in eye distances
+        a0, c0 = a - a.mean(0), c - c.mean(0)
+        s = np.linalg.norm(c0) / max(np.linalg.norm(a0), 1e-9)
+        u, _, vt = np.linalg.svd(a0.T @ c0)
+        return float(np.linalg.norm(a0 @ (u @ vt) * s - c0) / len(a) / max(np.linalg.norm(c[45] - c[36]), 1e-6))
+
+    inner = np.arange(17, 68)  # brows, nose, eyes, mouth (the jaw contour follows the silhouette: not for fitting)
+    acc = np.zeros((len(face_ids), 3))
+    wsum = np.zeros(len(face_ids))
+    wmax = np.zeros(len(face_ids))
+    report = {"photos": {}}
+    renders = {y: render_rgbd(y) for y in np.arange(-60, 61, 7.5)}
+    rl = {y: detect(r[0]) for y, r in renders.items()}
+    for path in [Path(p) for p in args.photos.replace(":", ",").split(",") if p]:
+        im = np.asarray(ImageOps.exif_transpose(Image.open(path)).convert("RGB"))
+        f = detect(im)
+        if f is None or getattr(f, "landmark_3d_68", None) is None:
+            print(f"[project] {path.name}: no face", flush=True)
+            continue
+        lp = f.landmark_3d_68[:, :2].astype(np.float64)
+        de = float(np.linalg.norm(lp[45] - lp[36]))
+        if de < args.min_eye_px:
+            print(f"[project] {path.name}: face too small ({de:.0f} px between the eyes)", flush=True)
+            continue
+        # mid-point faces (a shout, a squint into the sun) would bake teeth or half-shut lids into his: not those
+        mouth = float(np.linalg.norm(lp[62] - lp[66])) / de
+        eyes = float(np.mean([np.linalg.norm(lp[i] - lp[j]) for i, j in ((37, 41), (38, 40), (43, 47), (44, 46))])) / de
+        if mouth > args.max_mouth or eyes < args.min_eyes:
+            print(f"[project] {path.name}: mouth {mouth:.3f}, eyes {eyes:.3f}: skipped", flush=True)
+            continue
+        errs = {y: procrustes_err(r.landmark_3d_68[inner, :2], lp[inner]) for y, r in rl.items() if r is not None}
+        yaw = min(errs, key=errs.get)
+        rgb_r, depth, V, eye = renders[yaw]
+        lr = rl[yaw].landmark_3d_68[:, :2].astype(np.float64)
+        # the render's landmarks in 3D, from its depth
+        ui = np.clip(np.round(lr).astype(int), 0, [W - 1, H - 1])
+        d = depth[ui[:, 1], ui[:, 0]]
+        cam = np.c_[(lr[:, 0] - K[0, 2]) / fpx * d, (lr[:, 1] - K[1, 2]) / fpx * d, d]
+        Vi = np.linalg.inv(V)
+        X = (Vi[:3, :3] @ cam.T).T + Vi[:3, 3]
+        # the photo's camera: 3D -> 2D affine, least squares on the inner landmarks
+        A = np.c_[X[inner], np.ones(len(inner))]
+        P, *_ = np.linalg.lstsq(A, lp[inner], rcond=None)
+        fit = float(np.sqrt(((A @ P - lp[inner]) ** 2).sum(1).mean()) / de)
+        if fit > args.max_fit:
+            print(f"[project] {path.name}: yaw {yaw}, fit off by {fit:.3f} eye distances: skipped", flush=True)
+            continue
+        # which face Gaussians the render sees (its depth), and how squarely
+        x = means[face_ids]
+        xc = (V[:3, :3] @ x.T).T + V[:3, 3]
+        u = np.round(xc[:, 0] / xc[:, 2] * fpx + K[0, 2]).astype(int)
+        v = np.round(xc[:, 1] / xc[:, 2] * fpx + K[1, 2]).astype(int)
+        inside = (u >= 0) & (u < W) & (v >= 0) & (v < H)
+        seen = np.zeros(len(x), dtype=bool)
+        seen[inside] = xc[inside, 2] <= depth[v[inside], u[inside]] + args.depth_tol
+        radial = x - (head - np.array([0.0, 0.05, 0.0]))
+        radial /= np.linalg.norm(radial, axis=1, keepdims=True)
+        view = (eye - x) / np.linalg.norm(eye - x, axis=1, keepdims=True)
+        facing = np.clip((radial * view).sum(1), 0, 1) ** 1.5
+        # inside the photo's landmark outline, fading out over its edge
+        uv = np.c_[x, np.ones(len(x))] @ P
+        hull = cv2.convexHull(lp.astype(np.float32))
+        edge = np.array([cv2.pointPolygonTest(hull, (float(a), float(c)), True) for a, c in uv]) / de
+        rim = np.clip(edge / args.fade, 0, 1)
+        quality = min(1.0, de / 120.0) * math.exp(-((fit / 0.03) ** 2))
+        if quality < args.min_quality:
+            print(f"[project] {path.name}: quality {quality:.2f} (eyes {de:.0f} px, fit {fit:.3f}): skipped", flush=True)
+            continue
+        w = seen * facing * rim * quality
+        ok = w > 0.01
+        if ok.sum() < 200:
+            print(f"[project] {path.name}: only {ok.sum()} Gaussians seen: skipped", flush=True)
+            continue
+        col = np.stack([cv2.remap(im[..., c].astype(np.float32), uv[ok, 0].astype(np.float32)[None],
+                                  uv[ok, 1].astype(np.float32)[None], cv2.INTER_LINEAR)[0] for c in range(3)], 1) / 255
+        core = w[ok] > 0.5
+        shift = old[face_ids[ok]][core].mean(0) - col[core].mean(0) if core.any() else 0
+        wp = w[ok] ** args.power
+        acc[ok] += wp[:, None] * np.clip(col + args.tone * shift, 0, 1)
+        wsum[ok] += wp
+        wmax[ok] = np.maximum(wmax[ok], w[ok] / max(quality, 1e-6))
+        report["photos"][path.name] = {"yaw": float(yaw), "fitEyeDist": round(fit, 4), "coloured": int(ok.sum()), "quality": round(quality, 3),
+                                       "eyePx": round(de, 1), "mouth": round(mouth, 3), "eyes": round(eyes, 3)}
+        print(f"[project] {path.name}: yaw {yaw}, fit {fit:.3f}, {ok.sum()} Gaussians", flush=True)
+    if not report["photos"]:
+        raise SystemExit("project: no photo could be used")
+    a = np.clip(wmax / 0.5, 0, 1) * args.strength  # fully where some photo saw it squarely, fading toward the edges
+    new = old.copy()
+    m = wsum > 0
+    proj = acc[m] / wsum[m, None]
+    if args.shade_k > 0:  # the head's broad shading, the photos' detail
+        from scipy.spatial import cKDTree
+
+        lum_w = np.array([0.299, 0.587, 0.114])
+        pos = np.asarray(g.xyz, dtype=np.float64)[face_ids[m]]
+        _, nb = cKDTree(pos).query(pos, k=min(args.shade_k, len(pos)))
+        ratio = (old[face_ids[m]] @ lum_w)[nb].mean(1) / np.maximum((proj @ lum_w)[nb].mean(1), 1e-3)
+        proj = np.clip(proj * np.clip(ratio, 0.6, 1.6)[:, None], 0, 1)
+    new[face_ids[m]] = (1 - a[m, None]) * old[face_ids[m]] + a[m, None] * proj
+    g.f_dc[:] = ((new - 0.5) / SH_C0).astype(g.f_dc.dtype)
+    write_ply(b / av["file"], g)
+    report.update(strength=args.strength, tone=args.tone, power=args.power, shadeK=args.shade_k, recoloured=int(m.sum()),
+                  meanBlend=round(float(a[m].mean()), 3))
+    (b / "project.json").write_text(json.dumps(report, indent=1) + "\n")
+    print(f"[project] {report['recoloured']} face Gaussians recoloured from {len(report['photos'])} photos")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1359,6 +1734,39 @@ def main() -> None:
     k.add_argument("--insightface-root", required=True)
     k.add_argument("--shape-photos", default="", help="frontal photos (paths, comma-separated) to compare proportions with")
     k.add_argument("--out", required=True)
+    h = sub.add_parser("headband")
+    h.add_argument("bundle")
+    h.add_argument("--above-eyes", type=float, default=0.04, help="the band's lower edge over the eyes at the front (m)")
+    h.add_argument("--width", type=float, default=0.04)
+    h.add_argument("--drop", type=float, default=0.03, help="how much lower it sits at the back (m)")
+    h.add_argument("--thickness", type=float, default=0.004, help="how far it stands off the hair's smoothed outline (m)")
+    h.add_argument("--radius-pct", type=float, default=70.0, help="the hair outline: this percentile of radius per direction")
+    h.add_argument("--colour", type=float, nargs=3, default=[0.88, 0.88, 0.89])
+    hr = sub.add_parser("hair")
+    hr.add_argument("bundle")
+    hr.add_argument("--volume", type=float, default=0.08)
+    hr.add_argument("--wave", type=float, default=0.004)
+    hr.add_argument("--highlights", type=float, default=0.3)
+    hr.add_argument("--highlight-colour", type=float, nargs=3, default=[0.45, 0.31, 0.2])
+    pj = sub.add_parser("project")
+    pj.add_argument("bundle")
+    pj.add_argument("--photos", required=True, help="photos the head was built from (comma-separated paths)")
+    pj.add_argument("--insightface-root", required=True)
+    pj.add_argument("--strength", type=float, default=0.85)
+    pj.add_argument("--power", type=float, default=6.0, help="photo weights to this power: the best photo per Gaussian wins")
+    pj.add_argument("--min-quality", type=float, default=0.0, help="skip photos below this (small faces, loose fits)")
+    pj.add_argument("--shade-k", type=int, default=0, help="neighbours the broad shading is measured over (0: keep the photos')")
+    pj.add_argument("--tone", type=float, default=1.0, help="share of the photos' tone shifted to the head's own")
+    pj.add_argument("--fade", type=float, default=0.15, help="fade-out over the landmark outline (eye distances)")
+    pj.add_argument("--depth-tol", type=float, default=0.006, help="seen: within this of the render's depth (m)")
+    pj.add_argument("--max-fit", type=float, default=0.08, help="skip a photo whose camera fit is off by more (eye distances)")
+    pj.add_argument("--min-eye-px", type=float, default=40.0)
+    pj.add_argument("--max-mouth", type=float, default=0.05, help="inner lips apart, in eye distances: more is a shout")
+    pj.add_argument("--min-eyes", type=float, default=0.055, help="lids apart, in eye distances: less is a squint")
+    fc = sub.add_parser("face")
+    fc.add_argument("bundle")
+    fc.add_argument("--nose-m", type=float, default=0.0)
+    fc.add_argument("--mouth", type=float, default=1.0)
     u = sub.add_parser("audit")
     u.add_argument("bundles", nargs="+", help="label=bundle_dir")
     u.add_argument("--out", required=True)
@@ -1371,7 +1779,8 @@ def main() -> None:
     w.add_argument("--max-sat", type=float, default=0.12, help="saturation (max-min RGB) below which a Gaussian is kit")
     args = p.parse_args()
     {"colour": colour, "prep": prep, "build": build, "compare": compare, "whites": whites, "polish": polish,
-     "audit": audit, "likeness": likeness}[args.cmd](args)
+     "audit": audit, "likeness": likeness, "headband": headband,
+     "face": face, "hair": hair, "project": project}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,8 @@ hair. Writes the bundle in place (keeps avatar/avatar.raw.ply, avatar/skin.raw.b
    --hand-rgb (the face's skin) when given.
 12. --keep-colours: the geometry and solidity passes only; a white kit keeps the photos' colours for
    lhmpp_avatar.py whites.
+13. --neck-fill (alone, on a finished bundle): a solid neck under the one there, on SMPL-X's surface and skinned as
+   SMPL-X, so a turned head never opens a see-through gap beside the collar (see neck_fill()).
 """
 
 from __future__ import annotations
@@ -440,6 +442,155 @@ def shirt_surface(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, layout:
     return res
 
 
+def neck_fill(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, joints: np.ndarray, xyz: np.ndarray,
+              alpha: np.ndarray, ref: np.ndarray, rgb: np.ndarray, bottom_y: float, top_front_y: float,
+              top_back_y: float, spacing: float = 0.0025, seed: int = 0) -> dict:
+    """A neck that stays whole when the head turns. A head model's neck turns with the head while the body's neck
+    below it hardly does, so with the head turned (eye contact turns it up to 35 degrees) a gap opens between them and
+    the collar: see-through, with the jacket's dark edge and the turned head's own smoke showing in it. Underneath the
+    neck that's there, a solid one: SMPL-X's neck surface from `bottom_y` (inside the collar) up to under the jaw
+    (`top_front_y`) and, behind, under the hair (`top_back_y`), filled with small flat opaque discs (two layers),
+    skinned with SMPL-X's own smooth weights so it bends as one surface, each 2 mm inside the opaque Gaussians already
+    over it (never outside SMPL-X's surface: hidden at rest, there when a gap opens). Its colour at each point is the
+    median of the 12 nearest `ref` Gaussians: what covers it at rest (skin and hair under the head, the jacket under
+    the collar, so a gap in the collar still shows the jacket). Returns xyz, rgb, scale, rot, idx, q (empty when no
+    face of SMPL-X's neck is in the band)."""
+    from lucid_avatars.head_distill_core import face_skin, sample_surface
+
+    vn = face_normals_at(verts, faces)
+    cen = verts[faces].mean(1)
+    neck = joints[J["neck"]]
+    rel = cen - neck
+    r = np.hypot(rel[:, 0], rel[:, 2])
+    front = 0.5 + 0.5 * rel[:, 2] / np.maximum(r, 1e-9)  # 1 at the throat, 0 at the nape
+    top = top_back_y + (top_front_y - top_back_y) * front
+    neckish = np.isin(np.argmax(lbs, 1), [J["neck"], J["head"], J["spine3"]])[faces].all(1)
+    pick = neckish & (cen[:, 1] >= bottom_y) & (cen[:, 1] <= top) & (r < 0.075)
+    fids = np.flatnonzero(pick)
+    if len(fids) == 0:
+        return {}
+    tri = verts[faces[fids]]
+    area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1).sum()
+    fid, bary, p, _ = sample_surface(verts, faces, fids, int(area / spacing ** 2), seed=seed)
+    sn = np.einsum("nk,nkj->nj", bary, vn[faces[fid]])
+    sn /= np.maximum(np.linalg.norm(sn, axis=1, keepdims=True), 1e-9)
+    # how deep: 2 mm inside the outer opaque layer over each point, never outside SMPL-X's own surface
+    solid = np.flatnonzero(alpha > 0.6)
+    _, nb = cKDTree(xyz[solid]).query(p, k=16)
+    outer = np.percentile(np.einsum("nkj,nj->nk", xyz[solid][nb] - p[:, None], sn), 75, axis=1)
+    p = p + np.clip(outer - 0.002, -0.008, 0.0)[:, None] * sn
+    refs = np.flatnonzero(ref)
+    _, nr = cKDTree(xyz[refs]).query(p, k=12)
+    col = np.median(rgb[refs][nr], axis=1)
+    h_idx, h_q = face_skin(fid, bary, faces, lbs)
+    out = {k: [] for k in ("xyz", "rgb", "scale", "rot", "idx", "q")}
+    for depth, width in ((0.0, 0.9), (-0.0008, 1.2)):
+        out["xyz"].append(p + depth * sn)
+        out["rgb"].append(col)
+        out["scale"].append(np.log(np.tile([width * spacing, width * spacing, 0.0003], (len(p), 1))))
+        out["rot"].append(disc_quats(sn))
+        out["idx"].append(h_idx)
+        out["q"].append(h_q)
+    return {k: np.concatenate(v) for k, v in out.items()}
+
+
+def swings_off(xyz: np.ndarray, idx: np.ndarray, q: np.ndarray, verts: np.ndarray, lbs: np.ndarray, joints: np.ndarray,
+               yaw_deg: float = 35.0, off_m: float = 0.008) -> np.ndarray:
+    """Gaussians that stand on SMPL-X's surface at rest but leave it by more than `off_m` (further than at rest) with
+    the head turned either way by `yaw_deg`, as the players turn it for eye contact (the neck 30%, the head 70%):
+    skinned unlike the body round them, they swing out as wisps."""
+    from lucid_avatars.skinning import skin_matrices
+
+    def pose(M: np.ndarray, x: np.ndarray, w: np.ndarray) -> np.ndarray:  # linear blend skinning, w: (n, 55)
+        B = np.einsum("nj,jab->nab", w, M)
+        return np.einsum("nab,nb->na", B[:, :3, :3], x) + B[:, :3, 3]
+
+    wg = np.zeros((len(xyz), 55))
+    np.add.at(wg, (np.repeat(np.arange(len(xyz)), idx.shape[1]), idx.reshape(-1).astype(np.int64)), q.reshape(-1) / 255.0)
+    near = np.isin(np.argmax(lbs, 1), [J["neck"], J["head"], J["jaw"], J["spine3"]])
+    d0 = cKDTree(verts[near]).query(xyz)[0]
+    out = np.zeros(len(xyz), dtype=bool)
+    for yaw in (-yaw_deg, yaw_deg):
+        p = np.zeros((55, 3))
+        p[J["neck"], 1], p[J["head"], 1] = math.radians(0.3 * yaw), math.radians(0.7 * yaw)
+        M = skin_matrices(joints, np.array([0.0, 0.0, 0.0, 1.0]), np.zeros(3), p)
+        d1 = cKDTree(pose(M, verts, lbs)[near]).query(pose(M, xyz, wg))[0]
+        out |= (d1 > off_m) & (d1 - d0 > off_m)
+    return out
+
+
+def neck_fill_bundle(root: Path, smplx: Path, below_m: float = 0.02, back_m: float = 0.05, faint: float = 0.4,
+                     lobe_m: float = 0.012) -> dict:
+    """--neck-fill on a finished bundle (a head model's head included): only this pass. The fill goes in just before
+    the head range (uika_head.json's head.first moves up by its size), so the head stays the last, contiguous range.
+    With a solid neck under it, the smoke round the neck (Gaussians fainter than `faint` in its band: the seam's
+    cross-fade, the collar's soft edge) has nothing left to hide and only shows as wisps when the head turns: it
+    goes (the face is never touched)."""
+    dream = json.loads((root / "dream.json").read_text())
+    av = dream["avatar"]
+    for k in ("reality", "expr"):
+        if av.get(k):
+            raise SystemExit(f"--neck-fill: the bundle has avatar.{k}, which would need the same Gaussians inserted")
+    ply, skin = root / av["file"], root / av["skin"]
+    g = read_ply(ply)
+    idx, q = read_skin_bin(skin)
+    joints, verts, lbs = _smplx_rest(smplx, Motion.load(root / av["motion"]).betas)
+    faces = np.asarray(np.load(smplx, allow_pickle=True)["f"], dtype=np.int64)
+    head_report = root / "uika_head.json"
+    rep = json.loads(head_report.read_text()) if head_report.is_file() else None
+    first = int(rep["head"]["first"]) if rep else len(g)
+    rgb = np.clip(g.f_dc * SH_C0 + 0.5, 0, 1)
+    alpha = 1 / (1 + np.exp(-np.asarray(g.opacity, dtype=np.float64).reshape(-1)))
+    seam = rep["seam"] if rep else {"y": float(joints[J["neck"], 1]) + 0.06, "chinY": float(joints[J["head"], 1]) - 0.07}
+    bottom_y, top_front_y, top_back_y = (float(joints[J["neck"], 1]) - below_m, float(seam["chinY"]) - 0.012,
+                                         float(seam["y"]) + back_m)
+    xyz = np.asarray(g.xyz, dtype=np.float64)
+    rel = xyz - joints[J["neck"]]
+    r = np.hypot(rel[:, 0], rel[:, 2])
+    fr = 0.5 + 0.5 * rel[:, 2] / np.maximum(r, 1e-9)
+    in_band = (xyz[:, 1] >= bottom_y - 0.01) & (xyz[:, 1] <= top_back_y + (top_front_y - top_back_y) * fr) & (r < 0.1)
+    face = (rel[:, 2] > 0.03) & (xyz[:, 1] > top_front_y)
+    smoke = in_band & (alpha < faint) & ~face
+    # what leaves the neck when the head turns: skinned unlike the neck round it, it swings out as a wisp
+    swing = in_band & ~face & swings_off(xyz, idx, q, verts, np.asarray(lbs), joints)
+    # and soft skin standing off the neck (a lobe behind the nape the hair hides until the head turns): over a solid
+    # neck it has nothing to show; hair (dark) and the jacket's collar stay
+    near = np.isin(np.argmax(lbs, 1), [J["neck"], J["head"], J["jaw"], J["spine3"]])
+    off = cKDTree(verts[near]).query(xyz)[0]
+    lum, sat = rgb @ LUM, rgb.max(1) - rgb.min(1)
+    lobe = in_band & ~face & (off > lobe_m) & (lum > 0.25) & (sat > 0.06)
+    swing |= lobe
+    fill = neck_fill(verts, faces, np.asarray(lbs), joints, xyz, alpha, (alpha > 0.6) & ~smoke, rgb,
+                     bottom_y=bottom_y, top_front_y=top_front_y, top_back_y=top_back_y)
+    if not fill:
+        raise SystemExit("--neck-fill: no SMPL-X neck in the band")
+    m = len(fill["xyz"])
+    keep = ~smoke & ~swing
+    first_kept = int(keep[:first].sum())
+
+    def ins(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        a = a[keep]
+        return np.concatenate([a[:first_kept], b.astype(a.dtype), a[first_kept:]])
+
+    g_out = replace(g, xyz=ins(g.xyz, fill["xyz"]), f_dc=ins(g.f_dc, (fill["rgb"] - 0.5) / SH_C0),
+                    f_rest=ins(g.f_rest, np.zeros((m, g.f_rest.shape[1]))),
+                    opacity=ins(g.opacity, np.full(m, math.log(0.98 / 0.02))),
+                    scale=ins(g.scale, fill["scale"]), rotation=ins(g.rotation, fill["rot"]))
+    write_ply(ply, g_out)
+    write_skin_bin(skin, ins(idx, fill["idx"]), ins(q, fill["q"]))
+    if rep:
+        rep["head"]["first"] = first_kept + m
+        rep["head"]["gaussians"] = int(keep[first:].sum())
+        rep["neckFill"] = {"gaussians": m, "belowNeckM": below_m, "backAboveSeamM": back_m, "smokeDropped": int(smoke.sum()),
+                           "smokeBelow": faint, "swingDropped": int((swing & ~smoke & ~lobe).sum()),
+                           "lobeDropped": int((lobe & ~smoke).sum())}
+        head_report.write_text(json.dumps(rep, indent=2) + "\n")
+    out = {"neckFill": m, "insertedAt": first_kept, "smokeDropped": int(smoke.sum()),
+           "swingDropped": int((swing & ~smoke & ~lobe).sum()), "lobeDropped": int((lobe & ~smoke).sum())}
+    print("[cleanup] neck fill", out)
+    return out
+
+
 def collar_mirror(xyz: np.ndarray, rgb: np.ndarray, scale: np.ndarray, region: np.ndarray, mid_x: float,
                   reach: float = 0.008, spot_region: np.ndarray | None = None, jacket: np.ndarray | None = None
                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -538,6 +689,9 @@ def main(argv=None) -> None:
     p.add_argument("--from-current", action="store_true", help="start from the bundle as it is (passes another tool made stay), not from avatar.raw.ply")
     p.add_argument("--keep-colours", action="store_true", help="skip the suit-minded colour passes (specks, sleeve logos, back smears, trouser blobs): a white kit keeps its colours for lhmpp_avatar.py whites")
     p.add_argument("--back-collar-m", type=float, default=None, help="the back pass reaches up to this far above the neck joint (m; the shirt collar's band above it stays); default 5 cm below it")
+    p.add_argument("--shoulder-tuft", action="store_true", help="the jacket on top of the shoulders beside the neck: no more than 1.2 cm off the body, nothing lighter than the jacket")
+    p.add_argument("--collar-skin", action="store_true", help="clothes up to 3.5 cm above the neck joint stop following the head: their head and jaw weights move to the neck")
+    p.add_argument("--neck-fill", action="store_true", help="on a finished bundle, only this pass: a solid neck under the one there, skinned as SMPL-X, so no gap opens beside the collar when the head turns")
     p.add_argument("--rebuild-shirt", action="store_true", help="with --shirt-clean: the shirt front rebuilt as fresh flat opaque discs on the body's surface (no cobblestones)")
     p.add_argument("--shirt-texture", type=float, default=0.0, help="with --rebuild-shirt: a faint cloth grain in its shading (e.g. 0.03)")
     p.add_argument("--collar-mirror", action="store_true", help="a dark patch on one side of the collar whose mirror image is the shirt's white takes it")
@@ -545,6 +699,9 @@ def main(argv=None) -> None:
     p.add_argument("--shirt-clean", choices=["tie", "open"], default=None,
                    help="the shirt between the lapels one clean white (grey blotches go) and, with tie, the tie one dark cloth")
     a = p.parse_args(argv)
+    if a.neck_fill:
+        neck_fill_bundle(a.bundle, a.smplx)
+        return
 
     root = a.bundle
     dream = json.loads((root / "dream.json").read_text())
@@ -915,6 +1072,46 @@ def main(argv=None) -> None:
             ni, nq = quantize_top4(avg[odd])
             idx[bi[odd]], q[bi[odd]] = ni, nq
             consistent = int(odd.sum())
+    # 11a. --shoulder-tuft: the jacket on top of the shoulders, beside the neck, stands up in grey tufts LHM++ guessed
+    # (the head hides them until it turns, then they show as a fuzzy blob over the shoulder line): there, nothing
+    # stays more than 1.2 cm off the body, and what is lighter than the jacket takes its local dark colour
+    tuft_n = 0
+    if a.shoulder_tuft:
+        faces_t = np.asarray(np.load(a.smplx, allow_pickle=True)["f"], dtype=np.int64)
+        vn_t = face_normals_at(verts, faces_t)
+        mid_x, neck_y = float(joints[J["spine3"], 0]), float(joints[J["neck"], 1])
+        lat = np.abs(xyz[:, 0] - mid_x)
+        top = keep & ~hands & ~head & (lat > 0.07) & (lat < 0.18) & (xyz[:, 1] > neck_y - 0.01)
+        ti = np.flatnonzero(top)
+        if len(ti):
+            d_t, i_t = cKDTree(verts).query(xyz[ti])
+            off = np.einsum("nj,nj->n", xyz[ti] - verts[i_t], vn_t[i_t])
+            far = off > 0.012
+            xyz[ti[far]] -= (off[far] - 0.012)[:, None] * vn_t[i_t[far]]
+            lum_t = out @ LUM
+            dark_t = top & (lum_t < 0.15)
+            if dark_t.sum() > 20:
+                jc = np.median(out[dark_t], axis=0)
+                light_t = top & (lum_t > float(jc @ LUM) + 0.1) & ((out.max(1) - out.min(1)) < 0.12)
+                out[light_t] = jc
+                tuft_n = int(far.sum() + light_t.sum())
+    # 11b. --collar-skin: below the jaw the clothes don't follow the head. LHM++'s coarse skinning gives the jacket's
+    # collar and lapels a share of the head's and jaw's weights, so when the head turns (eye contact turns it up to
+    # 35 degrees) they tear off the collar by 1-2 cm, a fuzzy dark blob beside the neck: that share moves to the neck
+    collar_n = 0
+    if a.collar_skin:
+        HEAD_J = [J["head"], J["jaw"], J["left_eye"], J["right_eye"]]
+        ii = np.flatnonzero(keep & ~head & (xyz[:, 1] < joints[J["neck"], 1] + 0.035)
+                            & (np.isin(idx, HEAD_J) & (q > 0)).any(1))
+        if len(ii):
+            from lucid_avatars.skinning import quantize_top4
+
+            W = np.zeros((len(ii), 55))
+            np.add.at(W, (np.repeat(np.arange(len(ii)), 4), idx[ii].reshape(-1).astype(np.int64)), q[ii].reshape(-1) / 255.0)
+            W[:, J["neck"]] += W[:, HEAD_J].sum(1)
+            W[:, HEAD_J] = 0
+            idx[ii], q[ii] = quantize_top4(W)
+            collar_n = len(ii)
     lonely_n = 0
     if a.drop_lonely:
         d9, _ = cKDTree(xyz).query(xyz, k=9)
@@ -985,7 +1182,7 @@ def main(argv=None) -> None:
               "evenCloth": a.even_cloth, "evened": evened, "legsLum": a.legs_lum, "legsToned": int(toned.sum()), "legsSolid": int(solid.sum()),
               "feetLum": a.feet_lum, "clothHue": a.cloth_hue, "hued": hued, "reskinnedHips": int(reskinned.sum()),
               "droppedFaint": int(faint.sum()), "madeSolid": int(firm.sum()), "widened": widened,
-              "lightStreaks": int(streaks.sum()), "needlesCapped": needled, "legsRelit": relit, "skinConsistent": consistent,
+              "lightStreaks": int(streaks.sum()), "needlesCapped": needled, "legsRelit": relit, "skinConsistent": consistent, "collarSkin": collar_n, "shoulderTuft": tuft_n,
               "lonelyDropped": lonely_n, "backSmear": a.back_smear, "backCollarM": a.back_collar_m, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "shirtRebuilt": shirt_rebuilt, "collarMirrored": mirrored_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "fromCurrent": a.from_current, "headFirst": head_first, "handShading": a.hand_shading, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
               "of": len(g), "kept": int(keep.sum()) + (len(new_hands["xyz"]) if new_hands else 0)
               + (len(new_shirt["xyz"]) if new_shirt else 0)}

@@ -8,6 +8,8 @@ For each bundle, posed by its own skin.bin (gsplat, the way the players pose it)
   close-ups hands (seated, from across the table), collar and neck seam (front, side, back), jacket hem and hips
             (front, back), knees and crotch (seated front, standing front), shoes and ankles (front, side), back of
             the head (135, 180), under the arms (seated, both sides)
+  turn     with --turn, seated with the head turned to +-35 degrees (as the players turn it for eye contact) and
+            the right arm out, the neck and collar from five sides
   motions  with --motions DIR, the bundle in each clip there (a tennis player's shots: the contact frame) from four
             sides, one sheet per clip
 Each view is drawn twice: colour on grey, and its alpha with every half-transparent pixel inside the person painted
@@ -153,6 +155,37 @@ def render(gs: dict, eye, target, size, fov_deg: float) -> tuple[np.ndarray, np.
     return rgb, av
 
 
+def turned_pose(pose: np.ndarray, yaw: float) -> np.ndarray:
+    """Eye contact as the players do it (apps/webxr/src/look.ts): the neck takes 30% of a yaw about the head's own up
+    axis (neck' = neck . head . D(0.3 yaw) . head^-1) and the head the rest (head' = head . D(0.7 yaw))."""
+    from lucid_avatars.rotations import aa_to_quat, quat_mul, quat_to_aa
+
+    inv = lambda qq: qq * np.array([-1.0, -1.0, -1.0, 1.0])  # noqa: E731  a unit quaternion's inverse, [x, y, z, w]
+    p = np.array(pose, dtype=float).reshape(-1, 3).copy()
+    qh, qn = aa_to_quat(p[J["head"]]), aa_to_quat(p[J["neck"]])
+    d3, d7 = aa_to_quat(np.array([0.0, 0.3 * yaw, 0.0])), aa_to_quat(np.array([0.0, 0.7 * yaw, 0.0]))
+    p[J["neck"]] = quat_to_aa(quat_mul(qn, quat_mul(qh, quat_mul(d3, inv(qh)))))
+    p[J["head"]] = quat_to_aa(quat_mul(qh, d7))
+    return p
+
+
+def turn_views(b: Bundle) -> dict:
+    """Seated, the head turned to either end of the look-at range (+-35 degrees), the right arm reaching out (its
+    elbow straight): the neck, collar and shoulders from 65 degrees either side, both sides and behind, from a little
+    above. Where clothes skinned to the head would tear off the collar."""
+    out = {}
+    m = seated_idle(b.rest, b.motion.betas, seconds=1.0)
+    for yaw in (-35, 35):
+        pose = turned_pose(m.pose[0], math.radians(yaw))
+        pose[J["right_elbow"]] = 0.0
+        M = S.skin_matrices(b.rest, m.root_q[0], m.root_t[0], pose)
+        gs = b.posed(M)
+        neck = (M[J["neck"]] @ np.r_[b.rest[J["neck"]], 1.0])[:3]
+        for a in (65, 295, 90, 270, 180):
+            out[f"turn{yaw:+d}_{a:03d}"] = render(gs, eye_at(neck, 0.8, a, 15), neck, (512, 512), 40.0)
+    return out
+
+
 def motion_views(b: Bundle, files: list[Path]) -> dict:
     """The bundle in other motions (a tennis player's shots and runs): each at its contact frame (else its middle),
     from 0, 90, 180 and 270 degrees, framed like the standing views."""
@@ -264,6 +297,7 @@ def main() -> int:
     p.add_argument("bundles", type=Path, nargs="+")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--label", help="labels, one per bundle, comma- or colon-separated (default: folder names)")
+    p.add_argument("--turn", action="store_true", help="also seated with the head turned +-35 degrees and an arm out, the neck and collar from five sides")
     p.add_argument("--motions", type=Path, help="a folder of motion clips (motion.json frames, e.g. the tennis player's): "
                    "each bundle is also drawn in each one, on its own sheet")
     a = p.parse_args()
@@ -275,6 +309,8 @@ def main() -> int:
         b = Bundle(root)
         v, numbers = views(b)
         v.update(motion_views(b, motions))
+        if a.turn:
+            v.update(turn_views(b))
         report[label] = {"bundle": str(root), **rest_numbers(b), **numbers}
         rows.append((label, v))
         print(label, json.dumps(report[label]), flush=True)
@@ -282,7 +318,9 @@ def main() -> int:
     groups = {"stand": [k for k in keys if k.startswith("stand_")], "seat": [k for k in keys if k.startswith("seat_")
                                                                            and k[5:].isdigit()],
               "close": [k for k in keys if (not k[-3:].isdigit() or not k.startswith(("stand_", "seat_")))
-                        and not k.startswith("mo_")]}
+                        and not k.startswith(("mo_", "turn"))]}
+    if a.turn:
+        groups["turn"] = [k for k in keys if k.startswith("turn")]
     for f in motions:
         groups[f"motion-{f.stem}"] = [k for k in keys if k.startswith(f"mo_{f.stem}_")]
     for name, ks in groups.items():

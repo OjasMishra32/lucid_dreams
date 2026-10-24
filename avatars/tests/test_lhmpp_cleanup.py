@@ -173,3 +173,69 @@ def test_shirt_surface_fills_the_shirt_without_gaps_and_draws_a_tie():
     d = cKDTree(front).query(front, k=2)[0][:, 1]
     assert np.percentile(d, 99) < 2.5 * 0.0025  # no gaps between the discs
     assert (s["q"].sum(1) == 255).all() and (s["idx"][:, 0] == C.J["spine2"]).all()
+
+
+def test_neck_fill_lies_under_the_skin_in_its_colour_and_bends_as_smplx():
+    # a neck: a vertical cylinder (5.5 cm round the neck joint), skinned neck below 8 cm and head above it
+    neck_y, R = 0.10, 0.055
+    th, ys = np.linspace(-np.pi, np.pi, 73)[:-1], np.arange(0.05, 0.2501, 0.005)
+    verts = np.array([[R * np.sin(t), y, R * np.cos(t)] for y in ys for t in th])
+    n = len(th)
+    faces = []
+    for j in range(len(ys) - 1):
+        for i in range(n):
+            a, b, c, d = j * n + i, j * n + (i + 1) % n, (j + 1) * n + i, (j + 1) * n + (i + 1) % n
+            faces += [[a, b, d], [a, d, c]]  # outward normals
+    faces = np.array(faces)
+    lbs = np.zeros((len(verts), 55))
+    lbs[verts[:, 1] < neck_y + 0.08, C.J["neck"]] = 1.0
+    lbs[verts[:, 1] >= neck_y + 0.08, C.J["head"]] = 1.0
+    joints = np.zeros((55, 3))
+    joints[C.J["neck"]] = [0, neck_y, 0]
+    joints[C.J["head"]] = [0, neck_y + 0.16, 0]
+    rng = np.random.default_rng(3)
+    # what's there: skin 2 mm outside SMPL-X, and a dark jacket collar 1.5 cm out at the bottom
+    m = 4000
+    t, y = rng.uniform(-np.pi, np.pi, m), rng.uniform(0.07, 0.24, m)
+    skin = np.c_[(R + 0.002) * np.sin(t), y, (R + 0.002) * np.cos(t)]
+    tj, yj = rng.uniform(-np.pi, np.pi, 800), rng.uniform(0.06, 0.1, 800)
+    jacket = np.c_[(R + 0.015) * np.sin(tj), yj, (R + 0.015) * np.cos(tj)]
+    xyz = np.r_[skin, jacket]
+    rgb = np.r_[np.tile([0.78, 0.6, 0.5], (m, 1)), np.tile([0.08, 0.08, 0.09], (800, 1))]
+    alpha = np.full(len(xyz), 0.95)
+    ref = np.r_[np.ones(m, bool), np.zeros(800, bool)]
+    f = C.neck_fill(verts, faces, lbs, joints, xyz, alpha, ref, rgb, bottom_y=neck_y - 0.02, top_front_y=0.19,
+                    top_back_y=0.22)
+    r = np.hypot(f["xyz"][:, 0], f["xyz"][:, 2])
+    assert r.max() <= R + 1e-4 and np.percentile(r, 50) > R - 0.004  # under the skin, never outside SMPL-X
+    assert f["xyz"][:, 1].min() >= neck_y - 0.02 - 1e-3 and f["xyz"][:, 1].max() <= 0.22 + 1e-3
+    front = f["xyz"][:, 2] > 0.04
+    assert f["xyz"][front, 1].max() <= 0.19 + 0.006  # lower at the throat than at the nape
+    assert np.allclose(f["rgb"], [0.78, 0.6, 0.5], atol=0.02)  # his skin's colour, never the jacket's
+    assert set(np.unique(f["idx"][f["q"] > 0])) <= {C.J["neck"], C.J["head"]} and (f["q"].sum(1) == 255).all()
+    half = len(f["xyz"]) // 2
+    d = cKDTree(f["xyz"][:half]).query(f["xyz"][:half], k=2)[0][:, 1]
+    assert np.percentile(d, 99) < 2.5 * 0.0025  # no gaps
+
+
+def test_swings_off_finds_what_a_turned_head_leaves_behind():
+    # a head on a neck: SMPL-X's surface there follows the head; one Gaussian on it follows the head too (stays),
+    # one beside it is skinned to the chest (left behind when the head turns: a wisp)
+    from lucid_avatars.skinning import NUM_JOINTS
+
+    joints = np.zeros((NUM_JOINTS, 3))
+    joints[C.J["spine3"]] = [0, 0.0, 0]
+    joints[C.J["neck"]] = [0, 0.1, 0]
+    joints[C.J["head"]] = [0, 0.25, 0]
+    th = np.linspace(-np.pi, np.pi, 60, endpoint=False)
+    # an oval neck and head, deeper than wide and set forward of the joints (a real neck isn't a cylinder round them)
+    verts = np.array([[0.045 * np.sin(t), y, 0.02 + 0.075 * np.cos(t)] for y in np.arange(0.12, 0.3, 0.005) for t in th])
+    lbs = np.zeros((len(verts), 55))
+    lbs[:, C.J["head"]] = 1.0
+    xyz = np.array([[0.0, 0.2, -0.056], [0.0, 0.2, -0.0565]])  # at the nape, on the surface
+    idx = np.zeros((2, 4), np.uint8)
+    idx[0, 0], idx[1, 0] = C.J["head"], C.J["spine3"]
+    q = np.zeros((2, 4), np.uint8)
+    q[:, 0] = 255
+    out = C.swings_off(xyz, idx, q, verts, lbs, joints, off_m=0.005)
+    assert not out[0] and out[1]

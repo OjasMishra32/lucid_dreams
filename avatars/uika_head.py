@@ -1124,7 +1124,8 @@ def cmd_judge(a) -> int:
 def cmd_rebody(a) -> int:
     """The head a distill fitted (the bundle `--head`, its head range from uika_head.json) on another cleaning of the
     same body (`--body`: the same LHM++ person, same skeleton and seam), cut at the same seam: the face stays exactly
-    as fitted (identity unchanged), the clothes get the new pass. Writes `--out` (a copy of `--head` with avatar.ply,
+    as fitted (identity unchanged), the clothes get the new pass; --drop-faded drops what the cut's cross-fade left of
+    the body's own neck (near-transparent smoke). Writes `--out` (a copy of `--head` with avatar.ply,
     skin.bin, cleanup.json and uika_head.json replaced); then run finish on it."""
     from lucid_avatars.skinning import SKELETON_FILE, read_skin_bin, write_skin_bin
 
@@ -1143,6 +1144,18 @@ def cmd_rebody(a) -> int:
     idx, q = read_skin_bin(body_b / bd["avatar"]["skin"])
     seam_y = float(report["seam"]["y"])
     body_k, keep_b, _ = D.cut_body(body, idx, q, seam_y)
+    faded_n = 0
+    if a.drop_faded:  # the cut fades the body's own neck out under the seam: left in, it is smoke beside a turned head
+        kept = np.flatnonzero(keep_b)
+        dom_k = idx[kept, np.argmax(q[kept], 1)]
+        alpha_k = 1 / (1 + np.exp(-np.asarray(body_k.opacity).reshape(-1)))
+        faded = (alpha_k < a.drop_faded) & np.isin(dom_k, [J["neck"], J["head"], J["jaw"], J["left_eye"], J["right_eye"]])
+        if faded.any():
+            stay = ~faded
+            body_k = Gaussians(xyz=body_k.xyz[stay], f_dc=body_k.f_dc[stay], f_rest=body_k.f_rest[stay],
+                               opacity=body_k.opacity[stay], scale=body_k.scale[stay], rotation=body_k.rotation[stay])
+            keep_b[kept[faded]] = False
+            faded_n = int(faded.sum())
     head = Gaussians(xyz=g_h.xyz[first:], f_dc=g_h.f_dc[first:], f_rest=g_h.f_rest[first:], opacity=g_h.opacity[first:],
                      scale=g_h.scale[first:], rotation=g_h.rotation[first:])
     h_idx, h_q = i_h[first:], q_h[first:]
@@ -1178,6 +1191,38 @@ def cmd_rebody(a) -> int:
             head = Gaussians(xyz=head.xyz[keep_h], f_dc=f_dc[keep_h], f_rest=head.f_rest[keep_h],
                              opacity=head.opacity[keep_h], scale=head.scale[keep_h], rotation=head.rotation[keep_h])
             h_idx, h_q = h_idx[keep_h], h_q[keep_h]
+    hairline_n = 0
+    if a.neck_hairline:  # short hair ends at the earlobes and a little lower at the nape: below that, the neck
+        from scipy.spatial import cKDTree
+
+        side_d, back_d = (float(v) for v in a.neck_hairline.split(":"))
+        jaw_y, hj, nj = float(rest_h[22, 1]), rest_h[15], rest_h[12]
+        axis = (hj - nj) / np.linalg.norm(hj - nj)
+        rgb = np.clip(head.f_dc * SH_C0 + 0.5, 0, 1)
+        lum, sat = rgb @ np.array([0.299, 0.587, 0.114]), rgb.max(1) - rgb.min(1)
+        rel = head.xyz - nj
+        along = rel @ axis
+        radial = rel - along[:, None] * axis
+        r = np.linalg.norm(radial, axis=1)
+        behind = head.xyz[:, 2] < hj[2] - 0.03
+        side = (np.abs(head.xyz[:, 0] - hj[0]) > 0.035) & (head.xyz[:, 2] < hj[2])  # behind the ears, never the face
+        y = head.xyz[:, 1]
+        hair = (lum < 0.28) & (((y < jaw_y - side_d) & side & ~behind) | ((y < jaw_y - back_d) & behind))
+        skin = (lum > 0.3) & (sat > 0.1) & (y < jaw_y)
+        if hair.any() and skin.sum() > 50:
+            ids = np.flatnonzero(hair)
+            sk = np.flatnonzero(skin)
+            _, nn = cKDTree(head.xyz[sk]).query(head.xyz[ids], k=8)
+            rgb[ids] = np.median(rgb[sk][nn], axis=1)  # the neck's own skin there
+            r_skin = np.median(r[sk][nn], axis=1)  # and on its surface: nothing stands off it
+            pull = r[ids] > r_skin + 0.002
+            k = ids[pull]
+            scale_r = (r_skin[pull] + 0.002) / np.maximum(r[k], 1e-6)
+            xyz = head.xyz.copy()
+            xyz[k] = nj + along[k, None] * axis + radial[k] * scale_r[:, None]
+            head = Gaussians(xyz=xyz, f_dc=(rgb - 0.5) / SH_C0, f_rest=head.f_rest, opacity=head.opacity,
+                             scale=head.scale, rotation=head.rotation)
+            hairline_n = len(ids)
     if out.resolve() != head_b.resolve():
         if out.exists():
             if not (out / REPORT_FILE).is_file():
@@ -1191,7 +1236,9 @@ def cmd_rebody(a) -> int:
     report["head"].update(first=int(keep_b.sum()), bodyKept=int(keep_b.sum()), bodyDropped=int((~keep_b).sum()),
                           gaussians=len(head))
     report["rebody"] = {"body": str(body_b), "headFrom": str(head_b), "headLonelyDropped": lonely,
-                        "sideHairToSkin": trimmed, "sideHairDropped": dropped_hair, "trimSideHairM": a.trim_side_hair}
+                        "sideHairToSkin": trimmed, "sideHairDropped": dropped_hair, "trimSideHairM": a.trim_side_hair,
+                        "fadedNeckDropped": faded_n, "dropFaded": a.drop_faded, "neckHairline": a.neck_hairline,
+                        "hairToNeck": hairline_n}
     if (body_b / "cleanup.json").is_file():
         shutil.copy(body_b / "cleanup.json", out / "cleanup.json")
         report["bodyCleanup"] = json.loads((body_b / "cleanup.json").read_text())
@@ -1249,6 +1296,10 @@ def main() -> int:
     r.add_argument("--body", type=Path, required=True, help="the same person's body, cleaned anew")
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--head-lonely", type=float, default=0.0, help="drop head Gaussians whose 8 nearest average further (m)")
+    r.add_argument("--neck-hairline", type=str, default=None,
+                   help="SIDE:BACK metres below the jaw joint where the hair ends (e.g. 0.02:0.035); below it, on the neck's back and sides, the head's dark Gaussians become the neck's skin, on its surface")
+    r.add_argument("--drop-faded", type=float, default=None,
+                   help="drop the body's neck, head and jaw Gaussians the seam's cross-fade left fainter than this (the smoke a turned head shows beside the neck)")
     r.add_argument("--trim-side-hair", type=float, default=None,
                    help="hair at the sides of the neck more than this (m) below the jaw joint becomes neck skin (or goes, if it hangs free)")
     f = sub.add_parser("finish", help="after lhmpp_cleanup.py: posed check, preview, thumb, validate")
