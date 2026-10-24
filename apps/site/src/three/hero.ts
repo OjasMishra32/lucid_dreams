@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PERSON } from "../config";
+import { heroPerson, holdsReplay } from "../people";
 import { contactShadow, floorGlow, Person } from "./person";
 import { clamp01, damp, easeInOut, onTick, reducedMotion, smooth } from "../motion";
 import { Stage } from "./stage";
@@ -15,7 +15,8 @@ export async function mountHero(host: HTMLElement, figure: HTMLElement): Promise
   const stage = new Stage(host, { splats: true, fov: 22 });
   let person: Person;
   try {
-    person = await Person.load(PERSON);
+    const { moving, still } = await heroPerson();
+    person = await Person.load(holdsReplay() ? moving : still);
   } catch (e) {
     stage.dispose();
     throw e;

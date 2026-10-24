@@ -1,5 +1,6 @@
 import "./styles.css";
-import { DEMO_URL, PERSON, REPO_URL } from "./config";
+import { CREDITS, DEMO_URL, REPO_URL } from "./config";
+import { bundleFile, dreams, heroPerson, onSite, type Bundle } from "./people";
 import { Typer } from "./typer";
 import { clamp01, onTick, reducedMotion, webgl2Available } from "./motion";
 
@@ -43,9 +44,9 @@ const caption = $("#hero-caption");
 if (has3d) {
   import("./three/hero")
     .then(({ mountHero }) => mountHero($("#hero-canvas"), $("#hero-figure")))
-    .then((person) => {
+    .then(async (person) => {
       const n = person.count.toLocaleString("en-US");
-      caption.textContent = `${PERSON.label}. ${n} Gaussians, rendered live.`;
+      caption.textContent = `${(await heroPerson()).moving.label}. ${n} Gaussians, rendered live.`;
       arrive();
     })
     .catch((e) => {
@@ -152,6 +153,75 @@ if (has3d)
       .catch(fallback("#how")),
   );
 
+// ---------------------------------------------------------------- uses: the reel
+
+/**
+ * The three best real dreams, playing: replays of a whole move first, then the sharpest (held-out PSNR), then the
+ * newest, one per person. Public figures and a family's private dreams never appear. Without a bridge it stays hidden.
+ */
+const reel = $("#reel");
+const rank = (d: Bundle) => [d.kind === "replay" && d.frameCount >= 121 ? 0 : 1, -(d.metrics?.psnr ?? 0), -Date.parse(d.createdAt ?? "")];
+const before = (a: Bundle, b: Bundle) => {
+  const [x, y] = [rank(a), rank(b)];
+  return x[0] - y[0] || x[1] - y[1] || (x[2] || 0) - (y[2] || 0);
+};
+whenNear(reel.parentElement!, () =>
+  dreams().then((all) => {
+    // one tile per person: a head-swap bundle ("<id>-head") and its base dream are the same person
+    const seen = new Set<string>();
+    const best = all
+      .filter(onSite)
+      .sort(before)
+      .filter((d) => {
+        const person = d.id.replace(/-head(-\d+)?$/, "");
+        return !seen.has(person) && !!seen.add(person);
+      })
+      .slice(0, 3);
+    if (!best.length) return;
+    const list = $("#reel-list");
+    const playing = new IntersectionObserver(
+      (entries) => entries.forEach((e) => (e.isIntersecting && !still ? (e.target as HTMLVideoElement).play().catch(() => {}) : (e.target as HTMLVideoElement).pause())),
+      { threshold: 0.3 },
+    );
+    best.forEach((d, i) => {
+      const li = document.createElement("li");
+      li.className = "reel-item";
+      li.setAttribute("data-reveal", "");
+      li.style.setProperty("--i", String(i));
+      const media = document.createElement("div");
+      media.className = "reel-media";
+      const v = document.createElement("video");
+      Object.assign(v, { muted: true, loop: true, playsInline: true, preload: "metadata" });
+      v.src = bundleFile(d, d.preview!);
+      if (d.thumb) v.poster = bundleFile(d, d.thumb);
+      v.setAttribute("aria-label", `${d.name}, walked all the way around`);
+      media.append(v);
+      const name = document.createElement("h3");
+      name.textContent = d.name;
+      li.append(media, name);
+      const said = d.intent?.trim().replace(/[.!]+$/, "");
+      if (said) {
+        const p = document.createElement("p");
+        p.className = "reel-intent";
+        const q = document.createElement("q");
+        q.textContent = said.charAt(0).toUpperCase() + said.slice(1) + ".";
+        p.append(q);
+        li.append(p);
+      }
+      if (CREDITS[d.id]) {
+        const c = document.createElement("p");
+        c.className = "reel-credit";
+        c.textContent = CREDITS[d.id];
+        li.append(c);
+      }
+      list.append(li);
+      playing.observe(v);
+      revealer.observe(li);
+    });
+    reel.hidden = false;
+  }),
+);
+
 // ---------------------------------------------------------------- play
 
 const play = $("#play");
@@ -169,10 +239,11 @@ realityBtn.addEventListener("click", () => {
   realityBtn.setAttribute("aria-pressed", String(realityOn));
 });
 const seenPct = $("#seen-pct");
-if (PERSON.seenFraction != null) {
-  seenPct.textContent = String(Math.round(PERSON.seenFraction * 100));
+heroPerson().then(({ still: p }) => {
+  if (p.seenFraction == null) return;
+  seenPct.textContent = String(Math.round(p.seenFraction * 100));
   $("#honesty").classList.add("has-seen");
-}
+});
 const honesty = $("#honesty");
 let honestyInView = false;
 new IntersectionObserver(([e]) => (honestyInView = e.isIntersecting), { threshold: 0.25 }).observe($(".honesty-stage"));

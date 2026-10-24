@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PERSON } from "../config";
+import { heroPerson } from "../people";
 import { contactShadow, floorGlow, Person } from "./person";
 import { damp, onTick, reducedMotion } from "../motion";
 import { Stage } from "./stage";
@@ -17,7 +17,7 @@ export async function mountHonesty(host: HTMLElement, hooks: HonestyHooks): Prom
   const stage = new Stage(host, { splats: true, fov: 22 });
   let person: Person;
   try {
-    person = await Person.load(PERSON);
+    person = await Person.load((await heroPerson()).still); // one frame: the hero already holds the replay
   } catch (e) {
     stage.dispose();
     throw e;

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PERSON } from "../config";
+import { heroPerson } from "../people";
 import { contactShadow, Person } from "./person";
 import { clamp01, damp, lerp, onTick, smooth } from "../motion";
 import { Stage } from "./stage";
@@ -44,7 +44,7 @@ export async function mountHow(host: HTMLElement, hooks: HowHooks): Promise<Pers
   const stage = new Stage(host, { splats: true, fov: 30 });
   let person: Person;
   try {
-    person = await Person.load(PERSON);
+    person = await Person.load((await heroPerson()).still); // one frame: the hero already holds the replay
   } catch (e) {
     stage.dispose();
     throw e;
