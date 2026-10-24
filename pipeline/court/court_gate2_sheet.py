@@ -1,6 +1,7 @@
 """Gate-2 sheet: for each fetched Court Side run, the clip and 4DAnyone's views 00/04/08/12 (and any other views fetched)
 at the freeze frame K (the whole fetched ring in two rows: the Janus / doubled-figure gate looks at every view), and,
-when a freeze has been trained, its peeks (the real frame | render, then the views' ground truth | render).
+when a freeze has been trained, its peeks (the real frame | render, then the views' ground truth | render) and its
+bundle's orbit preview every 45 degrees (180 = the back of the head).
 
     python3 -I court_gate2_sheet.py --out gate2.jpg [--height 480] <run dir>...
 
@@ -82,7 +83,26 @@ def rows_for(run: Path, h: int, clips: Path | None) -> list[np.ndarray]:
         if any(p.exists() for p in peeks):
             imgs = [cv2.imread(str(p)) if p.exists() else None for p in peeks]
             out.append(np.hstack([tile(imgs[0], h, f"{rec.name} real | render"), tile(imgs[1], h, "views gt | render")]))
+    for b in sorted(run.glob("bundle-*/preview.mp4")):
+        out.append(orbit_row(b, h))
     return out
+
+
+def frame_count(video: Path) -> int:
+    p = subprocess.run(["ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries",
+                        "stream=nb_read_packets", "-of", "csv=p=0", str(video)], capture_output=True, text=True)
+    return int(p.stdout.strip() or 0)
+
+
+def orbit_row(preview: Path, h: int) -> np.ndarray:
+    """A trained freeze from every side: its bundle's orbit preview (one turn, angle 0 = the person's front) every 45
+    degrees. 180 is the back of the head: the Janus check on the 3D result itself."""
+    n = frame_count(preview)
+    tiles = []
+    for i in range(8):
+        label = f"{preview.parent.name} 0" if i == 0 else ("BACK 180" if i == 4 else str(45 * i))
+        tiles.append(tile(frame_at(preview, n * i // 8) if n else None, h, label))
+    return np.hstack(tiles)
 
 
 def stack(rows: list[np.ndarray]) -> np.ndarray:

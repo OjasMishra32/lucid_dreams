@@ -61,6 +61,15 @@ class Gate2Sheet(unittest.TestCase):
         first, second = g2.rows_for(self.run, 64, None)[:2]
         self.assertEqual(second.shape[1], 35 + 35 + 36 + 35)  # 12 is missing: a grey 36x64 tile
 
+    def test_each_bundle_gets_its_orbit_every_45_degrees(self):
+        ramp(self.run / "bundle-raw-default-r0-300k" / "preview.mp4", 18, 32, n=12)  # frame i: grey 20 * i
+        rows = g2.rows_for(self.run, 64, None)
+        self.assertEqual(len(rows), 4)  # ring, ring, peeks, orbit
+        orbit = rows[3]
+        self.assertEqual(orbit.shape[1], 8 * 36)
+        back = orbit[40:60, 4 * 36 + 2:4 * 36 + 30]  # 180 degrees: frame 6 of 12, below its label
+        self.assertAlmostEqual(float(back.mean()), 120, delta=6)
+
     def test_no_k_anywhere_is_one_labelled_tile(self):
         bare = Path(self.tmp.name) / "court-y"
         bare.mkdir()
