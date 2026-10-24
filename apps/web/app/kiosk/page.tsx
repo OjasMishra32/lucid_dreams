@@ -3,7 +3,7 @@ import Kiosk, { type KioskSlide } from "@/components/Kiosk";
 import { listReady } from "@/lib/bridge/dreams";
 import { intentOf } from "@/lib/bridge/experience";
 import { dreamFile, type Dream } from "@/lib/dream";
-import { SHOWCASE_IDS } from "@/lib/showcase";
+import { SHOWCASE_IDS, chessLabel, legendOf } from "@/lib/showcase";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Kiosk" };
@@ -26,6 +26,7 @@ export default function KioskPage() {
       id: d.id,
       name: d.name,
       line: line(d),
+      ...(legendOf(d.id) ? { note: chessLabel(legendOf(d.id)!) } : {}),
       preview: dreamFile(d.id, d.preview!),
       poster: d.thumb ? dreamFile(d.id, d.thumb) : null,
     }));

@@ -75,5 +75,11 @@ export function chessLabel(strength: string): string {
   return who ? `Stockfish at ${who}’s peak rating. Not affiliated.` : "A real chess engine. Not affiliated with any player.";
 }
 
+/** The engine strength a legend's dream plays at ("fischer" for bobby-fischer and bobby-fischer-head), else null. */
+export function legendOf(id: string): string | null {
+  for (const m of MOMENTS) if (m.chess?.[id]) return m.chess[id];
+  return null;
+}
+
 /** Every showcase dream id, in moment order: the kiosk leads with these. */
 export const SHOWCASE_IDS = MOMENTS.flatMap((m) => m.ids);

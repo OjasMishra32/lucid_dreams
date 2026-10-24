@@ -11,8 +11,9 @@ import { heldIds, readDream } from "@/lib/bridge/dreams";
 import { ensureExperience } from "@/lib/bridge/experience";
 import { onThisMac, publicOrigin, viewerOrigin } from "@/lib/bridge/http";
 import { ensureRealism } from "@/lib/bridge/realism";
-import { dreamFile, formatCount, heightM, isPrivate, type Dream } from "@/lib/dream";
+import { dreamFile, formatCount, heightM, isPrivate, type Dream, type Strength } from "@/lib/dream";
 import { formatDate, seenPercent } from "@/lib/format";
+import { chessLabel, legendOf } from "@/lib/showcase";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!d) return { title: "Not found" };
   if (isPrivate(d)) return { title: d.name, robots: { index: false, follow: false } }; // nothing that unfurls in a share
   const origin = publicOrigin(await headers());
-  const description = `${d.name}, rebuilt in 3D from one video. Life size, in your room.`;
+  const legend = legendOf(d.id);
+  const description = legend
+    ? `Chess across a real-size board. ${chessLabel(legend)}`
+    : `${d.name}, rebuilt in 3D from ${d.kind === "avatar" ? "photos" : "one video"}. Life size, in your room.`;
   const images = d.thumb ? [{ url: dreamFile(d.id, d.thumb), alt: d.name }] : [];
   return {
     title: d.name,
@@ -47,7 +51,12 @@ export default async function DreamPage({ params }: Props) {
   const d = await visible((await params).id);
   if (!d) notFound();
 
-  const experience = ensureExperience(d.id);
+  const legend = legendOf(d.id); // a chess legend: the engine at their peak, labelled as the engine wherever they appear
+  const planned = ensureExperience(d.id);
+  const experience =
+    legend && planned.state === "ready" && planned.experience.play
+      ? { ...planned, experience: { ...planned.experience, play: { ...planned.experience.play, strength: legend as Strength } } }
+      : planned;
   const hidden = isPrivate(d); // a family's dream: no share link, no Quest address, no realism check, numbers folded away
   const realism = hidden ? null : ensureRealism(d.id);
   const h = await headers();
@@ -125,6 +134,7 @@ export default async function DreamPage({ params }: Props) {
           <p className="detail-kind">{d.kind === "avatar" ? "Avatar · can do any move" : "Replay · moves exactly like the clip"}</p>
           <h1 className="page-title">{d.name}</h1>
           {d.createdAt && <p className="detail-date">Made {formatDate(d.createdAt)}</p>}
+          {legend && <p className="detail-legend">{chessLabel(legend)} They never speak.</p>}
           <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl} initial={experience} />
           <PlacesRow id={d.id} planned={experience.state === "ready" ? experience.experience.environment : null} />
           {!hidden && <QuestUrl url={questUrl} />}

@@ -8,6 +8,7 @@ export interface KioskSlide {
   id: string;
   name: string;
   line: string;
+  note?: string; // a legend's label: "Stockfish at Fischer's peak rating. Not affiliated."
   preview: string;
   poster: string | null;
 }
@@ -132,6 +133,7 @@ export default function Kiosk({ slides }: { slides: KioskSlide[] }) {
               <figcaption className="kiosk-copy">
                 <p className="kiosk-name">{s.name}</p>
                 <p className="kiosk-line">{s.line}</p>
+                {s.note && <p className="kiosk-note">{s.note}</p>}
               </figcaption>
             </figure>
           );
