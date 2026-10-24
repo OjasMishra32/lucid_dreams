@@ -39,9 +39,7 @@ for (const name of [null, ...Object.keys(court.video.fallbacks ?? {}).filter((k)
   const frames = read(join(bundleRoot, v.frames));
   const cards = read(join(bundleRoot, v.cards));
   for (const e of validateFrames(frames, view)) problems.push(`${tag} frames: ${e}`);
-  // the small copy shares the main stream's cards.json, whose boxes are in main-stream pixels: check them against the main
-  // regions (validating them against the scaled regions, as chooseStream gives, rejects every card; reported to the integrator)
-  for (const e of validateCards(cards, name === "small" ? court : view, frames)) problems.push(`${tag} cards: ${e}`);
+  for (const e of validateCards(cards, view, frames)) problems.push(`${tag} cards: ${e}`);
   const file = join(bundleRoot, v.file);
   if (!existsSync(file)) {
     problems.push(`${tag}: ${v.file} is missing`);

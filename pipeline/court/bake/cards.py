@@ -4,6 +4,10 @@ A card says where a person is (foot point on the floor, court metres), where the
 (live-region pixels) and where their matte sits in the matte atlas (mattes-region pixels); the runtime stands the card
 upright at the foot and cuts it by the matte, so nobody shows twice through a gap and nobody tears (P43).
 
+The JSON entry is format.ts ShowCard (resolution-free): kind, `at` (the foot point), `box` in undistorted SOURCE pixel
+edges (camera.width x camera.height, the size frames.json's focal goes with) and `tile` as 0-1 coordinates inside the
+matte atlas. `build_cards` works in live-region / atlas pixels (what stack.py cuts with); `to_format` converts.
+
 Inputs are the layers contract (people.json): per source frame, each person's id, box, foot and depth order. Boxes here
 are already in live-region pixels of the undistorted frame (bake.py converts them, or takes them from the matte with
 `box_from_matte`). The ball's card is out of scope until the layers data has one.
@@ -121,6 +125,19 @@ def build_cards(layout: Layout, people: Sequence[Person], slots: TileSlots) -> l
     return cards
 
 
+def to_format(card: dict, layout: Layout, camera_size: tuple[int, int]) -> dict:
+    """A pixel-space card (build_cards) as a cards.json entry: box in source pixel edges, tile in 0-1 atlas units."""
+    sx, sy = camera_size[0] / layout.live[2], camera_size[1] / layout.live[3]
+    mw, mh = layout.mattes[2], layout.mattes[3]
+    b, t = card["box"], card["tile"]
+    return {
+        "id": card["id"], "kind": "person", "at": list(card["foot"]),
+        "box": [round(b[0] * sx, 2), round(b[1] * sy, 2), round(b[2] * sx, 2), round(b[3] * sy, 2)],
+        "tile": [round(t[0] / mw, 7), round(t[1] / mh, 7), round(t[2] / mw, 7), round(t[3] / mh, 7)],
+        "order": card["order"],
+    }
+
+
 class PeopleTrack:
     """People per source frame (the layers contract) -> the people of any (fractional) source frame."""
 
@@ -176,11 +193,12 @@ def cards_for_frames(
     layout: Layout,
     srcs: Sequence[float],
     track: PeopleTrack,
+    camera_size: tuple[int, int],
     n_slots: int = 6,
     gutter: int = 2,
     hold: int = 72,
 ) -> tuple[list[dict], list[tuple[str, int]]]:
     """cards.json for display frames whose source frames are `srcs`, plus the people that found no slot ((id, frame))."""
     slots = TileSlots(layout, n_slots, gutter, hold)
-    out = [{"cards": build_cards(layout, track.at(s), slots)} for s in srcs]
+    out = [{"cards": [to_format(c, layout, camera_size) for c in build_cards(layout, track.at(s), slots)]} for s in srcs]
     return out, slots.dropped
