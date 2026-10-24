@@ -36,6 +36,9 @@ class TL:
     cutoff: int
     idr: list
 
+    def fallback_block(self):
+        return {"displayHz": self.hz, "pass2Speed": self.pass2_speed, "segments": self.segments, "cutoff": self.cutoff}
+
 
 def make_timeline(hz, n1=24, n2=30, ease=(10, 8), n_resume=12):
     """pass 1, pass 2 (F at its 20th frame), two eases ending on F, a resume; every other pass-1 frame an in-between."""
@@ -122,13 +125,13 @@ def test_bake_writes_the_bundle_validates_and_lands_F(tmp_path):
     rep, tls = run_bake(tmp_path)
     v = tmp_path / "video"
     for name in ("show.h264", "show-small.h264", "show-90.h264", "pass1.mp4", "frames.json", "cards.json", "frames-90.json", "cards-90.json", "freeze.png", "freeze-clean.png", "video.json"):
-        assert (v / name).is_file(), name
+        assert (v / name).is_file() or (name == "video.json" and (tmp_path / name).is_file()), name
     assert rep["missing"] == ["stands-mask.png", "inpaint-mask.png"]
     assert rep["format"]["ok"], rep["format"]["problems"]
     assert rep["ok"], rep
     assert sorted(p.name for p in v.iterdir() if p.suffix == ".png") == ["freeze-clean.png", "freeze.png"]
     # streams: one access unit per frame, IDRs at the timeline's, codec per size and rate
-    info = json.loads((v / "video.json").read_text())
+    info = json.loads((tmp_path / "video.json").read_text())
     assert info["video"]["codec"] == "avc1.640033" and info["video"]["fallbacks"]["hz90"]["codec"] == encode.codec_for(LAY.width, LAY.height, 90)
     for name, tl in (("show.h264", tls[72]), ("show-small.h264", tls[72]), ("show-90.h264", tls[90])):
         s = encode.scan_h264(v / name)

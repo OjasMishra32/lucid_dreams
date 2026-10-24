@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const [checkout, videoDir, ...rest] = process.argv.slice(2);
-const infoPath = rest[0] === "--info" ? rest[1] : join(videoDir, "video.json");
+const infoPath = rest[0] === "--info" ? rest[1] : join(videoDir, "..", "video.json");
 const src = (p) => pathToFileURL(resolve(checkout, "apps/webxr", p)).href;
 const { validateCourt, validateFrames, validateCards, chooseStream } = await import(src("src/court/format.ts"));
 const { splitAnnexB, spsCodec } = await import(src("src/court/annexb.ts"));

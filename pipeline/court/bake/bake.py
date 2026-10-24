@@ -1,13 +1,15 @@
 """The show bake: timeline + frames + layers -> the stacked H.264 streams and the video/ part of the court bundle.
 
-    python -m pipeline.court.bake.bake --synth <dir>     # the synthetic clip end to end (tests, CI); writes <dir>/bundle/video/
-    python -m pipeline.court.bake.bake --real            # the real clip -> ~/court-side-data/luka/bundle/court-side/video/
+    python -m pipeline.court.bake.bake --synth <dir>     # the synthetic clip end to end (tests, CI); writes <dir>/show/
+    python -m pipeline.court.bake.bake --real            # the real clip -> ~/court-side-data/luka/work/show/ (staging)
 
-Writes (paths in video.json are "video/...", relative to court.json's folder):
+Output folder `show/` (stream G's assembler copies it into the bundle; this module never writes into
+~/court-side-data/luka/bundle/court-side/, which assemble.py rebuilds and swaps: `check_out_dir` refuses it):
+  show/video.json  and  show/video/<files below>. Paths in video.json are "video/...", relative to show/ (= court.json's folder).
   show.h264 (1536 x 2160, 72 Hz, avc1.640033), show-small.h264 (same frames, 1280 wide), show-90.h264 (own timeline at 90 Hz),
   pass1.mp4 (pass 1 for a <video> element), frames.json / cards.json (+ frames-90.json / cards-90.json), freeze.png,
   freeze-clean.png, stands-mask.png, inpaint-mask.png (the last three only from the layers' plates; reported missing otherwise),
-  video.json = { "video": <court.json's video block>, "camera": <centre, sourceFps, captureFps, slow, ...> }.
+  show/video.json = { "video": <court.json's video block>, "camera": <centre, sourceFps, captureFps, slow, ...> }.
 Then format.ts's validators run on all of it (fmtcheck.py, node, read-only against origin/court-side).
 
 The stages that need other modules sit behind two small interfaces so this file never imports the footage code directly:
@@ -149,9 +151,24 @@ def write_json(path: Path, obj) -> None:
     path.write_text(json.dumps(obj, separators=(",", ":")))
 
 
+BUNDLE = Path.home() / "court-side-data" / "luka" / "bundle" / "court-side"
+STAGING = Path.home() / "court-side-data" / "luka" / "work" / "show"
+
+
+def check_out_dir(out_dir: Path | str) -> Path:
+    """The output folder, resolved; refuses anything at or under the assembled bundle (assemble.py owns and swaps it)."""
+    p = Path(out_dir).expanduser().resolve()
+    root = BUNDLE.resolve()
+    if p == root or root in p.parents:
+        raise ValueError(f"refusing to write into {root}: stream G's assemble.py rebuilds that folder; bake into {STAGING}")
+    return p
+
+
 def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, out_dir: Path, opts: Options = Options(), main_hz: int = 72) -> dict:
-    """Bake every timeline into out_dir/video/ and validate. `timelines` maps display Hz -> timeline; main_hz is show.h264's."""
-    vdir = Path(out_dir) / "video"
+    """Bake every timeline into out_dir/video/ (+ out_dir/video.json) and validate. `timelines` maps display Hz -> timeline;
+    main_hz is show.h264's."""
+    out_dir = check_out_dir(out_dir)
+    vdir = out_dir / "video"
     vdir.mkdir(parents=True, exist_ok=True)
     tl = timelines[main_hz]
     layout = opts.layout
@@ -203,8 +220,8 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
         write_json(vdir / "frames-90.json", cameras.frames_json(t90))
         write_json(vdir / "cards-90.json", r90.cards)
         fb["hz90"] = {
-            "file": "video/show-90.h264", "codec": res90[0].codec, "width": layout.width, "height": layout.height, "displayHz": 90, "pass2Speed": t90.pass2_speed,
-            "frames": "video/frames-90.json", "cards": "video/cards-90.json", "segments": t90.segments, "cutoff": t90.cutoff,
+            "file": "video/show-90.h264", "codec": res90[0].codec, "width": layout.width, "height": layout.height,
+            "frames": "video/frames-90.json", "cards": "video/cards-90.json", **t90.fallback_block(),
         }
 
     # F's plate and masks come from the layers' data; never faked
@@ -217,7 +234,7 @@ def bake(timelines: Mapping[int, object], provider: Provider, cameras: Cameras, 
         video[key] = f"video/{name}"
 
     info = {"video": video, "camera": cameras.camera_block()}
-    write_json(vdir / "video.json", info)
+    write_json(out_dir / "video.json", info)
     check = fmtcheck.check_bundle(vdir)
     report["format"] = check
     report["ok"] = bool(check["ok"]) and all(s["f"]["ok"] for s in report["streams"].values())
@@ -231,8 +248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--synth", metavar="DIR", help="bake the synthetic clip into DIR (a temp-style work dir)")
-    mode.add_argument("--real", action="store_true", help="bake the real clip into the private bundle")
-    ap.add_argument("--out", help="bundle folder (real: default ~/court-side-data/luka/bundle/court-side)")
+    mode.add_argument("--real", action="store_true", help="bake the real clip into the staging folder")
+    ap.add_argument("--out", help="output folder (real: default ~/court-side-data/luka/work/show; never the assembled bundle)")
     ap.add_argument("--config", help="private bake_config.json (real)")
     ap.add_argument("--crf", type=float, default=18)
     ap.add_argument("--preset", default="veryfast")
@@ -241,6 +258,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--no-pass1-mp4", action="store_true")
     ap.add_argument("--protect-qp", type=int)
     args = ap.parse_args(argv)
+    if args.out:
+        check_out_dir(args.out)  # refuse before any work
     from pipeline.court.bake import providers  # the footage-side adapters (source / interp / layers / cameras)
 
     extra = dict(layout=stack.synthetic_layout(256), small_width=128, n_slots=4) if args.synth else {}  # the synthetic clip is tiny

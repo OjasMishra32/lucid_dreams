@@ -57,6 +57,7 @@ from pipeline.court.bake import cards as cards_mod
 from pipeline.court.bake import config as config_mod
 from pipeline.court.bake import timeline as timeline_mod
 from pipeline.court.bake.bake import Layers
+from pipeline.court.bake.layers_input import LayersFiles
 from pipeline.court.bake.cards import Person
 from pipeline.court.bake.stack import Layout
 
@@ -69,41 +70,6 @@ class RealLayers:
     plate: np.ndarray
     mattes: dict
     people: list
-
-
-class LayersFiles:
-    """The layers agent's out/ folder (the data contract): people.json, plates/<src>.jpg, mattes/<src>/<id>.png (+ optional
-    freeze-clean.png, stands-mask.png, inpaint-mask.png for F)."""
-
-    def __init__(self, root: Path):
-        self.root = Path(root)
-        doc = json.loads((self.root / "people.json").read_text())
-        self.scale = doc.get("scale", 1.0)
-        self.frames = {int(k): v for k, v in doc["frames"].items()}
-
-    def plate_path(self, src: int) -> Path:
-        return self.root / "plates" / f"{src:06d}.jpg"
-
-    def matte_path(self, src: int, pid: str) -> Path:
-        return self.root / "mattes" / f"{src:06d}" / f"{pid}.png"
-
-    def has_frame(self, src: int) -> bool:
-        return self.plate_path(src).exists() and src in self.frames
-
-    def plate_raw(self, src: int) -> np.ndarray:
-        img = cv2.imread(str(self.plate_path(src)), cv2.IMREAD_COLOR)
-        if img is None:
-            raise FileNotFoundError(self.plate_path(src))
-        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    def matte_raw(self, src: int, pid: str) -> np.ndarray | None:
-        return cv2.imread(str(self.matte_path(src, pid)), cv2.IMREAD_GRAYSCALE)
-
-    def optional(self, name: str) -> np.ndarray | None:
-        p = self.root / name
-        if not p.exists():
-            return None
-        return cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
 
 
 class SourceProvider:
@@ -123,17 +89,14 @@ class SourceProvider:
         plate = self.source.undistort_layer(raw, src, "plate")
         mattes, people = {}, []
         live_w = self.layout.live[2]
-        for e in L.frames.get(src, []):
-            m = L.matte_raw(src, e["id"])
-            if m is None:
-                continue
-            m = self.source.undistort_layer(m, src, "matte")
+        for e in L.frame_people(src):
+            m = self.source.undistort_layer(e.matte, src, "matte")
             box = cards_mod.box_from_matte(m, pad=self.pad)
             if box is None:
                 continue
             s = live_w / m.shape[1]
-            mattes[e["id"]] = m
-            people.append(Person(e["id"], tuple(v * s for v in box), (float(e["foot"][0]), 0.0, float(e["foot"][2])), e.get("order", 0)))
+            mattes[e.id] = m
+            people.append(Person(e.id, tuple(v * s for v in box), (e.foot[0], 0.0, e.foot[2]), e.order))
         if len(self._cache) >= self.cache_n:
             self._cache.pop(next(iter(self._cache)))
         self._cache[src] = RealLayers(raw, plate, mattes, people)
@@ -262,7 +225,7 @@ def _solved_f(solve, s: float) -> float:
 
 
 def synth_run(work, out, config, opts, bake_fn) -> dict:
-    """The synthetic clip end to end: writes it into `work` if it is not there, bakes into work/bundle/video."""
+    """The synthetic clip end to end: writes it into `work` if it is not there, bakes into work/show/video."""
     from pipeline.court.bake import synth
 
     work = Path(work)
@@ -270,13 +233,11 @@ def synth_run(work, out, config, opts, bake_fn) -> dict:
     if not cfg_path.exists():
         synth.write_clip(work)
     cfg = config_mod.load(cfg_path)
-    return build_run(cfg, Path(out) if out else work / "bundle", opts, bake_fn)
-
-
-DEFAULT_BUNDLE = Path.home() / "court-side-data" / "luka" / "bundle" / "court-side"
+    return build_run(cfg, Path(out) if out else work / "show", opts, bake_fn)
 
 
 def real_run(work, out, config, opts, bake_fn) -> dict:
     cfg = config_mod.load(config)
-    out_dir = Path(out).expanduser() if out else (Path(cfg.out).expanduser().parent if cfg.out else DEFAULT_BUNDLE)
-    return build_run(cfg, out_dir, opts, bake_fn)
+    from pipeline.court.bake import bake as bake_mod
+
+    return build_run(cfg, bake_mod.check_out_dir(out) if out else bake_mod.STAGING, opts, bake_fn)
