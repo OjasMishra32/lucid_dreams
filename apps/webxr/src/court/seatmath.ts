@@ -346,7 +346,7 @@ export interface Placement {
   inside: number[];
   /** Metres from the chair (room space) in to the bounds (>= BODY_INSET passes; negative: outside them). */
   chairInside: number;
-  /** The chair is on the camera's side of the pair's axis, at least SIDE_MIN from its line (Gobert's side, never the invented front). */
+  /** The chair is on the camera's side of the pair's axis, at least SIDE_MIN from its line (the defender's side, never the invented front). */
   cameraSide: boolean;
   /** How far the chair is from the axis's diagonal, metres: the walking anchoring takes the diagonal away from the chair. */
   offDiagonal: number;
