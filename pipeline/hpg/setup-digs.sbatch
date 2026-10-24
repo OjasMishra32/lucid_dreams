@@ -22,7 +22,7 @@ cd $L/repos/DiGS-Avatar
 grep -vE '^(torch|torchvision|torchaudio|pytorch3d|simple-knn|xformers)\s*$' requirements.txt > /tmp/digs-req.txt
 pip install -q -r /tmp/digs-req.txt
 # what DiGS imports but its requirements miss; mmcv-lite: the full mmcv has no wheel for torch 2.8 / cu128
-pip install -q mmengine mmcv-lite pytz ipdb
+pip install -q mmengine mmcv-lite pytz ipdb torch-fidelity
 pip install -q xformers==0.0.32.post2 --index-url https://download.pytorch.org/whl/cu128 || echo "xformers wheel missing; continuing"
 python -c "import pytorch3d" 2>/dev/null || pip install -q --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git"
 python -c "import simple_knn" 2>/dev/null || pip install -q --no-build-isolation "git+https://github.com/camenduru/simple-knn.git"
