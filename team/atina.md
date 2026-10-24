@@ -4,6 +4,13 @@ You own what the judges see and read, and the footage everything is built from. 
 judgment and writing, not heavy AI use, so it fits a small Codex plan: use Codex for the README and Devpost polish,
 not for long coding sessions. Read `AGENTS.md` first.
 
+## ADDED (Fri 11:40 PM): the showcase is set
+
+`demo/showcase.md` has the five demo moments (piano lesson side by side, LeBron in your driveway, chess with the
+legends, someone you've lost, you perfected). Build the video script on exactly those five, in that order, about
+30 s each. Credits to add to `demo/credits.md`: Jason Han's piano videos (Wikimedia Commons, CC BY-SA 4.0,
+"JMC, Han (Jason)"), Poly Haven environments (CC0, list in `apps/webxr/public/places/CREDITS.md` once it lands).
+
 ## ADDED (Fri 11 PM): the lesson has a ball and a hoop now
 
 LeBron's lesson will have the real ball moving with his hands and a regulation hoop in the room (rim 3.05 m), and

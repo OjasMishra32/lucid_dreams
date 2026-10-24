@@ -4,6 +4,15 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
+## ADDED (Fri 11:40 PM): sentences and places
+
+- Suggestions under the intent field: "Teach me this", "Sit next to me and teach me this piece", "Just be with me",
+  "Play chess with me".
+- The Gemini plan may set `"environment"` (a place id: concert hall, court, ring, studio; list in AGENTS.md under
+  Experience once the Places builder pushes). Ask Gemini to pick one only when the activity clearly has a home
+  (piano -> concert hall, basketball -> court).
+- `demo/showcase.md` lists the five demo moments; make sure each one works end to end from the web app.
+
 ## ADDED (Fri 11 PM): props in the plan
 
 When Gemini writes `experience.json`, also ask it which objects matter for the intent (`"objects": ["basketball",

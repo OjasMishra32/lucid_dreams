@@ -3,6 +3,14 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+## ADDED (Fri 11:40 PM): Places and the piano tutor
+
+- **Places:** the WebXR viewer is getting a "Place" button that swaps your room for a 360-degree environment around
+  the person (Poly Haven CC0 HDRIs in `apps/webxr/public/places/`, ids in AGENTS.md under Experience once pushed).
+  In Unity it's a skybox swap with passthrough off; worth an hour after the avatar player.
+- **Seated people:** the piano tutor sits at an upright. `place: "beside"` puts them 0.8 m to your right facing your
+  way, so you sit next to them. Make sure your placement handles a seated person (feet on the floor, not the hips).
+
 ## ADDED (Fri 11 PM): props and seated opponents
 
 - **Props (new contract, `props.json`, in AGENTS.md shortly):** the important objects around the person. For
