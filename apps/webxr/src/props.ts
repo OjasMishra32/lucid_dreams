@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType } from "@sparkjsdev/spark";
 import { type Dream, dreamUrl } from "./dream";
 
 // The important objects around the person (AGENTS.md, "Props"): the real ball moving exactly as it did in the clip,
@@ -60,7 +61,12 @@ export class Props {
   readonly hoops: THREE.Vector3[] = [];
   /** The hoops themselves (local frame: floor under the ring, +Z toward the shooter; userData.rimTop = ring height). */
   readonly hoopGroups: THREE.Group[] = [];
+  /** The tracked balls (person space, one point per bundle frame, null where unknown), for anything that plays with them. */
+  readonly tracks: BallTrack[] = [];
+  /** False while something else shows the ball (a ball you pass to the person): there is only ever one ball. */
+  ballsVisible = true;
   private balls: Ball[] = [];
+  private erasers: { sdf: SplatEditSdf; track: BallTrack }[] = [];
   private fader = new Fader();
   private reveal = -1;
 
@@ -81,6 +87,15 @@ export class Props {
       if (o.kind === "basketball") {
         const ball = new Ball(o as BallProp, fps, env, anisotropy);
         this.balls.push(ball);
+        const track = new BallTrack(o as BallProp, fps);
+        this.tracks.push(track);
+        // the ball is in the reconstruction too (it was in the clip): erased there, so the solid ball is the only one
+        const edit = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.MULTIPLY, softEdge: 0.02 });
+        // 2.5 cm past the ball takes its soft edge too (checked on lebron-jumper-hq: none left, his hands kept)
+        const sdf = new SplatEditSdf({ type: SplatEditSdfType.SPHERE, radius: track.radius + 0.025, opacity: 0 });
+        edit.add(sdf);
+        this.group.add(edit);
+        this.erasers.push({ sdf, track });
         this.group.add(ball.mesh, ball.shadow);
       } else {
         const h = o as HoopProp;
@@ -99,7 +114,11 @@ export class Props {
   /** t: the same clip time the person is posed at; reveal: the person's materialise fade, 0 -> 1. */
   update(t: number, dt: number, reveal: number) {
     if (reveal !== this.reveal) this.fader.set((this.reveal = reveal));
-    for (const b of this.balls) b.update(t, dt, reveal);
+    for (const b of this.balls) {
+      b.update(t, dt, reveal);
+      if (!this.ballsVisible) b.mesh.visible = b.shadow.visible = false;
+    }
+    for (const e of this.erasers) e.track.at(t, e.sdf.position);
   }
 }
 
@@ -123,6 +142,35 @@ class Fader {
 }
 
 // ---------------- the ball ----------------
+
+/** A ball's path through the clip, sampled anywhere: straight across unknown frames, held at the ends. */
+export class BallTrack {
+  readonly points: (THREE.Vector3 | null)[];
+  readonly radius: number;
+  readonly known: number[]; // frames where it's known
+  constructor(p: BallProp, readonly fps: number) {
+    this.radius = Number.isFinite(p.radius) && p.radius! > 0 ? p.radius! : 0.12;
+    this.points = p.track.map((v) => (finite3(v) ? new THREE.Vector3(v[0], v[1], v[2]) : null));
+    this.known = this.points.flatMap((v, i) => (v ? [i] : []));
+  }
+  /** Where it is at clip time t (person space). False if the clip never shows it. */
+  at(t: number, out: THREE.Vector3): boolean {
+    const k = this.known;
+    if (!k.length) return false;
+    const f = t * this.fps;
+    if (f <= k[0]) return !!out.copy(this.points[k[0]]!);
+    if (f >= k[k.length - 1]) return !!out.copy(this.points[k[k.length - 1]]!);
+    let lo = 0, hi = k.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (k[mid] <= f) lo = mid;
+      else hi = mid;
+    }
+    const a = k[lo], b = k[hi];
+    out.lerpVectors(this.points[a]!, this.points[b]!, (f - a) / (b - a));
+    return true;
+  }
+}
 
 class Ball {
   readonly mesh: THREE.Mesh;

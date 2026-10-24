@@ -565,6 +565,17 @@ export async function renderViewer(root: HTMLElement, id: string) {
     return out.lengthSq() < 1e-6 ? out.set(0, 0, -1) : out.normalize();
   };
   const ahead = new THREE.Vector3();
+  // catch and shoot: pass to them, they catch it, shoot it, and the rebound comes back to you (their ball's track)
+  if (hoopBall && props?.tracks.length) {
+    hoopBall.attachPlayer(props.group, props.tracks[0], duration, height);
+    hoopBall.setGame(true);
+    const xrGame: XrButton = new XrButton("catch", "Catch & shoot", () => {
+      hoopBall.setGame(!hoopBall.gameOn);
+      xrGame.setOn(hoopBall.gameOn);
+    });
+    xrGame.setOn(hoopBall.gameOn);
+    menu.add(xrGame);
+  }
   if (hoopBall?.hoop)
     menu.add(
       new XrButton("hoop", "Hoop here", () => {
@@ -723,7 +734,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
       hoopBall?.update(dt, open, eyes, flatForward(ahead));
       if (guitar) guitar.update(dt, open, eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn));
     }
-    if (lesson) {
+    const game = !!hoopBall?.driving;
+    if (props) props.ballsVisible = !game; // one ball: theirs follows the clip, unless you're passing yours to them
+    if (game) {
+      t = hoopBall!.clip; // the game shows them waiting, catching and shooting
+      if (audio && !audio.paused) audio.pause();
+    } else if (lesson) {
       if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration);
       if (playing) t = lesson.update(t, performance.now());
       if (lesson.phase === "turn") {

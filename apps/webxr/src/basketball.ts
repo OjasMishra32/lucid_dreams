@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { Dream } from "./dream";
 import type { Experience } from "./experience";
-import { basketballTextures, HOOP, type Props, shadowTexture, standaloneHoop } from "./props";
+import { basketballTextures, type BallTrack, HOOP, type Props, shadowTexture, standaloneHoop } from "./props";
 
 // A real size-7 ball in your own hands, to shoot at the hoop in a basketball dream. No gesture does anything: you hold
 // it by putting your palms on it (one hand under it, or both on its sides), it follows your hands, and it leaves them
@@ -72,7 +72,7 @@ class Palm {
   }
 }
 
-type State = "floating" | "held" | "flying" | "away";
+type State = "floating" | "held" | "flying" | "his" | "pass" | "away";
 type Hit = "floor" | "board" | "rim" | "swish";
 
 export class Basketball {
@@ -117,6 +117,19 @@ export class Basketball {
   private personR = 0.35;
   private wasHidden = false;
   log: string[] = []; // dev: what happened, newest last
+  // catch and shoot: you pass to the person in the clip, they catch, shoot, and the rebound comes back to you
+  private player: { space: THREE.Object3D; track: BallTrack; duration: number; gatherT: number; releaseT: number; chest: THREE.Vector3 } | null = null;
+  gameOn = false;
+  /** The clip time the game shows while it's on (the person waiting, gathering, shooting). */
+  clip = 0;
+  private phase: "waiting" | "has" | "after" = "waiting";
+  private catchFrom = new THREE.Vector3();
+  private hisShot = false;
+  private counted = false; // the last throw counted as a shot (a pass they catch doesn't)
+  private floorHits = 0;
+  private firstFloorT = -1;
+  private pass: { p0: THREE.Vector3; b: THREE.Vector3; v1: THREE.Vector3; v2: THREE.Vector3; t1: number; t2: number; bounced: boolean } | null = null;
+  private tw = new THREE.Vector3();
 
   constructor(
     private scene: THREE.Scene,
@@ -214,6 +227,18 @@ export class Basketball {
 
   /** Back to you: floating at your waist, a little in front, never inside the person. */
   respawn(head: THREE.Vector3, forward: THREE.Vector3) {
+    this.homeSpot(head, forward);
+    this.pos.copy(this.home);
+    this.vel.set(0, 0, 0);
+    this.spin.set(0, 0, 0);
+    this.state = "floating";
+    this.stateT = 0;
+    this.alpha = 0;
+    this.holders = [];
+  }
+
+  /** Where a ball coming back to you floats: at your waist, a little in front, never inside the person. */
+  private homeSpot(head: THREE.Vector3, forward: THREE.Vector3) {
     const right = this.v1.set(-forward.z, 0, forward.x);
     const y = THREE.MathUtils.clamp(head.y - 0.58, 0.75, 1.25);
     const tries: [number, number][] = [[0.42, 0], [0.36, 0.3], [0.36, -0.3], [0.24, 0.32], [0.2, -0.32]];
@@ -222,13 +247,172 @@ export class Basketball {
     // the first spot in front of you that's clear of them; if they stand right there, at your side away from them
     const [f, s] = tries.find(([f, s]) => away(f, s) > clear) ?? ([[0, 0.45], [0, -0.45]] as [number, number][]).sort((a, b) => away(...b) - away(...a))[0];
     this.home.set(head.x + forward.x * f + right.x * s, y, head.z + forward.z * f + right.z * s);
-    this.pos.copy(this.home);
+  }
+
+  // ---------------- catch and shoot
+
+  /**
+   * The person in the clip as someone you can pass to: their ball's track (person space) gives where they gather it
+   * and where it leaves their hands. The release is the last moment it's in their hands before it flies (a jump in speed
+   * up high, or well out from their body above their head), else the clip's last tracked frame; the gather is the
+   * lowest point it rises from into the shot.
+   */
+  attachPlayer(space: THREE.Object3D, track: BallTrack, duration: number, height: number) {
+    const { points: pts, known, fps } = track;
+    if (known.length < 3) return;
+    let rel = known[known.length - 1];
+    for (let n = 1; n < known.length; n++) {
+      const a = known[n - 1], b = known[n];
+      const pa = pts[a]!, pb = pts[b]!;
+      const speed = (pa.distanceTo(pb) * fps) / (b - a);
+      // held out in front of them it can be 0.6 m from their feet; gone, it's well past that and above their head
+      if ((speed > 4 && pb.y > pa.y && pb.y > 0.75 * height) || (pb.y > 0.9 * height && Math.hypot(pb.x, pb.z) > 0.9)) {
+        rel = a;
+        break;
+      }
+    }
+    let gather = rel, low = pts[rel]!.y;
+    for (let n = known.indexOf(rel) - 1; n >= 0; n--) {
+      const i = known[n];
+      if (known[n + 1] - i > 15) break;
+      const y = pts[i]!.y;
+      if (y > low + 0.03) break;
+      if (y < low) {
+        low = y;
+        gather = i;
+      }
+    }
+    this.player = { space, track, duration, gatherT: gather / fps, releaseT: rel / fps, chest: new THREE.Vector3(0, 0.68 * height, -0.12) };
+    this.log.push(`player: gather frame ${gather}, release frame ${rel}`);
+  }
+
+  /** Catch and shoot on or off. On, the person waits in their opening pose for your pass. */
+  setGame(on: boolean) {
+    this.gameOn = on && !!this.player;
+    this.phase = "waiting";
+    this.clip = 0;
+  }
+
+  /** True while the game, not the lesson, decides what moment of the clip is shown. */
+  get driving(): boolean {
+    return this.gameOn && this.state !== "away";
+  }
+
+  private trackWorld(t: number, out: THREE.Vector3): THREE.Vector3 {
+    const pl = this.player!;
+    pl.track.at(t, out);
+    pl.space.updateWorldMatrix(true, false);
+    return pl.space.localToWorld(out);
+  }
+
+  /** Your pass reaches them: within 0.8 m of their chest or hands, on its way toward them. */
+  private caught(): boolean {
+    if (!this.gameOn || !this.player || this.phase !== "waiting") return false;
+    const chest = this.player.space.localToWorld(this.v1.copy(this.player.chest));
+    const hands = this.trackWorld(this.player.gatherT, this.tw);
+    const near = Math.min(this.pos.distanceTo(chest), this.pos.distanceTo(hands));
+    return near < 0.8 && this.vel.dot(this.v2.subVectors(chest, this.pos)) > 0;
+  }
+
+  private catchIt() {
+    this.state = "his";
+    this.phase = "has";
+    this.stateT = 0;
+    this.clip = this.player!.gatherT;
+    this.catchFrom.copy(this.pos);
     this.vel.set(0, 0, 0);
     this.spin.set(0, 0, 0);
-    this.state = "floating";
+    this.sound("board", 0.25); // the slap of a ball into two hands
+    if (this.counted) {
+      this.shots--; // a pass, not a shot
+      this.counted = false;
+      this.counter?.draw();
+    }
+    this.log.push("they caught it");
+  }
+
+  /** In their hands: the clip plays from the gather, the ball on their track; at the release they shoot. */
+  private theirs(dt: number) {
+    const pl = this.player!;
+    this.clip = Math.min(this.clip + dt, pl.releaseT);
+    const k = THREE.MathUtils.smoothstep(this.stateT / 0.2, 0, 1); // from where it reached them into their hands
+    this.pos.lerpVectors(this.catchFrom, this.trackWorld(this.clip, this.tw), k);
+    if (this.clip >= pl.releaseT - 1e-6) this.theirShot();
+  }
+
+  /**
+   * Their shot leaves on the track's own velocity where the clip has it, nudged 70% of the way toward the arc that drops
+   * through the ring (the clip ends before the release: the arc itself), with a little of a real shooter's spread.
+   */
+  private theirShot() {
+    const pl = this.player!;
+    const p = this.trackWorld(pl.releaseT, new THREE.Vector3());
+    const before = this.trackWorld(Math.max(0, pl.releaseT - 1 / pl.track.fps), new THREE.Vector3());
+    const vTrack = p.clone().sub(before).multiplyScalar(pl.track.fps);
+    const ring = this.hoop!.localToWorld(new THREE.Vector3(0, this.rimTop - RIM_TUBE, 0));
+    const solved = solveShot(p, ring);
+    const flat = (v: THREE.Vector3) => this.v1.set(v.x, 0, v.z).normalize();
+    const plausible = vTrack.length() > 3 && flat(vTrack).dot(this.v2.set(ring.x - p.x, 0, ring.z - p.z).normalize()) > 0.7;
+    const v = plausible ? vTrack.lerp(solved, 0.7) : solved;
+    // a good shooter's spread: about 0.5% in speed and 0.35 degrees in aim (most go in, some rattle out)
+    v.multiplyScalar(1 + gauss() * 0.005).applyAxisAngle(this.v1.set(0, 1, 0), THREE.MathUtils.degToRad(gauss() * 0.35));
+    this.pos.copy(p);
+    this.release(v, "their shot");
+    this.hisShot = true;
+    this.phase = "after";
+  }
+
+  /** The rebound back to you: a bounce pass that comes up to your waist (two arcs, one bounce on your floor). */
+  private passBack(head: THREE.Vector3, forward: THREE.Vector3) {
+    this.homeSpot(head, forward);
+    const p0 = this.pos.clone();
+    const h = this.home;
+    const flat = new THREE.Vector3(h.x - p0.x, 0, h.z - p0.z);
+    const dist = flat.length();
+    const b = p0.clone().addScaledVector(flat, 0.55).setY(R);
+    const t1 = THREE.MathUtils.clamp((dist * 0.55) / 4.8, 0.22, 0.9);
+    const v1 = new THREE.Vector3(b.x - p0.x, 0, b.z - p0.z).divideScalar(t1);
+    v1.y = (R - p0.y + 0.5 * G * t1 * t1) / t1;
+    const t2 = Math.sqrt((2 * Math.max(0.05, h.y - R)) / G); // it rises to your hands and arrives at the top of its arc
+    const v2 = new THREE.Vector3(h.x - b.x, 0, h.z - b.z).divideScalar(t2);
+    v2.y = G * t2;
+    this.pass = { p0, b, v1, v2, t1, t2, bounced: false };
+    this.state = "pass";
     this.stateT = 0;
-    this.alpha = 0;
-    this.holders = [];
+    this.hisShot = false;
+    this.log.push("bounce pass back to you");
+  }
+
+  private passing(dt: number) {
+    const ps = this.pass!;
+    let s = this.stateT, from = ps.p0, v = ps.v1;
+    if (s > ps.t1) {
+      if (!ps.bounced) {
+        ps.bounced = true;
+        this.sound("floor", 0.6);
+      }
+      s -= ps.t1;
+      from = ps.b;
+      v = ps.v2;
+    }
+    if (from === ps.b && s >= ps.t2) {
+      // in front of you, ready to take; they reset to their opening pose for the next pass
+      this.pos.copy(this.home);
+      this.state = "floating";
+      this.stateT = 0;
+      this.pass = null;
+      this.phase = "waiting";
+      this.clip = 0;
+      this.log.push("back to you");
+      return;
+    }
+    this.pos.copy(from).addScaledVector(v, s);
+    this.pos.y = from.y + v.y * s - 0.5 * G * s * s;
+    const sp = Math.hypot(v.x, v.z);
+    if (sp > 1e-3) {
+      this.q1.setFromAxisAngle(this.v1.set(v.z, 0, -v.x).divideScalar(sp), (sp / R) * dt);
+      this.ball.quaternion.premultiply(this.q1);
+    }
   }
 
   /** Once a frame while presenting. menuOpen: the left palm is up, so the ball in your hands goes away for now. */
@@ -261,9 +445,17 @@ export class Basketball {
     else if (this.state === "flying") {
       if (this.stateT > REGRAB_S) this.tryGrab(); // catch a rebound
       if (this.state === "flying") this.fly(dt);
+      if (this.state === "flying" && !this.hisShot && this.caught()) this.catchIt();
       const far = Math.hypot(this.pos.x - head.x, this.pos.z - head.z) > 30;
-      if (this.restT > 1 || this.stateT > RESPAWN_S || far) this.respawn(head, forward);
-    }
+      if (this.state !== "flying") {
+        // caught by you or by them
+      } else if (this.hisShot) {
+        // their shot: once it's come down and bounced, it comes back to you as a bounce pass
+        if ((this.floorHits > 0 && this.t - this.firstFloorT > 0.45) || this.stateT > 3.5 || far) this.passBack(head, forward);
+      } else if (this.restT > 1 || this.stateT > RESPAWN_S || far) this.respawn(head, forward);
+    } else if (this.state === "his") this.theirs(dt);
+    else if (this.state === "pass") this.passing(dt);
+    if (this.gameOn && this.phase === "after") this.clip = Math.min(this.clip + dt, this.player?.duration ?? 0);
 
     const target = hidden ? 0 : 1;
     this.alpha = THREE.MathUtils.clamp(this.alpha + (target ? dt / 0.3 : -dt / 0.15), 0, 1);
@@ -326,7 +518,7 @@ export class Basketball {
       if (ks.length && this.holders.length === 1 && this.palms[1 - k].on(this.pos)) ks = [k, 1 - k]; // the other hand joins
     }
     if (!ks.length) {
-      if (tracked.length) return this.release(this.velNow(), "hands came off");
+      if (tracked.length) return this.release(this.peak() ?? this.velNow(), "hands came off"); // opening right after a push
       return; // both lost a moment: it stays where it was
     }
     if (ks.length !== this.holders.length || ks[0] !== this.holders[0]) this.rel.copy(this.palms[ks[0]].quat).invert().multiply(this.ball.quaternion);
@@ -345,8 +537,8 @@ export class Basketball {
     const peak = this.peak();
     if (peak && this.stateT > 0.1) {
       const wrapped = ks.length === 1 && this.palms[ks[0]].wraps(this.pos);
-      const strong = ks.length === 2 ? 3 : 2.2;
-      const frac = ks.length === 2 ? 0.45 : 0.55;
+      const strong = 2; // a soft pass to someone close is about 2-3 m/s
+      const frac = ks.length === 2 ? 0.5 : 0.55;
       const pushing = ks.length === 2 || peak.dot(this.palms[ks[0]].normal) > 0.4 * peak.length();
       if (!wrapped && pushing && peak.length() > strong && v.length() < frac * peak.length()) this.release(peak, "hands slowed");
     }
@@ -394,7 +586,10 @@ export class Basketball {
     this.holders = [];
     this.madeThisShot = false;
     this.touchedThisShot = false;
-    if (v.length() > 2) {
+    this.hisShot = false;
+    this.floorHits = 0;
+    this.counted = v.length() > 2;
+    if (this.counted) {
       this.shots++;
       this.counter?.draw();
       if (this.counter) this.counter.mesh.visible = true;
@@ -510,6 +705,7 @@ export class Basketball {
     this.vel.addScaledVector(n, -(1 + e) * vn);
     this.friction(n, mu * (1 + e) * -vn);
     if (what !== "floor") this.touchedThisShot = true;
+    else if (this.floorHits++ === 0) this.firstFloorT = this.t;
     this.sound(what, THREE.MathUtils.clamp(-vn / (what === "floor" ? 5 : 4), 0.08, 1));
   }
 
@@ -548,7 +744,7 @@ export class Basketball {
   debug() {
     const r = (x: THREE.Vector3) => x.toArray().map((k) => +k.toFixed(3));
     const rim = this.hoop ? r(this.hoop.localToWorld(new THREE.Vector3(0, this.rimTop - RIM_TUBE, 0))) : null;
-    return { state: this.state, holders: this.holders.length, pos: r(this.pos), vel: r(this.vel), speed: +this.vel.length().toFixed(2), makes: this.makes, shots: this.shots, rim, hoopInRoom: this.hoopInRoom, alpha: +this.alpha.toFixed(2), log: this.log.slice(-8) };
+    return { game: this.gameOn ? `${this.phase} @${this.clip.toFixed(2)}s` : "off", state: this.state, holders: this.holders.length, pos: r(this.pos), vel: r(this.vel), speed: +this.vel.length().toFixed(2), makes: this.makes, shots: this.shots, rim, hoopInRoom: this.hoopInRoom, alpha: +this.alpha.toFixed(2), log: this.log.slice(-8) };
   }
 }
 
@@ -613,4 +809,41 @@ function tone(ctx: BaseAudioContext, what: Hit): AudioBuffer {
     d[i] = s * 0.7;
   }
   return b;
+}
+
+/**
+ * A ball from p that drops through the ring centre c: 55 degrees up (it comes down steeply enough to clear the ring),
+ * as fast as it takes (same gravity and drag).
+ */
+function solveShot(p: THREE.Vector3, c: THREE.Vector3): THREE.Vector3 {
+  const dir = new THREE.Vector3(c.x - p.x, 0, c.z - p.z);
+  const dist = dir.length();
+  dir.divideScalar(Math.max(dist, 1e-6));
+  const th = THREE.MathUtils.degToRad(55);
+  const reach = (speed: number) => {
+    const q = p.clone(), v = dir.clone().multiplyScalar(speed * Math.cos(th));
+    v.y = speed * Math.sin(th);
+    const h = 1 / 240;
+    for (let i = 0; i < 2400; i++) {
+      const sp = v.length();
+      v.y -= G * h;
+      v.addScaledVector(v, -DRAG * sp * h);
+      const y0 = q.y;
+      q.addScaledVector(v, h);
+      if (v.y < 0 && y0 > c.y && q.y <= c.y) return Math.hypot(q.x - p.x, q.z - p.z);
+    }
+    return 0;
+  };
+  let lo = 1.5, hi = 16;
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    if (reach(mid) < dist) lo = mid;
+    else hi = mid;
+  }
+  const speed = (lo + hi) / 2;
+  return dir.multiplyScalar(speed * Math.cos(th)).setY(speed * Math.sin(th));
+}
+
+function gauss(): number {
+  return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
 }
