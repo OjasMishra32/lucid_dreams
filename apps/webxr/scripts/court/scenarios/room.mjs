@@ -6,6 +6,7 @@
 // bounds (world.testEdge, dev only), since the bounds are seat.ts's (seatmath.test.ts checks the distance itself).
 // Owner: stream E.
 import { HZ, alphaOk, sitAtSeat } from "../look/view.mjs";
+import { boundsCase } from "../look/bounds.mjs";
 
 export const owner = "E (look)";
 export const needs = ["world"];
@@ -27,28 +28,29 @@ export default async function room(ctx) {
     const inRoom = out.at(-1);
     ctx.check("open world: the room shows once the veil is off (P34)", inRoom.alphaMin === 0, `alpha min ${inRoom.alphaMin} at 2.2 s`);
     ctx.check("open world: the players and their shadows stay (P34: alpha > 0 on them)", inRoom.alphaMean > 0.5, `alpha mean ${inRoom.alphaMean} (0 = nothing kept)`);
-    // extras beyond the bounds go with the arena, one inside them stays (P34); court.ts hands freeze.bounds the room
-    const kept = await ctx.page.evaluate(() => {
+    // extras beyond the bounds go with the arena, one inside them stays (P34); court.ts hands freeze.bounds the room.
+    // The extra and both rooms come from court.json (boundsCase), never from the order the splats loaded in.
+    const kept = await ctx.page.evaluate((c) => {
+      if (!c) return null;
       const fz = window.__courtLook.freeze;
-      const extras = fz.people.filter((p) => !p.pair);
-      const opacity = () => extras.map((p) => p.splats[0]?.opacity ?? NaN);
-      const around = ([x, z], r) => [[x - r, z - r], [x + r, z - r], [x + r, z + r], [x - r, z + r]];
-      const pair = fz.people.find((p) => p.pair).foot;
+      const extra = fz.people.find((p) => p.id === c.id);
+      if (!extra) return { id: c.id, missing: true };
+      const opacity = () => extra.splats[0]?.opacity ?? extra.reliefMats[0]?.opacity ?? NaN;
       fz.bounds(null);
       const none = opacity();
-      fz.bounds(extras.length ? around(extras[0].foot, 1) : null);
+      fz.bounds(c.inside);
       const inside = opacity();
-      fz.bounds(around(pair, 1.5));
+      fz.bounds(c.beyond);
       const beyond = opacity();
       const pairStays = fz.people.filter((p) => p.pair).every((p) => p.splats[0]?.opacity === 1);
       fz.bounds(null);
-      return { extras: extras.map((p) => p.id), none, inside, beyond, pairStays };
-    });
-    if (kept.extras.length)
+      return { id: c.id, none, inside, beyond, pairStays };
+    }, boundsCase(ctx.court));
+    if (kept)
       ctx.check(
         "open world: an extra inside the bounds stays, one beyond them goes (P34)",
-        kept.none[0] === 0 && kept.inside[0] === 1 && kept.beyond[0] === 0 && kept.pairStays,
-        `${kept.extras[0]}: ${kept.none[0]} with no bounds, ${kept.inside[0]} inside, ${kept.beyond[0]} beyond; the pair ${kept.pairStays ? "stays" : "went"}`,
+        !kept.missing && kept.none === 0 && kept.inside === 1 && kept.beyond === 0 && kept.pairStays,
+        kept.missing ? `${kept.id} isn't in the freeze (it didn't load)` : `${kept.id}: ${kept.none} with no bounds, ${kept.inside} inside, ${kept.beyond} beyond; the pair ${kept.pairStays ? "stays" : "went"}`,
       );
     const back = await ctx.pressFrames("room", Math.round(0.8 * HZ) + 4);
     const backAt = back.findIndex((f) => f.roomP <= 0);

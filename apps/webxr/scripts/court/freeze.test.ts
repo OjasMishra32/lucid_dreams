@@ -7,6 +7,7 @@ import { cameraOf, project } from "../../src/court/camera.ts";
 import type { Court, ShowFrame, Vec3 } from "../../src/court/format.ts";
 import { standinBundle } from "./standin.mjs";
 import { openEye } from "./look/proximity.mjs";
+import { boundsCase } from "./look/bounds.mjs";
 
 const { court, frames } = structuredClone(standinBundle()) as { court: Court; frames: ShowFrame[] };
 const HZ = 72;
@@ -108,4 +109,27 @@ test("P17's ball check leans in from the open side: a ball held at the hip, insi
   const side: Vec3 = [ball.centre[0] - 0.42 * Math.cos(a), ball.centre[1], ball.centre[2] - 0.42 * Math.sin(a)];
   close(capsuleDistance(side, torso), 0.176, 2e-3, "the review's 0.176 m");
   assert.ok(nearBody(side, [torso, head]), "along his side the holder fades");
+});
+
+test("P34's bounds case comes from court.json, whatever order the people load in: the extra inside one room, beyond the other", () => {
+  const extra = court.freeze.others[0];
+  assert.ok(extra, "the stand-in has an extra");
+  // the extra standing close to either player, with the players and the extras listed in every order
+  const order = <T,>(xs: T[], k: number) => xs.map((_, i) => xs[(i + k) % xs.length]);
+  for (const near of court.freeze.players) {
+    const foot: Vec3 = [near.bounds.max[0] + 0.3, 0, (near.bounds.min[2] + near.bounds.max[2]) / 2];
+    for (let k = 0; k < court.freeze.players.length; k++) {
+      const c = structuredClone(court);
+      c.freeze.others = [{ ...extra, foot }, ...c.freeze.others.slice(1)];
+      c.freeze.players = order(c.freeze.players, k);
+      const kase = boundsCase(c)!;
+      assert.equal(kase.id, extra.id, "the extra by its id");
+      assert.ok(inBounds(foot[0], foot[2], kase.inside), `inside: next to ${near.id}, order ${k}`);
+      assert.ok(!inBounds(foot[0], foot[2], kase.beyond), `beyond: next to ${near.id}, order ${k}`);
+    }
+  }
+  // the page looks the extra up by id: a shuffled load order finds the same one
+  const people = [...court.freeze.players.map((p) => ({ id: p.id, pair: true })), ...court.freeze.others.map((o) => ({ id: o.id, pair: false }))];
+  for (let k = 0; k < people.length; k++) assert.equal(order(people, k).find((p) => p.id === boundsCase(court)!.id)?.id, extra.id, `load order ${k}`);
+  assert.equal(boundsCase({ ...court, freeze: { ...court.freeze, others: [] } }), null, "no extras, no case");
 });
