@@ -51,6 +51,9 @@ const { SeatedOpponent } = seatedModule;
 // (the table as seated.ts defines it; older versions of it didn't, and had this one in mind)
 const TABLE_TOP: number = (seatedModule as Record<string, unknown>).TABLE_TOP as number ?? -0.012;
 const TABLE_EDGE: number = (seatedModule as Record<string, unknown>).TABLE_EDGE as number ?? 0.398;
+const TABLE_NEAR: number = (seatedModule as Record<string, unknown>).TABLE_NEAR as number ?? 0.45;
+const TABLE_HALF_X: number = (seatedModule as Record<string, unknown>).TABLE_HALF_X as number ?? 0.6;
+const TABLE_THICK: number = (seatedModule as Record<string, unknown>).TABLE_THICK as number ?? 0.04;
 const { BodyShape } = await import("../src/chess/body.ts");
 const { SQUARE, squareToLocal, pieceHeight, pieceRadius: pieceRadiusOf } = await import("../src/chess/pieces.ts");
 
@@ -429,10 +432,10 @@ function jointLimit(k: string): [number, number] {
 // ---------------- the scene ----------------
 
 const BOARD_HALF = SQUARE * 4 + 0.018;
-// the table (seated.ts): its top is the board's underside; it ends TABLE_EDGE behind the board's centre on their side
-// and runs 0.45 m toward the player, 1.2 m across
-const TABLE_C = v3(0, TABLE_TOP - 0.02, (0.45 - TABLE_EDGE) / 2);
-const TABLE_H = v3(0.6, 0.02, (0.45 + TABLE_EDGE) / 2);
+// the table (seated.ts builds it): its top TABLE_TOP, TABLE_THICK thick, TABLE_EDGE behind the board's centre on their
+// side, TABLE_NEAR in front of it on the player's, TABLE_HALF_X either way across
+const TABLE_C = v3(0, TABLE_TOP - TABLE_THICK / 2, (TABLE_NEAR - TABLE_EDGE) / 2);
+const TABLE_H = v3(TABLE_HALF_X, TABLE_THICK / 2, (TABLE_NEAR + TABLE_EDGE) / 2);
 // the far button of the clock, standing (clock.ts: body 0.095 x 0.034 x 0.18 at x = SQUARE * 4 + 0.13)
 const CLOCK_X = SQUARE * 4 + 0.13;
 

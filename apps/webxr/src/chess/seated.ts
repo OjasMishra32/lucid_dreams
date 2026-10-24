@@ -33,14 +33,17 @@ const HIPS_BEHIND_EDGE = 0.45;
 /** How far behind the board's centre the opponent's hip joints are: where the chair goes. */
 export const SEAT_DISTANCE = BOARD_EDGE + HIPS_BEHIND_EDGE;
 /**
- * The table the board stands on, table-local: its top is the board's underside, and on their side it ends 18 cm past
- * the board, a hand's width in front of their belly (where a real table's edge would be for someone sitting there).
- * Nothing of theirs goes through it: hands rest on it, forearms lie on it, elbows over it stay above it.
+ * The table the board is set into (built with the chair: buildTable), table-local. Its top is 1 mm under the board's
+ * surface (the board is inlaid, so the clock and the captured pieces, which stand at the board's height, stand on it),
+ * 3 cm thick, 96 cm across. On their side it ends 18 cm past the board, a hand's width in front of their belly; on
+ * yours 7 cm past it, about where your hands come to rest, so its edge never cuts through your forearms. Nothing of
+ * theirs goes through it: hands rest on it, forearms lie on it, elbows over it stay above it.
  */
-export const TABLE_TOP = -0.012;
+export const TABLE_TOP = -0.001;
 export const TABLE_EDGE = BOARD_EDGE + 0.18;
-/** The table's footprint across (table-local x): a 1.2 m table. */
-const TABLE_HALF_X = 0.6;
+export const TABLE_NEAR = BOARD_EDGE + 0.07;
+export const TABLE_HALF_X = 0.48;
+export const TABLE_THICK = 0.03;
 const BOARD_TOP = 0.0005;
 const GAP = 0.008; // meters every hand, arm and carried piece keeps above anything it passes over
 
@@ -96,7 +99,7 @@ const BODY = 22; // joints 0..21 are posed here; the rest (jaw, eyes, fingers) c
 const BASE_LEAN = 0.2; // radians forward, pelvis + spine, at rest
 const MAX_LEAN = 0.75; // what a far reach may add
 const MAX_SLIDE = 0.1; // meters forward on the seat for a reach further than that
-const MAX_RISE = 0.14; // meters up off the seat, half standing, for a reach the chest would otherwise take into the table
+const MAX_RISE = 0.2; // meters up off the seat, half standing, for a reach the chest would otherwise take into the table
 const MAX_BEND = 2.6; // elbow / knee
 const ELBOW_REST = 0.04; // the elbow joint above the table when that elbow rests on it (the arm's own thickness)
 const CLEAR = 0.04; // meters every hand and forearm keeps from the body (the face and torso), past its own thickness
@@ -429,8 +432,10 @@ interface Thing {
 }
 const FAR_BUTTON = new THREE.Object3D(); // their clock button, among the things: a press may touch it
 const HEAD_BACK = 0.3; // radians the head may tip back past the chest's forward
+const HEAD_TURN = 1.0; // radians the head may turn from the chest, all told
 const TIP_LET_GO = 0.55; // radians a resigning king is tipped by hand before it's let go to fall the rest of the way
 const _fq = new THREE.Quaternion();
+const _tl = new THREE.Vector3();
 const _bq = new THREE.Quaternion();
 
 /** One hand's state: its queue of steps and where it is asked to be. */
@@ -442,6 +447,7 @@ class Hand {
   pin = 0; // pinch pose weight
   pt = 0; // pointing pose weight
   tuck = 0; // middle, ring and pinky curled in
+  ease = 0; // how much wider than its step asks the pinch is held (easePinch), let go of slowly: no flicker
   contact = new THREE.Vector3(); // the hand's contact point in its wrist's rest frame, this frame (shape().contact)
   o = 0;
   beta = 0.9;
@@ -464,6 +470,9 @@ const up = (v: THREE.Vector3, h: number) => v.clone().setY(v.y + h);
 
 export class SeatedOpponent {
   readonly chair: THREE.Group;
+  /** The table, in the board's table group (it moves with the board, its handle and its anchor); legs to the floor. */
+  readonly desk: THREE.Group;
+  private legs: THREE.Mesh[] = [];
   private rig!: Rig;
   private chairMats: THREE.MeshStandardMaterial[] = [];
   private hands: [Hand, Hand] = [new Hand(0), new Hand(1)];
@@ -569,6 +578,8 @@ export class SeatedOpponent {
     // a bulkier body (a jacket, a fuller belly) sits back by the extra depth, so there's room in front of it
     this.seatBack = clamp(this.body.front - 0.167, 0, 0.12);
     this.chair = this.buildChair();
+    this.desk = this.buildTable();
+    table.add(this.desk);
     this.reseed(hashSeed("opponent"));
   }
 
@@ -801,8 +812,10 @@ export class SeatedOpponent {
   }
 
   dispose() {
-    this.chair.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    this.desk.removeFromParent();
+    for (const g of [this.chair, this.desk]) g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
     this.chairMats.forEach((m) => m.dispose());
+    (this.chairMats.find((m) => m.map)?.map as THREE.Texture | undefined)?.dispose();
   }
 
   /**
@@ -819,6 +832,9 @@ export class SeatedOpponent {
     this.pressure = clamp(ctx.pressure ?? 0, 0, 1);
 
     this.table.updateWorldMatrix(true, true);
+    // the table's legs reach the floor wherever the board is (on the floor, y = 0 in world)
+    const under = this.table.localToWorld(_tl.set(0, TABLE_TOP - TABLE_THICK, 0)).y;
+    for (const leg of this.legs) leg.scale.y = Math.max(0.01, under);
     this.avatar.mesh.updateWorldMatrix(true, false);
     this.toBundle.copy(this.avatar.mesh.matrixWorld).invert().multiply(this.table.matrixWorld);
     this.fromBundle.copy(this.toBundle).invert();
@@ -1287,7 +1303,7 @@ export class SeatedOpponent {
       pinOpen = openSt.pin = this.pinFor(side, this.shape(side, holdSt).gap + 0.024);
       for (const s of segs) {
         if (s.pin1 === undefined || s.pt1) continue;
-        s.pin1 = s.kind === "grip" || s.kind === "carry" || s.kind === "adjust" ? pinHold : s.kind === "set" || (s.kind === "hover" && s !== segs[1]) ? (pinHold + pinOpen) / 2 : s.kind === "lift" ? pinOpen * 0.6 : pinOpen;
+        s.pin1 = s.kind === "grip" || s.kind === "carry" ? pinHold : s.kind === "adjust" ? pinHold - 0.08 : s.kind === "set" || (s.kind === "hover" && s !== segs[1]) ? (pinHold + pinOpen) / 2 : s.kind === "lift" ? pinOpen * 0.6 : pinOpen;
       }
     };
     const lookFrom = () => up(k.fromTL, 0.02);
@@ -1398,13 +1414,14 @@ export class SeatedOpponent {
     });
     if (opt.adjust)
       segs.push(
-        { kind: "set", dur: rng.range(0.06, 0.09), end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: (pinHold + pinOpen) / 2, tuck1: 1, look: lookTo },
-        { kind: "hover", dur: rng.range(0.12, 0.3), end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: (pinHold + pinOpen) / 2, tuck1: 1, look: lookTo },
+        { kind: "set", dur: rng.range(0.07, 0.1), end: () => up(P.dest, (k.raise ?? 0) + 0.008), k, w1: 1, c1: 0, pin1: (pinHold + pinOpen) / 2, tuck1: 1, look: lookTo },
+        { kind: "hover", dur: rng.range(0.12, 0.3), end: () => up(P.dest, (k.raise ?? 0) + 0.008), k, w1: 1, c1: 0, pin1: (pinHold + pinOpen) / 2, tuck1: 1, look: lookTo },
         { kind: "grip", dur: 0.08, end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold, tuck1: 1, hold: false, look: lookTo },
-        { kind: "adjust", dur: rng.range(0.22, 0.38), end: () => up(P.final, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold, tuck1: 1, look: lookTo },
+        { kind: "adjust", dur: rng.range(0.22, 0.38), end: () => up(P.final, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold - 0.08, tuck1: 1, look: lookTo },
       );
     segs.push(
-      { kind: "release", dur: rng.range(0.06, 0.1), end: () => up(P.final, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinOpen, tuck1: 1, places: true, look: lookTo },
+      // the fingers open as the hand lifts off it a little: opening alone would sweep the index tip through its head
+      { kind: "release", dur: rng.range(0.07, 0.11), end: () => up(P.final, (k.raise ?? 0) + 0.01), k, w1: 1, c1: 0, pin1: pinOpen, tuck1: 1, places: true, look: lookTo },
       // straight up off it, the fingers opening, until the hand is clear of it
       {
         kind: "lift", dur: st.settle * rng.range(0.8, 1.25) + 0.08, end: () => P.off, w1: 1, c1: 0, pin1: pinOpen * 0.6, tuck1: 1, skew: 0.1, look: lookTo,
@@ -1921,7 +1938,7 @@ export class SeatedOpponent {
    * the table. fixed: only what never moves (the table, the board, the clock), not the pieces.
    */
   private ground(x: number, z: number, rad: number, skip?: Set<THREE.Object3D | null>, extra?: Thing[], fixed = false) {
-    let y = Math.abs(x) < TABLE_HALF_X + rad && z > -TABLE_EDGE - rad ? TABLE_TOP : -Infinity;
+    let y = Math.abs(x) < TABLE_HALF_X + rad && z > -TABLE_EDGE - rad && z < TABLE_NEAR + rad ? TABLE_TOP : -Infinity;
     if (Math.abs(x) < BOARD_EDGE + rad && Math.abs(z) < BOARD_EDGE + rad) y = Math.max(y, BOARD_TOP);
     for (const list of extra ? [this.things, extra] : [this.things])
       for (const t of list) {
@@ -2274,13 +2291,20 @@ export class SeatedOpponent {
     const m = smooth(h.w);
     h.q.slerpQuaternions(idle.q, reachQ, m);
     const sk = h.segs[0]?.k && ["descend", "grip", "carry", "set", "hover", "adjust", "release"].includes(h.segs[0].kind) ? h.segs[0].k : null;
-    if (h.held || sk) this.easePinch(h, h.held ?? sk!);
+    if (h.held || sk) {
+      // wider than asked if the piece needs it, and kept that wide a while: re-deciding every frame would flicker
+      h.ease = Math.max(0, h.ease - this.dt * 0.6);
+      const asked = h.pin;
+      h.pin = Math.max(-0.6, asked - h.ease);
+      this.easePinch(h, h.held ?? sk!);
+      h.ease = Math.max(h.ease, asked - h.pin);
+    } else h.ease = 0;
     h.contact.copy(this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck }).contact);
     h.wrist.copy(h.contact).applyQuaternion(h.q).negate().add(h.graspB);
     h.pole.copy(idle.pole).lerp(this.defaultPole(side, new THREE.Vector3()), m).normalize();
     // the reaching shoulder comes forward: the torso turns a little toward the target, more for the far side
     const az = Math.atan2(-h.graspB.x, -h.graspB.z); // + toward the person's left
-    h.twist = m * (side === 1 ? clamp(0.1 + 0.45 * az, -0.12, 0.45) : -clamp(0.1 - 0.45 * az, -0.12, 0.45));
+    h.twist = m * (side === 1 ? clamp(0.1 + 0.55 * az, -0.12, 0.62) : -clamp(0.1 - 0.55 * az, -0.12, 0.62)); // (across the body: a good deal)
   }
 
   private handPose(h: HandRest, dir: THREE.Vector3, palm: THREE.Vector3, roll: number, out: THREE.Quaternion) {
@@ -2390,7 +2414,7 @@ export class SeatedOpponent {
     // about 1.6 rad/s (the reaches are timed so it keeps up)
     const asked = Math.max(reach, 0.06 * wmax);
     // leaning that far in, a bulky chest would go over the table's edge and into it: they rise a little off the seat
-    // instead (up to 14 cm: half standing), and if even that isn't enough, lean no further
+    // instead (up to 20 cm: half standing), and if even that isn't enough, lean no further
     let rise = 0;
     let lean = asked;
     if (asked > 0.25 && this.chestInTable(local, rootT, asked, 0, slide) > 0) {
@@ -2448,7 +2472,7 @@ export class SeatedOpponent {
     const turn = (1 - 0.6 * held) * this.idleOut.look;
     const eye = (j: number) => this.P[j].clone().add(r.eyeOff.clone().applyQuaternion(G[j]));
     const want = this.gazeB.clone().sub(eye(HEAD)).normalize();
-    const qn = swing(Z.clone().applyQuaternion(G[HEAD]), want, 1.1 * turn).clone().slerp(ID, 0.6); // the neck takes 40%
+    const qn = swing(Z.clone().applyQuaternion(G[HEAD]), want, 1.0 * turn).clone().slerp(ID, 0.6); // the neck takes 40%
     G[NECK].premultiply(qn);
     local[NECK].copy(G[SPINE3]).invert().multiply(G[NECK]);
     this.fk(local, rootT, HEAD);
@@ -2464,6 +2488,13 @@ export class SeatedOpponent {
     if (shake >= 0 && shake < 1) {
       local[HEAD].multiply(rot(0, 0.07 * Math.sin(2 * Math.PI * 1.5 * shake) * Math.sin(Math.PI * shake), 0));
       G[HEAD].multiplyQuaternions(G[NECK], local[HEAD]);
+    }
+    // nor turns more than about 57 degrees from the chest all told: past that the neck's skin twists
+    const rel = _bq.copy(G[SPINE3]).invert().multiply(G[HEAD]);
+    const ang = 2 * Math.acos(clamp(Math.abs(rel.w), 0, 1));
+    if (ang > HEAD_TURN) {
+      G[HEAD].copy(G[SPINE3]).multiply(rel.slerp(ID, 1 - HEAD_TURN / ang));
+      local[HEAD].copy(G[NECK]).invert().multiply(G[HEAD]);
     }
     // the head never tips back more than about 17 degrees past the chest's forward (looking up from a lean is the
     // eyes' job): further back the neck's skin stretches and, from behind, the face shows over the head
@@ -2610,7 +2641,7 @@ export class SeatedOpponent {
     let worst = 0;
     const test = () => {
       p.applyMatrix4(this.fromBundle);
-      const top = Math.abs(p.x) < BOARD_EDGE && Math.abs(p.z) < BOARD_EDGE ? BOARD_TOP : Math.abs(p.x) < TABLE_HALF_X && p.z > -TABLE_EDGE ? TABLE_TOP : -Infinity;
+      const top = Math.abs(p.x) < BOARD_EDGE && Math.abs(p.z) < BOARD_EDGE ? BOARD_TOP : Math.abs(p.x) < TABLE_HALF_X && p.z > -TABLE_EDGE && p.z < TABLE_NEAR ? TABLE_TOP : -Infinity;
       worst = Math.max(worst, top + 0.012 - p.y);
     };
     // the front of the trunk as the avatar's own Gaussians have it, and the measured blocks' front faces
@@ -2787,6 +2818,54 @@ export class SeatedOpponent {
   lastReport: string[] = [];
 
   // ---------------- the chair ----------------
+
+  private buildTable(): THREE.Group {
+    // dark walnut, matte, a faint grain along its length; the board set into its top; four slim legs to the floor
+    const g = new THREE.Group();
+    const grain = typeof document === "undefined" ? null : this.grain(); // (none outside a page: the pose check)
+    const wood = new THREE.MeshStandardMaterial({ map: grain, color: grain ? 0xffffff : 0x1a1411, roughness: 0.78, metalness: 0, envMapIntensity: 0.22 });
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x15110e, roughness: 0.8, metalness: 0, envMapIntensity: 0.22 });
+    this.chairMats.push(wood, legMat);
+    const depth = TABLE_EDGE + TABLE_NEAR;
+    const top = new THREE.Mesh(new RoundedBoxGeometry(TABLE_HALF_X * 2, TABLE_THICK, depth, 3, 0.006), wood);
+    top.position.set(0, TABLE_TOP - TABLE_THICK / 2, (TABLE_NEAR - TABLE_EDGE) / 2);
+    g.add(top);
+    // a leg is 1 m tall from its top down; update() stretches it to the floor
+    const leg = new THREE.CylinderGeometry(0.016, 0.012, 1, 16).translate(0, -0.5, 0);
+    for (const lx of [-1, 1])
+      for (const lz of [-TABLE_EDGE + 0.05, TABLE_NEAR - 0.05]) {
+        const m = new THREE.Mesh(leg, legMat);
+        m.position.set(lx * (TABLE_HALF_X - 0.05), TABLE_TOP - TABLE_THICK, lz);
+        g.add(m);
+        this.legs.push(m);
+      }
+    return g;
+  }
+
+  /** Dark walnut: a faint grain along the table's length. */
+  private grain() {
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 128;
+    const x = c.getContext("2d")!;
+    x.fillStyle = "#1a1411";
+    x.fillRect(0, 0, 512, 128);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 90; i++) {
+      x.strokeStyle = `rgba(${rnd() < 0.5 ? "40,30,24" : "12,9,7"},${0.25 + 0.35 * rnd()})`;
+      x.lineWidth = 0.6 + 1.6 * rnd();
+      x.beginPath();
+      const y0 = rnd() * 128;
+      x.moveTo(0, y0);
+      for (let px = 0; px <= 512; px += 32) x.lineTo(px, y0 + 3 * Math.sin(px / (60 + 80 * rnd()) + i));
+      x.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+  }
 
   private buildChair(): THREE.Group {
     // dark, minimal: a dark leather seat, four slim legs, two back posts and a curved-feeling rail. Front faces -Z.
