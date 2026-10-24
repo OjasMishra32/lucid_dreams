@@ -111,7 +111,7 @@ Then check on the real headset with your own hands, and log what you measured.
 passthrough only (Place button, places and panoramas gone, APK 45 MB). HandsCheck and HeadLookCheck pass.
 
 **Grandma (moment 4), decided: the replay is her demo version.** `ian-grandma`, from the frontal home video:
-121 frames, 1.69 m, held-out PSNR 28.5 dB / SSIM 0.98, 58% seen; her own voice. Private: held on both Macs, never
+121 frames, 1.69 m, views PSNR 28.5 dB / SSIM 0.98 (trained on, not held out), 58% seen; her own voice. Private: held on both Macs, never
 in git, never on the site, kiosk or showcase. Family consent is in, including her voice. Every avatar route was
 tried and is held, not used, because none of the faces read as her yet:
 - `ian-grandma-avatar-head`: DiGS body + LAM head. Colours fixed by Vishal's tone fix; still wide and messy at 3/4.
