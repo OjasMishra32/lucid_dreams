@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
+import { SkinnedAvatar } from "./avatar";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
@@ -102,7 +103,19 @@ export async function renderViewer(root: HTMLElement, id: string) {
     loaded++;
     onProgress();
   });
-  await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, count) }, worker));
+  // an avatar with a rig moves live (any motion, one Gaussian file); everything else plays its frames
+  let avatar: SkinnedAvatar | null = null;
+  if (SkinnedAvatar.canSkin(dream)) {
+    try {
+      avatar = await SkinnedAvatar.load(dream);
+      person.add(avatar.mesh);
+      loaded = count;
+      onProgress();
+    } catch (e) {
+      console.warn("Showing the rest pose: the rig didn't load.", e);
+    }
+  }
+  if (!avatar) await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, count) }, worker));
   $("#loader").classList.add("done");
   $("#controls").hidden = false;
 
@@ -134,7 +147,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let speed = 1;
   let t = 0; // seconds into the clip
   let shown = -1;
-  const duration = Math.max(dream.durationS, 1 / dream.fps);
+  const duration = avatar ? avatar.duration : Math.max(dream.durationS, 1 / dream.fps);
   let reveal = 0; // 0 -> 1 over the first moments: the person materialises instead of popping in
   const show = (i: number, force = false) => {
     if (active[i]) active[i]!.opacity = reveal;
@@ -271,7 +284,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const m = caption.material as THREE.MeshBasicMaterial;
       m.opacity += (target - m.opacity) * Math.min(1, dt * 4);
     }
-    show(Math.min(count - 1, Math.floor(t * dream.fps)));
+    if (avatar) {
+      avatar.pose(t);
+      avatar.mesh.opacity = reveal;
+    } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;
     if (!renderer.xr.isPresenting) controls.update();
