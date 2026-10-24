@@ -20,15 +20,16 @@ const config: NextConfig = {
   agentRules: false,
   // One website: the home page shows every scene, so the old showcase page sends you there
   async redirects() {
-    return [
-      { source: "/showcase", destination: "/#scenes", permanent: false },
-      { source: "/xr", destination: "/xr/", permanent: false },
-    ];
+    return [{ source: "/showcase", destination: "/#scenes", permanent: false }];
   },
   // /xr/ keeps its slash: the headset app's own links are relative to it ("./" is its library)
   skipTrailingSlashRedirect: true,
   async rewrites() {
-    return [{ source: "/xr/:path*", destination: `${XR}/xr/:path*` }];
+    // (its page by name: the WebXR server only answers under "/xr/", and a rewrite of the bare folder loses the slash)
+    return [
+      { source: "/xr", destination: `${XR}/xr/index.html` },
+      { source: "/xr/:path+", destination: `${XR}/xr/:path+` },
+    ];
   },
 };
 

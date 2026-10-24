@@ -168,7 +168,7 @@ clear over the music.
   - `:5175` Talk (`apps/talk`, keys in its git-ignored `.env`);
   - `:5180` WebXR, https (what the headset uses);
   - `:5181` WebXR over plain http (working tree, for desktop checks).
-  - There is one website: `apps/web` on `:5170` (public at https://getluciddreams.vercel.app). The old `apps/site` (:5190) is retired.
+  - There is one address for everything: https://getluciddreams.vercel.app is the website (`apps/web` on `:5170`) and the headset app at `/xr/` on it (the website passes `/xr/` to the WebXR stable build on `:5182`; `~/LucidDreams-held/rebuild-stable.sh` builds and serves it, also https on `:5180/xr/` for the Mac's Wi-Fi). `lucid-xr.vercel.app` forwards there. The old `apps/site` (:5190) is retired.
 - **Cloudflare quick tunnels** (campus Wi-Fi blocks the Quest from the Mac):
   - WebXR: `cloudflared tunnel --url https://localhost:5180 --no-tls-verify`;
   - the bridge and Talk URLs are in `~/LucidDreams-held/{bridge,talk}-tunnel.txt`.
