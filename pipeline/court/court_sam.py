@@ -3,6 +3,7 @@
   Mac:  python3 -I court_sam.py pack --video <clip> --range A-B --prompts <prompts.json> --out <dir>
                                     [--crop x0,y0,x1,y1]
   HPG:  python court_sam.py run <upload dir> <out dir>          (court-sam.sbatch, the sam2 venv, one GPU)
+        python court_sam.py rematte <set dir> <masks-sam.tar> <out dir>   (the matte again, on an earlier run's masks)
   Mac:  python3 -I court_sam.py unpack <masks-sam.tar> --out <masks dir> [--set <name>]
 
 A clip (a "set") is a folder holding frames.zip (images whose names sort in frame order; the name's stem is the frame
@@ -152,7 +153,7 @@ def write_png(path: Path, m: np.ndarray):
     Image.fromarray(m).save(path)
 
 
-def run_set(pred, set_dir: Path, out: Path, work: Path) -> dict:
+def run_set(pred, set_dir: Path, out: Path, work: Path, matte: bool = True) -> dict:
     prompts = json.loads((set_dir / "prompts.json").read_text())
     frames = work / "frames"
     shutil.rmtree(frames, ignore_errors=True)
@@ -193,6 +194,15 @@ def run_set(pred, set_dir: Path, out: Path, work: Path) -> dict:
     print(f"[sam] {set_dir.name}: {n}/{len(stems)} frames, {len(prompts['objects'])} objects, {rep['seconds']} s, "
           f"empty frames {sum(len(v) for v in empty.values())}", flush=True)
     shutil.rmtree(frames, ignore_errors=True)
+    if matte:
+        matte_set(set_dir, out, rep)
+    return rep
+
+
+def matte_set(set_dir: Path, out: Path, rep: dict) -> dict:
+    """The BiRefNet band matte for a set whose prompts ask for it ("matte": true), on out/masks; updates report.json.
+    Run it outside SAM's bf16 autocast: BiRefNet runs in fp16 and autocast would mix the two."""
+    prompts = json.loads((set_dir / "prompts.json").read_text())
     if prompts.get("matte"):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import court_matte
@@ -214,14 +224,14 @@ def run_set(pred, set_dir: Path, out: Path, work: Path) -> dict:
 def sets_in(upload: Path) -> list[Path]:
     if (upload / "prompts.json").exists():
         return [upload]
-    return sorted(d for d in upload.iterdir() if (d / "prompts.json").exists() and (d / "frames.zip").exists())
+    return sorted(d for d in upload.iterdir() if (d / "prompts.json").exists()
+                  and ((d / "frames.zip").exists() or json.loads((d / "prompts.json").read_text()).get("video")))
 
 
 def run(upload: Path, out: Path):
     import torch
     from sam2.build_sam import build_sam2_video_predictor
 
-    torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     ck = os.path.join(os.environ["SAM2_ROOT"], "checkpoints", "sam2.1_hiera_large.pt")
@@ -232,8 +242,35 @@ def run(upload: Path, out: Path):
     work = Path(tempfile.mkdtemp(prefix="court_sam_"))
     with torch.inference_mode():
         for s in sets:
-            run_set(pred, s, out if s == upload else out / s.name, work)
+            o = out if s == upload else out / s.name
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                rep = run_set(pred, s, o, work, matte=False)
+            matte_set(s, o, rep)
     shutil.rmtree(work, ignore_errors=True)
+
+
+def rematte(upload: Path, tar: Path, out: Path) -> dict:
+    """The band matte again, on an earlier run's masks (its masks-sam.tar) for the same upload (one set, or one
+    folder per set): [<set>/]alpha/ under out. Returns {set: matte summary} ("." for a one-set upload)."""
+    import torch
+
+    done = {}
+    with tarfile.open(tar) as t:
+        for s in sets_in(upload):
+            pre = "./" if s == upload else f"./{s.name}/"
+            o = out if s == upload else out / s.name
+            members = [m for m in t.getmembers() if m.name.startswith(pre + "masks/") or m.name == pre + "report.json"]
+            for m in members:  # each set's files land in its own folder under out
+                m.name = m.name[len(pre):]
+            t.extractall(o, members=members)
+            rep = json.loads((o / "report.json").read_text())
+            rep.pop("matte", None)
+            with torch.inference_mode():
+                rep = matte_set(s, o, rep)
+            shutil.copyfile(s / "prompts.json", o / "prompts.json")
+            shutil.rmtree(o / "masks")  # the binaries are already home; only the alpha goes back
+            done["." if s == upload else s.name] = rep.get("matte")
+    return done
 
 
 # --- Mac: pack and unpack -----------------------------------------------------------------------------------------
@@ -329,6 +366,10 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("upload", type=Path)
     r.add_argument("out", type=Path)
+    m = sub.add_parser("rematte")
+    m.add_argument("set", type=Path)
+    m.add_argument("tar", type=Path, help="the earlier run's masks-sam.tar")
+    m.add_argument("out", type=Path)
     u = sub.add_parser("unpack")
     u.add_argument("tar", type=Path)
     u.add_argument("--out", type=Path, required=True)
@@ -354,6 +395,8 @@ def main(argv=None):
               f"frames.zip {(d / 'frames.zip').stat().st_size / 2**20:.0f} MB")
     elif a.cmd == "run":
         run(a.upload, a.out)
+    elif a.cmd == "rematte":
+        print(json.dumps(rematte(a.set, a.tar, a.out)))
     else:
         size = tuple(int(v) for v in a.size.split(",")) if a.size else None
         print(f"{unpack(a.tar, a.out, a.set, size, a.single)} masks -> {a.out}")

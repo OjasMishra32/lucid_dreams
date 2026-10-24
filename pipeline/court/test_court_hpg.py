@@ -143,6 +143,35 @@ class Masks(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertTrue(c[0].endswith("court-sam.sbatch"), c)
 
+    def test_rematte_reuses_the_upload_and_the_masks(self):
+        L = fake_l(self.root, env_ready=True)
+        d = L / "data/court/court-sam-pair"
+        d.mkdir()
+        (d / "prompts.json").write_text("{}")
+        (d / "A.mp4").write_bytes(b"x" * 100)
+        rc, out, c = direct(L, "court-rematte-pair")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("masks-sam.tar to matte", out)
+        (L / "runs/court-sam-pair").mkdir(parents=True)
+        (L / "runs/court-sam-pair/masks-sam.tar").write_bytes(b"x" * 100)
+        rc, out, c = direct(L, "court-rematte-pair")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"RUN={L}/runs/court-rematte-pair,DATA={L}/data/court/court-sam-pair,"
+                      f"MASKS_TAR={L}/runs/court-sam-pair/masks-sam.tar", c[0])
+        self.assertTrue(c[0].endswith("court-sam.sbatch"))
+        self.assertIn("masks-alpha.tar", out)
+        # a multi-set upload (one folder per view) rematted the same way
+        v = L / "data/court/court-sam-views"
+        for who in ("v1", "v2"):
+            (v / who).mkdir(parents=True)
+            (v / who / "prompts.json").write_text("{}")
+            (v / who / "frames.zip").write_bytes(b"x" * 100)
+        (L / "runs/court-sam-views").mkdir(parents=True)
+        (L / "runs/court-sam-views/masks-sam.tar").write_bytes(b"x" * 100)
+        rc, out, c = direct(L, "court-rematte-views")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("MASKS_TAR=", c[-1])
+
     def test_a_prompted_upload_without_a_set_submits_nothing(self):
         L = fake_l(self.root, env_ready=True)
         (L / "data/court/court-sam-pair").mkdir()
@@ -231,6 +260,13 @@ class Mac(unittest.TestCase):
         out = self.mac("fetch", "sam", "views", "/m", "--single")
         self.assertIn("runs/court-sam-views/masks-sam.tar /m/", out[1])
         self.assertTrue(out[2].endswith("court_sam.py unpack /m/masks-sam.tar --out /m --single"), out[2])
+
+    def test_rematte_and_its_fetch(self):
+        out = self.mac("rematte", "pair")
+        self.assertTrue(out[-1].endswith("court-hpg.sh court-rematte-pair"), out[-1])
+        out = self.mac("fetch", "rematte", "pair", "/m")
+        self.assertIn("runs/court-rematte-pair/masks-alpha.tar /m/", out[1])
+        self.assertTrue(out[2].endswith("court_sam.py unpack /m/masks-alpha.tar --out /m"), out[2])
 
     def test_fetch_matte_unpacks_into_the_masks(self):
         out = self.mac("fetch", "matte", "/m", "/stage")

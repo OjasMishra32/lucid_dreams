@@ -114,7 +114,8 @@ class FromVideo(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.set = self.root / "court-sam-pair"
         self.set.mkdir()
-        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc=size={W}x{H}:rate=25", "-frames:v", "10",
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc=size={W}x{H}:rate=25",
+                        "-frames:v", "10",
                         "-pix_fmt", "yuv420p", str(self.set / "clip.mp4")], check=True)
 
     def tearDown(self):
@@ -163,6 +164,20 @@ class FromVideo(unittest.TestCase):
         self.assertTrue((self.root / "masks/a-alpha/000004.png").exists())
         self.assertTrue((self.root / "masks/b-prob/000002.png").exists())
 
+    def test_rematte_on_an_earlier_runs_masks(self):
+        self.test_sam_then_matte_on_the_same_node()  # a run (masks + alpha) and the stand-in BiRefNet
+        tar = self._tar()
+        out = self.root / "again"
+        rep = court_sam.rematte(self.set, tar, out)
+        self.assertEqual(rep["."]["crops"], 8)
+        self.assertEqual(len(list((out / "alpha/a").glob("*.png"))), 4)
+        self.assertFalse((out / "masks").exists())  # only the alpha goes back
+        with tarfile.open(self.root / "alpha.tar", "w") as t:
+            t.add(out, arcname=".")
+        # alpha only: no binary masks counted
+        self.assertEqual(court_sam.unpack(self.root / "alpha.tar", self.root / "m2"), 0)
+        self.assertTrue((self.root / "m2/a-alpha/000004.png").exists())
+
     def test_one_frame_sets_from_zips_with_the_matte(self):
         self.test_sam_then_matte_on_the_same_node()  # installs the stand-in BiRefNet
         up = self.root / "views"
@@ -180,6 +195,11 @@ class FromVideo(unittest.TestCase):
         for v in ("v1", "v2"):
             for f in ("a.png", "a-prob.png", "a-alpha.png", "b.png", "b-alpha.png"):
                 self.assertTrue((self.root / "flat" / v / f).exists(), (v, f))
+        # the matte again on that multi-set run's masks, alpha only, each set in its own folder
+        again = court_sam.rematte(up, tar, self.root / "again")
+        self.assertEqual(sorted(again), ["v1", "v2"])
+        self.assertTrue((self.root / "again/v2/alpha/a/000009.png").exists())
+        self.assertFalse((self.root / "again/v2/masks").exists())
 
     def _tar(self) -> Path:
         tar = self.root / "masks-sam.tar"

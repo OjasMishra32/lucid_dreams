@@ -4,10 +4,12 @@
 #   court-masks-hpg.sh people <frames dir> <sam_plan.json> <sam_people.py> <staging dir>
 #                                                                          pack, upload, submit the all-people masks
 #   court-masks-hpg.sh sam <name> <upload dir>   upload a court_sam.py set (or folder of sets), submit court-sam-<name>
+#   court-masks-hpg.sh rematte <name>            the band matte again on court-sam-<name>'s masks (no upload)
 #   court-masks-hpg.sh matte <clip> <masks dir> <staging dir> <name>...    pack, upload, submit the pair's soft edges
 #   court-masks-hpg.sh fetch people <dir>      masks-people.tar into <dir>, unpacked there (label/, prob/, objects.json)
 #   court-masks-hpg.sh fetch sam <name> <dir> [unpack flags]   masks-sam.tar into <dir>, unpacked there
 #                                              (--size w,h for a cropped set, --single for one-frame sets)
+#   court-masks-hpg.sh fetch rematte <name> <dir>   masks-alpha.tar into <dir>, unpacked as <dir>/<object>-alpha/
 #   court-masks-hpg.sh fetch matte <masks dir> <staging dir>    the alpha mattes into <masks dir>/<name>-alpha/
 # Data paths are arguments (nothing about the footage lives in git). The HPG side is court-hpg.sh: it checks the upload
 # and the group quota, submits, and deletes nothing. Env: DRY=1 prints what would run; HOST (hpg); MIN_GB.
@@ -41,6 +43,10 @@ case "${1:-}" in
     up_code
     run rsync -a --partial -e "$SSH" "$U/" "$HOST:$L/data/court/court-sam-$N/"
     submit "court-sam-$N" ;;
+  rematte)
+    N=${2:?name}
+    up_code
+    submit "court-rematte-$N" ;;
   matte)
     V=${2:?clip}; M=${3:?masks dir}; O=${4:?staging dir}; shift 4
     (( $# )) || { echo "name the masks to soften (folders in $M)" >&2; exit 1; }
@@ -60,6 +66,11 @@ case "${1:-}" in
         run mkdir -p "$O"
         run rsync -a -e "$SSH" "$HOST:$L/runs/court-sam-$N/masks-sam.tar" "$O/"
         run python3 -I "$HERE/court_sam.py" unpack "$O/masks-sam.tar" --out "$O" "${@:5}" ;;
+      rematte)
+        N=${3:?name}; O=${4:?dir}
+        run mkdir -p "$O"
+        run rsync -a -e "$SSH" "$HOST:$L/runs/court-rematte-$N/masks-alpha.tar" "$O/"
+        run python3 -I "$HERE/court_sam.py" unpack "$O/masks-alpha.tar" --out "$O" "${@:5}" ;;
       matte)
         M=${3:?masks dir}; O=${4:?staging dir}
         run mkdir -p "$O"
@@ -68,5 +79,5 @@ case "${1:-}" in
       *) echo "fetch people <dir> | fetch sam <name> <dir> [flags] | fetch matte <masks dir> <staging dir>" >&2
          exit 1 ;;
     esac ;;
-  *) sed -n '2,13p' "$0" >&2; exit 1 ;;
+  *) sed -n '2,15p' "$0" >&2; exit 1 ;;
 esac
