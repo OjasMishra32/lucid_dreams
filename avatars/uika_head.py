@@ -372,6 +372,7 @@ STANDOFF_M = {"hair": 0.045, "back": 0.030, "other": 0.030}  # furthest from its
 # keeps the person's shape in offsets from the mean FLAME, so a face Gaussian may sit 2 cm off; a collar 4 cm)
 HAIR_REGIONS = ("scalp", "forehead", "left_ear", "right_ear")
 NECK_REGIONS = ("neck", "boundary")
+COLLAR_REACH_M = 0.03  # a head model's neck under seam + this is checked against the body's collar
 SMOOTH_K = 256  # seen Gaussians averaged for a repainted colour (smooth across the back of the head)
 CHIN_GAP_M = 0.03  # the seam sits this far under the chin (UIKA's face and lips): the whole jaw and upper neck are
 # UIKA's, and the cross-fade to the body's neck falls low on the neck, by the collar
@@ -487,6 +488,23 @@ def scalp_shell(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, seam_lo: 
                      scale=np.log(np.tile(SHELL_SIZE_M, (len(p), 1))), rotation=q)
 
 
+def through_collar(xyz: np.ndarray, is_neck: np.ndarray, cloth_xyz: np.ndarray, neck_xz: np.ndarray, below_y: float,
+                   reach: float = 0.02, margin: float = 0.002) -> np.ndarray:
+    """True for the head model's neck Gaussians (`is_neck`) under `below_y` that sit at or outside the body's clothes
+    next to them, measured out from the neck's vertical axis (`neck_xz`): a thick neck poking through a collar."""
+    from scipy.spatial import cKDTree
+
+    out = np.zeros(len(xyz), dtype=bool)
+    cand = np.flatnonzero(is_neck & (xyz[:, 1] < below_y))
+    if len(cand) == 0 or len(cloth_xyz) == 0:
+        return out
+    d, j = cKDTree(cloth_xyz).query(xyz[cand])
+    r_head = np.linalg.norm(xyz[cand][:, [0, 2]] - neck_xz, axis=1)
+    r_cloth = np.linalg.norm(cloth_xyz[j][:, [0, 2]] - neck_xz, axis=1)
+    out[cand] = (d < reach) & (r_head > r_cloth - margin)
+    return out
+
+
 def own_bundle_errors(person: str, src: Path, new_id: str) -> list[str]:
     """The body has to be the person's own avatar, and the new bundle a new <person>-... id that never replaces a
     bundle this step didn't write."""
@@ -529,7 +547,7 @@ def cmd_distill(a) -> int:
     av = dream["avatar"]
     ply, skin = src / av["file"], src / av.get("skin", SKIN_FILE)
     raw_ply, raw_skin = ply.with_name("avatar.raw.ply"), skin.with_name("skin.raw.bin")
-    if raw_ply.is_file() and raw_skin.is_file():
+    if a.body == "raw" and raw_ply.is_file() and raw_skin.is_file():  # lhmpp_cleanup.py runs once, on the result
         ply, skin = raw_ply, raw_skin
     body = read_ply(ply)
     idx, q = read_skin_bin(skin)
@@ -607,8 +625,13 @@ def cmd_distill(a) -> int:
     chin_y = float(flame_a[np.isin(regions, ("face", "lips")), 1].min())
     seam_y = chin_y - CHIN_GAP_M + a.seam_offset
     seam_lo = seam_y - H.BAND_M
-    sel = keep_u & (ug.xyz[:, 1] > seam_lo)
     body_k, keep_b, body_above = D.cut_body(body, idx, q, seam_y)
+    dom_k = idx[keep_b][np.arange(int(keep_b.sum())), np.argmax(q[keep_b], axis=1)]
+    cloth = ~np.isin(dom_k, SKIN_JOINTS) & (1 / (1 + np.exp(-body_k.opacity)) > 0.5)
+    collar = through_collar(ug.xyz, np.isin(regions[near], NECK_REGIONS), body_k.xyz[cloth],
+                            rest[J["neck"]][[0, 2]], seam_y + COLLAR_REACH_M)
+    edits["throughCollar"] = int((collar & keep_u).sum())
+    sel = keep_u & ~collar & (ug.xyz[:, 1] > seam_lo)
     # UIKA leaves gaps at the back of the head (its own renders smear over them): through them one sees the face from
     # behind. An opaque shell on the SMPL-X scalp, just under UIKA's hair and coloured like the seen hair, closes them
     hair_lift = 0.8 * float(np.median(dist[seen_hair])) if seen_hair.any() else 0.01
@@ -857,7 +880,7 @@ def cmd_distill(a) -> int:
         "align": {"scale": round(s, 6), "rmsM": round(rms, 6)},
         "exportCheck": {"psnr": round(check_psnr, 2), "alphaError": round(check_alpha, 4)},
         "size": {"uika": size_uika, "avatar": size_body},
-        "seam": {"y": round(seam_y, 4), "chinY": round(chin_y, 4), "jawJointY": round(float(rest[J["jaw"], 1]), 4),
+        "body": a.body, "seam": {"y": round(seam_y, 4), "chinY": round(chin_y, 4), "jawJointY": round(float(rest[J["jaw"], 1]), 4),
                  "bandM": H.BAND_M, "offsetM": a.seam_offset, "bodyAbove": body_above},
         "edits": edits, "seeds": n_u,
         "fit": {"steps": a.steps, "pruned": pruned, "cloned": cloned, "split": split,
@@ -1088,6 +1111,9 @@ def main() -> int:
     d.add_argument("--flame-ids", type=Path, required=True, help="SMPL-X__FLAME_vertex_ids.npy")
     d.add_argument("--id", required=True, help="the new bundle's id (a new <person>-... id)")
     d.add_argument("--held", type=Path)
+    d.add_argument("--body", choices=("raw", "current"), default="raw",
+                   help="raw: avatar.raw.ply when there (lhmpp_cleanup.py then runs on the result); current: the body as "
+                        "it is now (already cleaned or slimmed: fitted in its final shape)")
     d.add_argument("--steps", type=int, default=7000)
     d.add_argument("--seam-offset", type=float, default=0.0, help="move the jaw-line seam up (+) or down, metres")
     d.add_argument("--flame-masks", type=Path, required=True, help="FLAME_masks.pkl (FLAME 2023's regions)")

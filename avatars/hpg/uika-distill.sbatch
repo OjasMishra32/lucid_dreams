@@ -14,7 +14,8 @@
 #   sbatch --export=ALL,NAME=magnus-carlsen,USE=c11:c31:c42:c46 avatars/hpg/uika-distill.sbatch
 # AVATAR=<bundle> the body (default $NAME-lhm) in DREAMS (default dreams/); ID=<new bundle> (default $NAME-uika), written
 # next to it; STAGES=teacher:distill:judge; FACES=<photo folder>; CLEANUP=<lhmpp_cleanup.py flags for the body>;
-# PREP=<LHM++ prep/raw photos for its identity yardstick>;
+# PREP=<LHM++ prep/raw photos for its identity yardstick>; BODY=current fits the head on the body as it is (already
+# cleaned or slimmed; then CLEANUP=skip), BODY=raw (default) on LHM++'s raw body, cleaned after;
 # STEPS=<fit steps>; SIZE=<teacher px, default 1024>; CODE=<avatars folder> (default the repo checkout).
 # Who: consenting people, or the chess opponents the project lead approved from freely licensed photos (OPPONENTS in
 # uika_head.py; AGENTS.md rule 5). The gate runs before anything is read.
@@ -120,13 +121,13 @@ fi
 if [[ ",$STAGES," == *",distill,"* ]]; then
   $PY -u $CODE/uika_head.py distill --person "$NAME" --avatar "$DREAMS/$AVATAR" --teacher "$TEACHER" \
     --smplx "$SMPLX" --flame-ids "$IDS" --flame-masks $M/human_parametric_models/FLAME_masks.pkl --id "$NEW" \
-    --held "$HELD" ${STEPS:+--steps "$STEPS"} \
+    --held "$HELD" --body "${BODY:-raw}" ${STEPS:+--steps "$STEPS"} \
     ${SEAM_OFFSET:+--seam-offset "$SEAM_OFFSET"} 2>&1 | grep -vE "NVML|warnings.warn"
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
   # CLEANUP: the body's own flags (e.g. "--body-only --mute 0.35 --flatten 0.35 --deflate 0.5"); the head is kept
   # either way (finish restores its fitted colours)
   # shellcheck disable=SC2086
-  $PY -u $CODE/lhmpp_cleanup.py "$DREAMS/$NEW" --smplx "$SMPLX" ${CLEANUP:-}
+  [ "${CLEANUP:-}" = skip ] || $PY -u $CODE/lhmpp_cleanup.py "$DREAMS/$NEW" --smplx "$SMPLX" ${CLEANUP:-}
   $PY -u $CODE/uika_head.py finish "$DREAMS/$NEW" 2>&1 | grep -vE "NVML|warnings.warn"
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 fi

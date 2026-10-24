@@ -150,3 +150,14 @@ def test_flame_regions_take_the_finer_mask():
     masks = {"face": np.arange(10), "nose": np.array([2, 3]), "scalp": np.array([20]), "neck": np.array([9])}
     reg = U.flame_regions(masks, 25)
     assert reg[2] == "nose" and reg[0] == "face" and reg[9] == "neck" and reg[20] == "scalp" and reg[24] == "other"
+
+
+def test_through_collar_drops_a_neck_outside_the_collar_only():
+    pytest.importorskip("scipy")
+    a = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+    ring = lambda r, y: np.stack([r * np.cos(a), np.full_like(a, y), r * np.sin(a)], 1)  # noqa: E731
+    collar = ring(0.065, 0.10)
+    neck = np.concatenate([ring(0.075, 0.10), ring(0.055, 0.10), ring(0.075, 0.20)])  # outside, inside, above
+    out = U.through_collar(neck, np.ones(len(neck), dtype=bool), collar, np.zeros(2), below_y=0.15)
+    assert out[:72].all() and not out[72:].any()
+    assert not U.through_collar(neck, np.zeros(len(neck), dtype=bool), collar, np.zeros(2), 0.15).any()  # only necks
