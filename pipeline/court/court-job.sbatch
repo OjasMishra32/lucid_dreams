@@ -30,7 +30,8 @@
 # FACEFIX (opt-in): a dir of the player's real face crops; right after the views, court_facefix.py gives every view's
 # face that identity (pose, light and expression kept; profiles and the back of the head untouched), before SeedVR2 and
 # every recon; the fixed ring samples come back in views-facefix/ beside the originals in views/. FACEFIX_PY and
-# FACEFIX_MODELS: its env's python and models ($L/envs/facefix/bin/python, $L/models/facefix: court-facefix-env.sbatch).
+# FACEFIX_MODELS: its env's python and models ($D/envs/facefix/bin/python, $D/models/facefix, D = COURT_DATA_L or L:
+# court-facefix-env.sbatch). With VIEWS_FROM the copied views are fixed (in scratch; the saved ones are only read).
 # Checked before the views; if the swap fails the job stops (the same job without FACEFIX is the plain run).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack (env.sh, repos, envs): only read
@@ -97,7 +98,7 @@ REALS=$(for r in $REALS; do if [[ $r =~ ^[0-9]$ ]] && (( r <= NX )); then echo "
 log "K=$K FOCAL=$FOCAL $( ((TURBO)) && echo Turbo || echo 24-step) views${SEED:+, seed $SEED}; variants: $VARIANTS;" \
   "real views: A + {${REALS// /,}} of $NX; caps: $CAPS; results -> $OUTD"
 if [ -n "${FACEFIX:-}" ]; then  # checked now, not after the views
-  FF_PY=${FACEFIX_PY:-$L/envs/facefix/bin/python}; FF_MODELS=${FACEFIX_MODELS:-$L/models/facefix}
+  FF_PY=${FACEFIX_PY:-$D/envs/facefix/bin/python}; FF_MODELS=${FACEFIX_MODELS:-$D/models/facefix}
   test -x "$FF_PY" || { log "FACEFIX: no $FF_PY (court-facefix-env.sh)"; exit 1; }
   for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
     test -s "$FF_MODELS/$m" || { log "FACEFIX: no $FF_MODELS/$m"; exit 1; }

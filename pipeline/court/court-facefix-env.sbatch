@@ -9,14 +9,15 @@
 #SBATCH --output=/blue/iruchkin/vishalnaveen/lucid/jobs/%x-%j.log
 # Court Side: the env and models for court-job's FACEFIX (court_facefix.py: the player's real face on the views).
 # A small venv layered on the 4danyone env (numpy, OpenCV, ffmpeg and the CUDA 12 / cuDNN 9 wheels come from there; only
-# onnxruntime-gpu and onnx land in the venv) and the face models in $L/models/facefix: SCRFD det_10g and ArcFace
+# onnxruntime-gpu and onnx land in the venv) and the face models in $D/models/facefix: SCRFD det_10g and ArcFace
 # w600k_r50 (InsightFace buffalo_l), inswapper_128, and inswapper_emap.npy (its last initializer, so the jobs need no
 # onnx), each sha256-checked against the Mac's copies. Downloads land in node scratch; only checked files move to Blue
 # (~0.8 GB). Ends with a CPU smoke test of the whole swap. Submit with court-facefix-env.sh. Safe to re-run.
+# COURT_DATA_L (e.g. /home while /blue is full): the venv, models and code are there; the stack at L is only read.
 set -euo pipefail
-L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # L: court-hpg.sh passes it
-C=$L/code/pipeline/court
-M=$L/models/facefix
+L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # L: court-facefix-env.sh passes it
+D=${COURT_DATA_L:-$L}; C=$D/code/pipeline/court
+M=$D/models/facefix; V=$D/envs/facefix
 ORT=onnxruntime-gpu==1.26.0  # the newest CUDA 12 / cuDNN 9 build (1.27 on are CUDA 13), as torch cu128 in 4danyone
 BUFFALO=https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
 SWAP=https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx
@@ -30,9 +31,10 @@ export PIP_CACHE_DIR=${TMPDIR:-/tmp}/pip TMPDIR=${TMPDIR:-/tmp}
 module load conda/26.7 cuda/12.8.1
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/4danyone
-[ -x $L/envs/facefix/bin/python ] || python -m venv --system-site-packages $L/envs/facefix
-source $L/envs/facefix/bin/activate
-python -c "import onnxruntime, onnx" 2>/dev/null || pip install -q "$ORT" onnx
+[ -x $V/bin/python ] || python -m venv --system-site-packages $V
+source $V/bin/activate
+python -c "import onnx, onnxruntime as o, sys; sys.exit('CUDAExecutionProvider' not in o.get_available_providers())" \
+  2>/dev/null || pip install -q "$ORT" onnx
 python -c "import onnxruntime as o, numpy, cv2; print('onnxruntime', o.__version__, o.get_available_providers(), 'numpy', numpy.__version__, 'cv2', cv2.__version__)"
 mkdir -p "$M"
 have() { [ -s "$M/$1" ] && [ "$(sha256sum "$M/$1" | cut -d' ' -f1)" = "${SHA[$1]}" ]; }
@@ -66,7 +68,7 @@ if e.shape != (512, 512) or got != want:
 np.save(m / "inswapper_emap.npy", e)
 print("inswapper_emap.npy", e.shape, "ok")
 PY
-du -sh $L/envs/facefix "$M"
+du -sh $V "$M"
 # the whole swap on CPU (the GPU is tried by the jobs and falls back to this): models load, a face is found and swapped
 python - "$C" "$M" <<'PY'
 import sys
@@ -76,5 +78,5 @@ import court_facefix as ff
 f = ff.Faces(Path(sys.argv[2]), swap=True, cpu_only=True)
 print("facefix smoke test OK on", f.used)
 PY
-touch $L/envs/facefix/.court-facefix-ok   # court-hpg.sh won't rebuild it
+touch $V/.court-facefix-ok   # court-facefix-env.sh won't rebuild it
 echo SETUP_OK

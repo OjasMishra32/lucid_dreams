@@ -52,9 +52,9 @@ if [ "${CHECK:-0}" = 1 ]; then
   exit
 fi
 run $SSH "$HOST" "mkdir -p $D/code/pipeline/court $D/data/court"
-run rsync -a -e "$SSH" "$HERE"/{court-job.sbatch,court-job-submit.sh,court-lib.sh,court_fetch_seedvr2.py,court_grid_report.py} \
+run rsync -a -e "$SSH" "$HERE"/{court-job.sbatch,court-job-submit.sh,court-lib.sh,court_fetch_seedvr2.py,court_grid_report.py,court_facefix.py} \
   "$HERE"/{court-check.sbatch,court-check-submit.sh,court_p42.py,court_stance.py,court_gate2_sheet.py} \
-  "$HERE"/{court_extra_pose.py,lucid-fixed-pose.patch,court_facefix.py} "$HOST:$D/code/pipeline/court/"
+  "$HERE"/{court_extra_pose.py,lucid-fixed-pose.patch} "$HOST:$D/code/pipeline/court/"
 for id in "${IDS[@]}"; do
   run rsync -a -e "$SSH" "$RUNS/$id/" "$HOST:$D/data/court/$id/"
 done

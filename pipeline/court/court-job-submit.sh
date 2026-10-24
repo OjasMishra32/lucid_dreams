@@ -13,7 +13,7 @@
 # too; QUOTA_GROUP picks whose /blue space is checked. COURT_DATA_L: uploads, results and these scripts live there
 # instead of under $L (free space then from df); CPUS: --cpus-per-task.
 # FACEFIX=<dir of the player's real face crops, on this cluster> reaches the jobs (court-job.sbatch: the identity swap
-# on the views); checked here with its env and models (FACEFIX_PY, FACEFIX_MODELS; defaults under $L).
+# on the views); checked here with its env and models (FACEFIX_PY, FACEFIX_MODELS; defaults under COURT_DATA_L or $L).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}  # the stack the jobs source (env.sh): only read
 D=${COURT_DATA_L:-$L}; C=$D/code/pipeline/court  # uploads, results and these scripts (COURT_DATA_L: elsewhere)
@@ -40,9 +40,9 @@ fi
 if [ -n "${FACEFIX:-}" ]; then
   [[ $FACEFIX =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "FACEFIX='$FACEFIX' (an absolute path)"
   compgen -G "$FACEFIX/*.jpg" > /dev/null || compgen -G "$FACEFIX/*.png" > /dev/null || fail "no .jpg/.png crops in $FACEFIX"
-  test -x "${FACEFIX_PY:-$L/envs/facefix/bin/python}" || fail "no facefix env (court-facefix-env.sh)"
+  test -x "${FACEFIX_PY:-$D/envs/facefix/bin/python}" || fail "no facefix env (court-facefix-env.sh)"
   for m in det_10g.onnx w600k_r50.onnx inswapper_128.onnx inswapper_emap.npy; do
-    test -s "${FACEFIX_MODELS:-$L/models/facefix}/$m" || fail "no ${FACEFIX_MODELS:-$L/models/facefix}/$m"
+    test -s "${FACEFIX_MODELS:-$D/models/facefix}/$m" || fail "no ${FACEFIX_MODELS:-$D/models/facefix}/$m"
   done
 fi
 for v in ACCOUNT QOS PARTITION; do

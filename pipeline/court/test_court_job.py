@@ -332,13 +332,15 @@ class Job(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertEqual(self.calls, [])
 
-    def facefix_stack(self) -> Path:
-        """The facefix env (a stub that 'fixes' every fourth view), its models and a ref dir with one crop."""
-        b = self.L / "envs" / "facefix" / "bin"
+    def facefix_stack(self, root: Path | None = None) -> Path:
+        """The facefix env (a stub that 'fixes' every fourth view) and its models under root (default $L), and a ref dir
+        with one crop."""
+        root = root or self.L
+        b = root / "envs" / "facefix" / "bin"
         b.mkdir(parents=True)
         (b / "python").write_text(STUB_FF)
         (b / "python").chmod(stat.S_IRWXU)
-        m = self.L / "models" / "facefix"
+        m = root / "models" / "facefix"
         m.mkdir(parents=True)
         for f in ("det_10g.onnx", "w600k_r50.onnx", "inswapper_128.onnx", "inswapper_emap.npy"):
             (m / f).write_bytes(b"m")
@@ -398,25 +400,39 @@ class Job(unittest.TestCase):
         self.assertIn("FACEFIX: 12 of 48 views got the face", p.stdout)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
-    def test_facefix_on_saved_views(self):
-        """VIEWS_FROM + FACEFIX: the saved views are copied in, get the face in scratch, then SeedVR2 and the recon."""
+    def test_facefix_on_a_gated_seeds_saved_views(self):
         ref = self.facefix_stack()
         v = self.saved_views()
-        before = {str(x): x.read_bytes() for x in v.rglob("*") if x.is_file()}
-        p = self.run_job(VIEWS_FROM=str(v), FACEFIX=str(ref), TAG="faces-up-v", VARIANTS="up:default", REALS="0",
-                         METRICS="0")
+        before = {str(x): x.read_bytes() for x in v.parent.rglob("*") if x.is_file()}
+        p = self.run_job(FACEFIX=str(ref), VIEWS_FROM=str(v), TAG="face-s1", VARIANTS="up:default", REALS="0",
+                         METRICS="0", CAPS="300000 225000", FACE="4")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         k = self.kinds()
-        self.assertNotIn("inference.py", k)  # no new views
-        last_fix = max(i for i, x in enumerate(k) if x == "facefix")
-        self.assertLess(last_fix, min(k.index("inference_cli.py"), k.index("lucid.recon")))
-        self.assertIn("FACEFIX: 12 of 48 views got the face", p.stdout)
+        self.assertNotIn("inference.py", k)
+        self.assertLess(k.index("facefix"), min(k.index("inference_cli.py"), k.index("lucid.recon")))
         up = next(c for c in self.calls if c["args"][0].endswith("inference_cli.py"))
-        self.assertIn("--resolution 64 ", " ".join(up["args"]))  # SeedVR2 read the fixed 00.mp4
-        self.assertEqual({str(x): x.read_bytes() for x in v.rglob("*") if x.is_file()}, before)  # the saved set untouched
-        out = self.L / "runs" / self.id / "faces-up-v"
-        self.assertTrue((out / "bundle-up-default-r0-300k" / "dream.json").exists())
-        self.assertTrue((out / "views-facefix" / "videos" / "00.mp4").exists())
+        self.assertIn("--resolution 64 ", " ".join(up["args"]))  # SeedVR2 on the fixed views
+        out = self.L / "runs" / self.id / "face-s1"
+        self.assertEqual(len(list((out / "views-facefix" / "videos").iterdir())), 4)
+        self.assertEqual(sorted(c["args"][c["args"].index("--out") + 1] for c in self.recons()),
+                         ["recon-up-default-r0-225k", "recon-up-default-r0-300k"])  # one freeze per GPU
+        self.assertEqual({c["args"][c["args"].index("--face-weight") + 1] for c in self.recons()}, {"4"})
+        self.assertEqual({str(x): x.read_bytes() for x in v.parent.rglob("*") if x.is_file()}, before)  # only read
+
+    def test_facefix_env_beside_the_data_when_the_stack_is_only_read(self):
+        d = self.t / "home" / "court-runs"
+        (d / "data" / "court").mkdir(parents=True)
+        (d / "code" / "pipeline").mkdir(parents=True)
+        (d / "code" / "pipeline" / "court").symlink_to(HERE)
+        self.data.rename(d / "data" / "court" / self.id)
+        ref = self.facefix_stack(d)
+        p = self.run_job(COURT_DATA_L=str(d), FACEFIX=str(ref), VARIANTS="raw:default", REALS="0", METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        ff = [c for c in self.calls if c.get("facefix") and c["args"][1] == "fix"]
+        self.assertTrue(ff)
+        a = ff[0]["args"]
+        self.assertEqual(a[a.index("--models") + 1], str(d / "models" / "facefix"))
+        self.assertFalse((self.L / "envs" / "facefix").exists())
 
     def test_facefix_failure_stops_before_anything_trains(self):
         ref = self.facefix_stack()
@@ -641,6 +657,19 @@ class FacefixEnv(unittest.TestCase):
         self.assertIn("envs/4danyone", out)
         rc, out = dryrun(SCRIPT="court-facefix-env.sh", DRY="1")
         self.assertEqual((rc, calls(out)), (0, []))
+
+    def test_env_beside_the_data_when_the_stack_is_full(self):
+        d = Path(tempfile.mkdtemp()) / "court-runs"
+        try:
+            rc, out = dryrun(SCRIPT="court-facefix-env.sh", COURT_DATA_L=str(d), NO_PYTHON="1")
+            self.assertEqual(rc, 0, out)
+            c = calls(out)
+            self.assertEqual(len(c), 1, out)
+            self.assertIn(f"--output={d}/jobs/%x-%j.log ", c[0])
+            self.assertTrue(c[0].endswith(f"{d}/code/pipeline/court/court-facefix-env.sbatch"), c[0])
+            self.assertIn(f"facefix env into {d}/envs/facefix", out)
+        finally:
+            shutil.rmtree(d.parent)
 
 
 class GridCheck(unittest.TestCase):
