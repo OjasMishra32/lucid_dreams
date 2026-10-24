@@ -1,6 +1,7 @@
 """One player's 4DAnyone clip from a calibrated broadcast angle, plus the real frame the freeze is trained against.
 
     python3 -I player_clip.py --config <private config.json> [--sets a,b] [--measure-only] [--allow-partial]
+        [--extras-only] [--real-only]
 
 Everything about the footage (the clip, its calibration, the masks, the freeze frame, the windows) comes from the
 private config, never from defaults here. Per clip set (one player, one stride):
@@ -19,8 +20,12 @@ measure.json, court-run.json, job.json, and sheet.jpg / edge-k.png / k-vs-ref.pn
 
 Config keys: video, calib, masks (<masks>/<name>/<frame:06d>.png, white = them), out, ref, repeat [mod, phase],
 repeat_range [first, last], crop [w, h], margin, bg [r, g, b], grow, near, n (121), matte (false: true composites
-with <masks>/<name>-alpha/ where it exists), sets {name: {player, with,
-front, stride, k}}, runs {id: {set, turbo}}. `front` lists who is nearer the camera than the player.
+with <masks>/<name>-alpha/ where it exists), edge (0), touch_band (0), sets {name: {player, with,
+front, touch, stride, k}}, runs {id: {set, turbo}}. `front` lists who is nearer the camera than the player; `touch`
+who else meets them in the real frame. The real views' ignore can add a band `edge` px each side of the player's
+mask edge (background light a binary edge may carry) and one `touch_band` px around where a `touch` person meets them
+(a hand the masks split between two people); --real-only redoes just that, the other cameras' views and the run
+folders, from the masks, for sets already built.
 """
 
 from __future__ import annotations
@@ -113,6 +118,33 @@ def ignore_mask(own: np.ndarray, front: list[np.ndarray], grow: int, near: int) 
         ig = np.maximum(ig, grow_mask(o.astype(np.float32), grow))
     region = grow_mask((own > 0.5).astype(np.uint8), near).astype(np.float32)
     return np.clip(ig, 0, 1) * region
+
+
+def edge_band(alpha: np.ndarray, r: int) -> np.ndarray:
+    """White within r px of the matte's edge, on both sides."""
+    b = (alpha > 0.5).astype(np.uint8)
+    if r <= 0 or not b.any():
+        return np.zeros(alpha.shape, np.float32)
+    return (cv2.dilate(b, _disk(r)) - cv2.erode(b, _disk(r))).astype(np.float32)
+
+
+def contact_band(own: np.ndarray, others: list[np.ndarray], r: int) -> np.ndarray:
+    """White within r px of both the player and someone else: where they meet."""
+    band = np.zeros(own.shape, np.float32)
+    if r <= 0:
+        return band
+    near = cv2.dilate((own > 0.5).astype(np.uint8), _disk(r))
+    for o in others:
+        band = np.maximum(band, (near & cv2.dilate((o > 0.5).astype(np.uint8), _disk(r))).astype(np.float32))
+    return band
+
+
+def real_ignore(own: np.ndarray, alpha: np.ndarray, front: list[np.ndarray], touch: list[np.ndarray], grow: int,
+                near: int, edge: int = 0, touch_band: int = 0) -> np.ndarray:
+    """A real view's ignore: who's in front of the player (off the player's matte), plus the edge and contact bands
+    when asked for (these may cross into the matte: recon leaves ignored pixels out of every real-view loss)."""
+    ig = ignore_mask(own, front, grow, near) * (alpha <= 0)
+    return np.maximum(ig, np.maximum(edge_band(alpha, edge), contact_band(own, touch, touch_band)))
 
 
 def composite(rgb: np.ndarray, alpha: np.ndarray, bg) -> np.ndarray:
@@ -357,15 +389,29 @@ def warp(rgb, maps, interp):
     return out
 
 
-def layers(rgb, n, s, maps, cfg, w, h):
-    """The frame warped into a canvas window, with the player's matte there (soft where a matte exists) and the warped
-    binary masks of the player and of who's in front (for ignore)."""
-    img = warp(rgb, maps, cv2.INTER_LANCZOS4)
+def layer_masks(n, s, maps, cfg, w, h, touch=False):
+    """The warped binary masks of the player, of who's in front and (when asked) of who touches them, and the player's
+    matte (soft where a matte exists and the config asks for it)."""
     m = cfg["masks"]
     wm = lambda f: warp(f, maps, cv2.INTER_LINEAR)  # noqa: E731
     own, front = wm(load_mask(m / s["player"], n, w, h)), [wm(load_mask(m / o, n, w, h)) for o in s.get("front", [])]
+    near = [wm(load_mask(m / o, n, w, h)) for o in s.get("touch", [])] if touch else []
     soft = [wm(load_matte(m, x, n, w, h, cfg.get("matte", False))) for x in [s["player"], *s.get("with", [])]]
-    return img, own, front, player_alpha(soft[0], soft[1:], front, cfg.get("grow", 3))
+    return own, front, near, player_alpha(soft[0], soft[1:], front, cfg.get("grow", 3))
+
+
+def layers(rgb, n, s, maps, cfg, w, h, touch=False):
+    """The frame warped into a canvas window, plus layer_masks there."""
+    return (warp(rgb, maps, cv2.INTER_LANCZOS4), *layer_masks(n, s, maps, cfg, w, h, touch))
+
+
+def _real_ignore(cfg, own, alpha, front, touch):
+    return real_ignore(own, alpha, front, touch, cfg.get("grow", 3), cfg.get("near", 200), cfg.get("edge", 0),
+                       cfg.get("touch_band", 0))
+
+
+def _ignore_settings(cfg, s):
+    return {"edge": cfg.get("edge", 0), "touch": s.get("touch", []), "touchBand": cfg.get("touch_band", 0)}
 
 
 def build(cfg: dict, names: list[str], plans: dict, calib: dict, still: dict, frames_by_n: dict):
@@ -394,7 +440,7 @@ def build(cfg: dict, names: list[str], plans: dict, calib: dict, still: dict, fr
                 continue
             p, s = plans[name], cfg["sets"][name]
             x0, y0, wc, hc = p["clip"]["window"]
-            img, own, front, alpha = layers(rgb, n, s, st.crop_maps(still, fr, w, h, x0, y0, wc, hc), cfg, w, h)
+            img, own, front, _, alpha = layers(rgb, n, s, st.crop_maps(still, fr, w, h, x0, y0, wc, hc), cfg, w, h)
             comp = composite(img, alpha, bg)
             if p["clip"]["scale"] < 1:
                 comp = cv2.resize(comp, tuple(p["clip"]["size"]), interpolation=cv2.INTER_AREA)
@@ -404,8 +450,8 @@ def build(cfg: dict, names: list[str], plans: dict, calib: dict, still: dict, fr
             if n == ref:
                 x0, y0, cw, ch = p["crop"]
                 maps = st.crop_maps(still, fr, w, h, x0, y0, cw, ch)
-                img, own, front, alpha = layers(rgb, n, s, maps, cfg, w, h)
-                ig = ignore_mask(own, front, cfg.get("grow", 3), cfg.get("near", 200)) * (alpha <= 0)
+                img, own, front, touch, alpha = layers(rgb, n, s, maps, cfg, w, h, touch=True)
+                ig = _real_ignore(cfg, own, alpha, front, touch)
                 # how far taking the lens out moved the reference frame's pixels, on the player
                 gu, gv = np.meshgrid(np.arange(x0, x0 + cw), np.arange(y0, y0 + ch))
                 lens = np.hypot(maps[0] - gu, maps[1] - gv)[alpha > 0.5]
@@ -460,7 +506,7 @@ def finish_set(cfg: dict, name: str, p: dict, sst: dict, still: dict):
     run_rec = {"set": name, "player": p["player"], "K": k, "FOCAL": focal, "stride": p["stride"],
                "window": p["window"], "frames": p["frames"], "crop": p["crop"], "clip": p["clip"], "containerFps": FPS,
                "fill": p["fill"], "maxCovered": p["maxCovered"], "magnification": p["magnification"],
-               "lensShiftPx": Kd["lensShiftPx"],
+               "lensShiftPx": Kd["lensShiftPx"], "realIgnore": _ignore_settings(cfg, cfg["sets"][name]),
                "still": {"refFrame": cfg["ref"], "R": still["R"], "C": still["C"],
                          "K": [[focal, 0, round(K[0, 2] - x0, 3)], [0, focal, round(K[1, 2] - y0, 3)], [0, 0, 1]],
                          "note": "pinhole camera of source-4k.mkv's pixels (crop): the reference frame's own R and "
@@ -490,7 +536,9 @@ def build_extras(cfg: dict, name: str, d: Path) -> list[dict]:
             cam = extra_view.make_view(Path(os.path.expanduser(e["video"])), Path(os.path.expanduser(e["calib"])),
                                        e["frame"], Path(os.path.expanduser(e["masks"])), s["player"], s.get("with", []),
                                        s.get("front", []), d / "real" / e["name"], cfg.get("margin", 32),
-                                       cfg.get("grow", 3), cfg.get("near", 200), cfg.get("matte", False))
+                                       cfg.get("grow", 3), cfg.get("near", 200), cfg.get("matte", False),
+                                       edge=cfg.get("edge", 0), touch=s.get("touch", []),
+                                       touch_band=cfg.get("touch_band", 0))
         except FileNotFoundError as err:
             print(f"[{name}] extra view {e['name']} skipped: {err}")
             continue
@@ -520,6 +568,30 @@ def add_extras(cfg: dict, name: str):
         rec["extras"] = run_rec["extras"]
         (rd / "court-run.json").write_text(json.dumps(rec, indent=1))
     print(f"[{name}] other real views: {[e['name'] for e in run_rec['extras']] or 'none'}")
+
+
+def refresh_real(cfg: dict, name: str, calib: dict, still: dict, frames_by_n: dict):
+    """--real-only: the reference frame's ignore (from the masks alone), the other cameras' views and the run folders
+    again for an already built set; the clip, source-4k.mkv and the masks stay as built. Files are replaced, never
+    rewritten in place, so a run folder the config no longer lists keeps what it had."""
+    d = cfg["out"] / name
+    rec_path = d / "court-run.json"
+    if not rec_path.exists():
+        raise SystemExit(f"[{name}] not built yet: {d}")
+    run_rec = json.loads(rec_path.read_text())
+    s, (w, h), (x0, y0, cw, ch) = cfg["sets"][name], calib["image_size"], run_rec["crop"]
+    maps = st.crop_maps(still, frames_by_n[cfg["ref"]], w, h, x0, y0, cw, ch)
+    own, front, touch, alpha = layer_masks(cfg["ref"], s, maps, cfg, w, h, touch=True)
+    path = d / "ignore" / f"{run_rec['K']:06d}.png"
+    path.unlink(missing_ok=True)
+    write_png(path, _real_ignore(cfg, own, alpha, front, touch))
+    run_rec["realIgnore"] = _ignore_settings(cfg, s)
+    run_rec["extras"] = build_extras(cfg, name, d)
+    rec_path.write_text(json.dumps(run_rec, indent=1))
+    for rid, r in cfg.get("runs", {}).items():
+        if r["set"] == name:
+            write_run(cfg, d, rid, r, run_rec)
+    print(f"[{name}] real views redone: {run_rec['realIgnore']}; extras {[e['name'] for e in run_rec['extras']]}")
 
 
 def _link_real(d: Path, rd: Path):
@@ -604,6 +676,9 @@ def main(argv=None):
     ap.add_argument("--measure-only", action="store_true", help="union boxes and crops only; no video decoded")
     ap.add_argument("--extras-only", action="store_true",
                     help="add the config's other real views to sets already built (and their run folders); no clip work")
+    ap.add_argument("--real-only", action="store_true",
+                    help="redo the real views' ignore, the other cameras' views and the run folders of sets already "
+                         "built, from the masks; no clip work")
     ap.add_argument("--allow-partial", action="store_true",
                     help="measure only the frames that already have a calibration and masks (implies --measure-only)")
     a = ap.parse_args(argv)
@@ -616,6 +691,10 @@ def main(argv=None):
     calib = json.loads(cfg["calib"].read_text())
     frames_by_n = {st.source_frame(fr, t): fr for t, fr in enumerate(calib["frames"])}
     still = st.ref_still_camera(calib, cfg["ref"])
+    if a.real_only:
+        for name in names:
+            refresh_real(cfg, name, calib, still, frames_by_n)
+        return
     plans = {name: plan_set(cfg, name, calib, still, frames_by_n, a.allow_partial) for name in names}
     cfg["out"].mkdir(parents=True, exist_ok=True)
     for name, p in plans.items():

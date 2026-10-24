@@ -48,7 +48,8 @@ def read_matte(masks: Path, name: str, n: int, w: int, h: int, use: bool = True)
 
 
 def make_view(video: Path, calib_path: Path, frame: int, masks: Path, player: str, carried: list[str],
-              front: list[str], out: Path, margin: int = 32, grow: int = 3, near: int = 200, matte: bool = False) -> dict:
+              front: list[str], out: Path, margin: int = 32, grow: int = 3, near: int = 200, matte: bool = False,
+              edge: int = 0, touch: list[str] = (), touch_band: int = 0) -> dict:
     calib = json.loads(Path(calib_path).read_text())
     w, h = calib["image_size"]
     fr = calib["frames"][st.frame_index(calib, frame)]
@@ -69,7 +70,13 @@ def make_view(video: Path, calib_path: Path, frame: int, masks: Path, player: st
     fronts = [wm[o] for o in front]
     soft = [pc.warp(read_matte(masks, who, frame, w, h, matte), maps, cv2.INTER_LINEAR) for who in [player, *carried]]
     alpha = pc.player_alpha(soft[0], soft[1:], fronts, grow)
-    ignore = pc.ignore_mask(wm[player], fronts, grow, near) * (alpha <= 0)
+    touches = []
+    for who in touch if touch_band > 0 else []:
+        try:
+            touches.append(pc.warp(read_mask(masks, who, frame, w, h), maps, cv2.INTER_LINEAR))
+        except FileNotFoundError:
+            print(f"[{out.name}] no {who} mask: no contact band with them")
+    ignore = pc.real_ignore(wm[player], alpha, fronts, touches, grow, near, edge, touch_band)
     out.mkdir(parents=True, exist_ok=True)
     enc = pc.Encoder(out / f"{out.name}.mkv", cw, ch)
     enc.write(img)

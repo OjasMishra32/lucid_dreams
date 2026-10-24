@@ -172,6 +172,33 @@ class Layers(unittest.TestCase):
         self.assertEqual(float(ig[19, 15]), 0.0)  # far from the back player
         self.assertEqual(float(pc.ignore_mask(self.front, [], grow=1, near=3).max()), 0.0)
 
+    def test_edge_band_straddles_the_matte_edge(self):
+        band = pc.edge_band(self.back, 2)
+        self.assertEqual(float(band[2, 6]), 1.0)  # on the top edge, inside
+        self.assertEqual(float(band[1, 6]), 1.0)  # just outside it
+        self.assertEqual(float(band[10, 8]), 0.0)  # deep inside
+        self.assertEqual(float(band[10, 16]), 0.0)  # well outside
+        self.assertEqual(float(pc.edge_band(self.back, 0).max()), 0.0)
+
+    def test_contact_band_is_where_another_person_meets_the_player(self):
+        hand = np.zeros((20, 20), np.float32)
+        hand[0:6, 13:20] = 1  # one column of background between it and the player
+        band = pc.contact_band(self.back, [hand], 3)
+        self.assertEqual(float(band[3, 12]), 1.0)  # the gap between them
+        self.assertEqual(float(band[3, 10]), 1.0)  # the player's own pixels next to the hand
+        self.assertEqual(float(band[15, 10]), 0.0)  # the player's far end
+        self.assertEqual(float(pc.contact_band(self.back, [], 3).max()), 0.0)
+
+    def test_real_ignore_adds_the_bands_only_when_asked(self):
+        hand = np.zeros((20, 20), np.float32)
+        hand[0:6, 13:20] = 1
+        alpha = pc.player_alpha(self.back, [], [self.front], 1)
+        base = pc.ignore_mask(self.back, [self.front], 1, 3) * (alpha <= 0)
+        np.testing.assert_array_equal(pc.real_ignore(self.back, alpha, [self.front], [hand], 1, 3), base)
+        full = pc.real_ignore(self.back, alpha, [self.front], [hand], 1, 3, edge=2, touch_band=3)
+        self.assertTrue((full >= base).all())
+        self.assertEqual((float(full[3, 12]), float(full[2, 6]), float(full[4, 7])), (1.0, 1.0, 0.0))
+
     def test_soft_matte_is_preferred_when_present(self):
         import cv2
         with tempfile.TemporaryDirectory() as tmp:
@@ -388,6 +415,38 @@ class ExtrasLater(EndToEnd):
         self.assertEqual(len(decode(self.run_dir / "real" / "X150" / "X150.mkv")), 1)
         run = json.loads((self.run_dir / "court-run.json").read_text())
         self.assertEqual((run["id"], run["extras"][0]["name"]), ("court-test-back-s1", "X150"))
+
+
+class RealViewsLater(EndToEnd):
+    """--real-only redoes the real views' ignore (here with an edge band) and the run folders from the masks alone; the
+    clip stays as built, and a run folder the config no longer lists keeps its files."""
+
+    def test_real_only_adds_the_edge_band_under_a_new_run_id(self):
+        import cv2
+        k = json.loads((self.run_dir / "court-run.json").read_text())["K"]
+        before = (self.set_dir / "input.mp4").stat().st_mtime_ns
+        old = cv2.imread(str(self.run_dir / "ignore" / f"{k:06d}.png"), cv2.IMREAD_GRAYSCALE)
+        old_x = cv2.imread(str(self.run_dir / "real" / "X150" / "ignore" / "000000.png"), cv2.IMREAD_GRAYSCALE)
+        cfg = dict(self.cfg, edge=2, runs={"court-test-back-s1-r2": {"set": "back-s1", "turbo": True}})
+        (self.root / "cfg3.json").write_text(json.dumps(cfg))
+        pc.main(["--config", str(self.root / "cfg3.json"), "--real-only"])
+        self.assertEqual((self.set_dir / "input.mp4").stat().st_mtime_ns, before)
+        rd = self.root / "out" / "runs" / "court-test-back-s1-r2"
+        three = np.ones((3, 3), np.uint8)
+        for m_path, ig_path, was in ((rd / "masks" / f"{k:06d}.png", rd / "ignore" / f"{k:06d}.png", old),
+                                     (rd / "real" / "X150" / "masks" / "000000.png",
+                                      rd / "real" / "X150" / "ignore" / "000000.png", old_x)):
+            m = (cv2.imread(str(m_path), cv2.IMREAD_GRAYSCALE) > 127).astype(np.uint8)
+            ig = cv2.imread(str(ig_path), cv2.IMREAD_GRAYSCALE) > 0
+            outline = (cv2.dilate(m, three) > 0) & ~(cv2.erode(m, three) > 0)
+            self.assertTrue(outline.any())
+            self.assertTrue(ig[outline].all())  # both sides of the player's edge
+            self.assertTrue(ig[was > 0].all())  # and still who's in front
+        np.testing.assert_array_equal(cv2.imread(str(self.run_dir / "ignore" / f"{k:06d}.png"),
+                                                 cv2.IMREAD_GRAYSCALE), old)
+        run = json.loads((rd / "court-run.json").read_text())
+        self.assertEqual((run["id"], run["realIgnore"]["edge"], run["extras"][0]["name"]),
+                         ("court-test-back-s1-r2", 2, "X150"))
 
 
 class EndToEndScaled(EndToEnd):
