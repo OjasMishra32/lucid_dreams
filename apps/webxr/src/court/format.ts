@@ -1,18 +1,21 @@
-// The court bundle format: the types of court.json and video/frames.json, a validator that names every bad field in
-// plain words, and loadCourt (fetch + validate). DOM-free and dependency-free (it runs under node --test and in the
-// page alike), so it is also the reference for a Unity or visionOS reader: README.md beside this file documents it
-// with a worked example. Owned by the integrator (frozen at T0); a change here is a contract change for every stream.
+// The court bundle format: the types of court.json, video/frames.json and video/cards.json, a validator that names every
+// bad field in plain words, and loadCourt (fetch + validate). DOM-free and dependency-free (it runs under node --test and
+// in the page alike), so it is also the reference for a Unity or visionOS reader: README.md beside this file documents
+// it with a worked example. Owned by the integrator; a change here is a contract change for every stream.
 //
 // Conventions used by every field below:
 // - Court space: metres; origin at centre court on the floor; +Y up; +X toward the basket the play attacks; +Z to the
 //   right when facing +X (right-handed). Every position in the bundle is in court space unless it says otherwise.
 // - Show frames: the baked stream's frames, 0-based; show frame i is displayed at t = i / video.displayHz.
-// - Source frames: the source clip's own frame numbers (A's, at camera.sourceFps), fractional for an in-between. One
-//   second of real action is camera.sourceFps x camera.slow source frames (A: 59.94 x 2.67 = 160); camera.captureFps
-//   is the capture's own rate, which says which display frames can be real (A's repeats make the two differ).
+// - Source frames: the source clip's own frame numbers (at camera.sourceFps), fractional for an in-between. One second
+//   of real action is camera.sourceFps x camera.slow source frames; camera.captureFps is the capture's own rate, which
+//   says which display frames can be real.
 // - Cameras: OpenCV axes (+x right, +y down, +z forward), world-from-camera rotation, intrinsics in source pixels
-//   (camera.width x camera.height), pixel centres at whole numbers. An image of another width w is scaled by
-//   s = w / camera.width as u' = (u + 0.5) s - 0.5 (camera.ts `scaled`).
+//   (camera.width x camera.height), pixel centres at whole numbers. An image of the frame of another width w (the live
+//   or plate region, freeze.png) is scaled by s = w / camera.width as u' = (u + 0.5) s - 0.5 (camera.ts `scaled`).
+// - Stream pixels: each show frame stacks three regions (video.regions): the live frame, its background plate (the
+//   live frame with every person replaced from a fixed-centre pan mosaic) and the matte atlas. A fallback stream keeps
+//   the same layout scaled by its width / video.width.
 // - Paths are relative to court.json's folder, never absolute, never "..", never a URL.
 // - Unknown fields are ignored, so the format can grow (as every Lucid Dreams contract does).
 
@@ -22,6 +25,12 @@ export type Vec3 = [number, number, number];
 export type Quat = [number, number, number, number];
 /** An inclusive range of show frames: [first, last]. */
 export type FrameRange = [number, number];
+/** A rectangle in stream pixels: [x, y, width, height], from the stream's top-left corner. */
+export type Region = [number, number, number, number];
+/** A box in an image's own pixels: [x0, y0, x1, y1], x0 < x1 and y0 < y1, from its top-left corner. */
+export type Box = [number, number, number, number];
+/** Four corners in court space: bottom-left, bottom-right, top-right, top-left, as seen from the front. */
+export type Quad = [Vec3, Vec3, Vec3, Vec3];
 /**
  * A rectangle on the floor (y = 0) in court metres: [minX, minZ, maxX, maxZ]. An image laid on it runs left to right
  * from minX to maxX and top to bottom from minZ to maxZ.
@@ -32,6 +41,8 @@ export type BundlePath = string;
 
 /** The honesty label, word for word (P22). The bundle must carry exactly this text. */
 export const LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.";
+/** The id a ball's card uses in cards.json (every other card is a person). */
+export const BALL_CARD = "ball";
 
 /** court.json. */
 export interface Court {
@@ -39,7 +50,7 @@ export interface Court {
   version: 1;
   /** The moment's name, for the page title. */
   title: string;
-  /** Who, which game and the moment, shown low in front of the judge ("… · Gobert closes out as Luka gathers"). */
+  /** Who, which game and the moment, shown low in front of the judge. */
   caption: string;
   /** Always exactly LABEL. */
   label: string;
@@ -48,6 +59,7 @@ export interface Court {
   court: CourtGeometry;
   camera: SourceCamera;
   video: ShowVideoInfo;
+  light: LightLevels;
   seat: SeatInfo;
   freeze: FreezeInfo;
   audio: AudioInfo;
@@ -60,8 +72,10 @@ export interface CourtGeometry {
   length: number;
   /** Sideline to sideline, metres (15.24). Runs along Z, centred on 0. */
   width: number;
-  /** Centre of the ring the play attacks, court space; y is the rim height (3.05 m +/- 0.03, P2). */
+  /** Centre of the ring the play attacks, court space; y is the rim height (3.05 m +/- 0.03, P2). The rim and net are drawn in 3D here (props.ts standaloneHoop) and painted out of the plate. */
   rim: Vec3;
+  /** The backboard's front face (the plate's board pixels are projected onto it), corners as seen from the court. */
+  backboard: Quad;
   /** Top-down image of the floor made from the footage, covering the whole court (FloorRect [-length/2, -width/2, length/2, width/2]). */
   floor: BundlePath;
   /** Same extent as `floor`: white where the camera really filmed the floor; everything else is rendered (Reality check). */
@@ -70,25 +84,25 @@ export interface CourtGeometry {
   hardwood: [number, number, number];
 }
 
-/** The source camera (A): one fixed centre; its rotation and zoom change per frame (frames.json). */
+/** The source camera: one fixed centre; its rotation and zoom change per frame (frames.json). */
 export interface SourceCamera {
   /** The camera's optical centre, court space (fixed for the whole show). */
   centre: Vec3;
   /** Source image width, pixels (3840 for 4K). Every focal and principal point is in these pixels. */
   width: number;
-  /** Source image height, pixels (2160). */
+  /** Source image height, pixels. */
   height: number;
-  /** Principal point, source pixels (1919.5 for a centred 3840-wide image). */
+  /** Principal point, source pixels (width / 2 - 0.5 when centred). */
   cx: number;
-  /** Principal point, source pixels (1079.5). */
+  /** Principal point, source pixels. */
   cy: number;
   /** Radial distortion left in the bundle: always 0 (the bake undistorts every frame with the solve's own k1). */
   k1: number;
-  /** The source clip's container rate, frames per second (59.94 for A). Real time -> source frames: sourceFps x slow per second. */
+  /** The source clip's container rate, frames per second. Real time -> source frames: sourceFps x slow per second. */
   sourceFps: number;
-  /** The real capture rate, frames per second (120 for A's high-speed replay): how many distinct real frames a second of action has. */
+  /** The real capture rate, frames per second: how many distinct real frames a second of action has. */
   captureFps: number;
-  /** How much slower than real time the source clip plays (2.67 for A); 1 for a real-time clip. */
+  /** How much slower than real time the source clip plays; 1 for a real-time clip. */
   slow: number;
 }
 
@@ -96,41 +110,54 @@ export interface SourceCamera {
 export interface ShowVideoInfo {
   /** Raw H.264 Annex B, -bf 0 (decode order = display order), an IDR at every segment start, undistorted, no audio. */
   file: BundlePath;
-  /** WebCodecs codec string: "avc1.640034" (High, level 5.2) for 2560x1440 at 72 Hz. */
+  /** WebCodecs codec string: "avc1.640033" (High, level 5.1) for the 1536x2160 stacked frame at 72 Hz. */
   codec: string;
-  /** Coded width, pixels (2560). */
+  /** Coded width, pixels (1536). */
   width: number;
-  /** Coded height, pixels (1440). */
+  /** Coded height, pixels (2160: live 864 + plate 864 + mattes 432). */
   height: number;
+  /** Where each part of a show frame sits in the stream (stream pixels; the regions never overlap). */
+  regions: {
+    /** The live frame, at the source's aspect: what the camera filmed (people and all). */
+    live: Region;
+    /** The background plate, the live region's size: the live frame with every person replaced from the pan mosaic. */
+    plate: Region;
+    /** The matte atlas: each card's matte (white = the person) in its own tile (cards.json `tile`). */
+    mattes: Region;
+  };
   /** The display rate the show is baked for, Hz (72). The clock steps round(dt x displayHz) show frames per XR frame. */
   displayHz: number;
+  /** Pass 2's playback speed, x real time (below 1): every display frame of pass 2 is a real captured frame. Every ease starts at it; the resume ramps up to it. */
+  pass2Speed: number;
   /** Pre-built fallbacks (section 9), each optional. */
   fallbacks: ShowFallbacks;
   /** Per show frame: its source frame and camera (video/frames.json, `ShowFrame[]`). */
   frames: BundlePath;
+  /** Per show frame: one card per person in the lit region, and the ball's from the release to the make (video/cards.json, `ShowCards[]`). */
+  cards: BundlePath;
   segments: ShowSegments;
   /** The last pass-2 show frame a press can still stop on (the last ease start); later presses stop on the next pass. */
   cutoff: number;
-  /** F: the source frame the show freezes on (1244). Every ease ends on it; it is a real frame (interp false). */
+  /** F: the source frame the show freezes on. Every ease ends on it; it is a real frame (interp false). */
   freezeSource: number;
-  /** Source frame where the ball drops through the net (~1602): the `make` one-shots fire as the show passes it. Required when any one-shot is cued on "make". */
+  /** Source frame where the ball drops through the net: the `make` one-shots fire as the show passes it. Required when any one-shot is cued on "make". */
   makeSource?: number;
-  /** Frame F, lossless, at the source's aspect (any width; scale the camera by width). */
+  /** Frame F, lossless, undistorted, at the source's aspect (any width; scale the camera by width). */
   freeze: BundlePath;
-  /** F with the players and the watermark painted out: the clean plate under the players. */
+  /** F's background plate (the clean plate): the players and the watermark gone, filled from the pan mosaic. */
   freezeClean: BundlePath;
-  /** Same size as `freeze`: white where the stands and crowd are (dimmed 10-20% during the time stop). */
+  /** Same size as `freeze`: white where the stands and crowd are. */
   standsMask: BundlePath;
-  /** Same size as `freeze`: white where `freezeClean` was painted in (players, watermark), for the Reality check. */
+  /** Same size as `freeze`: white where `freezeClean` was inpainted (pixels the pan never saw), for the Reality check. */
   inpaintMask?: BundlePath;
 }
 
-/** The pre-built fallbacks: a 1080p copy (same frames), a 90 Hz bake (its own frames), pass 1 for a <video> element. */
+/** The pre-built fallbacks: a small copy (same frames), a 90 Hz bake (its own frames), pass 1 for a <video> element. */
 export interface ShowFallbacks {
-  /** `?show=1080`: the same show frame for frame (same frames.json, segments and cutoff), smaller. */
-  p1080?: { file: BundlePath; codec: string; width: number; height: number };
-  /** `?hz=90`: a separate bake at 90 Hz display times, so it has its own frames.json, segments and cutoff. */
-  hz90?: { file: BundlePath; codec: string; width: number; height: number; displayHz: number; frames: BundlePath; segments: ShowSegments; cutoff: number };
+  /** `?show=small`: the same show frame for frame (same frames.json, cards.json, segments and cutoff), smaller. */
+  small?: { file: BundlePath; codec: string; width: number; height: number };
+  /** `?hz=90`: a separate bake at 90 Hz display times, so it has its own frames.json, cards.json, segments and cutoff. */
+  hz90?: { file: BundlePath; codec: string; width: number; height: number; displayHz: number; frames: BundlePath; cards: BundlePath; segments: ShowSegments; cutoff: number };
   /** `?video=element`: pass 1 as an MP4 for a <video> element (only if WebCodecs fails on the headset). */
   element?: BundlePath;
 }
@@ -139,11 +166,11 @@ export interface ShowFallbacks {
 export interface ShowSegments {
   /** Pass 1, the play at real speed (1x). */
   pass1: FrameRange;
-  /** Pass 2, the replay at 0.6x; Step into the court is live here; unpressed it plays on through the make and repeats. */
+  /** Pass 2, the replay at video.pass2Speed; Step into the court is live here; unpressed it plays on through the make and repeats. */
   pass2: FrameRange;
-  /** From F on through the make: 0 -> 0.6x over 0.8 s, then 0.6x. Shown after F (frame F itself is the ease's last). */
+  /** From F on through the make: 0 -> pass2Speed over 0.8 s, then pass2Speed. Shown after F (frame F itself is the ease's last). */
   resume: FrameRange;
-  /** The ease ladder, in order of `start`: each slows 0.6x -> 0 (1 - smootherstep) and ends on F. */
+  /** The ease ladder, in order of `start`: each slows pass2Speed -> 0 (1 - smootherstep) and ends on F. */
   eases: ShowEase[];
 }
 
@@ -168,6 +195,44 @@ export interface ShowFrame {
   f: number;
 }
 
+/** One entry of video/cards.json per show frame. */
+export interface ShowCards {
+  cards: ShowCard[];
+}
+
+/**
+ * A layered card for one show frame: a person in the lit region (or the ball, id BALL_CARD), stood upright at their
+ * floor point and cut by their matte, so nobody shows twice through a gap and nobody tears at an edge (P43).
+ */
+export interface ShowCard {
+  /** The person's id (a freeze.players or freeze.others id when they are built in 3D; any other id otherwise), or "ball". */
+  id: string;
+  /** The floor point under them (under the ball for the ball's card), court space, y = 0: the card stands here. */
+  foot: Vec3;
+  /** Their box in the live region, live-region pixels [x0, y0, x1, y1]. */
+  box: Box;
+  /** Their matte's tile in the matte atlas, mattes-region pixels [x0, y0, x1, y1]; the box is scaled into it. */
+  tile: Box;
+  /** Front-to-back order in this frame: 0 is nearest the camera; each card has its own. */
+  order: number;
+}
+
+/** The light field's levels (lightfield.ts, 3.3): one world-space field over the footage, the floor, the stands and the splats. */
+export interface LightLevels {
+  /** The crowd's level at the full time stop, 0-1. */
+  crowd: number;
+  /** The floor outside the pool at the full time stop, 0-1. */
+  floor: number;
+  /** The pair (always 1: players never change in light). */
+  pair: number;
+  /** The stands after the pool has grown, 0-1. */
+  stands: number;
+  /** The pool's soft edge, metres (at least 1.5). */
+  penumbra: number;
+  /** The darker alternative shown at Q2 (its pick becomes the first set). */
+  alternative: { crowd: number; floor: number };
+}
+
 /** Decision W: where the judge sits and the viewing places after the world opens. */
 export interface SeatInfo {
   /** Which camera's optical ray the seat sits on: "freeze" (the camera of the show frame equal to F). */
@@ -178,11 +243,11 @@ export interface SeatInfo {
   distanceRange: [number, number];
   /** The pair's centre on the floor, court space (y = 0). */
   pairCentre: Vec3;
-  /** After Walk closer, the pair's centre is this far in front of the chair, metres (2.5). */
+  /** After Walk closer, the pair's centre is this far in front of the chair, metres (2.0). */
   closer: number;
   /** Every viewing spot and ring point keeps this much clear of each body's bounds, metres (1.0, P29). */
   clear: number;
-  /** The viewing spots on the floor, court space (three: front and 60 deg to either side, on the camera's side). */
+  /** The viewing spots on the floor, court space (three: front and up to 60 deg to either side, on the camera's side). */
   spots: Vec3[];
   /** The bounds that turn the walk ring on by themselves, metres: [width, depth] (4.5 x 5.5). */
   ringArea: [number, number];
@@ -199,7 +264,7 @@ export interface FreezeInfo {
 }
 
 export interface FreezePlayer {
-  /** Stable id, unique among players and others ("luka"). */
+  /** Stable id, unique among players and others. */
   id: string;
   /** Display name. */
   name: string;
@@ -244,17 +309,17 @@ export interface FreezeBall {
 
 /** An extra (3.4b): another player or ref, built one of three ways. */
 export interface FreezeExtra {
-  /** Unique among players and others ("reid"). */
+  /** Unique among players and others. */
   id: string;
   /** Display name (optional). */
   name?: string;
-  /** splats: rebuilt like the pair (PLY); body: an LHM++ body posed to C (PLY); relief: a relief mesh from A's frame (GLB). */
+  /** splats: rebuilt like the pair (PLY); body: an LHM++ body posed to C (PLY); relief: a relief mesh from the source frame (GLB). */
   kind: "splats" | "body" | "relief";
   /** The model file (PLY for splats and body, GLB for relief). */
   file: BundlePath;
   /** The same model with what no camera saw tinted blue. */
   reality: BundlePath;
-  /** Which camera gave the pose: "A" (seen in the show) or "C" (placed from the broadcast camera; Reality-marked). */
+  /** Which camera gave the pose: "A" (the source camera, seen in the show) or "C" (a second camera; Reality-marked). */
   pose: "A" | "C";
   /** Where they stand: the floor point under them, court space (y = 0). */
   foot: Vec3;
@@ -266,25 +331,25 @@ export interface FreezeExtra {
   reflection: FloorMap;
 }
 
-/** What the footage is projected onto besides the court plane and the players. */
+/** What the footage is projected onto besides the court plane, the backboard and the people's cards. */
 export interface StandsInfo {
-  /** The stands proxy: planes the footage (and the clean plate) is projected onto. */
-  proxy: { kind: "plane"; points: [Vec3, Vec3, Vec3, Vec3] }[];
+  /** The stands proxy: planes the plate is projected onto. */
+  proxy: { kind: "plane"; points: Quad }[];
   /** Depth cards (front row, photographers, the ref), each its own image on its own quad. */
   cards: StandCard[];
 }
 
 export interface StandCard {
-  /** Unique among cards ("front-row"). */
+  /** Unique among stand cards ("front-row"). */
   id: string;
   /** PNG cut from the clean plate, RGBA (alpha = the card's matte). */
   image: BundlePath;
   /** Corners in court space: bottom-left, bottom-right, top-right, top-left of the image, as seen from the court. */
-  quad: [Vec3, Vec3, Vec3, Vec3];
+  quad: Quad;
 }
 
 export interface AudioInfo {
-  /** The crowd bed: B's no-vocals stem, looped seamlessly, swell cut out (AAC in MP4). */
+  /** The crowd bed: a no-vocals stem, looped seamlessly, swell cut out (AAC in MP4). */
   bed: BundlePath;
   /** The bed's integrated loudness, LUFS (-23). */
   lufs: number;
@@ -292,7 +357,7 @@ export interface AudioInfo {
   sources: { at: Vec3; offsetS: number }[];
   /** One-shots: `make` fires as the show passes video.makeSource; `stepIn` fires softly at Step into the court. */
   oneShots: { file: BundlePath; at: "make" | "stepIn"; gainDb: number }[];
-  /** Sounds at 3D positions (squeak, bounce, release), each fired as the show passes its source frame. May be empty. */
+  /** Sounds at 3D positions (squeak, bounce, release), each fired as the show passes its source frame `frame`. May be empty. */
   events: { frame: number; kind: string; at: Vec3; file: BundlePath }[];
 }
 
@@ -338,9 +403,11 @@ class Check {
     return (typeof v === "string" && v.trim().length > 0) || this.fail(path, "expected some text", v);
   }
 
-  num(v: unknown, path: string, rule: { gt?: number; min?: number; max?: number; int?: boolean } = {}): v is number {
+  num(v: unknown, path: string, rule: { gt?: number; lt?: number; min?: number; max?: number; int?: boolean } = {}): v is number {
     if (typeof v !== "number" || !Number.isFinite(v)) return this.fail(path, "expected a number", v);
     if (rule.int && !Number.isInteger(v)) return this.fail(path, "expected a whole number", v);
+    if (rule.gt !== undefined && rule.lt !== undefined && !(v > rule.gt && v < rule.lt))
+      return this.fail(path, `expected a number between ${rule.gt} and ${rule.lt} (exclusive)`, v);
     if (rule.gt !== undefined && !(v > rule.gt)) return this.fail(path, `expected a number greater than ${rule.gt}`, v);
     if (rule.min !== undefined && rule.max !== undefined && (v < rule.min || v > rule.max))
       return this.fail(path, `expected a number between ${rule.min} and ${rule.max}`, v);
@@ -392,6 +459,14 @@ class Check {
     return (v[0] < v[2] && v[1] < v[3]) || this.fail(path, "expected [minX, minZ, maxX, maxZ] with minX < maxX and minZ < maxZ", v);
   }
 
+  /** A box [x0, y0, x1, y1] inside an image of w x h pixels. */
+  box(v: unknown, path: string, w: number, h: number, what: string): v is Box {
+    if (!this.nums(v, 4, path, `a box [x0, y0, x1, y1] in ${what} pixels`)) return false;
+    if (!(v[0] < v[2] && v[1] < v[3])) return this.fail(path, "expected [x0, y0, x1, y1] with x0 < x1 and y0 < y1", v);
+    if (v[0] < 0 || v[1] < 0 || v[2] > w || v[3] > h) return this.fail(path, `expected a box inside the ${what} (${w} x ${h})`, v);
+    return true;
+  }
+
   oneOf<T extends string>(v: unknown, options: readonly T[], path: string, words: string): v is T {
     return (typeof v === "string" && (options as readonly string[]).includes(v)) || this.fail(path, `expected ${words}`, v);
   }
@@ -417,13 +492,14 @@ export function validateCourt(json: unknown): string[] {
     for (const k of ["length", "width"]) if (c.has(o, k, `court.${k}`)) c.num(o[k], `court.${k}`, { gt: 0 });
     if (c.has(o, "rim", "court.rim") && c.vec3(o.rim, "court.rim") && Math.abs(o.rim[1] - 3.05) > 0.03)
       c.fail("court.rim", "expected the rim at 3.05 m (+/- 0.03) in y", o.rim);
+    if (c.has(o, "backboard", "court.backboard")) quad(c, o.backboard, "court.backboard");
     for (const k of ["floor", "floorSeen"]) if (c.has(o, k, `court.${k}`)) c.file(o[k], `court.${k}`);
     if (c.has(o, "hardwood", "court.hardwood") && c.nums(o.hardwood, 3, "court.hardwood", "an sRGB colour [r, g, b], each 0-1"))
       o.hardwood.forEach((x, i) => c.num(x, `court.hardwood[${i}]`, { min: 0, max: 1 }));
   }
 
   // camera
-  let aspect: number | null = null; // the source's height / width: every stream and image keeps it
+  let aspect: number | null = null; // the source's height / width: the live region keeps it
   if (c.has(j, "camera", "camera") && c.obj(j.camera, "camera")) {
     const o = j.camera;
     if (c.has(o, "centre", "camera.centre")) c.vec3(o.centre, "camera.centre");
@@ -442,34 +518,41 @@ export function validateCourt(json: unknown): string[] {
   // video
   const v = c.has(j, "video", "video") && c.obj(j.video, "video") ? j.video : null;
   if (v) {
-    if (c.has(v, "file", "video.file")) c.file(v.file, "video.file");
-    if (c.has(v, "codec", "video.codec") && c.text(v.codec, "video.codec") && !CODEC.test(v.codec))
-      c.fail("video.codec", 'expected a WebCodecs H.264 string like "avc1.640034"', v.codec);
-    for (const k of ["width", "height"]) if (c.has(v, k, `video.${k}`)) c.num(v[k], `video.${k}`, { gt: 0, int: true });
-    sameAspect(c, v, aspect, "video");
+    streamFields(c, v, "video");
+    const size = typeof v.width === "number" && typeof v.height === "number" ? { w: v.width, h: v.height } : null;
+    if (c.has(v, "regions", "video.regions")) regions(c, v.regions, size, aspect);
     if (c.has(v, "displayHz", "video.displayHz")) c.num(v.displayHz, "video.displayHz", { gt: 0 });
-    if (c.has(v, "frames", "video.frames")) c.file(v.frames, "video.frames");
-    for (const k of ["freeze", "freezeClean", "standsMask"]) if (c.has(v, k, `video.${k}`)) c.file(v[k], `video.${k}`);
+    if (c.has(v, "pass2Speed", "video.pass2Speed")) c.num(v.pass2Speed, "video.pass2Speed", { gt: 0, lt: 1 });
+    for (const k of ["frames", "cards", "freeze", "freezeClean", "standsMask"]) if (c.has(v, k, `video.${k}`)) c.file(v[k], `video.${k}`);
     if (v.inpaintMask !== undefined) c.file(v.inpaintMask, "video.inpaintMask");
     if (c.has(v, "freezeSource", "video.freezeSource")) c.num(v.freezeSource, "video.freezeSource", { min: 0 });
     if (v.makeSource !== undefined) c.num(v.makeSource, "video.makeSource", { min: 0 });
     if (c.has(v, "fallbacks", "video.fallbacks") && c.obj(v.fallbacks, "video.fallbacks")) {
       const fb = v.fallbacks;
-      if (fb.p1080 !== undefined && c.obj(fb.p1080, "video.fallbacks.p1080")) {
-        streamFields(c, fb.p1080, "video.fallbacks.p1080");
-        sameAspect(c, fb.p1080, aspect, "video.fallbacks.p1080");
+      if (fb.small !== undefined && c.obj(fb.small, "video.fallbacks.small")) {
+        streamFields(c, fb.small, "video.fallbacks.small");
+        sameShape(c, fb.small, size, "video.fallbacks.small");
       }
       if (fb.hz90 !== undefined && c.obj(fb.hz90, "video.fallbacks.hz90")) {
         const o = fb.hz90;
         streamFields(c, o, "video.fallbacks.hz90");
-        sameAspect(c, o, aspect, "video.fallbacks.hz90");
+        sameShape(c, o, size, "video.fallbacks.hz90");
         if (c.has(o, "displayHz", "video.fallbacks.hz90.displayHz")) c.num(o.displayHz, "video.fallbacks.hz90.displayHz", { gt: 0 });
-        if (c.has(o, "frames", "video.fallbacks.hz90.frames")) c.file(o.frames, "video.fallbacks.hz90.frames");
+        for (const k of ["frames", "cards"]) if (c.has(o, k, `video.fallbacks.hz90.${k}`)) c.file(o[k], `video.fallbacks.hz90.${k}`);
         if (c.has(o, "segments", "video.fallbacks.hz90.segments")) segments(c, o.segments, o.cutoff, "video.fallbacks.hz90", o.displayHz);
       }
       if (fb.element !== undefined) c.file(fb.element, "video.fallbacks.element");
     }
     if (c.has(v, "segments", "video.segments")) segments(c, v.segments, v.cutoff, "video", v.displayHz);
+  }
+
+  // light
+  if (c.has(j, "light", "light") && c.obj(j.light, "light")) {
+    const l = j.light;
+    for (const k of ["crowd", "floor", "pair", "stands"]) if (c.has(l, k, `light.${k}`)) c.num(l[k], `light.${k}`, { min: 0, max: 1 });
+    if (c.has(l, "penumbra", "light.penumbra")) c.num(l.penumbra, "light.penumbra", { min: 1.5 });
+    if (c.has(l, "alternative", "light.alternative") && c.obj(l.alternative, "light.alternative"))
+      for (const k of ["crowd", "floor"]) if (c.has(l.alternative, k, `light.alternative.${k}`)) c.num(l.alternative[k], `light.alternative.${k}`, { min: 0, max: 1 });
   }
 
   // seat
@@ -502,7 +585,8 @@ export function validateCourt(json: unknown): string[] {
     const ids = new Set<string>();
     const unique = (id: unknown, path: string) => {
       if (!c.text(id, path)) return;
-      if (ids.has(id)) c.fail(path, "expected an id unique among players and others", id);
+      if (id === BALL_CARD) c.fail(path, `"${BALL_CARD}" is the ball's card id; pick another`, id);
+      else if (ids.has(id)) c.fail(path, "expected an id unique among players and others", id);
       ids.add(id);
     };
     const players = new Set<string>();
@@ -572,7 +656,7 @@ export function validateCourt(json: unknown): string[] {
           const at = `freeze.stands.cards[${i}]`;
           if (!c.obj(card, at)) return;
           if (c.has(card, "id", `${at}.id`) && c.text(card.id, `${at}.id`)) {
-            if (cards.has(card.id)) c.fail(`${at}.id`, "expected an id unique among cards", card.id);
+            if (cards.has(card.id)) c.fail(`${at}.id`, "expected an id unique among stand cards", card.id);
             cards.add(card.id);
           }
           if (c.has(card, "image", `${at}.image`)) c.file(card.image, `${at}.image`);
@@ -633,21 +717,52 @@ export function validateCourt(json: unknown): string[] {
 function streamFields(c: Check, o: Record<string, unknown>, at: string) {
   if (c.has(o, "file", `${at}.file`)) c.file(o.file, `${at}.file`);
   if (c.has(o, "codec", `${at}.codec`) && c.text(o.codec, `${at}.codec`) && !CODEC.test(o.codec))
-    c.fail(`${at}.codec`, 'expected a WebCodecs H.264 string like "avc1.640032"', o.codec);
+    c.fail(`${at}.codec`, 'expected a WebCodecs H.264 string like "avc1.640033"', o.codec);
   for (const k of ["width", "height"]) if (c.has(o, k, `${at}.${k}`)) c.num(o[k], `${at}.${k}`, { gt: 0, int: true });
 }
 
-/** A stream keeps the source's aspect (within a pixel), so cameras scale by width alone (camera.ts `scaled`). */
-function sameAspect(c: Check, o: Record<string, unknown>, aspect: number | null, at: string) {
-  if (aspect === null || typeof o.width !== "number" || typeof o.height !== "number") return;
-  const want = o.width * aspect;
-  if (Math.abs(o.height - want) > 1) c.fail(`${at}.height`, `expected the source's aspect: ${Math.round(want)} for width ${o.width}`, o.height);
+/** A fallback keeps the main stream's shape (within a pixel), so its regions are the main ones scaled by width. */
+function sameShape(c: Check, o: Record<string, unknown>, main: { w: number; h: number } | null, at: string) {
+  if (!main || typeof o.width !== "number" || typeof o.height !== "number") return;
+  const want = (o.width * main.h) / main.w;
+  if (Math.abs(o.height - want) > 1) c.fail(`${at}.height`, `expected the main stream's shape: ${Math.round(want)} for width ${o.width}`, o.height);
 }
 
-/** Checks a segments block (and its cutoff); returns pass 2 when it is usable. */
-function segments(c: Check, s: unknown, cutoff: unknown, owner: string, displayHz: unknown): FrameRange | null {
+/** The stacked regions: inside the stream, never overlapping, live and plate the same size, live at the source's aspect. */
+function regions(c: Check, r: unknown, size: { w: number; h: number } | null, aspect: number | null) {
+  if (!c.obj(r, "video.regions")) return;
+  const got: [string, Region][] = [];
+  for (const k of ["live", "plate", "mattes"]) {
+    const at = `video.regions.${k}`;
+    if (!c.has(r, k, at) || !c.nums(r[k], 4, at, "a region [x, y, width, height] in stream pixels")) continue;
+    const g = r[k] as Region;
+    if (!g.every((x) => Number.isInteger(x)) || g[0] < 0 || g[1] < 0 || g[2] <= 0 || g[3] <= 0) {
+      c.fail(at, "expected whole pixels: x, y >= 0 and width, height > 0", g);
+      continue;
+    }
+    if (size && (g[0] + g[2] > size.w || g[1] + g[3] > size.h)) {
+      c.fail(at, `expected a region inside the stream (${size.w} x ${size.h})`, g);
+      continue;
+    }
+    got.push([k, g]);
+  }
+  for (let i = 0; i < got.length; i++)
+    for (let k = i + 1; k < got.length; k++) {
+      const [a, b] = [got[i][1], got[k][1]];
+      if (a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3])
+        c.fail("video.regions", `expected regions that never overlap: ${got[i][0]} and ${got[k][0]} do`);
+    }
+  const live = got.find(([k]) => k === "live")?.[1];
+  const plate = got.find(([k]) => k === "plate")?.[1];
+  if (live && plate && (live[2] !== plate[2] || live[3] !== plate[3])) c.fail("video.regions.plate", `expected the live region's size (${live[2]} x ${live[3]})`, plate);
+  if (live && aspect !== null && Math.abs(live[3] - live[2] * aspect) > 1)
+    c.fail("video.regions.live", `expected the source's aspect: height ${Math.round(live[2] * aspect)} for width ${live[2]}`, live);
+}
+
+/** Checks a segments block (and its cutoff). */
+function segments(c: Check, s: unknown, cutoff: unknown, owner: string, displayHz: unknown) {
   const at = `${owner}.segments`;
-  if (!c.obj(s, at)) return null;
+  if (!c.obj(s, at)) return;
   const named: [string, FrameRange][] = [];
   for (const k of ["pass1", "pass2", "resume"]) if (c.has(s, k, `${at}.${k}`) && c.range(s[k], `${at}.${k}`)) named.push([k, s[k] as FrameRange]);
   const pass2 = named.find(([k]) => k === "pass2")?.[1] ?? null;
@@ -683,7 +798,6 @@ function segments(c: Check, s: unknown, cutoff: unknown, owner: string, displayH
     else if (starts.length && cutoff > Math.max(...starts))
       c.fail(cp, `expected at most the last ease start (${Math.max(...starts)}): a later press would find no ease to take`, cutoff);
   }
-  return pass2;
 }
 
 function bounds(c: Check, b: unknown, at: string) {
@@ -750,14 +864,53 @@ export function validateFrames(json: unknown, court: Court): string[] {
   return c.errors;
 }
 
+/** Every problem with a parsed video/cards.json, checked against court.json and frames.json; empty when it is valid. */
+export function validateCards(json: unknown, court: Court, frames: readonly ShowFrame[]): string[] {
+  const c = new Check();
+  if (!Array.isArray(json) || json.length !== frames.length) {
+    c.fail("cards.json", `expected one entry per show frame (${frames.length}, as frames.json)`, Array.isArray(json) ? json.length : json);
+    return c.errors;
+  }
+  const { live, mattes } = court.video.regions;
+  json.forEach((entry, i) => {
+    const at = `cards.json[${i}]`;
+    if (!c.obj(entry, at) || !c.has(entry, "cards", `${at}.cards`) || !c.list(entry.cards, `${at}.cards`)) return;
+    const ids = new Set<string>();
+    const orders = new Set<number>();
+    const tiles: Box[] = [];
+    entry.cards.forEach((card, k) => {
+      const cp = `${at}.cards[${k}]`;
+      if (!c.obj(card, cp)) return;
+      if (c.has(card, "id", `${cp}.id`) && c.text(card.id, `${cp}.id`)) {
+        if (ids.has(card.id)) c.fail(`${cp}.id`, "expected one card per person per frame", card.id);
+        ids.add(card.id);
+      }
+      if (c.has(card, "foot", `${cp}.foot`) && c.vec3(card.foot, `${cp}.foot`) && Math.abs(card.foot[1]) > 0.01)
+        c.fail(`${cp}.foot`, "expected a point on the floor (y = 0)", card.foot);
+      if (c.has(card, "box", `${cp}.box`)) c.box(card.box, `${cp}.box`, live[2], live[3], "live region");
+      if (c.has(card, "tile", `${cp}.tile`) && c.box(card.tile, `${cp}.tile`, mattes[2], mattes[3], "matte atlas")) {
+        const t = card.tile as Box;
+        if (tiles.some((o) => t[0] < o[2] && o[0] < t[2] && t[1] < o[3] && o[1] < t[3])) c.fail(`${cp}.tile`, "expected a tile no other card in this frame uses", t);
+        tiles.push(t);
+      }
+      if (c.has(card, "order", `${cp}.order`) && c.num(card.order, `${cp}.order`, { min: 0, int: true })) {
+        if (orders.has(card.order)) c.fail(`${cp}.order`, "expected an order no other card in this frame has", card.order);
+        orders.add(card.order);
+      }
+    });
+  });
+  return c.errors;
+}
+
 // ---------------- loading ----------------
 
-/** A loaded, validated bundle: court.json, frames.json, and where its files are. */
+/** A loaded, validated bundle: court.json, frames.json, cards.json, and where its files are. */
 export interface CourtBundle {
   /** The folder URL court.json is in, ending in "/". */
   base: string;
   court: Court;
   frames: ShowFrame[];
+  cards: ShowCards[];
   /** The absolute URL of a bundle path. */
   file(path: BundlePath): string;
 }
@@ -782,22 +935,26 @@ async function getJson(url: string, fetcher: typeof fetch): Promise<unknown> {
   }
 }
 
-/** A pre-built stream instead of the main one: `?show=1080` (p1080) or `?hz=90` (hz90). */
-export type StreamFallback = "p1080" | "hz90";
+/** A pre-built stream instead of the main one: `?show=small` (small) or `?hz=90` (hz90). */
+export type StreamFallback = "small" | "hz90";
 
 /**
- * The court with a pre-built stream swapped into `video`, so every module reads one view of the show: the 1080p copy
- * changes only the file, codec and size; the 90 Hz bake also brings its display rate, frames.json, segments and
- * cutoff. Null returns the court as it is. Throws when the bundle has no such stream.
+ * The court with a pre-built stream swapped into `video`, so every module reads one view of the show: the small copy
+ * changes only the file, codec and size (its regions are the main ones scaled by width); the 90 Hz bake also brings
+ * its display rate, frames.json, cards.json, segments and cutoff. Null returns the court as it is. Throws when the
+ * bundle has no such stream.
  */
 export function chooseStream(court: Court, fallback: StreamFallback | null): Court {
   if (!fallback) return court;
   const fb = court.video.fallbacks[fallback];
-  if (!fb) throw new Error(`this bundle has no ${fallback === "hz90" ? "90 Hz bake (video.fallbacks.hz90)" : "1080p copy (video.fallbacks.p1080)"}`);
-  const video: ShowVideoInfo = { ...court.video, file: fb.file, codec: fb.codec, width: fb.width, height: fb.height };
+  if (!fb) throw new Error(`this bundle has no ${fallback === "hz90" ? "90 Hz bake (video.fallbacks.hz90)" : "small copy (video.fallbacks.small)"}`);
+  const s = fb.width / court.video.width;
+  const scale = (r: Region): Region => [Math.round(r[0] * s), Math.round(r[1] * s), Math.round(r[2] * s), Math.round(r[3] * s)];
+  const { live, plate, mattes } = court.video.regions;
+  const video: ShowVideoInfo = { ...court.video, file: fb.file, codec: fb.codec, width: fb.width, height: fb.height, regions: { live: scale(live), plate: scale(plate), mattes: scale(mattes) } };
   if (fallback === "hz90") {
     const hz = court.video.fallbacks.hz90!;
-    Object.assign(video, { displayHz: hz.displayHz, frames: hz.frames, segments: hz.segments, cutoff: hz.cutoff });
+    Object.assign(video, { displayHz: hz.displayHz, frames: hz.frames, cards: hz.cards, segments: hz.segments, cutoff: hz.cutoff });
   }
   return { ...court, video };
 }
@@ -805,7 +962,7 @@ export function chooseStream(court: Court, fallback: StreamFallback | null): Cou
 /**
  * Fetches and validates a court bundle. `url` is court.json's URL, or its folder ending in "/"; a relative URL is
  * resolved against the page (in node, pass an absolute one). `fallback` picks a pre-built stream (chooseStream): the
- * returned court and frames are that stream's.
+ * returned court, frames and cards are that stream's.
  */
 export async function loadCourt(url: string, options: { fetcher?: typeof fetch; fallback?: StreamFallback | null } = {}): Promise<CourtBundle> {
   const fetcher = options.fetcher ?? fetch;
@@ -820,5 +977,9 @@ export async function loadCourt(url: string, options: { fetcher?: typeof fetch; 
   const frames = await getJson(framesUrl, fetcher);
   const frameErrors = validateFrames(frames, court);
   if (frameErrors.length) throw new CourtFormatError(framesUrl, frameErrors);
-  return { base, court, frames: frames as ShowFrame[], file: (path) => new URL(path, base).href };
+  const cardsUrl = new URL(court.video.cards, base).href;
+  const cards = await getJson(cardsUrl, fetcher);
+  const cardErrors = validateCards(cards, court, frames as ShowFrame[]);
+  if (cardErrors.length) throw new CourtFormatError(cardsUrl, cardErrors);
+  return { base, court, frames: frames as ShowFrame[], cards: cards as ShowCards[], file: (path) => new URL(path, base).href };
 }

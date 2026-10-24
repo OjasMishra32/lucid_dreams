@@ -1,5 +1,5 @@
-// The show clock, in show frames: pass 1 (1x), pass 2 (0.6x, Step into the court live), the ease ladder and its
-// cutoff, a press in pass 1 armed for pass 2, the freeze on F, the resume through the make, the repeat. Every speed
+// The show clock, in show frames: pass 1 (1x), pass 2 (court.video.pass2Speed, Step into the court live), the ease
+// ladder and its cutoff, a press in pass 1 armed for pass 2, the freeze on F, the resume through the make, the repeat. Every speed
 // change is baked into the stream, so the clock only picks which show frame is on screen: it steps
 // round(dt x displayHz) frames per XR frame and switches segments at their edges (never a seek, never a playbackRate).
 // DOM-free (clock.test.ts imports it under node). Stream C (`core`) builds the Clock class; the curve functions below
@@ -9,11 +9,9 @@ import type { Court, ShowFrame } from "./format";
 /** True once stream C has built the Clock class (the e2e report lists the modules still stubbed). */
 export const BUILT = false;
 
-/** Pass 1 plays at real speed. */
+/** Pass 1 plays at real speed. (Pass 2's speed is the bundle's: court.video.pass2Speed; every ease starts at it.) */
 export const PASS1_SPEED = 1;
-/** Pass 2, every ease's start and the resume after its ramp play at 0.6x (120 fps x 0.6 = 72: every display frame real). */
-export const PASS2_SPEED = 0.6;
-/** The resume eases 0 -> 0.6x over this long (P18: <= 0.02 per display frame). */
+/** The resume eases 0 -> pass 2's speed over this long (P18: <= 0.02 per display frame). */
 export const RESUME_RAMP_S = 0.8;
 /** The ease ladder's lengths, seconds, earliest start first (1.2 s starts 0.36 s of real time before F). */
 export const EASE_SECONDS: readonly number[] = [1.2, 1.0, 0.8];
@@ -53,26 +51,26 @@ export function easeFrameCount(seconds: number, displayHz: number): number {
 
 /**
  * Real time (seconds, relative to F; negative before it) of an ease's frame k = 1..n, for an ease of n frames entered
- * at `speed`. Frame n is F (0); frame 0 would be the pass-2 frame it is entered from, -speed * n / displayHz / 2.
+ * at `speed` (pass 2's). Frame n is F (0); frame 0 would be the pass-2 frame it is entered from, -speed * n / displayHz / 2.
  */
-export function easeTau(k: number, n: number, displayHz: number, speed = PASS2_SPEED): number {
+export function easeTau(k: number, n: number, displayHz: number, speed: number): number {
   const distance = (speed * n) / displayHz / 2;
   return -distance * (1 - easeTravel(k / n));
 }
 
-/** Real time after F (seconds) of the resume's frame k = 1.., ramping 0 -> `speed` over n frames, then steady. */
-export function resumeTau(k: number, n: number, displayHz: number, speed = PASS2_SPEED): number {
+/** Real time after F (seconds) of the resume's frame k = 1.., ramping 0 -> `speed` (pass 2's) over n frames, then steady. */
+export function resumeTau(k: number, n: number, displayHz: number, speed: number): number {
   const ramp = (speed * n) / displayHz / 2;
   return k <= n ? ramp * rampTravel(k / n) : ramp + (speed * (k - n)) / displayHz;
 }
 
 /** Playback speed (x real time) at an ease's frame k of n. */
-export function easeSpeed(k: number, n: number, speed = PASS2_SPEED): number {
+export function easeSpeed(k: number, n: number, speed: number): number {
   return speed * (1 - smootherstep(k / n));
 }
 
 /** Playback speed at the resume's frame k with a ramp of n frames. */
-export function resumeSpeed(k: number, n: number, speed = PASS2_SPEED): number {
+export function resumeSpeed(k: number, n: number, speed: number): number {
   return speed * smootherstep(k / n);
 }
 
@@ -85,7 +83,7 @@ export interface ClockState {
   segment: Segment;
   /** The ease playing (index into video.segments.eases) while segment is "ease"; else null. */
   ease: number | null;
-  /** Playback speed relative to real time: 1 in pass 1, 0.6 in pass 2, 0 frozen. */
+  /** Playback speed relative to real time: 1 in pass 1, court.video.pass2Speed in pass 2, 0 frozen. */
   speed: number;
   /** The ease a press now would take (or the armed one); null after the cutoff or outside pass 1-2. */
   nextEase: number | null;

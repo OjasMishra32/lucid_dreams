@@ -1,27 +1,30 @@
 // Court Side (`?mode=court`): one real NBA moment at life size. renderCourt(root) loads the court bundle (`?bundle=`
-// <court.json URL or folder>, else the stand-in in dev and /bundle/ from serve.mjs), builds every module, runs the
-// immersive-ar session drawn opaque (SparkXr, mode "ar", required local-floor; optional anchors, hand-tracking,
-// bounded-floor), and drives the phase machine once per XR frame:
+// <court.json URL or folder>, else the stand-in in dev and /bundle/ from serve.mjs; `?show=small` / `?hz=90` pick a
+// pre-built stream), builds every module, runs the immersive-ar session drawn opaque (required local-floor; optional
+// anchors, hand-tracking, bounded-floor; requested here rather than through SparkXr, which ends a session on
+// `visible-blurred` and would break the headset-off hand-over, P38), and drives the phase machine once per XR frame:
 //   setup (until Seat here) -> arrival (black and room tone until the page is visible and the seated head is still
 //   ~1 s, then 2.5 s of lights-up) -> watching (pass 1, pass 2; Step into the court arms or takes an ease) -> easing
-//   -> handoff (handoff(p) 0 -> 1) -> open -> walking (Walk closer, Next view) -> returning (through the room to the
-//   chair, re-seat, handoff(p) 1 -> 0) -> resume (through the make) -> ended (Replay).
-// See my room works in every phase; the edge fade runs every frame. A throw inside the frame is logged once and the
-// loop keeps going (a stopped loop freezes the headset). `?stats` keeps the frame log; `?probe` hands the frame loop
-// to the e2e harness (probe.ts). The integrator owns this file; streams change it only through the integrator.
+//   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer, Next view) -> returning (through
+//   the room to the chair, re-seat, handback(t)) -> resume (through the make) -> ended (Replay).
+// See my room works in every phase; the edge fade runs every frame; every button, key and probe action is queued to
+// the top of the next frame. A throw inside the frame is logged once and the loop keeps going (a stopped loop freezes
+// the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e harness (probe.ts). Owned
+// by the integrator only: streams export their pieces and the integrator wires them here.
 import * as THREE from "three";
-import { SparkRenderer, SparkXr } from "@sparkjsdev/spark";
+import { SparkRenderer } from "@sparkjsdev/spark";
 import { WorldLock } from "../xr/anchor";
 import { handSides } from "../xr/menu";
 import { XR_QUALITY } from "../xr/quality";
-import { cameraOf } from "./camera";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
-import { loadCourt, type CourtBundle } from "./format";
+import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
-import { BUILT as HANDOFF_BUILT, HANDOFF_SECONDS, handoff, type HandoffParts } from "./handoff";
+import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
+import { BUILT as LIGHT_BUILT, LightField } from "./lightfield";
 import { Probe } from "./probe";
 import { BUILT as PROXIES_BUILT, Proxies } from "./proxies";
-import { BUILT as SEAT_BUILT, STAND_RISE, Seat, toCourt } from "./seat";
+import { BUILT as SEAT_BUILT, Seat } from "./seat";
+import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
 import type { Head, Phase } from "./types";
@@ -30,7 +33,7 @@ import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
 import { BUILT as VRHANDS_BUILT, VrHands } from "./vrhands";
 import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
-/** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves the real bundle at /bundle/. */
+/** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves a real bundle at /bundle/. */
 const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : "/bundle/";
 /** The arrival: the seated head still this long, then the lights come up over LIGHTS_UP_S (3.2). */
 const STILL_S = 1.0;
@@ -41,6 +44,7 @@ const ROOM_OUT_S = 0.6;
 const ROOM_BACK_S = 0.8;
 /** A head rise this big mid-fade finishes the video fade within 0.3 s (P10). */
 const RISE_FINISH = 0.1;
+const RISE_FADE_S = 0.3;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
   document.title = "Court Side · Lucid Dreams";
@@ -59,6 +63,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   renderer.setSize(innerWidth, innerHeight);
   renderer.setClearColor(0x000000, 1);
   renderer.toneMapping = THREE.NoToneMapping;
+  renderer.xr.enabled = true;
   root.querySelector("#court-stage")!.appendChild(renderer.domElement);
   const gl = renderer.getContext() as WebGL2RenderingContext;
   const scene = new THREE.Scene();
@@ -66,7 +71,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   camera.position.set(0, 1.15, 0);
   const spark = new SparkRenderer({ renderer });
   scene.add(spark);
-  /** Everything in court space; its transform is Seat.world (court -> room). */
+  /** Everything in court space; its transform is Seat.world (court -> room), written only by Seat. */
   const world = new THREE.Group();
   world.name = "court-world";
   scene.add(world);
@@ -78,8 +83,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   });
 
   const modules = {
-    clock: CLOCK_BUILT, video: VIDEO_BUILT, proxies: PROXIES_BUILT, world: WORLD_BUILT, freeze: FREEZE_BUILT,
-    handoff: HANDOFF_BUILT, seat: SEAT_BUILT, sound: SOUND_BUILT, vrhands: VRHANDS_BUILT, ui: UI_BUILT,
+    clock: CLOCK_BUILT, video: VIDEO_BUILT, proxies: PROXIES_BUILT, world: WORLD_BUILT, light: LIGHT_BUILT, freeze: FREEZE_BUILT,
+    handoff: HANDOFF_BUILT, seatmath: SEATMATH_BUILT, seat: SEAT_BUILT, sound: SOUND_BUILT, vrhands: VRHANDS_BUILT, ui: UI_BUILT,
   };
   let stats: FrameStats | null = null; // made once the bundle says the display rate
   // the machine's state, declared before the probe so its snapshot can read it
@@ -87,7 +92,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let setup = true; // until Seat here
   let still = 0;
   let lightsUp = -1;
-  let handoffP = 0;
+  let tF = 0; // seconds from F (the hand-off's clock)
+  let tBack = 0; // seconds from the sit (the hand-back's clock)
   let inRoom = false;
   let roomP = 0;
   let reality = false;
@@ -96,11 +102,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // every button, key and probe action waits for the top of the next XR frame (anchors need the XRFrame; one order)
   const queue: (() => void)[] = [];
   const actions = new Map<UiAction, () => void>();
-  // the e2e harness, dev only (scripts/court/e2e.mjs runs on vite dev; a real bundle reaches it from serve.mjs via ?bundle=)
+  // the e2e harness, dev only (scripts/court/e2e.mjs runs through serve.mjs --dev)
   const probe = import.meta.env.DEV && params.has("probe")
     ? new Probe(params.get("probe"), {
         snapshot: () => ({
-          phase, setup, still: Number(still.toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), handoffP, inRoom, roomP, reality,
+          phase, setup, still: Number(still.toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
         }),
@@ -111,9 +117,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       })
     : null;
 
-  // ---------------- the bundle (and the pre-built stream: ?show=1080, ?hz=90) ----------------
+  // ---------------- the bundle (and the pre-built stream: ?show=small, ?hz=90) ----------------
   const bundleUrl = params.get("bundle") ?? DEFAULT_BUNDLE;
-  const fallback = params.get("hz") === "90" ? "hz90" : params.get("show") === "1080" ? "p1080" : null;
+  const fallback: StreamFallback | null = params.get("hz") === "90" ? "hz90" : params.get("show") === "small" ? "small" : null;
   let bundle: CourtBundle;
   try {
     bundle = await loadCourt(bundleUrl, { fallback });
@@ -131,11 +137,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // ---------------- the modules ----------------
   const clock = new Clock(court, frames);
   clockState = clock.state;
-  const proxies = new Proxies(renderer, bundle);
-  const video = new ShowVideo(renderer, bundle, proxies, { element: params.get("video") === "element" });
+  const light = new LightField(court);
+  const video = new ShowVideo(renderer, bundle, { element: params.get("video") === "element" });
   videoRef = video;
-  const courtWorld = new CourtWorld(renderer, scene, world, bundle);
-  const freeze = new Freeze(world, bundle, spark);
+  const proxies = new Proxies(renderer, bundle, video, light);
+  const courtWorld = new CourtWorld(renderer, scene, world, bundle, light, proxies);
+  const freeze = new Freeze(world, bundle, spark, light);
   const sound = new Sound(bundle);
   const hands = [renderer.xr.getHand(0), renderer.xr.getHand(1)];
   hands.forEach((h) => scene.add(h));
@@ -144,7 +151,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const ui = new Ui(scene, hands, sideOf, bundle);
   const seat = new Seat(court, frames, world, new WorldLock(renderer, world), params.has("seat") ? Number(params.get("seat")) : undefined);
   world.add(proxies.group);
-  const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound };
+  const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
   await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
 
   // ---------------- the machine ----------------
@@ -154,12 +161,13 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const headQ = new THREE.Quaternion();
   const euler = new THREE.Euler();
   let seatedEyeY = 1.15;
-  let handoffSpeedUp = false;
+  let rushed = false; // the head rose mid-fade: the fade finishes within RISE_FADE_S
   let restored = false; // Back to my seat: the chair reached and the world re-seated
   let visible = true;
+  const flags = () => ({ inRoom, reality, setup, ring: seat.layout().kind === "ring" });
   const go = (next: Phase) => {
     phase = next;
-    ui.setPhase(phase, { inRoom, reality, setup, ring: seat.layout().kind === "ring" });
+    ui.setPhase(phase, flags());
   };
   const on = (action: UiAction, fn: () => void) => {
     const queued = () => queue.push(fn);
@@ -172,6 +180,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     setup = false;
     still = 0;
     lightsUp = -1;
+    light.set("dark", 0);
     go("arrival");
   });
   on("step", () => {
@@ -191,11 +200,13 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (phase !== "open" && phase !== "walking") return;
     inRoom = true; // back to the chair always goes through the room (3.5)
     restored = false;
+    tBack = 0;
     go("returning");
   });
   on("reality", () => {
     reality = !reality;
     courtWorld.reality(reality);
+    proxies.reality(reality);
     freeze.reality(reality);
   });
   on("replay", () => {
@@ -212,23 +223,14 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (!inRoom && phase === "watching") clock.restart();
     if (inRoom && (phase === "easing" || phase === "handoff")) {
       clock.jumpToFreeze();
-      freeze.draw(true);
-      handoffP = 1;
-      handoff(1, parts);
+      tF = HANDOFF_END;
+      handoff(tF, parts);
       go("open");
     }
-    ui.setPhase(phase, { inRoom, reality, setup, ring: seat.layout().kind === "ring" });
+    ui.setPhase(phase, flags());
   };
   on("room", toggleRoom);
   ui.onToggleRoom = () => queue.push(toggleRoom);
-
-  const showFrame = (s: ClockState) => {
-    video.show(s.frame);
-    const cam = cameraOf(court, frames[s.frame]);
-    proxies.project(cam);
-    courtWorld.frustum(cam);
-    video.prime(s.nextJump);
-  };
 
   const step = (dt: number) => {
     // See my room, in every phase
@@ -246,9 +248,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           if (still >= STILL_S) lightsUp = 0;
         } else lightsUp += dt;
         const p = Math.max(0, Math.min(1, lightsUp / LIGHTS_UP_S));
-        courtWorld.arrive(p);
+        light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
         sound.arrive(p);
-        if (lightsUp >= LIGHTS_UP_S) go("watching");
+        if (lightsUp >= LIGHTS_UP_S) {
+          light.set("watch", 0);
+          go("watching");
+        }
         break;
       }
       case "watching":
@@ -256,26 +261,37 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "resume": {
         if (!(inRoom && phase !== "resume")) clockState = clock.update(dt); // the clock holds in the room (3.6)
         const s = clock.state;
-        showFrame(s);
-        if (phase === "watching" && s.segment === "ease") {
-          freeze.draw(true); // under the opaque video from the ease start: the first sort is done before the fade
-          go("easing");
+        video.show(s.frame);
+        proxies.project(s.frame);
+        video.prime(s.nextJump);
+        const hush = 1 - s.speed / court.video.pass2Speed; // 0 at pass 2's speed, 1 frozen
+        if (phase === "watching" && s.segment === "ease") go("easing");
+        if (phase === "easing") {
+          const ease = s.ease !== null ? court.video.segments.eases[s.ease] : null;
+          tF = ease ? -(ease.frames[1] - s.frame) / hz : 0; // seconds to F
+          light.set("ease", ease ? ease.seconds + tF : 0);
+          sound.timeStop(Math.max(0, Math.min(1, hush)));
+          if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
         }
-        if (phase === "easing") proxies.dimStands(1 - s.speed / 0.6);
-        if (phase === "easing" || phase === "watching") sound.timeStop(phase === "easing" ? 1 - s.speed / 0.6 : 0);
         if (phase === "easing" && s.segment === "freeze") {
-          handoffP = 0;
-          handoffSpeedUp = false;
+          tF = 0;
+          rushed = false;
           go("handoff");
         }
-        if (phase === "resume" && s.segment === "ended") go("ended");
+        if (phase === "resume") {
+          light.set("resume", tBack);
+          tBack += dt;
+          if (s.segment === "ended") go("ended");
+        }
         break;
       }
       case "handoff": {
-        if (head.room[1] - seatedEyeY > RISE_FINISH) handoffSpeedUp = true;
-        handoffP = Math.min(1, handoffP + (dt / HANDOFF_SECONDS) * (handoffSpeedUp && handoffP < 1 / 3 ? 1 / 0.3 : 1));
-        handoff(handoffP, parts);
-        if (handoffP >= 1) go("open");
+        if (head.room[1] - seatedEyeY > RISE_FINISH && tF < BEATS.videoFades[1]) rushed = true;
+        const [, fadeEnd] = BEATS.videoFades;
+        // rushed: whatever is left of the fade plays out in RISE_FADE_S
+        tF += rushed && tF < fadeEnd ? Math.max(dt, ((fadeEnd - tF) * dt) / RISE_FADE_S) : dt;
+        handoff(tF, parts);
+        if (tF >= HANDOFF_END) go("open");
         break;
       }
       case "open":
@@ -288,16 +304,18 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           seat.restore(); // the chair back at the dolly seat, behind the room
           restored = true;
           inRoom = false;
-          ui.setPhase(phase, { inRoom, reality, setup, ring: seat.layout().kind === "ring" });
+          tBack = BACK_BEATS.videoReturns[0];
+          ui.setPhase(phase, flags());
         }
-        if (restored && roomP <= 0) {
-          handoffP = Math.max(0, handoffP - dt / HANDOFF_SECONDS);
-          handoff(handoffP, parts);
-          if (handoffP <= 0) {
+        if (restored) {
+          tBack += dt;
+          handback(tBack, parts);
+          if (tBack >= HANDBACK_END) {
             clock.resume();
+            tBack = 0;
             go("resume");
           }
-        }
+        } else light.set("return", tBack);
         break;
       }
       case "ended":
@@ -310,6 +328,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // ---------------- the frame loop ----------------
   const loopErrors = new Set<string>();
   let lastTime = -1;
+  let frameStart = 0;
   const onFrame = (time: number) => {
     for (const fn of queue.splice(0)) fn();
     const dt = probe ? probe.dt(hz) : lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000);
@@ -336,7 +355,6 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     stats?.gpu.end();
     stats?.frame(phase, interval, performance.now() - frameStart);
   };
-  let frameStart = 0;
   renderer.setAnimationLoop((time) => {
     frameStart = performance.now();
     try {
@@ -355,39 +373,43 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   });
 
   // ---------------- the session ----------------
-  const xr = new SparkXr({
-    renderer,
-    mode: "ar",
-    referenceSpaceType: "local-floor",
-    button: false,
-    element: document.createElement("button"), // keeps Spark's own ENTER AR box off the page
-    enableHands: true,
-    frameBufferScaleFactor: XR_QUALITY.res,
-    fixedFoveation: XR_QUALITY.fov,
-    sessionInit: { requiredFeatures: ["local-floor"], optionalFeatures: ["anchors", "hand-tracking", "bounded-floor"] },
-    onReady: (supported) => {
-      enterButton.disabled = !supported;
-      status.textContent = supported ? court.title : "This browser has no immersive AR";
-      if (probe) probe.api.ready = supported;
-    },
-    onEnterXr: () => {
-      scene.background = null;
-      lastTime = -1;
-      if (setup) go("arrival"); // a re-entry after Seat here keeps the phase, the anchor and the seat (9)
-      const session = renderer.xr.getSession();
-      session?.addEventListener("visibilitychange", () => {
-        visible = session.visibilityState === "visible";
-        if (!visible) still = 0; // the arrival waits for the judge (P27)
-      });
-      status.textContent = "In the headset";
-    },
-    onExitXr: () => {
+  const xrSystem = navigator.xr;
+  const supported = xrSystem ? await xrSystem.isSessionSupported("immersive-ar").catch(() => false) : false;
+  enterButton.disabled = !supported;
+  status.textContent = supported ? court.title : "This browser has no immersive AR";
+  if (probe) probe.api.ready = supported;
+  let session: XRSession | null = null;
+  const enter = async () => {
+    if (!xrSystem || session) return;
+    renderer.xr.setReferenceSpaceType("local-floor");
+    renderer.xr.setFramebufferScaleFactor(XR_QUALITY.res);
+    renderer.xr.setFoveation(XR_QUALITY.fov);
+    const s = await xrSystem.requestSession("immersive-ar", {
+      requiredFeatures: ["local-floor"],
+      optionalFeatures: ["anchors", "hand-tracking", "bounded-floor"],
+    });
+    session = s;
+    // the session is kept through `visible-blurred` and `hidden` (headset off, the system menu): only its end ends it
+    s.addEventListener("visibilitychange", () => {
+      visible = s.visibilityState === "visible";
+      if (!visible) still = 0; // the arrival waits for the judge (P27)
+    });
+    s.addEventListener("end", () => {
+      session = null;
       status.textContent = court.title;
-    },
-  });
+    });
+    await renderer.xr.setSession(s);
+    scene.background = null;
+    lastTime = -1;
+    if (setup) go("arrival"); // a re-entry after Seat here keeps the phase, the anchor and the seat (9)
+    status.textContent = "In the headset";
+  };
   enterButton.addEventListener("click", () => {
     sound.start(); // inside the tap: the audio context may start
-    void xr.toggleXr();
+    enter().catch((e: unknown) => {
+      status.textContent = `Could not enter: ${String(e)}`;
+      console.error("Court Side session:", e);
+    });
   });
 
   // production (served by serve.mjs): the Service Worker keeps the page and the bundle for a cable-off reload (P37);

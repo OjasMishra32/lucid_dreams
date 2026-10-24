@@ -1,53 +1,67 @@
-// The stand-in court bundle: a synthetic play with the real one's geometry, so every stream builds and tests against
-// a valid bundle before the real footage lands. Nothing in it comes from broadcast footage.
-//   node apps/webxr/scripts/court/standin.mjs [--out <dir>] [--render 960x540] [--workers N]
+// The stand-in court bundle: a synthetic play shaped like the real one, so every stream builds and tests against a
+// valid bundle before the real footage lands. Nothing in it comes from, or is measured from, broadcast footage: the
+// camera, rates, speeds and frame numbers are made up.
+//   node apps/webxr/scripts/court/standin.mjs [--out <dir>] [--render 768x432] [--workers N]
+//   node apps/webxr/scripts/court/standin.mjs --fixture   (rewrites scripts/court/fixtures/court.json only)
 // Writes (default) apps/webxr/scripts/court/out/standin/ (git-ignored by scripts/court/.gitignore):
-//   court.json, video/frames.json      valid per src/court/format.ts (checked before it exits)
-//   video/show.h264 (+ show-1080.h264)  the whole show at 72 Hz display times, 2560x1440 avc1.640034 (High 5.2),
-//                                      -bf 0, an IDR at every segment start, AUD per frame; pass 1 (1x), pass 2
-//                                      (0.6x), three eases (1.2/1.0/0.8 s) ending on F, the resume through the make
-//   video/freeze.png, freeze-clean.png, stands-mask.png, inpaint-mask.png   frame F and its plates (1920x1080)
+//   court.json, video/frames.json, video/cards.json   valid per src/court/format.ts (checked before it exits)
+//   video/show.h264 (+ show-small.h264)  the whole show at 72 Hz display times, each frame stacked 1536x2160: the live
+//                                       frame (1536x864), its background plate (the same frame with nobody in it and
+//                                       the rim painted out) and the matte atlas (1536x432, one tile per card);
+//                                       avc1.640033 (High 5.1), -bf 0, an IDR at every segment start, AUD per frame;
+//                                       pass 1 (1x), pass 2 (pass2Speed), three eases (1.2/1.0/0.8 s) ending on F, the
+//                                       resume through the make
+//   video/freeze.png, freeze-clean.png, stands-mask.png   frame F and its plate (1920x1080)
 //   players/<id>/freeze.ply, reality.ply, proxy.glb, shadow.png, reflection.png   two frozen players (3DGS PLY, SH1)
-//   others/ref/...                     one extra (a baseline ref)
+//   others/trailer/...                 a third person in the lit region, built like the pair
 //   stands/front-row.png, court/floor.jpg, court/floor-seen.png, audio/bed.m4a, audio/swell.m4a
-// The scene: camera A's stand-in at a fixed centre ~30 m from the pair, 1.0 m high, f 25k px at F (an 8.8 x 4.9 deg
-// window; calib-real's v9 solve says ~28.7k for A), panning and zooming with the play; each show frame is rendered from exactly the
-// camera frames.json lists for it. The source clip is a 120 fps real-time capture (sourceFps 120, slow 1), so at 0.6x
-// every display frame is a real frame and at 1x one in three is (the rest are in-betweens, flagged interp).
+// The scene: a fixed long-lens camera ~23 m from the pair that pans and zooms with the play; the pair stand with a
+// clear gap between their bodies (the layered watch must show nobody twice through it, P43) and a third person
+// trails them; each show frame is rendered from exactly the camera frames.json lists for it. The made-up source is a
+// 180 fps real-time capture played at pass2Speed 0.4 in pass 2, so every pass-2 display frame is a real frame and at
+// 1x one in two is (the rest are in-betweens, flagged interp).
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
-import { LABEL, validateCourt, validateFrames } from "../../src/court/format.ts";
-import { angleDeg, lookRotation, rotate, scaled } from "../../src/court/camera.ts";
-import { EASE_SECONDS, PASS2_SPEED, RESUME_RAMP_S, easeFrameCount, easeTau, resumeTau } from "../../src/court/clock.ts";
+import { BALL_CARD, LABEL, validateCards, validateCourt, validateFrames } from "../../src/court/format.ts";
+import { angleDeg, lookRotation, project, rotate, scaled } from "../../src/court/camera.ts";
+import { EASE_SECONDS, RESUME_RAMP_S, easeFrameCount, easeTau, resumeTau } from "../../src/court/clock.ts";
 import { splitAnnexB, spsCodec } from "../../src/court/annexb.ts";
 import { writePng } from "./png.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_OUT = join(HERE, "out", "standin");
+export const FIXTURE = join(HERE, "fixtures", "court.json");
 
-// ---------------- the show's timing ----------------
+// ---------------- the show's timing (made up) ----------------
 const HZ = 72;
-const CAPTURE = 120; // source frames per second of real time (sourceFps 120 x slow 1)
-const F_SRC = 1244; // F's source frame
+const CAPTURE = 180; // source frames per second of real time (sourceFps 180 x slow 1)
+const PASS2_SPEED = 0.4; // 180 x 0.4 = 72: every pass-2 display frame is a real frame
+const F_SRC = 600; // F's source frame
 const PASS1 = { start: -2.4, frames: 195 }; // real time relative to F, seconds; 1x
-const PASS2 = { start: -1.2, end: 1.3 }; // 0.6x
+const PASS2 = { start: -1.2, end: 1.3 };
+const RELEASE_TAU = 0.35; // the ball leaves the hands
 const MAKE_TAU = 1.0; // the ball drops through the net
 const SRC = { width: 3840, height: 2160, cx: 1919.5, cy: 1079.5 };
+/** The stacked stream: live, plate and mattes regions, stream pixels [x, y, w, h]. */
+export const STREAM = { width: 1536, height: 2160, live: [0, 0, 1536, 864], plate: [0, 864, 1536, 864], mattes: [0, 1728, 1536, 432] };
+const SMALL = { width: 1280, height: 1800 };
+/** The matte atlas: one 384 x 432 slot per card id (the ball's only from the release to the make). */
+const SLOTS = { shooter: 0, defender: 1, trailer: 2, [BALL_CARD]: 3 };
+const SLOT_W = 384;
 
-// ---------------- the scene (court space) ----------------
+// ---------------- the scene (court space, made up) ----------------
 const PC = [6.0, 0, 1.0]; // the pair's centre on the floor
-const CAM_C = [-22.0, 1.0, -9.0]; // camera A's stand-in centre (~29.7 m from the pair)
-const F0 = 25000; // focal at F, source pixels (head to toe with the raised hand in frame; v9 is ~28.7k)
+const CAM_C = [-14.0, 1.35, -10.5]; // the camera's fixed centre (~23 m from the pair)
+const F0 = 20000; // focal at F, source pixels (an 11 x 6 deg window: the pair head to toe with the raised hand)
 const RIM = [12.73, 3.05, 0];
 const BALL_R = 0.1195;
-const REF_AT = [10.6, 0, 4.8];
 const STANDS_X = 16.0;
 const CARD = { x: 15.2, z0: -4, z1: 10, y1: 1.35 };
-const BOARD = { x: 13.105, y0: 2.9, y1: 3.97, z: 0.915 };
+const BOARD = { x: 13.105, y0: 2.9, y1: 3.97, z: 0.915 }; // the rulebook board: face 1.22 m in from the baseline
 const LIGHT = norm([-0.35, 1, 0.3]);
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -66,19 +80,21 @@ function norm(v) {
 }
 const round = (v, d = 6) => Number(v.toFixed(d));
 
-// the camera's horizontal frame toward the pair: players are placed along it and across it
+// the camera's horizontal frame toward the pair: people are placed along it and across it
 const FWD = norm([PC[0] - CAM_C[0], 0, PC[2] - CAM_C[2]]);
 const RIGHT = [-FWD[2], 0, FWD[0]];
 const place = (along, across) => [PC[0] + FWD[0] * along + RIGHT[0] * across, 0, PC[2] + FWD[2] * along + RIGHT[2] * across];
-const S_F = place(-0.3, -0.25); // the shooter, nearer the camera, his back to it
-const D_F = place(0.3, 0.25); // the defender, facing the camera
+const S_F = place(-0.25, -0.42); // the shooter, nearer the camera, his back to it
+const D_F = place(0.25, 0.42); // the defender, facing the camera: ~0.5 m of clear floor between their bodies
+const T_F = place(2.0, -1.45); // the third person, trailing behind and to the left
 const V_S = add(mul(RIGHT, 0.9), mul(FWD, -0.15)); // m/s before F
 const V_D = mul(V_S, 0.85);
+const V_T = mul(V_S, 0.7);
 
 const PALETTE = {
   shooter: { skin: [0.8, 0.62, 0.5], jersey: [0.16, 0.33, 0.74], shorts: [0.14, 0.29, 0.66], shoes: [0.95, 0.95, 0.95], hair: [0.22, 0.15, 0.1], height: 1.98 },
   defender: { skin: [0.45, 0.3, 0.22], jersey: [0.08, 0.3, 0.22], shorts: [0.07, 0.26, 0.19], shoes: [0.12, 0.12, 0.12], hair: [0.06, 0.05, 0.05], height: 2.16 },
-  ref: { skin: [0.7, 0.52, 0.42], jersey: [0.58, 0.58, 0.6], shorts: [0.08, 0.08, 0.09], shoes: [0.08, 0.08, 0.08], hair: [0.3, 0.3, 0.3], height: 1.85 },
+  trailer: { skin: [0.62, 0.45, 0.35], jersey: [0.08, 0.3, 0.22], shorts: [0.07, 0.26, 0.19], shoes: [0.9, 0.9, 0.9], hair: [0.12, 0.08, 0.06], height: 2.05 },
 };
 
 /** A standing body as capsules: { a, b, r, part } in court space. */
@@ -113,6 +129,7 @@ export function sceneAt(tau) {
   const t = Math.min(tau, 0);
   const S = add(S_F, mul(V_S, t));
   const D = add(D_F, mul(V_D, t));
+  const T = add(T_F, mul(V_T, t));
   const toD = norm(sub(D, S));
   const toS = mul(toD, -1);
   const ks = PALETTE.shooter.height / 1.95;
@@ -125,31 +142,30 @@ export function sceneAt(tau) {
   let ball;
   if (tau <= -0.5) ball = dribble(tau);
   else if (tau <= 0) ball = lerp3(dribble(-0.5), hip, smooth((tau + 0.5) / 0.5));
-  else if (tau <= 0.35) ball = lerp3(hip, over, smooth(tau / 0.35));
+  else if (tau <= RELEASE_TAU) ball = lerp3(hip, over, smooth(tau / RELEASE_TAU));
   else if (tau <= MAKE_TAU) {
-    const s = (tau - 0.35) / (MAKE_TAU - 0.35);
+    const s = (tau - RELEASE_TAU) / (MAKE_TAU - RELEASE_TAU);
     ball = add(lerp3(over, RIM, s), [0, 4 * 1.3 * s * (1 - s), 0]);
   } else ball = add(RIM, [0, -2.5 * (tau - MAKE_TAU), 0]);
   const sShoulder = (side) => add(add(S, mul(sRight, side * 0.21 * ks)), [0, 1.43 * ks, 0]);
   const onBall = (side) => add(ball, mul(norm(sub(sShoulder(side), ball)), BALL_R + 0.05));
   const hands =
-    tau > 0.35
+    tau > RELEASE_TAU
       ? { left: add(sShoulder(-1), [toD[0] * 0.15, 0.5 * ks, toD[2] * 0.15]), right: add(sShoulder(1), [toD[0] * 0.25, 0.55 * ks, toD[2] * 0.25]) }
       : { left: tau > -0.5 ? onBall(-1) : null, right: onBall(1) };
   const shooter = body(S, toD, ks, hands);
-  // the defender's right arm rises over the shooter's head from tau = -1 to F
+  // the defender's right arm rises toward the shooter's head from tau = -1 to F, across the gap
   const dRight = [-toS[2], 0, toS[0]];
   const hang = add(add(D, mul(dRight, 0.28 * kd)), [0, 0.82 * kd, 0]);
-  const over_ = add(add(shooter.head, [0, 0.3, 0]), mul(toS, -0.12));
-  const raise = smooth((tau + 1) / 1);
-  const defender = body(D, toS, kd, { left: null, right: lerp3(hang, over_, raise) });
-  const toPair = norm(sub(PC, REF_AT));
-  const ref = body(REF_AT, toPair, PALETTE.ref.height / 1.95, { left: null, right: null });
+  const reachUp = add(add(shooter.head, [0, 0.3, 0]), mul(toS, -0.12));
+  const defender = body(D, toS, kd, { left: null, right: lerp3(hang, reachUp, smooth((tau + 1) / 1)) });
+  const kt = PALETTE.trailer.height / 1.95;
+  const trailer = body(T, norm(sub(PC, T)), kt, { left: null, right: null });
   return {
     people: [
       { id: "shooter", ...shooter, palette: PALETTE.shooter, k: ks },
       { id: "defender", ...defender, palette: PALETTE.defender, k: kd },
-      { id: "ref", ...ref, palette: PALETTE.ref, k: PALETTE.ref.height / 1.95 },
+      { id: "trailer", ...trailer, palette: PALETTE.trailer, k: kt },
     ],
     ball,
   };
@@ -165,7 +181,7 @@ export function cameraAt(tau) {
   const follow = smooth((tau - 0.3) / 0.45);
   const look = tau > MAKE_TAU ? RIM : sc.ball;
   target = lerp3(target, look, follow);
-  const f = F0 * (1 + 0.04 * Math.sin(1.9 * tau)) * lerp(1, 0.5, follow);
+  const f = F0 * (1 + 0.04 * Math.sin(1.9 * tau)) * lerp(1, 0.55, follow);
   return { q: lookRotation(sub(target, CAM_C)), f };
 }
 
@@ -200,16 +216,16 @@ export function timeline() {
   });
   const eases = EASE_SECONDS.map((seconds) => {
     const n = easeFrameCount(seconds, HZ);
-    const j = Math.round((easeTau(0, n, HZ) - PASS2.start) / step2);
-    if (Math.abs(PASS2.start + j * step2 - easeTau(0, n, HZ)) > 1e-9) throw new Error(`ease of ${n} frames doesn't start on pass 2's grid`);
+    const j = Math.round((easeTau(0, n, HZ, PASS2_SPEED) - PASS2.start) / step2);
+    if (Math.abs(PASS2.start + j * step2 - easeTau(0, n, HZ, PASS2_SPEED)) > 1e-9) throw new Error(`ease of ${n} frames doesn't start on pass 2's grid`);
     const frames = range(() => {
-      for (let k = 1; k <= n; k++) taus.push(easeTau(k, n, HZ));
+      for (let k = 1; k <= n; k++) taus.push(easeTau(k, n, HZ, PASS2_SPEED));
     });
     return { start: pass2[0] + j, frames, seconds: round(n / HZ, 4) };
   });
   const ramp = easeFrameCount(RESUME_RAMP_S, HZ);
   const resume = range(() => {
-    for (let k = 1; resumeTau(k, ramp, HZ) <= PASS2.end + 1e-9; k++) taus.push(resumeTau(k, ramp, HZ));
+    for (let k = 1; resumeTau(k, ramp, HZ, PASS2_SPEED) <= PASS2.end + 1e-9; k++) taus.push(resumeTau(k, ramp, HZ, PASS2_SPEED));
   });
   // a display frame shows the real frame when one lies within 0.1 frame of its time, else an in-between whose camera
   // is the slerp of its two real neighbours' (as the bake does)
@@ -230,6 +246,49 @@ export function timeline() {
   return { shows, segments: { pass1, pass2, resume, eases }, cutoff: eases[eases.length - 1].start };
 }
 
+const srcCam = (s) => ({ centre: CAM_C, q: s.q, f: s.f, cx: SRC.cx, cy: SRC.cy, width: SRC.width, height: SRC.height });
+
+/** A capsule body's (or the ball's) box in an image: [x0, y0, x1, y1], clipped to it; null when it is off the image. */
+function boxOf(cam, caps) {
+  const box = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const c of caps)
+    for (const p of [c.a, c.b]) {
+      const uv = project(cam, p);
+      const z = dot(sub(p, cam.centre), rotate(cam.q, [0, 0, 1]));
+      if (!uv || z <= 0) return null;
+      const m = (cam.f * c.r) / z + 1;
+      box[0] = Math.min(box[0], uv[0] - m);
+      box[1] = Math.min(box[1], uv[1] - m);
+      box[2] = Math.max(box[2], uv[0] + m);
+      box[3] = Math.max(box[3], uv[1] + m);
+    }
+  const clip = [Math.max(0, Math.floor(box[0])), Math.max(0, Math.floor(box[1])), Math.min(cam.width, Math.ceil(box[2])), Math.min(cam.height, Math.ceil(box[3]))];
+  return clip[0] < clip[2] && clip[1] < clip[3] ? clip : null;
+}
+
+/** The cards of one show frame: every person whose box is in the live region, and the ball from the release to the make. */
+export function cardsAt(show) {
+  const cam = scaled(srcCam(show), STREAM.live[2]);
+  const sc = sceneAt(show.tau);
+  const list = [];
+  for (const person of sc.people) {
+    const box = boxOf(cam, person.caps);
+    if (box) list.push({ id: person.id, foot: [round(person.foot[0], 4), 0, round(person.foot[2], 4)], box, depth: dot(sub(person.foot, CAM_C), FWD) });
+  }
+  if (show.tau >= RELEASE_TAU && show.tau <= MAKE_TAU) {
+    const box = boxOf(cam, [{ a: sc.ball, b: sc.ball, r: BALL_R }]);
+    if (box) list.push({ id: BALL_CARD, foot: [round(sc.ball[0], 4), 0, round(sc.ball[2], 4)], box, depth: dot(sub(sc.ball, CAM_C), FWD) });
+  }
+  list.sort((a, b) => a.depth - b.depth);
+  return list.map(({ id, foot, box }, order) => {
+    // the box scaled into its slot of the atlas, aspect kept
+    const s = Math.min(SLOT_W / (box[2] - box[0]), STREAM.mattes[3] / (box[3] - box[1]));
+    const x0 = SLOTS[id] * SLOT_W;
+    const tile = [x0, 0, x0 + Math.max(1, Math.round((box[2] - box[0]) * s)), Math.max(1, Math.round((box[3] - box[1]) * s))];
+    return { id, foot, box, tile, order };
+  });
+}
+
 const capsuleBounds = (caps) => {
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
@@ -245,11 +304,11 @@ const capsuleBounds = (caps) => {
 const boxDistance = (p, b) => Math.hypot(Math.max(b.min[0] - p[0], 0, p[0] - b.max[0]), Math.max(b.min[2] - p[2], 0, p[2] - b.max[2]));
 const floorRect = (c, half) => [round(c[0] - half, 3), round(c[2] - half, 3), round(c[0] + half, 3), round(c[2] + half, 3)];
 
-/** court.json and frames.json for the stand-in (pure: no files). */
+/** court.json, frames.json and cards.json for the stand-in (pure: no files). */
 export function standinBundle() {
   const tl = timeline();
   const atF = sceneAt(0);
-  const [shooter, defender, ref] = atF.people;
+  const [shooter, defender, trailer] = atF.people;
   const bounds = { shooter: capsuleBounds(shooter.caps), defender: capsuleBounds(defender.caps) };
   // the viewing spots: front (toward the camera) and 60 deg to either side, as close as 1.5 m and always `clear` m
   // from both bodies (P29)
@@ -263,8 +322,8 @@ export function standinBundle() {
   while ([-60, 0, 60].some((deg) => Object.values(bounds).some((b) => boxDistance(spotAt(deg, radius), b) < 1.05))) radius += 0.05;
   const spots = [0, -60, 60].map((deg) => spotAt(deg, radius));
   const eye = (p) => [p[0], 1.6, p[2]];
-  const refChest = [REF_AT[0], 1.2, REF_AT[2]];
-  const maxRayAngle = Math.max(...spots.map((s) => angleDeg(sub(refChest, CAM_C), sub(refChest, eye(s)))));
+  const chest = [trailer.foot[0], 1.2, trailer.foot[2]];
+  const maxRayAngle = Math.max(...spots.map((s) => angleDeg(sub(chest, CAM_C), sub(chest, eye(s)))));
   const interpShare = tl.shows.filter((s) => s.interp).length / tl.shows.length;
   const player = (p, name, seen) => ({
     id: p.id,
@@ -284,16 +343,23 @@ export function standinBundle() {
     caption: "Stand-in · the defender closes out as the shooter gathers",
     label: LABEL,
     credit: "Synthetic stand-in bundle: no broadcast footage.",
-    court: { length: 28.65, width: 15.24, rim: RIM, floor: "court/floor.jpg", floorSeen: "court/floor-seen.png", hardwood: [0.71, 0.52, 0.33] },
+    court: {
+      length: 28.65, width: 15.24, rim: RIM,
+      backboard: [[BOARD.x, BOARD.y0, -BOARD.z], [BOARD.x, BOARD.y0, BOARD.z], [BOARD.x, BOARD.y1, BOARD.z], [BOARD.x, BOARD.y1, -BOARD.z]],
+      floor: "court/floor.jpg", floorSeen: "court/floor-seen.png", hardwood: [0.71, 0.52, 0.33],
+    },
     camera: { centre: CAM_C, width: SRC.width, height: SRC.height, cx: SRC.cx, cy: SRC.cy, k1: 0, sourceFps: CAPTURE, captureFps: CAPTURE, slow: 1 },
     video: {
       file: "video/show.h264",
-      codec: "avc1.640034",
-      width: 2560,
-      height: 1440,
+      codec: "avc1.640033",
+      width: STREAM.width,
+      height: STREAM.height,
+      regions: { live: STREAM.live, plate: STREAM.plate, mattes: STREAM.mattes },
       displayHz: HZ,
-      fallbacks: { p1080: { file: "video/show-1080.h264", codec: "avc1.640032", width: 1920, height: 1080 } },
+      pass2Speed: PASS2_SPEED,
+      fallbacks: { small: { file: "video/show-small.h264", codec: "avc1.640033", width: SMALL.width, height: SMALL.height } },
       frames: "video/frames.json",
+      cards: "video/cards.json",
       segments: tl.segments,
       cutoff: tl.cutoff,
       freezeSource: F_SRC,
@@ -301,25 +367,25 @@ export function standinBundle() {
       freeze: "video/freeze.png",
       freezeClean: "video/freeze-clean.png",
       standsMask: "video/stands-mask.png",
-      inpaintMask: "video/inpaint-mask.png",
     },
-    seat: { ray: "freeze", distance: 5.0, distanceRange: [4, 7], pairCentre: PC, closer: 2.5, clear: 1.0, spots, ringArea: [4.5, 5.5] },
+    light: { crowd: 0.45, floor: 0.3, pair: 1.0, stands: 0.6, penumbra: 1.5, alternative: { crowd: 0.16, floor: 0.14 } },
+    seat: { ray: "freeze", distance: 5.0, distanceRange: [4, 7], pairCentre: PC, closer: 2.0, clear: 1.0, spots, ringArea: [4.5, 5.5] },
     freeze: {
       players: [player(shooter, "Shooter (stand-in)", seenShare(shooter)), player(defender, "Defender (stand-in)", seenShare(defender))],
       ball: { centre: atF.ball.map((x) => round(x, 4)), radius: BALL_R, erase: [{ player: "shooter", radius: 0.15 }] },
       others: [
         {
-          id: "ref",
-          name: "Baseline ref (stand-in)",
+          id: "trailer",
+          name: "Trailer (stand-in)",
           kind: "splats",
-          file: "others/ref/freeze.ply",
-          reality: "others/ref/reality.ply",
+          file: "others/trailer/freeze.ply",
+          reality: "others/trailer/reality.ply",
           pose: "A",
-          foot: REF_AT,
-          height: PALETTE.ref.height,
+          foot: [round(trailer.foot[0], 4), 0, round(trailer.foot[2], 4)],
+          height: PALETTE.trailer.height,
           maxRayAngle: round(maxRayAngle, 2),
-          shadow: { image: "others/ref/shadow.png", rect: floorRect(REF_AT, 0.8) },
-          reflection: { image: "others/ref/reflection.png", rect: floorRect(REF_AT, 0.8) },
+          shadow: { image: "others/trailer/shadow.png", rect: floorRect(trailer.foot, 0.8) },
+          reflection: { image: "others/trailer/reflection.png", rect: floorRect(trailer.foot, 0.8) },
         },
       ],
       stands: {
@@ -337,10 +403,11 @@ export function standinBundle() {
       ],
       events: [],
     },
-    metrics: { reprojDeg: { median: 0, p95: 0 }, heldOutPsnrVsGenerated: {}, seatPsnr: {}, interpShare: round(interpShare, 4) },
+    metrics: { reprojDeg: { median: null, p95: null }, heldOutPsnrVsGenerated: {}, seatPsnr: {}, interpShare: round(interpShare, 4) },
   };
   const frames = tl.shows.map((s) => ({ src: s.src, interp: s.interp, q: s.q.map((x) => round(x, 9)), f: round(s.f, 4) }));
-  return { court, frames };
+  const cards = tl.shows.map((s) => ({ cards: cardsAt(s) }));
+  return { court, frames, cards };
 }
 
 // ---------------- splats (deterministic) ----------------
@@ -536,7 +603,7 @@ function cardAt(z, y) {
 
 /**
  * Renders the scene at real time `tau` from a camera (court space, OpenCV axes) into W x H RGB, plus a kind per pixel.
- * `people: false` paints the people and the ball out (the clean plate).
+ * `people: false` paints the people and the ball out, `rim: false` the rim (the plate).
  */
 export function render(cam, tau, opts = {}) {
   const { width: W, height: H, f, cx, cy } = cam;
@@ -546,6 +613,7 @@ export function render(cam, tau, opts = {}) {
   const r2 = rotate(cam.q, [0, 0, 1]);
   const sc = sceneAt(tau);
   const withPeople = opts.people !== false;
+  const withRim = opts.rim !== false; // the plate paints the rim out (it is drawn in 3D at court.rim)
   // capsules: precomputed for the fixed ray origin C, with an image-space box each
   const caps = [];
   if (withPeople)
@@ -641,7 +709,7 @@ export function render(cam, tau, opts = {}) {
           }
         }
       }
-      if (d[1] > 0) {
+      if (withRim && d[1] > 0) {
         const t = (RIM[1] - C[1]) / d[1];
         if (t < best) {
           const rr = Math.hypot(C[0] + t * d[0] - RIM[0], C[2] + t * d[2] - RIM[2]);
@@ -823,37 +891,102 @@ function run(cmd, args, input) {
   });
 }
 
-const srcCam = (s) => ({ centre: CAM_C, q: s.q, f: s.f, cx: SRC.cx, cy: SRC.cy, width: SRC.width, height: SRC.height });
-
-const X264 = (level) => [
-  "-c:v", "libx264", "-profile:v", "high", "-level:v", level, "-preset", "veryfast", "-crf", "18", "-bf", "0", "-refs", "3",
+const X264 = [
+  "-c:v", "libx264", "-profile:v", "high", "-level:v", "5.1", "-preset", "veryfast", "-crf", "18", "-bf", "0", "-refs", "3",
   "-g", "100000", "-keyint_min", "100000", "-sc_threshold", "0", "-forced-idr", "1",
   "-x264-params", "aud=1:repeat-headers=1:colorprim=bt709:transfer=bt709:colormatrix=bt709", "-f", "h264",
 ];
 
+/** Bilinear resize of RGB. */
+function resize(src, sw, sh, dw, dh) {
+  const out = new Uint8Array(dw * dh * 3);
+  for (let y = 0; y < dh; y++) {
+    const fy = Math.min(sh - 1, Math.max(0, ((y + 0.5) * sh) / dh - 0.5));
+    const y0 = Math.floor(fy);
+    const y1 = Math.min(sh - 1, y0 + 1);
+    const wy = fy - y0;
+    for (let x = 0; x < dw; x++) {
+      const fx = Math.min(sw - 1, Math.max(0, ((x + 0.5) * sw) / dw - 0.5));
+      const x0 = Math.floor(fx);
+      const x1 = Math.min(sw - 1, x0 + 1);
+      const wx = fx - x0;
+      for (let k = 0; k < 3; k++) {
+        const a = src[(y0 * sw + x0) * 3 + k] * (1 - wx) + src[(y0 * sw + x1) * 3 + k] * wx;
+        const b = src[(y1 * sw + x0) * 3 + k] * (1 - wx) + src[(y1 * sw + x1) * 3 + k] * wx;
+        out[(y * dw + x) * 3 + k] = Math.round(a * (1 - wy) + b * wy);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * One stacked show frame (STREAM.width x STREAM.height RGB): the live frame, its plate (nobody in it, the rim painted
+ * out) and the matte atlas, each card's matte (the person's visible pixels in the live frame) in its tile.
+ */
+export function stackedFrame(show, cards, rw, rh) {
+  const cam = scaled(srcCam(show), rw);
+  cam.height = rh;
+  const live = render(cam, show.tau);
+  const plate = render(cam, show.tau, { people: false, rim: false });
+  const [, , lw, lh] = STREAM.live;
+  const out = new Uint8Array(STREAM.width * STREAM.height * 3);
+  out.set(resize(live.rgb, rw, rh, lw, lh), (STREAM.live[1] * STREAM.width + STREAM.live[0]) * 3);
+  out.set(resize(plate.rgb, rw, rh, lw, lh), (STREAM.plate[1] * STREAM.width + STREAM.plate[0]) * 3);
+  const ids = sceneAt(show.tau).people.map((p) => p.id);
+  for (const card of cards) {
+    const want = card.id === BALL_CARD ? KIND.ball : KIND.person + ids.indexOf(card.id);
+    const [tx0, ty0, tx1, ty1] = card.tile;
+    const [bx0, by0, bx1, by1] = card.box;
+    for (let ty = ty0; ty < ty1; ty++)
+      for (let tx = tx0; tx < tx1; tx++) {
+        let hits = 0;
+        // 2 x 2 samples per atlas pixel, through the box into the render
+        for (const [ox, oy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
+          const bx = bx0 + ((tx - tx0 + ox) / (tx1 - tx0)) * (bx1 - bx0);
+          const by = by0 + ((ty - ty0 + oy) / (ty1 - ty0)) * (by1 - by0);
+          const rx = Math.min(rw - 1, Math.floor((bx * rw) / lw));
+          const ry = Math.min(rh - 1, Math.floor((by * rh) / lh));
+          if (live.kind[ry * rw + rx] === want) hits++;
+        }
+        const v = Math.round((hits / 4) * 255);
+        const o = ((STREAM.mattes[1] + ty) * STREAM.width + STREAM.mattes[0] + tx) * 3;
+        out[o] = out[o + 1] = out[o + 2] = v;
+      }
+  }
+  return out;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
+  const { court, frames, cards } = standinBundle();
+  if (args.includes("--fixture")) {
+    mkdirSync(dirname(FIXTURE), { recursive: true });
+    writeFileSync(FIXTURE, `${JSON.stringify(court, null, 2)}\n`);
+    console.log(`FIXTURE ${FIXTURE}`);
+    return;
+  }
   const out = resolve(opt("--out", DEFAULT_OUT));
-  const [RW, RH] = opt("--render", "960x540").split("x").map(Number);
+  const [RW, RH] = opt("--render", "768x432").split("x").map(Number);
   const workers = Number(opt("--workers", Math.max(1, Math.min(8, availableParallelism() - 2))));
   const t0 = Date.now();
   const log = (m) => console.log(`[standin ${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
   rmSync(out, { recursive: true, force: true });
-  for (const d of ["video", "court", "stands", "audio", "players/shooter", "players/defender", "others/ref"]) mkdirSync(join(out, d), { recursive: true });
+  for (const d of ["video", "court", "stands", "audio", "players/shooter", "players/defender", "others/trailer"]) mkdirSync(join(out, d), { recursive: true });
 
-  const { court, frames } = standinBundle();
   const tl = timeline();
   writeFileSync(join(out, "court.json"), JSON.stringify(court, null, 2));
   writeFileSync(join(out, "video/frames.json"), JSON.stringify(frames));
-  log(`court.json, frames.json (${frames.length} show frames, ${(court.metrics.interpShare * 100).toFixed(1)}% in-betweens)`);
+  writeFileSync(join(out, "video/cards.json"), JSON.stringify(cards));
+  log(`court.json, frames.json, cards.json (${frames.length} show frames, ${(court.metrics.interpShare * 100).toFixed(1)}% in-betweens)`);
 
-  // frame F and its plates, at half the source size
+  // frame F and its plate, at half the source size
   const fIndex = court.video.segments.eases[0].frames[1];
   const camF = srcCam(tl.shows[fIndex]);
   const camF2 = scaled(camF, 1920);
   const full = render(camF2, 0);
-  const clean = render(camF2, 0, { people: false });
+  const clean = render(camF2, 0, { people: false, rim: false });
   const n = camF2.width * camF2.height;
   const mask = (pick) => {
     const m = new Uint8Array(n);
@@ -863,22 +996,21 @@ async function main() {
   writePng(join(out, "video/freeze.png"), { width: camF2.width, height: camF2.height, channels: 3, data: full.rgb });
   writePng(join(out, "video/freeze-clean.png"), { width: camF2.width, height: camF2.height, channels: 3, data: clean.rgb });
   writePng(join(out, "video/stands-mask.png"), mask((i) => clean.kind[i] === KIND.stands || clean.kind[i] === KIND.card));
-  writePng(join(out, "video/inpaint-mask.png"), mask((i) => full.kind[i] >= KIND.person || full.kind[i] === KIND.ball));
-  log("freeze.png, freeze-clean.png, stands-mask.png, inpaint-mask.png");
+  log("freeze.png, freeze-clean.png, stands-mask.png");
 
-  // players and the extra: splats, reality, proxy, floor maps
+  // the pair and the trailer: splats, reality, proxy (the pair), floor maps
   const atF = sceneAt(0);
   for (const [i, person] of atF.people.entries()) {
-    const dir = person.id === "ref" ? "others/ref" : `players/${person.id}`;
-    const pts = sampleBody(person, person.id === "ref" ? 12000 : 24000, 11 + i);
+    const dir = person.id === "trailer" ? "others/trailer" : `players/${person.id}`;
+    const pts = sampleBody(person, person.id === "trailer" ? 16000 : 24000, 11 + i);
     writeFileSync(join(out, dir, "freeze.ply"), ply(pts, false));
     writeFileSync(join(out, dir, "reality.ply"), ply(pts, true));
-    if (person.id !== "ref") writeFileSync(join(out, dir, "proxy.glb"), proxyGlb(person, camF));
+    if (person.id !== "trailer") writeFileSync(join(out, dir, "proxy.glb"), proxyGlb(person, camF));
     const rect = floorRect(person.foot, 0.8);
     writePng(join(out, dir, "shadow.png"), floorBlob(rect, person.feet, [0, 0, 0], 0.55));
     writePng(join(out, dir, "reflection.png"), floorBlob(rect, person.feet, person.palette.jersey, 0.15));
   }
-  log("players/*/freeze.ply, reality.ply, proxy.glb, shadow.png, reflection.png; others/ref/*");
+  log("players/*/freeze.ply, reality.ply, proxy.glb, shadow.png, reflection.png; others/trailer/*");
 
   // the front-row card, cut as the footage shows it
   {
@@ -933,14 +1065,14 @@ async function main() {
   await run("ffmpeg", [...ff, "-f", "lavfi", "-i", "anoisesrc=d=3:c=pink:r=48000:a=0.6:seed=11", "-af", "highpass=f=150,lowpass=f=6000,afade=t=in:d=1.2,afade=t=out:st=2:d=1,loudnorm=I=-18:TP=-1.5", "-ac", "1", "-ar", "48000", "-c:a", "aac", "-b:a", "128k", join(out, "audio/swell.m4a")]);
   log("audio/bed.m4a, swell.m4a");
 
-  // the show: every show frame rendered from its own camera, encoded twice (1440p High 5.2, 1080p High 5.0)
+  // the show: every stacked frame rendered from its own camera, encoded twice (1536 wide and the small copy)
   const starts = [court.video.segments.pass1, court.video.segments.pass2, court.video.segments.resume, ...court.video.segments.eases.map((e) => e.frames)].map((r) => r[0]).sort((a, b) => a - b);
   const keys = `expr:${starts.map((s) => `eq(n,${s})`).join("+")}`;
   const ffmpeg = spawn("ffmpeg", [
-    ...ff, "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", `${RW}x${RH}`, "-r", String(HZ), "-i", "pipe:0",
-    "-filter_complex", "[0:v]split=2[a][b];[a]scale=2560:1440:flags=lanczos:out_color_matrix=bt709:out_range=tv,format=yuv420p[hi];[b]scale=1920:1080:flags=lanczos:out_color_matrix=bt709:out_range=tv,format=yuv420p[lo]",
-    "-map", "[hi]", "-force_key_frames", keys, ...X264("5.2"), join(out, "video/show.h264"),
-    "-map", "[lo]", "-force_key_frames", keys, ...X264("5.0"), join(out, "video/show-1080.h264"),
+    ...ff, "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", `${STREAM.width}x${STREAM.height}`, "-r", String(HZ), "-i", "pipe:0",
+    "-filter_complex", `[0:v]split=2[a][b];[a]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[hi];[b]scale=${SMALL.width}:${SMALL.height}:flags=lanczos:out_color_matrix=bt709:out_range=tv,format=yuv420p[lo]`,
+    "-map", "[hi]", "-force_key_frames", keys, ...X264, join(out, "video/show.h264"),
+    "-map", "[lo]", "-force_key_frames", keys, ...X264, join(out, "video/show-small.h264"),
   ], { stdio: ["pipe", "ignore", "pipe"] });
   let ffErr = "";
   ffmpeg.stderr.on("data", (d) => (ffErr += d));
@@ -958,7 +1090,7 @@ async function main() {
   const ask = () => {
     if (next < tl.shows.length) {
       const s = tl.shows[next];
-      pool[next % workers].postMessage({ i: next, tau: s.tau, q: s.q, f: s.f });
+      pool[next % workers].postMessage({ i: next, show: { tau: s.tau, q: s.q, f: s.f }, cards: cards[next].cards });
       next++;
     }
   };
@@ -969,17 +1101,19 @@ async function main() {
     done.delete(i);
     ask();
     if (!ffmpeg.stdin.write(Buffer.from(rgb.buffer, rgb.byteOffset, rgb.byteLength))) await new Promise((r) => ffmpeg.stdin.once("drain", r));
-    if (i % 100 === 0) log(`show frame ${i} / ${tl.shows.length}`);
+    if (i % 200 === 0) log(`show frame ${i} / ${tl.shows.length}`);
   }
   ffmpeg.stdin.end();
   await encoded;
   await Promise.all(pool.map((w) => w.terminate()));
-  log("video/show.h264, show-1080.h264");
+  log("video/show.h264, show-small.h264");
 
   // self-check: the files as written are what the format promises
-  const problems = [...validateCourt(JSON.parse(readFileSync(join(out, "court.json"), "utf8")))];
+  const written = JSON.parse(readFileSync(join(out, "court.json"), "utf8"));
+  const problems = [...validateCourt(written)];
   problems.push(...validateFrames(JSON.parse(readFileSync(join(out, "video/frames.json"), "utf8")), court));
-  for (const [file, codec] of [["video/show.h264", "avc1.640034"], ["video/show-1080.h264", "avc1.640032"]]) {
+  problems.push(...validateCards(JSON.parse(readFileSync(join(out, "video/cards.json"), "utf8")), court, frames));
+  for (const [file, codec] of [["video/show.h264", "avc1.640033"], ["video/show-small.h264", "avc1.640033"]]) {
     const bytes = new Uint8Array(readFileSync(join(out, file)));
     const units = splitAnnexB(bytes);
     const keyAt = units.flatMap((u, i) => (u.key ? [i] : []));
@@ -998,10 +1132,8 @@ async function main() {
 
 if (!isMainThread) {
   const { RW, RH } = workerData;
-  parentPort.on("message", ({ i, tau, q, f }) => {
-    const cam = scaled({ centre: CAM_C, q, f, cx: SRC.cx, cy: SRC.cy, width: SRC.width, height: SRC.height }, RW);
-    cam.height = RH;
-    const { rgb } = render(cam, tau);
+  parentPort.on("message", ({ i, show, cards }) => {
+    const rgb = stackedFrame(show, cards, RW, RH);
     parentPort.postMessage({ i, rgb }, [rgb.buffer]);
   });
 } else if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

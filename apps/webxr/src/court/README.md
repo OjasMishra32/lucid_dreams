@@ -1,5 +1,8 @@
 # Court Side (`?mode=court`)
 
+> Being updated to the final plan's format (stacked live/plate/matte stream, cards.json, the light field):
+> `format.ts` and `scripts/court/fixtures/court.json` are the current truth until this file catches up.
+
 One real NBA moment at life size: watch it from a courtside seat, step into the frozen frame as 3D, walk around the
 players, sit back down and watch the make. The plan is `docs/plans/court-side.md` (sections 0-6); this folder is the
 WebXR module, `apps/webxr/scripts/court/` holds its tests, the stand-in bundle generator and the e2e harness.
@@ -14,7 +17,7 @@ WebXR module, `apps/webxr/scripts/court/` holds its tests, the stand-in bundle g
 | e2e (stepped capture) | `node apps/webxr/scripts/court/e2e.mjs [--only smoke,...]` | `E2E OK`; reports and PNGs in `apps/webxr/scripts/court/out/e2e/` |
 | Timing pass (alone, never in parallel) | `node apps/webxr/scripts/court/e2e.mjs --timing` | `TIME` lines per phase (CPU and GPU ms); informational on desktop |
 | Screenshot diff | `node apps/webxr/scripts/court/diff.mjs a.png b.png --px-per-deg 19.5 --max-deg 0.05 --min-psnr 30 --min-ssim 0.95 [--mask m.png]` | every line `PASS`; exit 0 |
-| Demo server (the real bundle, 127.0.0.1 only; refuses a bundle inside any checkout; `--standin` serves the stand-in) | `npm --prefix apps/webxr run build && node apps/webxr/src/court/serve.mjs --bundle ~/court-side-data/luka/court-side` | open `http://127.0.0.1:5185/?mode=court&bundle=/bundle/` (Quest: `adb reverse tcp:5185 tcp:5185`) |
+| Demo server (the real bundle, 127.0.0.1 only; refuses a bundle inside any checkout; `--standin` serves the stand-in) | `npm --prefix apps/webxr run build && node apps/webxr/src/court/serve.mjs --bundle <bundle folder outside the repo>` | open `http://127.0.0.1:5185/?mode=court&bundle=/bundle/` (Quest: `adb reverse tcp:5185 tcp:5185`) |
 | e2e on the real bundle | serve.mjs as above, then `node apps/webxr/scripts/court/e2e.mjs --bundle http://127.0.0.1:5185/bundle/court.json` | the bundle comes from serve.mjs (CORS for local pages only), never from vite |
 
 Notes: Node 25 runs the `.ts` tests with `--experimental-transform-types`; a folder argument to `--test` does not
@@ -42,7 +45,7 @@ bad field in one readable line (`seat.distance: expected a distance inside dista
 `{ base, court, frames, file(path) }`; `fallback` (`"p1080"` for `?show=1080`, `"hz90"` for `?hz=90`) swaps that
 pre-built stream into `court.video` (`chooseStream`), so every module reads one view of the show.
 
-Where it lives: the real bundle outside the repo (`~/court-side-data/luka/court-side/`), never under `dreams/` (vite
+Where it lives: the real bundle outside the repo, never under `dreams/` (vite
 and the tunnel serve that folder); only `serve.mjs` serves it, on 127.0.0.1. The synthetic stand-in lives in
 `apps/webxr/scripts/court/out/standin/` (git-ignored, no broadcast data) and the dev page loads it by default.
 
@@ -53,8 +56,8 @@ and the tunnel serve that folder); only `serve.mjs` serves it, on 127.0.0.1. The
 - **Show frames:** the baked stream's frames, 0-based; show frame i is displayed at t = i / `video.displayHz`.
   Segments are inclusive ranges, never overlap, and each starts with an IDR.
 - **Source frames:** the source clip's own numbering (`src`, fractional for an in-between). One second of real action
-  is `sourceFps x slow` source frames (A: 59.94 x 2.67 = 160); `captureFps` is the capture's own rate (A: 120), which
-  says which display frames can be real.
+  is `sourceFps x slow` source frames; `captureFps` is the capture's own rate, which says which display frames can be
+  real.
 - **Cameras:** OpenCV axes (+x right, +y down, +z forward); `q` is world-from-camera; `f`, `cx`, `cy` in source
   pixels (`camera.width` x `camera.height`), pixel centres at whole numbers; one fixed `camera.centre`. For an image
   of width w, s = w / camera.width and u' = (u + 0.5) s - 0.5 (`camera.ts` `scaled`). k1 is 0 (the bake undistorts).
@@ -89,7 +92,7 @@ audio/bed.m4a              the crowd bed (looped, -23 LUFS); swell.m4a (one-shot
   "court": { "length": 28.65, "width": 15.24, "rim": [12.73, 3.05, 0],
              "floor": "court/floor.jpg", "floorSeen": "court/floor-seen.png", "hardwood": [0.71, 0.52, 0.33] },
   "camera": { "centre": [-22, 1, -9], "width": 3840, "height": 2160, "cx": 1919.5, "cy": 1079.5, "k1": 0,
-              "sourceFps": 120, "captureFps": 120, "slow": 1 },          // A itself: 59.94, 120, 2.67
+              "sourceFps": 120, "captureFps": 120, "slow": 1 },
   "video": {
     "file": "video/show.h264", "codec": "avc1.640034", "width": 2560, "height": 1440, "displayHz": 72,
     "fallbacks": { "p1080": { "file": "video/show-1080.h264", "codec": "avc1.640032", "width": 1920, "height": 1080 } },
@@ -99,7 +102,7 @@ audio/bed.m4a              the crowd bed (looped, -23 LUFS); swell.m4a (one-shot
                             { "start": 303, "frames": [582, 653], "seconds": 1 },
                             { "start": 310, "frames": [654, 711], "seconds": 0.8056 }] },
     "cutoff": 310,                       // the last ease start: a later press stops on the next pass
-    "freezeSource": 1244, "makeSource": 1364,
+    "freezeSource": 600, "makeSource": 780,
     "freeze": "video/freeze.png", "freezeClean": "video/freeze-clean.png",
     "standsMask": "video/stands-mask.png", "inpaintMask": "video/inpaint-mask.png"
   },

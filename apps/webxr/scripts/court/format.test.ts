@@ -2,18 +2,34 @@
 //   node --experimental-transform-types --test apps/webxr/scripts/court/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CourtFormatError, LABEL, chooseStream, loadCourt, validateCourt, validateFrames } from "../../src/court/format.ts";
-import { standinBundle } from "./standin.mjs";
+import { readFileSync } from "node:fs";
+import { BALL_CARD, CourtFormatError, LABEL, chooseStream, loadCourt, validateCards, validateCourt, validateFrames } from "../../src/court/format.ts";
+import { FIXTURE, standinBundle } from "./standin.mjs";
 
 // the tests break arbitrary fields of plain JSON, so its values stay loosely typed here (and only here)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
-const fresh = () => structuredClone(standinBundle()) as { court: Json; frames: Json[] };
+const fresh = () => structuredClone(standinBundle()) as { court: Json; frames: Json[]; cards: Json[] };
 
-test("the stand-in court.json and frames.json validate", () => {
-  const { court, frames } = fresh();
+test("the stand-in court.json, frames.json and cards.json validate", () => {
+  const { court, frames, cards } = fresh();
   assert.deepEqual(validateCourt(court), []);
   assert.deepEqual(validateFrames(frames, court as never), []);
+  assert.deepEqual(validateCards(cards, court as never, frames as never), []);
+});
+
+test("the committed fixture (scripts/court/fixtures/court.json) is the stand-in's court.json", () => {
+  // regenerate with: node apps/webxr/scripts/court/standin.mjs --fixture
+  assert.deepEqual(JSON.parse(readFileSync(FIXTURE, "utf8")), JSON.parse(JSON.stringify(fresh().court)));
+});
+
+test("the stand-in has a gap between the pair and a third person in the lit region (P43), and the ball's card at the make", () => {
+  const { court, cards } = fresh();
+  const atF = cards[court.video.segments.eases[0].frames[1]].cards as Json[];
+  assert.deepEqual(atF.map((c) => c.id).sort(), ["defender", "shooter", "trailer"]);
+  const [s, d] = ["shooter", "defender"].map((id) => atF.find((c) => c.id === id)!.foot);
+  assert.ok(Math.hypot(s[0] - d[0], s[2] - d[2]) > 0.75, "the pair's feet are far enough apart for a gap");
+  assert.ok(cards.some((f) => (f.cards as Json[]).some((c) => c.id === BALL_CARD)), "the ball has a card somewhere");
 });
 
 test("they still validate after a JSON round trip", () => {
@@ -55,7 +71,19 @@ const BROKEN: [string, (c: Json) => void, string, RegExp][] = [
   ["display rate", (c) => (c.video.displayHz = 0), "video.displayHz", /greater than 0/],
   ["video file scheme", (c) => (c.video.file = "https://example.com/show.h264"), "video.file", /inside the bundle/],
   ["absolute path", (c) => (c.video.freeze = "/video/freeze.png"), "video.freeze", /inside the bundle/],
-  ["fallback shape", (c) => (c.video.fallbacks.p1080 = "video/show-1080.h264"), "video.fallbacks.p1080", /object/],
+  ["fallback shape", (c) => (c.video.fallbacks.small = "video/show-small.h264"), "video.fallbacks.small", /object/],
+  ["live region aspect", (c) => (c.video.regions.live = [0, 0, 1536, 900]), "video.regions.live", /aspect/],
+  ["regions overlap", (c) => (c.video.regions.plate = [0, 800, 1536, 864]), "video.regions", /overlap/],
+  ["region outside the stream", (c) => (c.video.regions.mattes = [0, 1728, 1536, 500]), "video.regions.mattes", /inside the stream/],
+  ["plate size", (c) => (c.video.regions.plate = [0, 864, 1500, 864]), "video.regions.plate", /live region's size/],
+  ["small copy shape", (c) => (c.video.fallbacks.small.width = 1400), "video.fallbacks.small.height", /shape/],
+  ["pass 2 speed", (c) => (c.video.pass2Speed = 1.2), "video.pass2Speed", /between 0 and 1/],
+  ["missing cards", (c) => delete c.video.cards, "video.cards", /missing/],
+  ["light level", (c) => (c.light.crowd = 1.5), "light.crowd", /between 0 and 1/],
+  ["penumbra", (c) => (c.light.penumbra = 1), "light.penumbra", /at least 1.5/],
+  ["light alternative", (c) => delete c.light.alternative.floor, "light.alternative.floor", /missing/],
+  ["backboard", (c) => (c.court.backboard.length = 3), "court.backboard", /four corners/],
+  ["extra named ball", (c) => (c.freeze.others[0].id = BALL_CARD), "freeze.others[0].id", /ball's card/],
   ["pass 1 reversed", (c) => (c.video.segments.pass1 = [10, 2]), "video.segments.pass1", /first <= last/],
   ["fractional range", (c) => (c.video.segments.resume = [0.5, 20]), "video.segments.resume", /whole/],
   ["no eases", (c) => (c.video.segments.eases = []), "video.segments.eases", /at least one/],
@@ -64,7 +92,7 @@ const BROKEN: [string, (c: Json) => void, string, RegExp][] = [
   ["eases out of order", (c) => c.video.segments.eases.reverse(), "video.segments.eases", /order/],
   ["overlapping segments", (c) => (c.video.segments.resume[0] = c.video.segments.pass2[1]), "video.segments", /overlap/],
   ["cutoff after the last ease", (c) => (c.video.cutoff = c.video.segments.pass2[1]), "video.cutoff", /last ease start/],
-  ["freeze source", (c) => (c.video.freezeSource = "1244"), "video.freezeSource", /number/],
+  ["freeze source", (c) => (c.video.freezeSource = "600"), "video.freezeSource", /number/],
   ["make needed by a one-shot", (c) => delete c.video.makeSource, "video.makeSource", /make/],
   ["seat ray", (c) => (c.seat.ray = "broadcast"), "seat.ray", /freeze/],
   ["seat distance", (c) => (c.seat.distance = 9), "seat.distance", /distanceRange/],
@@ -95,8 +123,6 @@ const BROKEN: [string, (c: Json) => void, string, RegExp][] = [
   ["event position", (c) => (c.audio.events = [{ frame: 1300, kind: "bounce", at: [0, 0], file: "audio/sfx/bounce.m4a" }]), "audio.events[0].at", /\[x, y, z\]/],
   ["interp share", (c) => (c.metrics.interpShare = 2), "metrics.interpShare", /between 0 and 1/],
   ["metrics map", (c) => (c.metrics.seatPsnr = { players: "high" }), "metrics.seatPsnr.players", /number/],
-  ["stream aspect", (c) => (c.video.height = 1400), "video.height", /aspect/],
-  ["1080p copy aspect", (c) => (c.video.fallbacks.p1080.width = 1440), "video.fallbacks.p1080.height", /aspect/],
 ];
 
 test("metrics not measured yet may be null (the project's convention)", () => {
@@ -174,15 +200,17 @@ function fakeFetch(files: Record<string, unknown>) {
 }
 
 test("loadCourt reads court.json and frames.json and resolves bundle paths beside court.json", async () => {
-  const { court, frames } = fresh();
+  const { court, frames, cards } = fresh();
   const { fetcher, asked } = fakeFetch({
     "http://127.0.0.1:5180/bundle/court.json": court,
     "http://127.0.0.1:5180/bundle/video/frames.json": frames,
+    "http://127.0.0.1:5180/bundle/video/cards.json": cards,
   });
   const bundle = await loadCourt("http://127.0.0.1:5180/bundle/court.json", { fetcher });
-  assert.deepEqual(asked, ["http://127.0.0.1:5180/bundle/court.json", "http://127.0.0.1:5180/bundle/video/frames.json"]);
+  assert.deepEqual(asked, ["http://127.0.0.1:5180/bundle/court.json", "http://127.0.0.1:5180/bundle/video/frames.json", "http://127.0.0.1:5180/bundle/video/cards.json"]);
   assert.equal(bundle.court.title, court.title);
   assert.equal(bundle.frames.length, frames.length);
+  assert.equal(bundle.cards.length, frames.length);
   assert.equal(bundle.file("video/show.h264"), "http://127.0.0.1:5180/bundle/video/show.h264");
   // a folder URL works too
   const again = await loadCourt("http://127.0.0.1:5180/bundle/", { fetcher });
@@ -190,10 +218,10 @@ test("loadCourt reads court.json and frames.json and resolves bundle paths besid
 });
 
 test("loadCourt refuses an invalid bundle with every error listed", async () => {
-  const { court, frames } = fresh();
+  const { court, frames, cards } = fresh();
   court.camera.k1 = 0.3;
   court.seat.ray = "x";
-  const { fetcher } = fakeFetch({ "http://h/b/court.json": court, "http://h/b/video/frames.json": frames });
+  const { fetcher } = fakeFetch({ "http://h/b/court.json": court, "http://h/b/video/frames.json": frames, "http://h/b/video/cards.json": cards });
   await assert.rejects(loadCourt("http://h/b/court.json", { fetcher }), (e: unknown) => {
     assert.ok(e instanceof CourtFormatError);
     assert.ok(e.errors.some((m) => m.startsWith("camera.k1: ")));
@@ -213,20 +241,22 @@ test("loadCourt names a missing file by its URL", async () => {
 
 /** The stand-in plus a 90 Hz bake with its own frames.json (the same frame list stands in for it here). */
 function withHz90() {
-  const { court, frames } = fresh();
+  const { court, frames, cards } = fresh();
   const v = court.video;
   const segments = structuredClone(v.segments);
   for (const e of segments.eases) e.seconds = (e.frames[1] - e.frames[0] + 1) / 90; // the same frames last less at 90 Hz
-  court.video.fallbacks.hz90 = { file: "video/show-90.h264", codec: "avc1.640034", width: 2560, height: 1440, displayHz: 90, frames: "video/frames-90.json", segments, cutoff: v.cutoff };
-  return { court, frames };
+  court.video.fallbacks.hz90 = { file: "video/show-90.h264", codec: "avc1.640033", width: 1536, height: 2160, displayHz: 90, frames: "video/frames-90.json", cards: "video/cards-90.json", segments, cutoff: v.cutoff };
+  return { court, frames, cards };
 }
 
-test("chooseStream: the 1080p copy keeps every frame and segment, only the file, codec and size change", () => {
+test("chooseStream: the small copy keeps every frame and segment; the file, codec, size and scaled regions change", () => {
   const { court } = fresh();
-  const c = chooseStream(court as never, "p1080");
-  assert.equal(c.video.file, "video/show-1080.h264");
-  assert.equal(c.video.codec, "avc1.640032");
-  assert.deepEqual([c.video.width, c.video.height], [1920, 1080]);
+  const c = chooseStream(court as never, "small");
+  assert.equal(c.video.file, "video/show-small.h264");
+  assert.equal(c.video.codec, "avc1.640033");
+  assert.deepEqual([c.video.width, c.video.height], [1280, 1800]);
+  assert.deepEqual(c.video.regions.live, [0, 0, 1280, 720]);
+  assert.deepEqual(c.video.regions.mattes, [0, 1440, 1280, 360]);
   assert.deepEqual(c.video.segments, court.video.segments);
   assert.equal(c.video.frames, court.video.frames);
   assert.equal(court.video.file, "video/show.h264", "the original is untouched");
@@ -247,9 +277,30 @@ test("chooseStream: a fallback the bundle doesn't have is a clear error", () => 
 });
 
 test("loadCourt with ?hz=90 fetches and validates the 90 Hz frames.json", async () => {
-  const { court, frames } = withHz90();
-  const { fetcher, asked } = fakeFetch({ "http://h/b/court.json": court, "http://h/b/video/frames-90.json": frames });
+  const { court, frames, cards } = withHz90();
+  const { fetcher, asked } = fakeFetch({ "http://h/b/court.json": court, "http://h/b/video/frames-90.json": frames, "http://h/b/video/cards-90.json": cards });
   const bundle = await loadCourt("http://h/b/court.json", { fetcher, fallback: "hz90" });
   assert.equal(bundle.court.video.displayHz, 90);
-  assert.deepEqual(asked, ["http://h/b/court.json", "http://h/b/video/frames-90.json"]);
+  assert.deepEqual(asked, ["http://h/b/court.json", "http://h/b/video/frames-90.json", "http://h/b/video/cards-90.json"]);
 });
+
+// ---------------- cards.json ----------------
+
+const BROKEN_CARDS: [string, (k: Json[]) => void, RegExp][] = [
+  ["one entry short", (k) => k.pop(), /^cards\.json: expected one entry per show frame/],
+  ["a person twice in a frame", (k) => k[10].cards.push({ ...k[10].cards[0], tile: [1200, 0, 1210, 10], order: 9 }), /^cards\.json\[10\]\.cards\[\d\]\.id: .*one card per person/],
+  ["a foot off the floor", (k) => (k[3].cards[0].foot[1] = 0.5), /^cards\.json\[3\]\.cards\[0\]\.foot: .*floor/],
+  ["a box outside the live region", (k) => (k[4].cards[0].box = [10, 10, 1600, 200]), /^cards\.json\[4\]\.cards\[0\]\.box: .*inside the live region/],
+  ["a tile outside the atlas", (k) => (k[5].cards[0].tile = [0, 0, 100, 500]), /^cards\.json\[5\]\.cards\[0\]\.tile: .*inside the matte atlas/],
+  ["two cards sharing a tile", (k) => (k[6].cards[1].tile = k[6].cards[0].tile), /^cards\.json\[6\]\.cards\[1\]\.tile: .*no other card/],
+  ["two cards with one order", (k) => (k[7].cards[1].order = k[7].cards[0].order), /^cards\.json\[7\]\.cards\[1\]\.order: .*no other card/],
+];
+
+for (const [what, breakIt, why] of BROKEN_CARDS) {
+  test(`cards.json: ${what} is named`, () => {
+    const { court, frames, cards } = fresh();
+    breakIt(cards);
+    const errors = validateCards(cards, court as never, frames as never);
+    assert.ok(errors.some((e) => why.test(e)), `nothing matched ${why}; got:\n  ${errors.slice(0, 5).join("\n  ") || "(none)"}`);
+  });
+}

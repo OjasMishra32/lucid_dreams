@@ -2,11 +2,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { angleDeg, fromBasis, lookRotation, opticalAxis, project, rayOf, rotate, scaled, toCamera, type PinholeCamera } from "../../src/court/camera.ts";
-import { toCourt, toRoom } from "../../src/court/seat.ts";
+import { toCourt, toRoom } from "../../src/court/seatmath.ts";
 
 const close = (a: number, b: number, eps = 1e-9, what = "") => assert.ok(Math.abs(a - b) <= eps, `${what} ${a} vs ${b}`);
-const cam = (forward: [number, number, number], f = 28700): PinholeCamera => ({
-  centre: [-22, 1, -9], q: lookRotation(forward), f, cx: 1919.5, cy: 1079.5, width: 3840, height: 2160,
+const cam = (forward: [number, number, number], f = 20000): PinholeCamera => ({
+  centre: [-14, 1.35, -10.5], q: lookRotation(forward), f, cx: 1919.5, cy: 1079.5, width: 3840, height: 2160,
 });
 
 test("a camera looking down +X has +Z on its right and the floor below its centre", () => {
@@ -15,12 +15,13 @@ test("a camera looking down +X has +Z on its right and the floor below its centr
   const down = rotate(c.q, [0, 1, 0]);
   [0, 0, 1].forEach((v, i) => close(right[i], v, 1e-12, "right"));
   [0, -1, 0].forEach((v, i) => close(down[i], v, 1e-12, "down"));
-  const ahead = project(c, [0, 1, -9])!;
+  const [x, y, z] = c.centre;
+  const ahead = project(c, [x + 20, y, z])!;
   close(ahead[0], c.cx, 1e-9, "u");
   close(ahead[1], c.cy, 1e-9, "v");
-  const toRight = project(c, [0, 1, -8])!;
+  const toRight = project(c, [x + 20, y, z + 1])!;
   assert.ok(toRight[0] > c.cx, "a point to the right (+Z) lands right of centre");
-  const lower = project(c, [0, 0, -9])!;
+  const lower = project(c, [x + 20, y - 1, z])!;
   assert.ok(lower[1] > c.cy, "a point below lands below centre (+v)");
 });
 

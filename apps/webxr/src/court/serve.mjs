@@ -2,7 +2,7 @@
 // over USB with `adb reverse tcp:<port> tcp:<port>`), never through a tunnel. Plain JS so tsc and the vite build leave
 // it alone. Owned by the integrator.
 //   npm --prefix apps/webxr run build
-//   node apps/webxr/src/court/serve.mjs --bundle ~/court-side-data/luka/court-side [--port 5185] [--dist apps/webxr/dist]
+//   node apps/webxr/src/court/serve.mjs --bundle <bundle folder, outside the repo> [--port 5185] [--dist apps/webxr/dist]
 // Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/)
 //          /bundle/...  the bundle folder (court.json beside it); CORS only for pages on localhost / 127.0.0.1, so the
 //                       dev page and the e2e runner can read a real bundle without vite ever serving it
