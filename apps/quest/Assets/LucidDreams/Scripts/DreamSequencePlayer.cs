@@ -45,6 +45,9 @@ namespace LucidDreams
         public float LoadProgress { get; private set; }
         public string Error { get; private set; }
         public FrameFormat LoadedFormat { get; private set; }
+        // Where the bundle's files are (file:// on the headset, or the bridge), for its other parts (voice, captions).
+        public string BaseUrl => baseUrl;
+        public float ClipTime => time;
         public int FrameCount => rig?.FrameCount ?? sequence?.FrameCount ?? 0;
         public int Frame => rig != null ? Mathf.Min((int)(time * rig.Fps), rig.FrameCount - 1) : sequence?.Current ?? 0;
         public float Duration => rig != null ? rig.Duration : Dream != null && Dream.fps > 0 ? FrameCount / Dream.fps : 0f;

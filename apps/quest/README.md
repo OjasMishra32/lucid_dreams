@@ -58,6 +58,16 @@ space, with each joint slerped between motion frames, so 30 fps motion is smooth
 reality check via `avatar.reality`, speed, scrub, hands) works the same as for a replay. `expr` (blinks) is ignored,
 as the README allows.
 
+## Their voice and words
+
+- **Voice** (`voice.m4a`, else `audio.m4a`): a 3D sound at mouth height (`bounds.max.y - 0.13`), 8 cm in front of the
+  face, full within 1.2 m and falling off beyond, kept within 0.12 s of the clip. Quiet while paused, during your
+  turn in a lesson, and below 1x (no pitch-correct time stretch yet). On the Quest the AAC is decoded with Android's
+  MediaExtractor + MediaCodec (Unity can't open AAC at runtime); the macOS editor converts it with `afconvert`.
+  Unity's own spatializer pans it (no HRTF: that needs Meta's audio SDK).
+- **Captions** (`captions.vtt`): a quiet dark pill in front of them at 60% of their height, toward you, fading in and
+  out with each cue, up to two lines.
+
 ## What you came to do (experience.json)
 
 The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experience"), or guesses a plan from
@@ -103,7 +113,8 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
 
 `HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
 eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
-instead: placement, step timing, your turn, Back / Again / Next and the voice. With `-bridge <url>` (no bundle) it
+instead: placement, step timing, your turn, Back / Again / Next and the voice; with a `voice` or `captions` it checks
+those (decode, mouth position, sync, quiet when paused or slowed, cue text). With `-bridge <url>` (no bundle) it
 checks the library from an empty cache: list, download, play from the headset, then offline. For an avatar bundle,
 `-expect <dir>` compares the GPU-skinned positions with reference poses (`frameN.bin` from `skinning.py`'s
 `pose_points`, `frameN.dq.bin` from a dual-quaternion blend of its `skin_matrices`):

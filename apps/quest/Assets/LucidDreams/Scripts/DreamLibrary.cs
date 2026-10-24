@@ -171,6 +171,7 @@ namespace LucidDreams
             Add(d.guide, false);
             Add(d.audio, false);
             Add(d.voice, false);
+            Add(d.captions, false);
             if (d.IsReplay && d.frames != null && !string.IsNullOrEmpty(d.frames.spz))
                 for (int i = 0; i < d.frameCount; i++)
                 {

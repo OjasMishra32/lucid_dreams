@@ -28,6 +28,7 @@ namespace LucidDreams
         public string intent; // what the user wants to do with this person ("teach me this strum"), or null
         public string experience; // experience.json: the plan written from the intent
         public string guide; // guide.json from the bridge's Gemini guide
+        public string captions; // captions.vtt: what the person says, in the clip's own time
 
         public bool IsReplay => kind == "replay";
         public bool IsAvatar => kind == "avatar";

@@ -58,6 +58,13 @@ namespace LucidDreams.Tests
                 Done = true;
                 yield break;
             }
+            if (!string.IsNullOrEmpty(player.Dream.voice) || !string.IsNullOrEmpty(player.Dream.captions))
+            {
+                yield return SpeechChecks(root);
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
             if (player.Lesson != null)
             {
                 yield return TeachChecks(root);
@@ -153,6 +160,44 @@ namespace LucidDreams.Tests
 
             Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
             Done = true;
+        }
+
+        // Their voice from where they stand, in step with the clip, and their words as a caption in front of them.
+        IEnumerator SpeechChecks(Transform root)
+        {
+            var speech = FindAnyObjectByType<DreamSpeech>();
+            float until = Time.realtimeSinceStartup + 15f;
+            while (!speech.HasVoice && Time.realtimeSinceStartup < until) yield return null;
+            Check(speech.HasVoice && speech.Voice.clip.length > 1f, $"voice.m4a decodes ({(speech.HasVoice ? speech.Voice.clip.length : 0f):F2} s)");
+            float height = player.Dream.bounds.Height;
+            var mouth = root.InverseTransformPoint(speech.Voice.transform.position);
+            Check(Mathf.Abs(mouth.y - (height - 0.13f)) < 0.005f && Mathf.Abs(mouth.z - 0.08f) < 0.005f,
+                $"the voice comes from their mouth, in front of the face ({mouth})");
+            Check(speech.Voice.spatialBlend == 1f, "as a sound in the room");
+
+            player.SetSpeed(1f);
+            player.Scrub(0f);
+            player.Play();
+            yield return new WaitForSeconds(0.3f);
+            Check(speech.Voice.isPlaying && Mathf.Abs(speech.Voice.time - player.ClipTime) < 0.15f,
+                $"plays in step with the clip (voice {speech.Voice.time:F2} s, clip {player.ClipTime:F2} s)");
+            player.Pause();
+            yield return Frames(2);
+            Check(!speech.Voice.isPlaying, "quiet while paused");
+            player.SetSpeed(0.5f);
+            player.Play();
+            yield return Frames(5);
+            Check(!speech.Voice.isPlaying, "quiet at slowed speeds (no pitch-correct stretch yet)");
+            player.Pause();
+            player.SetSpeed(1f);
+
+            player.Scrub(0.3f / player.Duration);
+            yield return new WaitForSeconds(0.3f);
+            Check(speech.CaptionText == "Hello there.", $"caption shows what they say now ({speech.CaptionText})");
+            player.Scrub(0.9f / player.Duration);
+            yield return new WaitForSeconds(0.3f);
+            Check(speech.CaptionText == "Watch my right hand & follow along.", $"and changes with the clip, entities decoded ({speech.CaptionText})");
+            Render(Path.Combine(outputDir, "caption-eye-view.png"));
         }
 
         // An avatar posed on the GPU, against lucid_avatars/skinning.py's reference positions (when given).

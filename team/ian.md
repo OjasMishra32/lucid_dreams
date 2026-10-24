@@ -214,3 +214,11 @@ What makes it simple, and what to do the same way in Unity:
 - Avatars without skin.bin/skeleton.json show as "Soon" in the library (bake them into a replay meanwhile).
 - Not yet run with a real DiGS avatar (dreams/test-avatar is on Ojasva's Mac) or on the Quest.
 
+## Decisions: voice and captions (Ian, Fri night)
+
+- Voice: Unity AudioSource (3D, log rolloff from 1.2 m) at mouth height, 8 cm in front of the face; resynced past
+  0.12 s; quiet when paused, in your turn and below 1x. AAC decoded by Android MediaCodec (JNI) on the Quest:
+  compiles and builds, but not yet heard on a real headset. No HRTF until Meta's XR Audio SDK is added.
+- Captions: WebVTT parsed like captions.ts (tags stripped, HTML entities decoded, which the WebXR canvas doesn't
+  do: Atina's captions.py escapes `&`), quiet pill at 60% height, 0.42 m toward you.
+

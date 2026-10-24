@@ -215,6 +215,7 @@ namespace LucidDreams.Editor
             camData.renderPostProcessing = false;
             camData.antialiasing = AntialiasingMode.None;
             camGo.AddComponent<ARCameraManager>();
+            camGo.AddComponent<AudioListener>(); // their voice is heard from where you stand
 
             var pose = camGo.AddComponent<TrackedPoseDriver>();
             pose.positionInput = new InputActionProperty(new InputAction("Head Position", binding: "<XRHMD>/centerEyePosition", expectedControlType: "Vector3"));
@@ -245,6 +246,7 @@ namespace LucidDreams.Editor
             var controls = dreamGo.AddComponent<DreamTestControls>();
             controls.player = player;
             controls.placer = placer;
+            dreamGo.AddComponent<DreamSpeech>().player = player;
             var shadow = dreamGo.AddComponent<ContactShadow>();
             shadow.shader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/ContactShadow.shader");
             shadow.player = player;
