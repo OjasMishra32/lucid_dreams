@@ -1,7 +1,8 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { roomEnvironment } from "./xr/env";
 import type { Dream } from "./dream";
 import type { Experience } from "./experience";
+import { liveJoints } from "./xr/hands";
 import { handIndex } from "./xr/menu";
 
 // A real acoustic guitar worn on you, to play along with a guitar lesson. A dreadnought built from code at real size
@@ -37,7 +38,7 @@ const stringZ = (x: number) => THREE.MathUtils.lerp(SADDLE_Z, NUT_Z, along(x));
 // where your right hand plays: over the sound hole, from near the bridge to the end of the fretboard
 // hand tracking is centimetres off at best, so a strum is read from the hand, not a fingertip on a string: the right
 // hand's knuckles passing through a generous box over the sound hole, across the middle, once per pass
-const ZONE = { x0: -0.16, x1: 0.2, y: 0.09, zBelow: 0.05, zAbove: 0.11, mid: 0.012, speed: 0.4 };
+const ZONE = { x0: -0.16, x1: 0.2, y: 0.09, zBelow: 0.05, zAbove: 0.11, mid: 0.02, speed: 0.4 }; // mid: a hand resting on the strings, shaking with tracking jitter, never crosses 4 cm
 const KNUCKLES = ["index-finger-phalanx-proximal", "middle-finger-phalanx-proximal", "ring-finger-phalanx-proximal"];
 
 /** Frets for each string, low E to high E; -1 is not played. */
@@ -296,7 +297,7 @@ function pluckBuffer(ctx: BaseAudioContext, hz: number, k: number): AudioBuffer 
 }
 
 type Joints = Record<string, THREE.Object3D>;
-const jointsOf = (h: THREE.Object3D | undefined) => (h as unknown as { joints?: Joints } | undefined)?.joints ?? {};
+const jointsOf = liveJoints;
 const FRET_TIPS = ["index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"];
 
 export class Guitar {
@@ -348,9 +349,7 @@ export class Guitar {
     listener: THREE.AudioListener | undefined,
     readonly chords: string[],
   ) {
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
+    const env = roomEnvironment(renderer);
     this.built = buildGuitar(env);
     this.group = this.built.group;
     this.group.visible = false;
@@ -567,7 +566,8 @@ export class Guitar {
     if (this.pickOk && !jump && dt > 0) this.vy += ((p.y - this.prevPick.y) / Math.max(dt, 1 / 120) - this.vy) * (1 - Math.exp(-dt / 0.04));
     else this.vy = 0;
     const side = !inBox ? 0 : p.y > ZONE.mid ? 1 : p.y < -ZONE.mid ? -1 : this.side;
-    if (inBox && this.side !== 0 && side !== 0 && side !== this.side && !jump && !menuOpen && dt > 0 && Math.abs(this.vy) > ZONE.speed)
+    // a stroke: across the middle from one side to the other, moving that way (jitter's speed points anywhere)
+    if (inBox && this.side !== 0 && side !== 0 && side !== this.side && !jump && !menuOpen && dt > 0 && Math.abs(this.vy) > ZONE.speed && Math.sign(this.vy) === side)
       this.play([{ k: this.vy < 0 ? 0 : 5, f: 0 }], this.vy, dt, p.x);
     this.side = side;
     this.prevPick.copy(p);

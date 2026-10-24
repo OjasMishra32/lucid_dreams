@@ -1,12 +1,11 @@
 import * as THREE from "three";
-import type { XrButton } from "./hands";
+import { liveJoints, openness, type XrButton } from "./hands";
 
-// Controls on your left palm, the way the Quest's own menus work: turn your left palm up toward your face and the
-// buttons appear just above it; press them with your right index fingertip. Nothing floats where a busy hand (a chess
+// Controls on your left palm, the way the Quest's own menus work: turn your open left hand palm up toward your face and
+// the buttons appear just above it; press them with your right index fingertip. Nothing floats where a busy hand (a chess
 // piece, a club, a dance move) could brush it, and no pinch or gesture changes anything by itself.
 
-type Joints = Record<string, THREE.Object3D>;
-const jointsOf = (h: THREE.Object3D | undefined) => (h as unknown as { joints?: Joints } | undefined)?.joints ?? {};
+const jointsOf = liveJoints;
 
 /** Which tracked hand is which (three numbers hands by input source, not by side); null until it's known. */
 export function handSides(hands: THREE.Object3D[]): (i: number) => XRHandedness | null {
@@ -76,7 +75,9 @@ export class HandMenu {
     const left = jointsOf(this.hands[handIndex(this.sideOf, "left")]);
     const mc = left["middle-finger-metacarpal"];
     let up = false;
-    if (mc?.visible && left.wrist?.visible) {
+    // an open hand, palm toward your eyes: a hand closed on a club, cupping a ball or pinching a piece never opens it
+    const flat = openness(left);
+    if (mc?.visible && left.wrist?.visible && flat !== null && flat > (this.open ? 0.82 : 0.88)) {
       mc.getWorldPosition(this.palm);
       mc.getWorldQuaternion(this.q);
       this.normal.set(0, -1, 0).applyQuaternion(this.q); // WebXR: a joint's -Y points out of the palm

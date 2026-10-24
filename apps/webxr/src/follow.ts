@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { type Dream, dreamUrl } from "./dream";
+import { liveJoints } from "./xr/hands";
 import { handIndex } from "./xr/menu";
 
 // Follow along: in a lesson, soft glowing targets show where YOUR head and wrists should be right now, taken from the
@@ -63,6 +64,10 @@ export class FollowAlong {
   private torso = new THREE.Vector3(0, 0, -1);
   private ready = false;
   private held = 0; // seconds the pose has been held within 10 cm on your turn
+  // where each of yours was last seen, and for how long it hasn't been: a moment's dropout keeps the last place; a
+  // longer one pauses the score (it neither drops nor, counted from the head alone, jumps up)
+  private last = { head: new THREE.Vector3(), left_wrist: new THREE.Vector3(), right_wrist: new THREE.Vector3() } as Record<Part, THREE.Vector3>;
+  private lost = { head: Infinity, left_wrist: Infinity, right_wrist: Infinity } as Record<Part, number>;
   private chimed = false;
   private wasTurn = false;
   private canvas = document.createElement("canvas");
@@ -156,7 +161,7 @@ export class FollowAlong {
     // their pose about their own hips on the floor, in their frame (+X their right, -Z their front)
     this.joint("pelvis", t, P);
     const mirrorMap = place === "facing";
-    let total = 0, weight = 0, worst = 0;
+    let total = 0, weight = 0, worst = 0, complete = true;
     const fade = THREE.MathUtils.clamp(1 - (away - 0.6) / 0.4, 0, 1); // walked off: the targets fade
     for (const part of PARTS) {
       // what's drawn: flipped if they're mirrored (their sides swap); copied like a mirror when they face you
@@ -170,7 +175,14 @@ export class FollowAlong {
       const sprite = this.sprites[part];
       sprite.position.copy(target);
       // where yours is: your head joint (a little below and behind your eyes), or your wrist
-      const have = part === "head" ? this.yourHead(eye, headQ, mine) : this.yourWrist(part === "left_wrist" ? "left" : "right", mine);
+      let have = part === "head" ? this.yourHead(eye, headQ, mine) : this.yourWrist(part === "left_wrist" ? "left" : "right", mine);
+      if (have) {
+        this.lost[part] = 0;
+        this.last[part].copy(mine);
+      } else if ((this.lost[part] += dt) < 0.5) {
+        mine.copy(this.last[part]);
+        have = true;
+      } else complete = false;
       const d = have ? mine.distanceTo(target) : Infinity;
       if (have) {
         total += WEIGHT[part] * THREE.MathUtils.clamp(1 - (d - 0.06) / 0.34, 0, 1);
@@ -187,16 +199,18 @@ export class FollowAlong {
       const want = fade * (blocking ? 0.12 : close ? 0.85 : 0.55);
       m.opacity += (want - m.opacity) * (1 - Math.exp(-dt / 0.15));
     }
-    const raw = weight > 0 ? (100 * total) / weight : 0;
-    this.score += (raw - this.score) * (1 - Math.exp(-dt / 0.3));
-    this.best = Math.max(this.best, this.score);
+    if (complete) {
+      const raw = weight > 0 ? (100 * total) / weight : 0;
+      this.score += (raw - this.score) * (1 - Math.exp(-dt / 0.3));
+      this.best = Math.max(this.best, this.score);
+    }
     // your turn: hold their pose (everything tracked within 10 cm) for half a second, a quiet chime, once a turn
     if (turn !== this.wasTurn) {
       this.wasTurn = turn;
       this.held = 0;
       this.chimed = false;
     }
-    this.held = turn && weight > 0 && worst < 0.1 ? this.held + dt : 0;
+    this.held = turn && complete && worst < 0.1 ? this.held + dt : 0;
     if (turn && !this.chimed && this.held >= 0.5) {
       this.chimed = true;
       this.ding();
@@ -210,7 +224,7 @@ export class FollowAlong {
   }
 
   private yourWrist(side: "left" | "right", out: THREE.Vector3): boolean {
-    const w = (this.hands[handIndex(this.sideOf, side)] as unknown as { joints?: Record<string, THREE.Object3D> }).joints?.wrist;
+    const w = liveJoints(this.hands[handIndex(this.sideOf, side)]).wrist;
     if (!w?.visible) return false;
     w.getWorldPosition(out);
     return true;

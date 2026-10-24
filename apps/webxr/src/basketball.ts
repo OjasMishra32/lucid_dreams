@@ -1,8 +1,10 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { roomEnvironment } from "./xr/env";
 import type { Dream } from "./dream";
 import type { Experience } from "./experience";
 import { basketballTextures, type BallTrack, HOOP, type Props, shadowTexture, standaloneHoop } from "./props";
+import type { BodyJoints } from "./follow";
+import { liveJoints, openness } from "./xr/hands";
 
 // A real size-7 ball in your own hands, to dribble and shoot at the hoop in a basketball dream. Hand tracking has no
 // ball to push back, so holding is forgiving and sticky: a hand that comes up to the ball with its palm toward it holds
@@ -21,7 +23,7 @@ const BACKSPIN = 9; // rad/s, about 1.5 turns a second, the way a shot leaves th
 const PALM_OUT = 0.015; // from the palm's bones out to its skin
 const REACH = 0.04; // a palm within this of the ball's skin (and facing it) takes it
 const REGRAB_S = 0.4; // after it leaves your hands it can't come straight back to them
-const LOST_S = 0.25; // a hand that drops out of tracking keeps the ball this long
+const LOST_S = 0.5; // a hand that drops out of tracking keeps the ball this long (a ball held low leaves the cameras' view)
 const OPEN = 0.95, CLOSED_AGAIN = 0.9, GRIP = 0.8; // finger straightness: wide open lets go; under GRIP is a grip
 const PUSH_SPEED = 2, PUSH_MIN_S = 0.08; // a throw: faster than this, for at least this long, released as it peaks
 const DRIBBLE = [2.5, 6]; // m/s a dribble leaves the hand at
@@ -46,20 +48,50 @@ const PARTS = ["phalanx-proximal", "phalanx-intermediate", "phalanx-distal", "ti
 const NEEDED = ["middle-finger-metacarpal", ...FINGERS.flatMap((f) => PARTS.map((p) => `${f}-${p}`))];
 
 /** A straight-line fit of positions over the last `window` seconds: the velocity they describe. */
+const fitMean = new THREE.Vector3(), fitD = new THREE.Vector3();
 function fitVelocity(hist: { t: number; p: THREE.Vector3 }[], now: number, window: number, out: THREE.Vector3): THREE.Vector3 {
   out.set(0, 0, 0);
-  const s = hist.filter((h) => h.t >= now - window);
-  if (s.length < 2) return out;
-  const tm = s.reduce((a, h) => a + h.t, 0) / s.length;
-  const pm = s.reduce((a, h) => a.add(h.p), new THREE.Vector3()).divideScalar(s.length);
+  let n = 0, tm = 0;
+  fitMean.set(0, 0, 0);
+  for (const h of hist)
+    if (h.t >= now - window) {
+      n++;
+      tm += h.t;
+      fitMean.add(h.p);
+    }
+  if (n < 2) return out;
+  tm /= n;
+  fitMean.divideScalar(n);
   let den = 0;
-  const d = new THREE.Vector3();
-  for (const h of s) {
-    const dtm = h.t - tm;
-    den += dtm * dtm;
-    out.addScaledVector(d.copy(h.p).sub(pm), dtm);
-  }
+  for (const h of hist)
+    if (h.t >= now - window) {
+      const dtm = h.t - tm;
+      den += dtm * dtm;
+      out.addScaledVector(fitD.copy(h.p).sub(fitMean), dtm);
+    }
   return den > 1e-9 ? out.divideScalar(den) : out.set(0, 0, 0);
+}
+
+/**
+ * Where a ball held in two hands sits, frame by frame, from their joints: between the wrists and a hand's length on
+ * from them along the forearms (the palms are on its sides). `together`: the wrists close enough to hold one.
+ */
+function handsBall(j: BodyJoints): { p: THREE.Vector3; together: boolean }[] | null {
+  const k = ["left_wrist", "right_wrist", "left_elbow", "right_elbow"].map((n) => j.names.indexOf(n));
+  if (k.some((i) => i < 0)) return null;
+  const w = new THREE.Vector3(), e = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
+  return j.frames.map((f) => {
+    a.fromArray(f[k[0]]);
+    b.fromArray(f[k[1]]);
+    w.addVectors(a, b).multiplyScalar(0.5);
+    const together = a.distanceTo(b) < 0.4;
+    e.fromArray(f[k[2]]).add(b.fromArray(f[k[3]])).multiplyScalar(0.5);
+    const along = e.subVectors(w, e);
+    const len = along.length();
+    const p = w.clone();
+    if (len > 1e-3) p.addScaledVector(along, 0.09 / len);
+    return { p, together };
+  });
 }
 
 /** One hand as something that holds a ball: its palm, which way it faces, how it's moving, how open the fingers are. */
@@ -73,12 +105,13 @@ class Palm {
   readonly prev = new THREE.Vector3(); // where the palm was the frame before
   openness = 1; // fingers straight out 1, a fist about 0.5
   open = true; // opened wide (with a little hysteresis)
+  private openT = 0; // seconds it has been opened wide while still counted as closed
   private hist: { t: number; p: THREE.Vector3 }[] = [];
   private a = new THREE.Vector3();
   private b = new THREE.Vector3();
 
   read(hand: THREE.Object3D | undefined, t: number, dt: number) {
-    const j = (hand as unknown as { joints?: Joints } | undefined)?.joints ?? {};
+    const j = liveJoints(hand);
     this.tracked = NEEDED.every((n) => j[n]?.visible);
     if (!this.tracked) {
       this.lostT += dt;
@@ -91,15 +124,18 @@ class Palm {
     j["middle-finger-metacarpal"].getWorldPosition(this.pos);
     j["middle-finger-phalanx-proximal"].getWorldPosition(this.a);
     this.pos.lerp(this.a, 0.5).addScaledVector(this.normal, PALM_OUT);
-    let open = 0;
-    for (const f of FINGERS) {
-      const [p0, p1, p2, p3] = PARTS.map((part) => j[`${f}-${part}`].getWorldPosition(new THREE.Vector3()));
-      open += p0.distanceTo(p3) / Math.max(1e-4, p0.distanceTo(p1) + p1.distanceTo(p2) + p2.distanceTo(p3));
-    }
-    this.openness = open / FINGERS.length;
+    this.openness = openness(j) ?? this.openness; // the same measure the palm menu uses
+    // closing counts at once; opening wide only after 80 ms of it (tracking flicks a finger straight for a frame)
     if (this.open && this.openness < CLOSED_AGAIN) this.open = false;
-    else if (!this.open && this.openness > OPEN) this.open = true;
-    this.hist.push({ t, p: this.pos.clone() });
+    else if (!this.open) {
+      this.openT = this.openness > OPEN ? this.openT + dt : 0;
+      if (this.openT >= 0.08) this.open = true;
+    }
+    // the last 0.15 s of palm positions, reusing the entries that age out (no garbage each frame)
+    const old = this.hist.length && this.hist[0].t < t - 0.15 ? this.hist.shift()! : { t, p: new THREE.Vector3() };
+    old.t = t;
+    old.p.copy(this.pos);
+    this.hist.push(old);
     while (this.hist.length && this.hist[0].t < t - 0.15) this.hist.shift();
     fitVelocity(this.hist, t, 0.07, this.vel);
   }
@@ -175,7 +211,16 @@ export class Basketball {
   private wasHidden = false;
   log: string[] = []; // dev: what happened, newest last
   // catch and shoot: you pass to the person in the clip, they catch, shoot, and the rebound comes back to you
-  private player: { space: THREE.Object3D; track: BallTrack; duration: number; gatherT: number; releaseT: number; chest: THREE.Vector3 } | null = null;
+  private player: {
+    space: THREE.Object3D;
+    track: BallTrack;
+    duration: number;
+    gatherT: number;
+    releaseT: number;
+    chest: THREE.Vector3;
+    hands: THREE.Vector3[] | null; // per clip frame, where a ball held in their two hands sits (their joints), bundle space
+    fps: number;
+  } | null = null;
   gameOn = false;
   /** The clip time the game shows while it's on (the person waiting, gathering, shooting). */
   clip = 0;
@@ -195,9 +240,7 @@ export class Basketball {
     listener: THREE.AudioListener | undefined,
     props: Props | null,
   ) {
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
+    const env = roomEnvironment(renderer);
     const { map, bump } = basketballTextures(R);
     map.anisotropy = bump.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     this.mat = new THREE.MeshPhysicalMaterial({ map, bumpMap: bump, bumpScale: 1.6, roughness: 0.66, metalness: 0, clearcoat: 0.12, clearcoatRoughness: 0.5, envMap: env, envMapIntensity: 0.9, transparent: true });
@@ -315,7 +358,24 @@ export class Basketball {
    * up high, or well out from their body above their head), else the clip's last tracked frame; the gather is the
    * lowest point it rises from into the shot.
    */
-  attachPlayer(space: THREE.Object3D, track: BallTrack, duration: number, height: number) {
+  attachPlayer(space: THREE.Object3D, track: BallTrack, duration: number, height: number, joints?: BodyJoints | null) {
+    const chest = new THREE.Vector3(0, 0.68 * height, -0.12);
+    const hands = joints ? handsBall(joints) : null;
+    if (hands) {
+      // their joints say where the ball is all through the clip (a tracker loses a ball in two hands, or held high):
+      // the release is where the hands, still together, reach the top of the shot, and the gather is the low point of
+      // the dip before it
+      const fps = joints!.fps;
+      let peak = -Infinity;
+      for (const h of hands) if (h.together && h.p.y > peak) peak = h.p.y;
+      let rel = hands.findIndex((h) => h.together && h.p.y >= peak - 0.03);
+      rel = Math.max(1, rel - 1);
+      let gather = rel;
+      for (let i = rel - 1; i >= Math.max(0, rel - Math.round(2 * fps)); i--) if (hands[i].p.y < hands[gather].p.y) gather = i;
+      this.player = { space, track, duration, gatherT: gather / fps, releaseT: rel / fps, chest, hands: hands.map((h) => h.p), fps };
+      this.log.push(`player: gather frame ${gather}, release frame ${rel} (from their joints)`);
+      return;
+    }
     const { points: pts, known, fps } = track;
     if (known.length < 3) return;
     let rel = known[known.length - 1];
@@ -340,8 +400,19 @@ export class Basketball {
         gather = i;
       }
     }
-    this.player = { space, track, duration, gatherT: gather / fps, releaseT: rel / fps, chest: new THREE.Vector3(0, 0.68 * height, -0.12) };
+    this.player = { space, track, duration, gatherT: gather / fps, releaseT: rel / fps, chest, hands: null, fps };
     this.log.push(`player: gather frame ${gather}, release frame ${rel}`);
+  }
+
+  /** Where a ball in their hands is at clip time t, in their own (bundle) space; false without their joints. */
+  handsAt(t: number, out: THREE.Vector3): boolean {
+    const h = this.player?.hands;
+    if (!h?.length) return false;
+    const f = THREE.MathUtils.clamp(t * this.player!.fps, 0, h.length - 1);
+    const i = Math.min(Math.floor(f), h.length - 2);
+    if (i < 0) return !!out.copy(h[0]);
+    out.lerpVectors(h[i], h[i + 1], f - i);
+    return true;
   }
 
   /** Catch and shoot on or off. On, the person waits in their opening pose for your pass. */
@@ -358,7 +429,7 @@ export class Basketball {
 
   private trackWorld(t: number, out: THREE.Vector3): THREE.Vector3 {
     const pl = this.player!;
-    pl.track.at(t, out);
+    if (!this.handsAt(t, out)) pl.track.at(t, out);
     pl.space.updateWorldMatrix(true, false);
     return pl.space.localToWorld(out);
   }
@@ -405,8 +476,8 @@ export class Basketball {
   private theirShot() {
     const pl = this.player!;
     const p = this.trackWorld(pl.releaseT, new THREE.Vector3());
-    const before = this.trackWorld(Math.max(0, pl.releaseT - 1 / pl.track.fps), new THREE.Vector3());
-    const vTrack = p.clone().sub(before).multiplyScalar(pl.track.fps);
+    const before = this.trackWorld(Math.max(0, pl.releaseT - 1 / pl.fps), new THREE.Vector3());
+    const vTrack = p.clone().sub(before).multiplyScalar(pl.fps);
     const ring = this.hoop!.localToWorld(new THREE.Vector3(0, this.rimTop - RIM_TUBE, 0));
     const solved = solveShot(p, ring);
     const flat = (v: THREE.Vector3) => this.v1.set(v.x, 0, v.z).normalize();

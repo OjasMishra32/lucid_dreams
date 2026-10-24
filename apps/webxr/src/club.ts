@@ -1,7 +1,8 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { roomEnvironment } from "./xr/env";
 import type { Dream } from "./dream";
 import type { Experience } from "./experience";
+import { liveJoints } from "./xr/hands";
 import { handIndex } from "./xr/menu";
 
 // A real 7-iron in your own hands, to copy a golf swing in your room, and a ball on a tee to hit with it. Built from
@@ -309,7 +310,7 @@ class HandGrip {
   private z = new THREE.Vector3();
 
   read(hand: THREE.Object3D | undefined) {
-    const joints = (hand as unknown as { joints?: Joints } | undefined)?.joints ?? {};
+    const joints = liveJoints(hand);
     this.tracked = NEEDED.every((n) => joints[n]?.visible);
     if (!this.tracked) {
       this.closed = this.held = false;
@@ -383,6 +384,11 @@ export class Golf {
   private lastButt = new THREE.Vector3();
   private teeSpot = new THREE.Group(); // the tee and its shadow: they move to where you address
   private follow = 0; // seconds the head has rested near the ball
+  private turnFrom = new THREE.Quaternion();
+  private sinceAway = Infinity; // seconds since the head was last well away from the ball (a backswing)
+  private turnSpeed = 0; // rad/s, how fast the shown club is turning (smoothed)
+  private restAt = new THREE.Vector3(); // where the head came to rest (hand tracking jitters it by a centimetre or so)
+  private headV = new THREE.Vector3(); // the head's velocity, smoothed over a few frames: jitter cancels, a swing doesn't
   private ready: THREE.Mesh; // a soft ring under the ball while you're addressing it
   private fade: THREE.Material[] = [];
   private ballFade: THREE.Material[] = [];
@@ -418,9 +424,7 @@ export class Golf {
     private sideOf: (i: number) => XRHandedness | null,
     listener?: THREE.AudioListener,
   ) {
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
+    const env = roomEnvironment(renderer);
     const built = buildClub(env, this.fade);
     this.club = built.club;
     this.head = built.head;
@@ -490,6 +494,8 @@ export class Golf {
   private tee() {
     this.state = "teed";
     this.v.set(0, 0, 0);
+    this.headV.set(0, 0, 0);
+    this.sinceAway = Infinity;
     this.spin = 0;
     this.stateT = 0;
     this.ball.position.set(this.teeSpot.position.x, BALL_TEED, this.teeSpot.position.z);
@@ -511,7 +517,11 @@ export class Golf {
       if (gl.closed && gr.closed && gl.center.distanceTo(gr.center) < 0.16) {
         // both hands on the grip: the top hand is the one the grips point away from
         a.copy(gl.axis).add(gr.axis);
-        const leftOnTop = a.dot(this.tmp.b.subVectors(gr.center, gl.center)) > 0;
+        const along = this.tmp.b.subVectors(gr.center, gl.center);
+        const cos = a.dot(along) / (a.length() * along.length() + 1e-9);
+        // a grip doesn't change hands mid-swing, and a new one needs clear evidence to: tracking jitter on hands this
+        // close together would otherwise flip the club end over end for a frame
+        const leftOnTop = gl.held && gr.held ? !this.lefty : this.lefty ? cos > 0.3 : cos > -0.3;
         grip = leftOnTop ? gl : gr;
         low = leftOnTop ? gr : gl;
         lefty = !leftOnTop;
@@ -553,9 +563,14 @@ export class Golf {
       const mode = low ? "two" : "one";
       if (!this.club.visible || this.opacity < 0.02 || (mode !== this.mode && !grip.held)) this.club.quaternion.copy(q);
       else {
-        // light smoothing on the turn only, quicker the faster it turns, so a swing never lags; the hands stay on it
-        const angle = this.club.quaternion.angleTo(q);
-        this.club.quaternion.slerp(q, 1 - Math.exp(-dt * (22 + 700 * angle)));
+        // smoothing on the turn only (the hands stay on it), set by how fast the club itself is turning: held still at
+        // address, tracking jitter (a few degrees a frame, two hands 9 cm apart) is filtered out; in a swing, at tens of
+        // radians a second, it follows within a fraction of a frame. A big gap (a quick move from rest) closes at once.
+        const err = this.club.quaternion.angleTo(q);
+        this.turnFrom.copy(this.club.quaternion);
+        this.club.quaternion.slerp(q, 1 - Math.exp(-dt * (12 + 6 * this.turnSpeed + 400 * Math.max(0, err - 0.25))));
+        const turned = this.turnFrom.angleTo(this.club.quaternion) / Math.max(dt, 1 / 120);
+        this.turnSpeed += (turned - this.turnSpeed) * (1 - Math.exp(-Math.max(dt, 1 / 120) / 0.04));
       }
       if (lefty !== this.lefty) this.head.scale.x = lefty ? -1 : 1; // a left-handed golfer gets a left-handed club
       this.lefty = lefty;
@@ -595,10 +610,12 @@ export class Golf {
   private fitToFloor(dt: number) {
     const down = this.tmp.z.set(0, -1, 0).applyQuaternion(this.club.quaternion); // butt to head, world
     const butt = this.club.position;
-    const moved = this.lastButt.distanceTo(butt) / Math.max(dt, 1e-3);
-    this.lastButt.copy(butt);
+    // held still: within a few centimetres of where the hands have been lately (a per-frame speed is mostly jitter)
+    const moved = this.lastButt.distanceTo(butt);
+    this.lastButt.lerp(butt, 1 - Math.exp(-dt / 0.25));
+    if (moved > 0.15) this.lastButt.copy(butt);
     const reach = down.y < -0.2 ? butt.y / -down.y : Infinity; // butt to the floor along the shaft
-    if (down.y < -0.5 && moved < 0.35 && reach < FIT.max + 0.4) this.addressT += dt;
+    if (down.y < -0.5 && moved < 0.04 && reach < FIT.max + 0.4) this.addressT += dt;
     else this.addressT = 0;
     if (this.addressT > 0.4) this.fit += (THREE.MathUtils.clamp(reach, FIT.min, FIT.max) - this.fit) * Math.min(1, dt * 2.5);
     setClubLength(this.parts, Math.max(0.3, Math.min(this.fit, reach - 0.004)));
@@ -608,9 +625,15 @@ export class Golf {
   private toAddress(dt: number) {
     const h = this.cur[1];
     const ball = this.ball.position;
-    const speed = h.distanceTo(this.prev[1]) / Math.max(dt, 1e-3);
+    // resting: the head stays within a few centimetres of where it settled (a per-frame speed is mostly jitter)
     const near = Math.hypot(h.x - ball.x, h.z - ball.z) < 0.7 && h.y < 0.16;
-    this.follow = near && speed < 0.3 ? this.follow + dt : 0;
+    if (!near || h.distanceTo(this.restAt) > 0.08) {
+      this.restAt.copy(h);
+      this.follow = 0;
+    } else {
+      this.restAt.lerp(h, 1 - Math.exp(-dt / 0.3));
+      this.follow += dt;
+    }
     const mat = this.ready.material as THREE.MeshBasicMaterial;
     mat.opacity += ((this.follow > 0.15 ? 0.55 : 0) - mat.opacity) * Math.min(1, dt * 8);
     this.ready.position.set(ball.x, 0.0015, ball.z);
@@ -637,18 +660,25 @@ export class Golf {
     if (this.state !== "teed" && this.state !== "resting") return;
     if (this.state === "teed") this.toAddress(dt);
     const c = this.ball.position;
+    // a shot needs a backswing: the head away from the ball and back within a moment. Resting or waggling the club
+    // at the ball (and hand tracking's jitter on it) never knocks it off the tee
+    if (this.cur[1].distanceTo(c) > 0.3) this.sinceAway = 0;
+    else this.sinceAway += dt;
+    if (this.sinceAway > 0.6) return;
     const { a, b } = this.tmp;
     // the head's path this frame (the middle of the face), and where it came nearest the ball
     const p0 = this.prev[1], p1 = this.cur[1];
     if (p0.distanceTo(p1) > 0.5) return; // a jump (tracking came back somewhere else), not a swing
     a.subVectors(p1, p0);
+    this.headV.lerp(b.copy(a).divideScalar(Math.max(dt, 1 / 120)), 1 - Math.exp(-Math.max(dt, 1 / 120) / 0.03));
     const len2 = a.lengthSq();
     const s = len2 > 1e-10 ? THREE.MathUtils.clamp(b.subVectors(c, p0).dot(a) / len2, 0, 1) : 0;
     b.copy(p0).addScaledVector(a, s);
     if (Math.hypot(b.x - c.x, b.z - c.z) > HIT.across || Math.abs(b.y - c.y) > HIT.up) return;
     const vClub = a.divideScalar(Math.max(dt, 1 / 120));
     const speed = vClub.length();
-    if (speed < HIT.speed) return; // resting the club behind it at address isn't a shot
+    // resting the club behind it at address isn't a shot, nor is a centimetre of tracking jitter in one frame
+    if (speed < HIT.speed || this.headV.length() < HIT.speed) return;
     // only the swing through, the way the face looks (the takeaway goes back past it, never hits it)
     const face = this.faceNormal(this.tmp.c).setY(0);
     const flat = this.tmp.y.set(vClub.x, 0, vClub.z);

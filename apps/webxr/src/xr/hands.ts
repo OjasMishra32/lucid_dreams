@@ -3,10 +3,38 @@ import * as THREE from "three";
 // Hands-only XR, shared by the viewer and chess: buttons you press by pushing a fingertip through them, and
 // depth-only stand-ins that keep your real hands in front of virtual things in passthrough.
 
+/**
+ * A hand's joints while it's tracked, else none. three hides a hand whose input source goes away (tracking lost) but
+ * leaves each joint's own `visible` as it was, so a joint alone can't tell a frozen hand from a live one: always ask here.
+ */
+export function liveJoints(hand: THREE.Object3D | undefined): Record<string, THREE.Object3D> {
+  if (!hand?.visible) return {};
+  return (hand as unknown as { joints?: Record<string, THREE.Object3D> }).joints ?? {};
+}
+
+const FINGER_NAMES = ["index-finger", "middle-finger", "ring-finger", "pinky-finger"];
+const FINGER_PARTS = ["phalanx-proximal", "phalanx-intermediate", "phalanx-distal", "tip"];
+const fa = new THREE.Vector3(), fb = new THREE.Vector3(), fc = new THREE.Vector3(), fd = new THREE.Vector3();
+
+/** How straight the four fingers are: 1 straight out, about 0.5 a fist; null when the hand isn't tracked. */
+export function openness(joints: Record<string, THREE.Object3D>): number | null {
+  let sum = 0;
+  for (const f of FINGER_NAMES) {
+    const [a, b, c, d] = FINGER_PARTS.map((p) => joints[`${f}-${p}`]);
+    if (!a?.visible || !b?.visible || !c?.visible || !d?.visible) return null;
+    a.getWorldPosition(fa);
+    b.getWorldPosition(fb);
+    c.getWorldPosition(fc);
+    d.getWorldPosition(fd);
+    sum += fa.distanceTo(fd) / Math.max(1e-4, fa.distanceTo(fb) + fb.distanceTo(fc) + fc.distanceTo(fd));
+  }
+  return sum / FINGER_NAMES.length;
+}
+
 /** Index fingertips of both hands in world space, or null for a hand that isn't tracked. */
 export function fingertips(hands: THREE.Object3D[]): (THREE.Vector3 | null)[] {
   return hands.map((h) => {
-    const t = (h as unknown as { joints: Record<string, THREE.Object3D> }).joints?.["index-finger-tip"];
+    const t = liveJoints(h)["index-finger-tip"];
     return t && t.visible ? t.getWorldPosition(new THREE.Vector3()) : null;
   });
 }
@@ -41,7 +69,7 @@ export function handOccluder(hand: THREE.Object3D, scene: THREE.Scene): () => vo
   const up = new THREE.Vector3(0, 1, 0);
   const radius = (j: THREE.Object3D) => Math.max(0.006, (j as unknown as { jointRadius?: number }).jointRadius ?? 0.008);
   return () => {
-    const joints = (hand as unknown as { joints: Record<string, THREE.Object3D> }).joints ?? {};
+    const joints = liveJoints(hand);
     const tracked = joints.wrist?.visible === true;
     group.visible = tracked;
     if (!tracked) return;
@@ -77,7 +105,7 @@ export class XrButton {
   private tex: THREE.CanvasTexture;
   private pressedUntil = 0;
   private cooldownUntil = 0;
-  private wasInside = [false, false];
+  private armed = [false, false]; // per hand: the tip has been in front of the button since it last pressed
   private on = false;
   private local = new THREE.Vector3();
   constructor(
@@ -119,26 +147,32 @@ export class XrButton {
     c.fillText(this.label, 256, 84);
     this.tex.needsUpdate = true;
   }
-  /** Both index fingertips in world space (null when not tracked). Fires once each time a tip pushes into the face. */
+  /**
+   * Both index fingertips in world space (null when not tracked). Fires once each time a tip that came from in front
+   * pushes into the face (2 mm in), however fast it goes through, and fires again only after that tip has come back
+   * out 15 mm: a fingertip resting on it, shaking with tracking jitter, never presses twice, and a hand passing behind
+   * the menu (the other hand's own fingers, say) never presses it. A tip that drops out of tracking keeps its state.
+   */
   touch(fingertips: (THREE.Vector3 | null)[], now: number) {
     if (!this.mesh.visible) return;
     let hover = false;
     fingertips.forEach((tip, h) => {
-      let inside = false;
-      if (tip) {
-        this.local.copy(tip);
-        this.mesh.worldToLocal(this.local);
-        const over = Math.abs(this.local.x) < 0.045 && Math.abs(this.local.y) < 0.014;
-        inside = over && this.local.z < 0.004 && this.local.z > -0.02;
-        hover ||= over && this.local.z >= 0.004 && this.local.z < 0.04; // a fingertip just in front: it lights up
-      }
-      if (inside && !this.wasInside[h] && now > this.cooldownUntil) {
-        this.cooldownUntil = now + 300;
+      if (!tip) return;
+      this.local.copy(tip);
+      this.mesh.worldToLocal(this.local);
+      const over = Math.abs(this.local.x) < 0.047 && Math.abs(this.local.y) < 0.016;
+      const z = this.local.z;
+      const near = Math.abs(this.local.x) < 0.08 && Math.abs(this.local.y) < 0.05;
+      if (near && z > 0.015 && z < 0.12) this.armed[h] = true; // in front of it, coming toward it
+      else if (!near || z < -0.08) this.armed[h] = false; // gone, or well behind it
+      hover ||= over && z > -0.002 && z < 0.04; // a fingertip just in front: it lights up
+      if (over && z < -0.002 && this.armed[h] && now > this.cooldownUntil) {
+        this.armed[h] = false;
+        this.cooldownUntil = now + 200; // a fresh push from in front is needed anyway; this only stops a bounce
         this.pressedUntil = now + 180;
         this.draw(true);
         this.onPress();
       }
-      this.wasInside[h] = inside;
     });
     if (hover !== this.hover) {
       this.hover = hover;

@@ -445,7 +445,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let avatarReality: SkinnedAvatar | null = null;
   let avatarRealityOn = false;
   let realityLoaded: Promise<void> | null = null;
-  const toggleReality = async (): Promise<boolean> => {
+  // one toggle at a time: a second press while the reality frames load (it looks like nothing happened) waits for the
+  // first instead of toggling back
+  let realityBusy: Promise<boolean> | null = null;
+  const toggleReality = (): Promise<boolean> => (realityBusy ??= toggleRealityNow().finally(() => (realityBusy = null)));
+  const toggleRealityNow = async (): Promise<boolean> => {
     if (avatar) {
       // an avatar's reality file has the same Gaussians in the same order, so it skins and moves identically
       const on = !avatarRealityOn;
@@ -539,7 +543,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
     );
   else menu.add(xrPlay, xrSpeed);
   if (!realityBtn.hidden) {
-    const xrReality: XrButton = new XrButton("reality", "Reality check", () => void toggleReality().then((on) => xrReality.setOn(on)));
+    const xrReality: XrButton = new XrButton("reality", "Reality check", () => {
+      if (!realityBusy && (avatar ? !avatarReality && !avatarRealityOn : active === frames && !realityLoaded)) xrReality.setLabel("Loading…");
+      void toggleReality().then((on) => {
+        xrReality.setLabel("Reality check");
+        xrReality.setOn(on);
+      });
+    });
     menu.add(xrReality);
   }
   menu.add(new XrButton("here", "Bring here", () => (placeNextFrame = true)));
@@ -586,7 +596,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const ahead = new THREE.Vector3();
   // catch and shoot: pass to them, they catch it, shoot it, and the rebound comes back to you (their ball's track)
   if (hoopBall && props?.tracks.length) {
-    hoopBall.attachPlayer(props.group, props.tracks[0], duration, height);
+    hoopBall.attachPlayer(props.group, props.tracks[0], duration, height, bodyJoints);
+    // while yours is the ball in play, theirs is erased wherever they hold it, tracked or not
+    props.inHands = (t, out) => hoopBall.handsAt(t, out);
     hoopBall.setGame(true);
     const xrGame: XrButton = new XrButton("catch", "Catch & shoot", () => {
       hoopBall.setGame(!hoopBall.gameOn);
@@ -826,7 +838,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, hands, setMirror };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, hands, setMirror, lesson, props, state: () => ({ playing, mirrored, placeMode, reality: realityBtn.classList.contains("on") }) };
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */

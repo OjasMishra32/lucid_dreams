@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { roomEnvironment } from "./xr/env";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType } from "@sparkjsdev/spark";
 import { type Dream, dreamUrl } from "./dream";
@@ -66,7 +66,9 @@ export class Props {
   /** False while something else shows the ball (a ball you pass to the person): there is only ever one ball. */
   ballsVisible = true;
   private balls: Ball[] = [];
-  private erasers: { sdf: SplatEditSdf; track: BallTrack }[] = [];
+  private erasers: { sdf: SplatEditSdf; ball: Ball }[] = [];
+  /** Where their hands hold a ball at clip time t (their joints), when a game hides the clip's ball for yours. */
+  inHands: ((t: number, out: THREE.Vector3) => boolean) | null = null;
   private fader = new Fader();
   private reveal = -1;
 
@@ -74,9 +76,7 @@ export class Props {
     const known = file.objects.filter((o) => (o?.kind === "basketball" && Array.isArray((o as BallProp).track)) || (o?.kind === "hoop" && finite3((o as HoopProp).rim)));
     if (!known.length) return;
     // a soft studio light of its own: the splats carry their own light, only these solid objects need it
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
+    const env = roomEnvironment(renderer);
     const sky = new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.6);
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(1.2, 4.5, -2.5);
@@ -103,7 +103,7 @@ export class Props {
         const sdf = new SplatEditSdf({ type: SplatEditSdfType.SPHERE, radius: track.radius + 0.025, opacity: 0 });
         edit.add(sdf);
         this.group.add(edit);
-        this.erasers.push({ sdf, track });
+        this.erasers.push({ sdf, ball });
         this.group.add(ball.mesh, ball.shadow);
       } else {
         const h = o as HoopProp;
@@ -126,7 +126,12 @@ export class Props {
       b.update(t, dt, reveal);
       if (!this.ballsVisible) b.mesh.visible = b.shadow.visible = false;
     }
-    for (const e of this.erasers) e.track.at(t, e.sdf.position);
+    // the reconstruction's own ball goes wherever the solid one stands in for it; nowhere else (a guess between
+    // tracked frames, or held at a track's ends, would cut pieces out of the person)
+    for (const e of this.erasers) {
+      if (e.ball.known) e.sdf.position.copy(e.ball.pos);
+      else if (!(!this.ballsVisible && this.inHands?.(t, e.sdf.position))) e.sdf.position.set(0, -100, 0);
+    }
   }
 }
 
@@ -196,8 +201,8 @@ class Ball {
   private fader = new Fader();
   private alpha = 0;
   private prevT = NaN;
-  private known = false;
-  private pos = new THREE.Vector3();
+  known = false; // the clip has it at this moment
+  readonly pos = new THREE.Vector3();
   private vel = new THREE.Vector3();
   private last = new THREE.Vector3();
   private lastVel = new THREE.Vector3();
@@ -270,8 +275,9 @@ class Ball {
     const wasKnown = this.known;
     this.known = this.sample(t, this.pos);
     if (this.known) {
-      // a jump (the clip looping, a scrub) fades in at the new place rather than flying across the room
-      if (wasKnown && this.pos.distanceTo(this.last) > 0.8) this.alpha = 0;
+      // the reconstruction's own ball is erased the moment this one is known, so this one takes its place at once
+      // (a fade in would leave neither for a few frames); losing it, it fades out on its way
+      if (!wasKnown || this.pos.distanceTo(this.last) > 0.8) this.alpha = 1;
       const ahead = this.sample(t + h, this.a);
       const behind = this.sample(t - h, this.b);
       if (ahead && behind) this.vel.subVectors(this.a, this.b).divideScalar(2 * h);
@@ -339,7 +345,16 @@ function catmullRom(p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, p3:
  * great circles at right angles, and two curved seams: circles around the points where the first crosses 90 degrees
  * from the second, which splits each of the 4 lunes in two). Plus a bump map: pebbles up, seams sunk in as channels.
  */
+const ballTextures = new Map<number, { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }>();
+/** A ball's colour and bump maps, made once per size and shared (the clip's ball and the one in your hands). */
 export function basketballTextures(r: number): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
+  const key = Math.round(r * 1000);
+  let t = ballTextures.get(key);
+  if (!t) ballTextures.set(key, (t = makeBasketballTextures(r)));
+  return t;
+}
+
+function makeBasketballTextures(r: number): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
   const W = 1024, H = 512;
   const mk = () => {
     const c = document.createElement("canvas");
@@ -527,9 +542,7 @@ function buildHoop(h: HoopProp, env: THREE.Texture, fader: Fader): THREE.Group {
 
 /** A regulation hoop on its own (a basketball dream without one): ring at 3.05 m over the origin, facing +Z. */
 export function standaloneHoop(renderer: THREE.WebGLRenderer): THREE.Group {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  pmrem.dispose();
+  const env = roomEnvironment(renderer);
   return buildHoop({ kind: "hoop", rim: [0, 3.05, 0], facing: [0, 0, 1] }, env, new Fader());
 }
 

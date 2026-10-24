@@ -5,7 +5,7 @@ import { Chess, type Move, type Square } from "chess.js";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "../avatar";
 import { loadDream } from "../dream";
-import { handOccluder, XrButton } from "../xr/hands";
+import { handOccluder, liveJoints, XrButton } from "../xr/hands";
 import { HandMenu, handIndex, handSides } from "../xr/menu";
 import { WorldLock } from "../xr/anchor";
 import { Engine, STRENGTHS, type Strength } from "./engine";
@@ -655,7 +655,7 @@ export async function renderChess(root: HTMLElement) {
     c.addEventListener("selectend", () => (ctrlDown[i] = false));
   });
   const occluders = hands.map((h) => handOccluder(h, scene));
-  const jointsOf = (i: number) => (hands[i] as unknown as { joints?: Record<string, THREE.Object3D> }).joints ?? {};
+  const jointsOf = (i: number) => liveJoints(hands[i]);
   // a pinch is thumb and index tips together. It lasts through a few frames of jitter or lost tracking, so a piece
   // never drops out of your fingers on its own
   const pinch = [0, 1].map(() => ({ down: false, offSince: 0, lostSince: 0, point: new THREE.Vector3() }));
@@ -680,12 +680,14 @@ export async function renderChess(root: HTMLElement) {
       s.point.copy(tip).add(thumb).multiplyScalar(0.5);
       return { point: s.point, down: s.down, firm: d < PINCH_FIRM };
     }
-    if (Object.keys(joints).length) {
-      // a hand that tracking lost this frame: whatever it holds stays held for a moment
-      if (s.down && now - (s.lostSince ||= now) < PINCH_LOST_MS) return { point: s.point, down: true, firm: false };
+    if (s.down) {
+      // a hand that tracking lost (a joint or the whole hand): whatever it holds stays held for a moment
+      if (now - (s.lostSince ||= now) < PINCH_LOST_MS) return { point: s.point, down: true, firm: false };
       s.down = false;
+      s.lostSince = 0;
       return null;
     }
+    if (Object.keys(joints).length) return null; // tracked hand, fingers not seen: nothing to do
     if (ctrls[i]?.visible) return { point: ctrls[i].getWorldPosition(new THREE.Vector3()), down: ctrlDown[i], firm: true };
     return null;
   };
@@ -1084,7 +1086,7 @@ export async function renderChess(root: HTMLElement) {
         if (renderer.xr.isPresenting) {
           const p = new THREE.Vector3();
           for (const h of hands) {
-            const joints = (h as unknown as { joints: Record<string, THREE.Object3D> }).joints ?? {};
+            const joints = liveJoints(h);
             for (const n of handJoints) if (joints[n]?.visible && joints[n].getWorldPosition(p).distanceTo(theirs) < 0.12) met = true;
           }
           for (const c of ctrls) if (c.visible && c.getWorldPosition(p).distanceTo(theirs) < 0.12) met = true;
