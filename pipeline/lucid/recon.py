@@ -50,6 +50,8 @@ def parse_args(argv=None):
     p.add_argument("--source-every", type=int, default=2, help="render the real view every Nth step")
     p.add_argument("--source-iters", type=int, default=2000, help="extra steps on the first frame once it's solved")
     p.add_argument("--source-max-height", type=int, default=2560)
+    p.add_argument("--face-weight", type=float, default=0.0,
+                   help="extra weight on a native-resolution crop of the real frame around the face (0 = off; try 2.0 once a clip's camera solves)")
     p.add_argument("--spz-sh", type=int, default=0, help="SH degree kept in the .spz copies")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--seed", type=int, default=0)
@@ -152,7 +154,7 @@ class Trainer:
         )
         return rgb.clamp(0, 1), alpha, info
 
-    def fit(self, params, rgba: torch.Tensor, iters: int, warm: bool, src: torch.Tensor | None = None):
+    def fit(self, params, rgba: torch.Tensor, iters: int, warm: bool, src: torch.Tensor | None = None, face=None):
         from gsplat.strategy import MCMCStrategy
 
         a = self.args
@@ -196,6 +198,14 @@ class Trainer:
                 spred, salpha, _ = self.source.render(self, params, degree, sbg)
                 loss = loss + a.source_weight * (0.8 * (spred - sgt).abs().mean() + 0.2 * (1 - ssim(spred, sgt))
                                                  + 0.1 * (salpha - sm).abs().mean())
+            if face is not None:  # the face at the clip's own 4K detail, every step: a small render
+                ft, fK, (fw, fh) = face
+                fbg = torch.rand(1, 3, device=self.device)
+                fm = ft[..., 3:4]
+                fgt = ft[..., :3] * fm + fbg[:, None, None, :] * (1 - fm)
+                fpred, falpha, _ = self.source._render(self, params, self.source.viewmat, fK, fw, fh, bg=fbg, degree=degree)
+                loss = loss + a.face_weight * (0.8 * (fpred - fgt).abs().mean() + 0.2 * (1 - ssim(fpred, fgt))
+                                               + 0.1 * (falpha - fm).abs().mean())
             if a.aniso > 0:
                 s = params["scales"]  # log scales, so max - min is the log of the axis ratio
                 loss = loss + a.aniso * (s.max(-1).values - s.min(-1).values - math.log(a.aniso_ratio)).clamp_min(0).mean()
@@ -264,6 +274,16 @@ def main(argv=None):
 
     trainer = Trainer(rig, args)
     source = None
+
+    def face_of(frame):
+        if source is None or not source.ready or args.face_weight <= 0:
+            return None
+        try:
+            return source.face(frame)
+        except Exception as e:
+            print(f"[source] face crop skipped for frame {frame}: {e}", flush=True)
+            return None
+
     if args.source_video and args.result:
         from .source_view import SourceView
 
@@ -284,11 +304,19 @@ def main(argv=None):
         else:
             params = clone_params(params)
         src = source.target(frame) if source is not None and source.ready else None
-        params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src)
+        face = face_of(frame)
+        params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src, face)
         if source is not None and not warm and source.solve(trainer, params, front_ids):
             trainer.source = source
             src = source.target(frame)
-            params = trainer.fit(params, rgba, args.source_iters, True, src)
+            if args.face_weight > 0:
+                try:
+                    n_faces = source.find_faces()
+                    print(f"[source] face visible in {n_faces}/{len(source.frame_ids)} frames", flush=True)
+                except Exception as e:  # a face crop is a quality boost, never a blocker
+                    print(f"[source] face crops off: {type(e).__name__}: {e}", flush=True)
+            face = face_of(frame)
+            params = trainer.fit(params, rgba, args.source_iters, True, src, face)
         metrics = trainer.evaluate(params, rgba)
         if src is not None:
             with torch.no_grad():
@@ -302,6 +330,14 @@ def main(argv=None):
                     pair = (torch.cat([gt[0], pred[0]], 1).clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
                     Image.fromarray(pair).save(args.out / f"peek-source-{frame:06d}.jpg", quality=90)
                     report["source"] = source.report
+                    if face is not None:
+                        ft, fK, (fw, fh) = face
+                        fp, _, _ = source._render(trainer, params, source.viewmat, fK, fw, fh, bg=white,
+                                                  degree=int(round(math.sqrt(params["shN"].shape[1] + 1))) - 1)
+                        fg = ft[..., :3] * ft[..., 3:4] + (1 - ft[..., 3:4])
+                        metrics["facePsnr"] = float(psnr(fp, fg))
+                        fpair = (torch.cat([fg[0], fp[0]], 1).clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+                        Image.fromarray(fpair).save(args.out / f"peek-face-{frame:06d}.jpg", quality=92)
                     (args.out / f"source-camera-{frame:06d}.json").write_text(json.dumps(source.camera))
         if args.peek and not warm:
             trainer.peek(params, rgba, [int(v) for v in args.peek.split(",")], args.out / f"peek-{frame:06d}.jpg")

@@ -184,6 +184,7 @@ class SourceView:
         K_crop[1, 2] -= y0
         K_crop[:2] *= r
         self.viewmat, self.K, self.size, self.crop, self.r = vm.detach(), K_crop, (w, h), (x0, y0, x1, y1), r
+        self.K_full = K_full.detach()
         self.report |= {"crop": [x0, y0, x1, y1], "size": [w, h]}
         # the camera itself, in the rig's world, at full resolution: the export's "seen" test uses it
         self.camera = {"camera_to_world": torch.linalg.inv(vm).detach().cpu().numpy().tolist(),
@@ -207,6 +208,60 @@ class SourceView:
     def render(self, trainer, params, degree: int, bg: torch.Tensor):
         w, h = self.size
         return self._render(trainer, params, self.viewmat, self.K, w, h, bg=bg, degree=degree)
+
+    # ---------------------------------------------------------------------------------------------------------------
+    # the face at the clip's native resolution: a person reads as real or not by the face, so it gets its own crop of
+    # the real frame, at full 4K detail and extra weight. Frames where the camera can't see the face (the back of the
+    # head, a hand over it) get none.
+
+    def find_faces(self, weights: str = "/blue/iruchkin/vishalnaveen/lucid/models/yolov8m-pose.pt", max_side: int = 768) -> int:
+        from ultralytics import YOLO
+
+        model = YOLO(weights)
+        self.faces = {}
+        s = 1280.0 / self.H
+        for i, frame in enumerate(self.frame_ids):
+            small = np.ascontiguousarray(self.rgb[i][::int(round(1 / s)) or 1, ::int(round(1 / s)) or 1, ::-1])
+            r = model.predict(small, verbose=False, conf=0.3)[0]
+            if r.keypoints is None or len(r.keypoints) == 0:
+                continue
+            k = r.keypoints.data.cpu().numpy()  # [people, 17, 3] in the small image
+            best = int(np.argmax(r.boxes.conf.cpu().numpy())) if r.boxes is not None and len(r.boxes) else 0
+            pts = k[best]
+            scale = self.H / small.shape[0]
+            nose, eyes, ears = pts[0], pts[1:3], pts[3:5]
+            if nose[2] < 0.5 or (eyes[:, 2] > 0.5).sum() == 0:  # no face toward the camera
+                continue
+            face = np.concatenate([nose[None], eyes[eyes[:, 2] > 0.5], ears[ears[:, 2] > 0.5]])[:, :2] * scale
+            cx, cy = face.mean(0)
+            span = max(np.ptp(face[:, 0]), np.ptp(face[:, 1]), 1.0)
+            side = int(np.clip(span * 3.2, 160, 1400))  # the whole head and a little hair and neck
+            x0, y0 = int(max(0, cx - side / 2)), int(max(0, cy - side * 0.55))
+            x1, y1 = int(min(self.W, x0 + side)), int(min(self.H, y0 + side))
+            if x1 - x0 < 96 or y1 - y0 < 96:
+                continue
+            r_ = min(1.0, max_side / max(x1 - x0, y1 - y0))
+            self.faces[frame] = (x0, y0, x1, y1, r_)
+        return len(self.faces)
+
+    def face(self, frame: int):
+        """(target [1,h,w,4], K, (w, h)) for this frame's face crop, or None."""
+        box = getattr(self, "faces", {}).get(frame)
+        if box is None or self.K is None:
+            return None
+        x0, y0, x1, y1, r_ = box
+        i = frame - self.frame_ids[0]
+        w, h = int(round((x1 - x0) * r_)), int(round((y1 - y0) * r_))
+        rgb = torch.as_tensor(self.rgb[i, y0:y1, x0:x1], device=self.device).float().permute(2, 0, 1) / 255.0
+        m = torch.as_tensor(self.masks[i, y0:y1, x0:x1], device=self.device)[None]
+        rgba = torch.cat([rgb, m], 0)[None]
+        if (w, h) != (x1 - x0, y1 - y0):
+            rgba = F.interpolate(rgba, size=(h, w), mode="area")
+        K = self.K_full.clone()
+        K[0, 2] -= x0
+        K[1, 2] -= y0
+        K[:2] *= r_
+        return rgba[0].permute(1, 2, 0)[None].contiguous(), K, (w, h)
 
 
 def psnr_masked(pred: torch.Tensor, gt: torch.Tensor) -> float:
