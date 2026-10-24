@@ -47,7 +47,9 @@ class Motion:
 
     def to_dict(self) -> dict:
         r = lambda a: np.round(np.asarray(a, dtype=np.float64), 6).tolist()
-        frames = [{"root_t": r(t), "root_q": r(q), "pose": r(p)} for t, q, p in zip(self.root_t, self.root_q, self.pose)]
+        frames = [
+            {"root_t": r(t), "root_q": r(q), "pose": r(p)} for t, q, p in zip(self.root_t, self.root_q, self.pose)
+        ]
         if self.expr is not None:
             for f, e in zip(frames, self.expr):
                 f["expr"] = r(e)

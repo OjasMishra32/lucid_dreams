@@ -7,7 +7,8 @@ photo -> rembg matte -> 640x896 crop around the person -> NLF SMPL-X fit -> DiGS
     python /path/to/avatars/digs_avatar.py --image photo.jpg --id grandma-01 --name "Grandma" \
         --nlf $L/models/nlf/nlf_l_multi_0.3.2.patch6.torchscript --out $L/data/avatars/dreams
 
-Every intermediate (matte, crop, fit JSON, reference render) goes to <out>/<id>.work/ for debugging.
+Every intermediate (matte, crop, fit JSON, reference render) goes to <out>/<id>.work/ for debugging, and code.pt
+(DiGS's decoder code + betas) is where digs_finetune.py starts from.
 """
 
 from __future__ import annotations
@@ -260,6 +261,7 @@ def main() -> int:
     ref_camera = demo._build_ref_camera(str(fit_path), same_size, D.DIGS_H, D.DIGS_W, demo_args, dev)
     ref_smpl = demo._load_ref_smpl_params(str(fit_path), betas, dev)
     code = demo._sample_decoder_code(demo_args, model, ref_chw.permute(0, 2, 3, 1), ref_camera, ref_smpl, ref_chw, dev)
+    torch.save({"code": code.detach().cpu(), "betas": betas_np, "hand_mean": hand_mean}, work / "code.pt")
 
     # Reference check: the avatar re-rendered from the photo's camera, beside the crop it came from.
     ref_render = render(model, code, ref_smpl, ref_camera.reshape(1, 1, 20))[0].numpy()
