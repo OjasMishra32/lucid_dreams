@@ -58,7 +58,7 @@ def _gap(p, side_ids, start):
 
 def test_blink_target_brings_the_lids_together_over_the_eye():
     v, faces = _toy_flame()
-    t = F.blink_target(v, faces)
+    t = F.blink_target(v)
     for eyeball, lid in F.EYES:
         c = v[eyeball].mean(0)
         up, lo = lid[v[lid, 1] > c[1]], lid[v[lid, 1] <= c[1]]
@@ -74,11 +74,12 @@ def test_blink_target_brings_the_lids_together_over_the_eye():
 
 def test_blink_never_folds_the_second_row_of_lid_over_the_margin():
     v, faces = _toy_flame()
-    moved = v + F.blink_target(v, faces)
+    moved = v + F.blink_target(v)
     for eyeball, lid in F.EYES:
         c = v[eyeball].mean(0)
         inner, outer = lid[:RING], lid[RING:2 * RING]
-        mu, mo = inner[v[inner, 1] > c[1]], outer[v[outer, 1] > c[1]]
+        mu = inner[v[inner, 1] > c[1]]
+        mo = outer[(v[outer, 1] > c[1]) & (np.abs(v[outer, 0] - c[0]) < 0.8 * 0.014)]  # above the opening, not beside it
         order = np.argsort(moved[mu, 0])
         margin_after = np.interp(moved[mo, 0], moved[mu, 0][order], moved[mu, 1][order])
         assert (moved[mo, 1] >= margin_after - 1e-4).all()  # the skin above the margin stays above it
@@ -89,17 +90,24 @@ def test_blink_refuses_lids_it_cannot_shut():
     eyeball, lid = F.EYES[0]
     c = v[eyeball].mean(0)
     flat = v.copy()
-    flat[lid[:RING], 1] = c[1] + 0.004  # the whole margin above the eye's centre: no lower lid to meet
+    flat[lid, 1] = c[1] + 0.004  # every lid vertex above the eye's centre: no lower lid to meet
     with pytest.raises(ValueError, match="lower eyelid"):
-        F.blink_target(flat, faces)
-    with pytest.raises(ValueError, match="no eye opening"):
-        F.blink_target(v, np.array([[0, 1, 2]]))
+        F.blink_target(flat)
+
+
+def test_skin_hugging_the_eye_stands_in_for_lid_rows_the_list_leaves_out():
+    """FLAME's sockets are closed and LAM's eyelid lists may name only some rows: the skin hugging the eyeball's
+    front counts as lid too, so a list with only the upper lid still shuts the eye."""
+    v, _ = _toy_flame()
+    upper_only = tuple((eyeball, lid[v[lid, 1] > v[eyeball, 1].mean()]) for eyeball, lid in F.EYES)
+    field, report = F.blink_field(v, np.zeros((F.FLAME_VERTS, 3, 100)), eyes=upper_only)
+    assert report["openFraction"] < 0.1
 
 
 def test_blink_closes_the_eyes_even_when_flames_expressions_cant():
     v, faces = _toy_flame()
     dirs = np.random.default_rng(1).normal(scale=1e-3, size=(F.FLAME_VERTS, 3, 100))  # nothing like a blink
-    field, report = F.blink_field(v, dirs, faces)
+    field, report = F.blink_field(v, dirs)
     moved = v + field
     for eyes in F.EYES:
         assert _gap(moved, eyes, v) < 0.1 * _gap(v, eyes, v)
@@ -113,18 +121,18 @@ def test_blink_closes_the_eyes_even_when_flames_expressions_cant():
 
 def test_blink_needs_no_help_from_a_basis_that_never_moves():
     v, faces = _toy_flame()
-    field, report = F.blink_field(v, np.zeros((F.FLAME_VERTS, 3, 100)), faces)
+    field, report = F.blink_field(v, np.zeros((F.FLAME_VERTS, 3, 100)))
     assert report["openFraction"] < 0.1 and report["pcaShare"] == 0
     assert np.isfinite(field).all()
     lids = np.concatenate([lid for _, lid in F.EYES])
-    np.testing.assert_allclose(field[lids], F.blink_target(v, faces)[lids])  # the lids alone shut the eyes
+    np.testing.assert_allclose(field[lids], F.blink_target(v)[lids])  # the lids alone shut the eyes
 
 
 def test_blink_uses_flames_own_expressions_when_they_can_close_the_eyes():
     v, faces = _toy_flame()
     dirs = np.random.default_rng(2).normal(scale=1e-6, size=(F.FLAME_VERTS, 3, 100))
-    dirs[:, :, 37] = 0.5 * F.blink_target(v, faces)
-    field, report = F.blink_field(v, dirs, faces)
+    dirs[:, :, 37] = 0.5 * F.blink_target(v)
+    field, report = F.blink_field(v, dirs)
     assert report["pcaShare"] > 0.9
     assert report["openFraction"] < 0.1
 

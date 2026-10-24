@@ -170,10 +170,12 @@ leftover DiGS hair or face doubling the head.
 gets `avatar/expr.bin` (format below) with ten channels per head Gaussian: FLAME's expressions 0-8 (LAM animates its
 heads with FLAME's first ten) and a blink. The blink is fitted to this person's eyelids: FLAME's expressions give the
 natural motion around the eye (capped at 0.3 mm outside the eye region), the eyelid margins meet exactly (the upper
-lid travels 80%, sliding over the eyeball, which never moves). The margins are FLAME's own eye openings, found in its
-faces, so extra rows of lid skin follow them instead of folding over; the eye corners stay put. If FLAME's eyes can't
-be shut that way (no opening, a margin too thin), the swap goes on without expr.bin and says why in
-`expr.skipped`; the extract checks the same thing first. `head_swap.json` `expr.blink` says how well:
+lid travels 80%, sliding over the eyeball, which never moves). FLAME's eye sockets are closed (its head's only boundary
+is the neck), so the lids are LAM's eyelid lists plus the skin hugging each eyeball's front, and each margin is the
+envelope of its lid: extra rows of lid skin follow it instead of folding over, and the eye corners stay put. The
+extract fits the blink on FLAME's own template first and stops if it doesn't shut (`[expr]` lines in the log: lid
+counts per eye, then `openFraction`). If a head's eyes can't be shut, the swap goes on without expr.bin, says why in
+`expr.skipped`, and still gets the 20 s living idle (breathing and glances, no blinks). `head_swap.json` `expr.blink` says how well:
 `openFraction` (0 = shut), `pcaShare` (how much FLAME's own expressions explain), `leakMm`. An idle source motion is
 replaced by the 20 s living idle that blinks through it (`motion: "living idle"`; a bundle whose source names a
 motion, `digs-perform`'s move or `digs-finetune`'s own clip, or `KEEP_MOTION=1` keeps it), and `blink.png` shows the face open | shut with the eyes zoomed: look at it before

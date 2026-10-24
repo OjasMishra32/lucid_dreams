@@ -45,8 +45,13 @@ def test_extract_stops_on_wrong_eye_ids():
     v[F.LEFT_EYELID[0]] = [0.5, 0.5, 0.5]  # an "eyelid" vertex nowhere near the eye
     with pytest.raises(ValueError, match="eyelid"):
         X.extract({**model, "v_template": _Ch(v)}, masks)
-    with pytest.raises(ValueError, match="eye opening"):  # faces without the eyes' openings: no blink possible
-        X.extract({**model, "f": np.array([[0, 1, 2]])}, masks)
+    flat = model["v_template"].r.copy()
+    eyeball, lid = F.EYES[1]
+    near = np.linalg.norm(flat - flat[eyeball].mean(0), axis=1) < 0.02
+    near[eyeball] = False
+    flat[near, 1] = flat[eyeball, 1].mean() + 0.004  # everything round the right eye above its centre: no lower lid
+    with pytest.raises(ValueError, match="lower eyelid"):
+        X.extract({**model, "v_template": _Ch(flat)}, masks)
 
 
 def test_the_npz_loads_as_face_exprs_flame(tmp_path):

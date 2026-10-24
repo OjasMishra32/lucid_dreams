@@ -417,13 +417,14 @@ def test_swap_skins_lams_head_by_the_flame_correspondence(tmp_path):
     np.testing.assert_array_equal(q[report["bodyKept"]:], want_q)
 
 
-def test_swap_without_flame_has_no_expr_and_keeps_the_motion(tmp_path):
+def test_swap_without_flame_has_no_expr_but_still_gets_the_living_idle(tmp_path):
     root, verts, flame_ids = _synthetic_body(tmp_path)
     _lam_with_flame(tmp_path, verts, flame_ids)
     out = _swap(tmp_path, root)
     dream = json.loads((out / "dream.json").read_text())
     assert "expr" not in dream["avatar"] and not (out / F.EXPR_FILE).exists()
-    assert json.loads((out / "head_swap.json").read_text())["motion"] == "kept"
+    assert json.loads((out / "head_swap.json").read_text())["motion"] == "living idle"  # alive, just no blinks
+    assert Motion.load(out / dream["avatar"]["motion"]).expr is None
     assert validate_bundle(out) == []
 
 
@@ -451,15 +452,19 @@ def test_cli_head_swap_with_flame_writes_expr_and_can_keep_the_motion(tmp_path, 
     assert "OK" in capsys.readouterr().out and validate_bundle(out) == []
 
 
-def test_swap_without_an_eye_opening_skips_expr_but_still_swaps(tmp_path):
+def test_swap_whose_eyes_cant_be_shut_skips_expr_but_still_swaps_and_lives(tmp_path, monkeypatch):
     root, verts, flame_ids = _synthetic_body(tmp_path)
     _lam_with_flame(tmp_path, verts, flame_ids)
-    z = dict(np.load(tmp_path / "flame.npz"))
-    np.savez(tmp_path / "flame.npz", **{**z, "faces": FACES[-3:]})  # FLAME's faces without the eyes
+
+    def no_lids(*a, **k):
+        raise ValueError("the lower eyelid has 0 vertices")
+
+    monkeypatch.setattr(F, "blink_field", no_lids)
     out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
     report = json.loads((out / "head_swap.json").read_text())
-    assert "eye opening" in report["expr"]["skipped"] and report["motion"] == "kept"
+    assert "eyelid" in report["expr"]["skipped"] and report["motion"] == "living idle"
     assert not (out / F.EXPR_FILE).exists() and validate_bundle(out) == []
+    assert Motion.load(out / "avatar" / "motion.json").expr is None  # breathing and glances, no blinks to show
 
 
 def test_swap_keeps_a_fine_tunes_own_clip(tmp_path):

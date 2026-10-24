@@ -5,7 +5,8 @@ and the 100 expression directions. FLAME's pickle holds chumpy arrays, so this r
 
 hpg/head-swap.sbatch runs it once. It also checks face_expr's eye constants against FLAME itself (the eyeball ids
 against FLAME_masks.pkl, each eyelid list beside its eyeball, an opening round each eye with an upper and a lower
-margin), so a wrong id stops here, not in a blink. The npz stays
+lid), and fits the blink on FLAME's own template and prints how far it shuts, so a wrong id or a blink that doesn't
+shut stops here, not on someone's face. The npz stays
 on HiPerGator: FLAME's licence doesn't let us publish it.
 """
 
@@ -16,10 +17,11 @@ import sys
 
 import numpy as np
 
-from lucid_avatars.face_expr import EYES, FLAME_VERTS, _eye
+from lucid_avatars.face_expr import EYES, FLAME_VERTS, _eye, blink_field
 
 N_SHAPE = 300  # FLAME's shapedirs: 300 shape components, then the expressions (LAM slices them the same way)
 LID_NEAR_EYE = 2.0  # eyeball radii: every eyelid vertex sits this close to its own eye's centre
+MAX_OPEN = 0.2  # a blink that leaves the template's eyes more open than this isn't shipped
 
 
 def arr(x) -> np.ndarray:
@@ -42,8 +44,15 @@ def extract(model: dict, masks: dict) -> dict[str, np.ndarray]:
         far = np.linalg.norm(v[lid] - c, axis=1).max() / r
         if far > LID_NEAR_EYE:
             raise ValueError(f"face_expr's {side} eyelid reaches {far:.1f} eyeball radii from the {side} eye: wrong ids")
-        _eye(v, eyeball, lid, faces)  # FLAME's own opening round this eye, with upper and lower margins to shut
-    return {"v_template": v, "faces": faces, "expr_dirs": sd[:, :, N_SHAPE:N_SHAPE + 100].astype(np.float32)}
+        _, _, up, lo, _ = _eye(v, eyeball, lid)  # an upper and a lower lid to shut, or ValueError
+        print(f"[expr] {side} eye: eyeball radius {r * 1000:.1f} mm, lid list {len(lid)}, upper lid {len(up)}, "
+              f"lower lid {len(lo)} vertices")
+    expr = sd[:, :, N_SHAPE:N_SHAPE + 100].astype(np.float32)
+    _, report = blink_field(v, expr)  # the blink on FLAME's own template: it must shut before any head gets it
+    print(f"[expr] blink on FLAME's template: {report}")
+    if report["openFraction"] > MAX_OPEN:
+        raise ValueError(f"the blink leaves FLAME's eyes {report['openFraction']:.0%} open (> {MAX_OPEN:.0%})")
+    return {"v_template": v, "faces": faces, "expr_dirs": expr}
 
 
 def main() -> int:

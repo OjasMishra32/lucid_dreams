@@ -241,7 +241,7 @@ def head_skin(points: np.ndarray, rows: np.ndarray, pairs: np.ndarray | None, fl
     return idx, q
 
 
-def living_idle(src: Motion, source: dict | None) -> Motion | None:
+def living_idle(src: Motion, source: dict | None, blink: bool = True) -> Motion | None:
     """The 20 s living idle (blinking through face_expr's blink channel) for an avatar whose motion is an idle: it
     stands in place (root within 5 cm, height within 3 cm) and its source names no motion (digs-perform's move and
     digs-finetune's clip do; digs-sample's photo avatar doesn't). Betas, standing height and finger pose (DiGS's hand mean) come from the source. None when
@@ -252,7 +252,7 @@ def living_idle(src: Motion, source: dict | None) -> Motion | None:
     if np.ptp(src.root_t[:, [0, 2]], axis=0).max() > 0.05 or np.ptp(src.root_t[:, 1]) > 0.03:
         return None
     m = idle_loop(src.betas, IDLE_S, int(round(src.fps)), float(np.median(src.root_t[:, 1])),
-                  blink_expr=np.eye(FE.N_CHANNELS)[FE.BLINK])
+                  blink_expr=np.eye(FE.N_CHANNELS)[FE.BLINK] if blink else None)
     m.pose[:, LEFT_HAND] = src.pose[0, LEFT_HAND]
     m.pose[:, RIGHT_HAND] = src.pose[0, RIGHT_HAND]
     return m
@@ -412,12 +412,12 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
     if expr_d is not None:
         FE.write_expr_bin(out / FE.EXPR_FILE, int(keep_b.sum()), expr_d[keep_h])
         avatar.update(expr=FE.EXPR_FILE, exprChannels=list(FE.EXPR_CHANNELS))
-        living = None if keep_motion else living_idle(Motion.load(src / av["motion"]), dream.get("source"))
-        if living is not None:
-            living.save(out / av["motion"])
-            dream.update(fps=living.fps, frameCount=living.num_frames,
-                         durationS=round(living.num_frames / living.fps, 3))
-            report["motion"] = "living idle"
+    living = None if keep_motion else living_idle(Motion.load(src / av["motion"]), dream.get("source"),
+                                                  blink=expr_d is not None)
+    if living is not None:
+        living.save(out / av["motion"])
+        dream.update(fps=living.fps, frameCount=living.num_frames, durationS=round(living.num_frames / living.fps, 3))
+        report["motion"] = "living idle"
     (out / "head_swap.json").write_text(json.dumps(report, indent=2) + "\n")
     dream.update(id=new_id, name=name or f"{dream['name']} (LAM head)", preview=None, thumb=None)
     dream["avatar"] = avatar
