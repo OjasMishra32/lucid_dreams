@@ -176,6 +176,33 @@ class Bundle(unittest.TestCase):
         m = min(range(len(frames)), key=lambda i: (abs(frames[i]["src"] - court["video"]["makeSource"]), i))
         self.assertIn(f"make-show{m:04d}.jpg", names)
         self.assertTrue(all(p.stat().st_size > 1000 for p in made))
+        n = court["video"]["segments"]["eases"][0]["frames"][1]
+        self.assertIn(f"at-F-splats-under-show{n:04d}.jpg", names)
+        self.assertIn(f"at-F-splats-outline-show{n:04d}.jpg", names)
+
+    def test_a_mask_at_f_gives_each_players_silhouette_iou(self):
+        """A player's mask at F (raw source pixels) against its splats seen from camera F: its own silhouette scores
+        high, the same mask moved half a body away scores low."""
+        import cv2
+
+        court = json.loads((self.out / "court.json").read_text())
+        frames = json.loads((self.out / court["video"]["frames"]).read_text())
+        camF = A.frame_camera(court["camera"], frames, court["video"])
+        bodies = [sp.read_ply(self.out / p["splats"]) for p in court["freeze"]["players"]]
+        _, ids = A.render_splats(camF.scaled(1280), bodies)
+        own = np.where(ids == 0, 255, 0).astype(np.uint8)
+        cv2.imwrite(str(self.tmp / "mask-a.png"), cv2.resize(own, (camF.w, camF.h), interpolation=cv2.INTER_NEAREST))
+        x = np.nonzero(own.any(0))[0]
+        moved = np.roll(own, (x.max() - x.min()) // 2, axis=1)
+        cv2.imwrite(str(self.tmp / "mask-b.png"), cv2.resize(moved, (camF.w, camF.h), interpolation=cv2.INTER_NEAREST))
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "maskF": str(self.tmp / "mask-a.png")}, {**cfg["players"][1], "maskF": str(self.tmp / "mask-b.png")}]
+        code, out = self.assemble_with("masks", players=players)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertGreater(asm["pieces"]["player:a"]["silhouetteIoU"], 0.85)
+        self.assertLess(asm["pieces"]["player:b"]["silhouetteIoU"], 0.3)
+        self.assertTrue(any(n.startswith("silhouette IoU at F") for n in asm["notes"]), asm["notes"])
 
     def staged_show(self, name: str) -> tuple[Path, dict]:
         S = json.loads((STANDIN / "court.json").read_text())
@@ -358,6 +385,71 @@ class Bundle(unittest.TestCase):
         self.assertTrue(any("P42" in p and "a" in p for p in pending), pending)
         errs, _, _ = A.validate(bad, A.WEBXR, strict=True)
         self.assertTrue(any("P42" in e for e in errs), errs)
+
+    def test_a_waived_gate_is_reported_and_not_counted(self):
+        """A recorded waiver (config `waivers`, court.json's list) turns that gate's failures into WAIVED lines with
+        their numbers; anything else still fails."""
+        bad = self.copy_bad("waived")
+        asm = json.loads((bad / "assembly.json").read_text())
+        asm["pieces"]["player:a"]["source"] = "real"
+        asm["players"]["a"]["run"] = {"variant": "v", "cap": "1k", "iou": 0.8123, "focal": 100.0, "focalHeld": True, "FOCAL": 100.0}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("(P42)" in e and "0.8123" in e for e in errs), errs)
+        court = json.loads((bad / "court.json").read_text())
+        court["waivers"] = ["P42"]
+        (bad / "court.json").write_text(json.dumps(court))
+        asm["waivers"] = {"P42": "turbo test"}
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, info = A.validate(bad, A.WEBXR)
+        self.assertFalse(any("P42" in e for e in errs), errs)
+        self.assertTrue(any(x.startswith("WAIVED P42 (turbo test)") and "0.8123" in x for x in info), info)
+        court["seat"]["distance"] = 9  # an unwaived failure still fails
+        (bad / "court.json").write_text(json.dumps(court))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("seat.distance" in e for e in errs), errs)
+
+    def test_a_waiver_in_the_config_lands_in_court_json(self):
+        code, out = self.assemble_with("waiver-cfg", waivers={"P42": "turbo test"})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((out / "court.json").read_text())["waivers"], ["P42"])
+        self.assertEqual(json.loads((out / "assembly.json").read_text())["waivers"], {"P42": "turbo test"})
+
+    def test_the_pair_is_cut_to_its_budget_by_contribution(self):
+        """capPair: each pair body keeps its largest contributions seen from camera F; the reality copy keeps the same
+        Gaussians; capPsnr measures what the cut costs (seat view and an 8-view orbit, cut vs whole)."""
+        code, out = self.assemble_with("capped", capPair=8000, capPsnr=True)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        for pid in ("a", "b"):
+            c = asm["players"][pid]["cap"]
+            self.assertEqual(c["kept"], 8000)
+            self.assertGreater(c["from"], 8000)
+            self.assertEqual(len(sp.read_ply(out / f"players/{pid}/freeze.ply")), 8000)
+            self.assertEqual(len(sp.read_ply(out / f"players/{pid}/reality.ply")), 8000)
+            self.assertEqual(len(c["psnr"]["orbit"]), 8)
+            self.assertTrue(all(x > 10 for x in [c["psnr"]["seat"], *c["psnr"]["orbit"]]), c["psnr"])
+
+    def test_a_coarse_proxy_fails_p8s_sampling(self):
+        """P8 needs the pair's proxies sampled at about half a centimetre at the silhouettes: a 5 cm grid fails."""
+        court = json.loads((self.out / "court.json").read_text())
+        info = json.loads((self.out / "assembly.json").read_text())["players"]["a"]["proxy"]
+        self.assertLessEqual(info["cellM"], 0.005)
+        bad = self.tmp / "coarse"
+        shutil.copytree(self.out, bad)
+        gu, gv = np.meshgrid(np.arange(11) * 0.05, np.arange(41) * 0.05)
+        pos = np.stack([5.0 + 0 * gu, gv, gu], -1).reshape(-1, 3)
+        idx = [[j * 11 + i, (j + 1) * 11 + i, j * 11 + i + 1] for j in range(40) for i in range(10)]
+        (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "coarse"))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
+        # Codex 2: fine across, coarse along (4 mm x 50 mm cells) fails too
+        gu, gv = np.meshgrid(np.arange(41) * 0.004, np.arange(41) * 0.05)
+        pos = np.stack([5.0 + 0 * gu, gv, gu], -1).reshape(-1, 3)
+        idx = [[j * 41 + i, (j + 1) * 41 + i, j * 41 + i + 1] for j in range(40) for i in range(40)]
+        (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "thin"))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
 
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"

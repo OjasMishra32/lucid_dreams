@@ -163,6 +163,58 @@ class Metrics(unittest.TestCase):
         self.assertEqual(got["interpShare"], 0.5)
 
 
+class SplatRender(unittest.TestCase):
+    def test_the_nearest_solid_splat_wins_where_it_projects(self):
+        import assemble as A
+        import assemble_splats as sp
+
+        cam = look(np.array([-10.0, 1.0, 0.0]), [0.0, 1.0, 0.0], w=640, h=360, f=800.0)
+
+        def blob(centre, dc, logit, sigma=0.02):
+            P = np.asarray(centre, float) + np.random.default_rng(1).normal(scale=sigma, size=(200, 3))
+            n = len(P)
+            return sp.Splats.new(P, np.tile([1, 0, 0, 0], (n, 1)), np.full((n, 3), -4.0), np.full(n, logit), np.tile(dc, (n, 1)))
+
+        near = blob([0.0, 1.0, 0.0], [1.5, -1.5, -1.5], 3.0)  # red, solid
+        far = blob([3.0, 1.0, 0.0], [-1.5, 1.5, -1.5], 3.0, sigma=0.002)  # green, small, behind it on the same ray
+        ghost = blob([-2.0, 1.0, 0.0], [-1.5, -1.5, 1.5], -3.0)  # blue, in front but nearly transparent
+        rgb, ids = A.render_splats(cam, [far, near, ghost])
+        u, v, _ = cam.project(np.array([0.0, 1.0, 0.0]))
+        u, v = int(round(float(u))), int(round(float(v)))
+        self.assertEqual(ids[v, u], 1)
+        np.testing.assert_allclose(rgb[v, u], near.rgb[0], atol=1e-6)
+        self.assertEqual(ids[5, 5], -1)
+        self.assertFalse((ids == 2).any())
+        self.assertFalse((ids == 0).any())  # hidden behind the near one
+
+    def test_a_raw_frame_is_undistorted_onto_the_pinhole_grid(self):
+        import assemble as A
+
+        cam = g.Cam(np.zeros(3), np.eye(3), 400.0, 319.5, 179.5, 640, 360)
+        k1 = 0.3
+        u, v = 560.0, 300.0  # where a pinhole camera puts it
+        xn, yn = (u - cam.cx) / cam.f, (v - cam.cy) / cam.f
+        d = 1 + k1 * (xn * xn + yn * yn)
+        raw = np.zeros((360, 640), np.uint8)
+        raw[int(round(cam.cy + cam.f * yn * d)), int(round(cam.cx + cam.f * xn * d))] = 255  # where the lens put it
+        und = A.undistort_image(raw, cam, k1)
+        y, x = np.unravel_index(int(np.argmax(und)), und.shape)
+        self.assertLessEqual(abs(x - u), 1)
+        self.assertLessEqual(abs(y - v), 1)
+        np.testing.assert_array_equal(A.undistort_image(raw, cam, 0.0), raw)
+
+    def test_silhouette_iou_compares_one_bodys_pixels_with_a_mask(self):
+        import assemble as A
+
+        ids = np.full((10, 10), -1)
+        ids[2:6, 2:6] = 0  # 16 pixels
+        ids[6:8, 2:6] = 1
+        mask = np.zeros((10, 10), bool)
+        mask[2:6, 4:8] = True  # 16 pixels, 8 shared with body 0
+        self.assertAlmostEqual(A.silhouette_iou(ids, 0, mask), 8 / 24)
+        self.assertEqual(A.silhouette_iou(ids, 2, np.zeros((10, 10), bool)), 0.0)
+
+
 class Placement(unittest.TestCase):
     def test_camera_mode_keeps_pixels_and_stands_on_the_floor(self):
         rng = np.random.default_rng(3)
@@ -448,6 +500,31 @@ class Ball(unittest.TestCase):
             got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
         np.testing.assert_allclose(got["centre"], ball, atol=0.03)
         self.assertEqual(got["erase"], [{"player": "holder", "radius": 0.15}])
+
+    def test_a_hand_beside_the_ray_does_not_pull_the_ball_forward(self):
+        """The ball held out in front of the body: an arm 8 cm to the side of the ball's ray and 0.4 m nearer the
+        camera is in a ball-wide tube round the ray but isn't what the ray sees; the ball's own surface on the ray is."""
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        rng = np.random.default_rng(7)
+        cam = look(np.array([-16.0, 0.8, 2.5]), [6.0, 1.0, 1.5], w=3840, h=2160, f=22000.0)
+        ball = np.array([6.2, 1.0, 1.5])
+        d = rng.normal(size=(4000, 3))
+        shell = ball + d / np.linalg.norm(d, axis=1, keepdims=True) * A.BALL_RADIUS
+        toward = (cam.C - ball) / np.linalg.norm(cam.C - ball)
+        front = shell[(shell - ball) @ toward > 0.05]
+        side = np.cross(toward, [0.0, 1.0, 0.0])
+        side /= np.linalg.norm(side)
+        arm = ball + 0.4 * toward + 0.08 * side + rng.normal(scale=0.02, size=(1500, 3))
+        body = np.concatenate([front, arm])
+        u, v, _ = cam.project(ball[None])
+        with tempfile.TemporaryDirectory() as tmp:
+            w = A.Writer(Path(tmp))
+            got = A.ball_piece(w, {"ball": {"pixel": [float(u[0]), float(v[0])], "depthFrom": "holder"}}, {}, [{"id": "holder"}], cam, {"holder": body})
+        np.testing.assert_allclose(got["centre"], ball, atol=0.03)
 
 
 class Floor(unittest.TestCase):

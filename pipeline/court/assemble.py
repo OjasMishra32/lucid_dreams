@@ -74,6 +74,7 @@ BOARD_X, BOARD_HALF, BOARD_Y = 13.106, 0.915, (2.90, 3.97)
 LIGHT = {"crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5, "alternative": {"crowd": 0.16, "floor": 0.14}}
 SEAT = {"distance": 5.0, "distanceRange": [4, 7], "clear": 1.0}
 SPLAT_BUDGET = 500_000  # visible at the worst pose until the Quest says more (plan 8)
+PROXY_CELL_M = 0.005  # P8 (stream D): the pair's splat-depth proxies sampled at about half a centimetre
 PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|webp|ply|glb|bin|m4a|mp4|wav|spz)$", re.I)
 
 
@@ -568,6 +569,46 @@ def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
     return src, dst
 
 
+def look_from(C, target, f: float, w: int, h: int) -> geo.Cam:
+    """A level camera at C looking at target (OpenCV axes, no roll)."""
+    fwd = np.asarray(target, float) - np.asarray(C, float)
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, geo.UP)
+    right /= np.linalg.norm(right)
+    return geo.Cam(np.asarray(C, float), np.stack([right, np.cross(fwd, right), fwd], 1), f, (w - 1) / 2, (h - 1) / 2, w, h)
+
+
+def seat_floor(camF: geo.Cam, pair_centre, distance: float) -> np.ndarray:
+    """The seat's floor point as seatmath.ts's seatPoint finds it: on camera F's floor ray, `distance` from the pair."""
+    d = np.array([camF.axis[0], 0.0, camF.axis[2]])
+    d /= np.linalg.norm(d)
+    o = np.array([camF.C[0] - pair_centre[0], 0.0, camF.C[2] - pair_centre[2]])
+    b = float(o @ d)
+    disc = b * b - (float(o @ o) - distance * distance)
+    if disc < 0:
+        raise ValueError(f"camera F's ray passes more than {distance} m from the pair's centre")
+    return np.array([camF.C[0], 0.0, camF.C[2]]) + (-b - math.sqrt(disc)) * d
+
+
+def cap_cost(whole: sp.Splats, kept: sp.Splats, camF: geo.Cam, pair_centre, distance: float, w: int = 384, h: int = 512) -> dict:
+    """What a pair body's cut costs: the PSNR of the cut body's render against the whole one's (sp.render, each alone
+    over black, over the pixels either covers), from the seat (eye 1.2 m up over seat_floor, looking at the body) and
+    from 8 views round the body (3 m out, 1.4 m up)."""
+    P = whole.pos[whole.alpha > 0.3].astype(float)
+    c = np.array([np.median(P[:, 0]), 0.5 * float(np.percentile(P[:, 1], 99)), np.median(P[:, 2])])
+
+    def psnr(C) -> float:
+        cam = look_from(C, c, h * float(np.linalg.norm(c - C)) / 2.6, w, h)
+        (ra, aa), (rb, ab) = sp.render(whole, cam), sp.render(kept, cam)
+        roi = (aa > 0.02) | (ab > 0.02)
+        mse = float(np.mean((ra[roi] - rb[roi]) ** 2)) if roi.any() else 0.0
+        return round(10 * math.log10(1 / mse), 2) if mse > 0 else 99.0
+
+    seat = seat_floor(camF, pair_centre, distance) + [0.0, 1.2, 0.0]
+    ring = [c + [3 * math.cos(k * math.pi / 4), 1.4 - c[1], 3 * math.sin(k * math.pi / 4)] for k in range(8)]
+    return {"seat": psnr(seat), "orbit": [psnr(C) for C in ring]}
+
+
 def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: geo.Cam, camF_standin: geo.Cam) -> dict:
     """One main player: their Gaussians placed in court space, the reality copy, the splat-depth proxy from camera F,
     capsules, bounds, floor maps. Returns the court.json entry plus private diagnostics under "_"."""
@@ -613,6 +654,15 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
                        same_space=slot.get("splatsSpace", "bundle") == "bundle")
     else:
         seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
+    cut = None
+    if slot.get("capPair") and len(s) > int(slot["capPair"]):
+        # the pair's budget (plan 8): keep the largest contributions seen from camera F, the reality copy alike
+        whole = s.transformed(sim)
+        keep = sp.cap(whole, camF, int(slot["capPair"]))
+        cut = {"from": len(s), "kept": int(keep.sum()), "by": "alpha x projected footprint area at F"}
+        if slot.get("capPsnr"):
+            cut["_whole"], cut["_kept"] = whole, whole.subset(keep)
+        s, seen = s.subset(keep), seen[keep]
     b = body_files(w, base, s, sim, seen, camF)
     Pp, rect = b["P"], b["rect"]
     contact = sp.contact_points_xz(Pp)
@@ -621,7 +671,7 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         "bounds": sp.bounds(Pp), "seenFraction": round(float(seen.mean()), 3),
         "capsules": [{k: c[k] for k in ("a", "b", "r")} for c in sp.body_capsules(Pp)],
         "shadow": {"image": f"{base}/shadow.png", "rect": rect}, "reflection": {"image": f"{base}/reflection.png", "rect": rect},
-        "_": {"sim": sim, "contact": contact, "count": b["count"], "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
+        "_": {"sim": sim, "contact": contact, "count": b["count"], "proxy": b["proxy"], "cap": cut, "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
               "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
     }
     if slot.get("run_report"):
@@ -679,7 +729,9 @@ def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, spla
         P = splats_by_id[holder]
         t = (P - camF.C) @ ray
         off = np.linalg.norm((P - camF.C) - np.outer(t, ray), axis=1)
-        near = t[off < BALL_RADIUS]
+        # what the ray itself meets: the narrowest tube round it with enough points (a hand or hip beside the ray, in
+        # a ball-wide tube, would pull the ball forward of its own surface)
+        near = next((t[off < r] for r in (0.25 * BALL_RADIUS, 0.5 * BALL_RADIUS, BALL_RADIUS) if (off < r).sum() >= 10), t[off < BALL_RADIUS])
         real_body = w.pieces.get(f"player:{holder}", {}).get("source") == "real"
         if len(near) >= 10:
             centre = camF.C + (np.percentile(near, 10) + BALL_RADIUS) * ray
@@ -743,13 +795,15 @@ def body_files(w: Writer, base: str, s: sp.Splats, sim: geo.Similarity, seen: np
     P = placed.pos[keep]
     sp.write_ply(w.path(f"{base}/freeze.ply"), placed)
     sp.write_ply(w.path(f"{base}/reality.ply"), sp.reality(placed, seen))
+    proxy = None
     if camF is not None:
-        w.path(f"{base}/proxy.glb").write_bytes(sp.proxy_glb(placed.pos, placed.alpha, camF, name=f"{Path(base).name}-proxy"))
+        data, proxy = sp.proxy_glb(placed, camF, name=f"{Path(base).name}-proxy")
+        w.path(f"{base}/proxy.glb").write_bytes(data)
     rect = sp.floor_rect(P)
     shadow, refl = sp.floor_maps(P, placed.alpha[keep], placed.rgb[keep], rect)
     sp.write_png(w.path(f"{base}/shadow.png"), shadow)
     sp.write_png(w.path(f"{base}/reflection.png"), refl)
-    return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean())}
+    return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean()), "proxy": proxy}
 
 
 def seen_of(s: sp.Splats, reality, spz: Path | None, w: Writer | None = None, who: str = "", same_space: bool = True) -> np.ndarray:
@@ -960,6 +1014,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         fill_plates(w, video, camF)
         court = court_piece(w, cfg, standin, S)
         slots = cfg.get("players") or [{} for _ in S["freeze"]["players"]]
+        slots = [{**sl, "capPair": cfg.get("capPair"), "capPsnr": cfg.get("capPsnr")} for sl in slots]
         players = [place_player(w, slot, i % len(S["freeze"]["players"]), standin, S, camF, camF_standin) for i, slot in enumerate(slots)]
         splats_by_id = {p["id"]: sp.solid(sp.read_ply(tmp / p["splats"])) for p in players}
         k1F = 0.0
@@ -967,9 +1022,15 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
             f_real = (cfg.get("source") or {}).get("freezeSource", video["freezeSource"])
             k1F = calib.k1[int(np.argmin(np.abs(np.asarray(calib.src) - f_real)))]
         ball = ball_piece(w, cfg, S, players, camF, splats_by_id, k1F)
+        silhouette_piece(w, cfg, players, camF, k1F)
         seat_cfg = {**SEAT, **(cfg.get("seat") or {})}
         pair = np.mean([p["_"]["contact"] for p in players], 0)
         pair_centre = [round(float(pair[0]), 3), 0.0, round(float(pair[1]), 3)]
+        seat_cfg_ = {**SEAT, **(cfg.get("seat") or {})}
+        for p in players:
+            c = p["_"].get("cap")
+            if c and "_whole" in c:
+                c["psnr"] = cap_cost(c.pop("_whole"), c.pop("_kept"), camF, pair_centre, seat_cfg_["distance"])
         # the walking spots are the runtime's (seatmath.ts); these approximations only size the extras' maxRayAngle
         spots = geo.viewing_spots(pair_centre, camF.C, [(p["bounds"]["min"], p["bounds"]["max"]) for p in players], seat_cfg["clear"])
         seat = {"ray": "freeze", "distance": seat_cfg["distance"], "distanceRange": seat_cfg["distanceRange"],
@@ -996,6 +1057,8 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
                        "others": others, "stands": stands},
             "audio": audio, "metrics": metrics,
         }
+        if cfg.get("waivers"):
+            court_json["waivers"] = sorted(cfg["waivers"])  # a gate waived for a test build: never shippable
         w.json("court.json", court_json, indent=1)
         diag = {
             "assembledAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "generator": "court-side assemble.py",
@@ -1006,6 +1069,8 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
             "splats": {"players": sum(p["_"]["count"] for p in players)},
             "cameraF": {"centre": rnd(camF.C), "axis": rnd(camF.axis, 6), "f": round(camF.f, 2)},
         }
+        if cfg.get("waivers"):
+            diag["waivers"] = dict(cfg["waivers"])
         w.json("assembly.json", diag, indent=1)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1200,6 +1265,13 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         pos, idx = sp.read_glb((bundle / p["proxy"]).read_bytes())
         if not len(pos) or idx.max() >= len(pos):
             errs.append(f"{p['proxy']}: an empty or broken mesh")
+            continue
+        tri = pos[idx.reshape(-1, 3)]
+        # a grid cell's two sides are each triangle's two shorter edges (the third is its diagonal): the longer side
+        cell = float(np.median(np.sort(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)[:, 1]))
+        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm")
+        if cell > PROXY_CELL_M * 1.1:
+            errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")
     asm_pieces = json.loads((bundle / "assembly.json").read_text()).get("pieces", {}) if (bundle / "assembly.json").exists() else {}
     for o in court["freeze"]["others"]:
         problems = []
@@ -1291,9 +1363,104 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         for k, pc_ in json.loads(asm.read_text())["pieces"].items():
             if pc_["source"] != "real":
                 pending.append(f"{k}: {pc_['detail']}")
+    waived = set(court.get("waivers") or [])
+    if waived:
+        why = (json.loads(asm.read_text()).get("waivers") or {}) if asm.exists() else {}
+        kept = []
+        for e in errs:
+            m = re.search(r"\((P\d+)\)", e)
+            if m and m.group(1) in waived:
+                info.append(f"WAIVED {m.group(1)} ({why.get(m.group(1), 'no reason recorded')}): {e}")
+            else:
+                kept.append(e)
+        errs = kept
     if strict and pending:
         errs += [f"pending: {x}" for x in pending]
     return errs, pending, info
+
+
+def render_splats(cam: geo.Cam, bodies: list, min_alpha: float = 0.5, max_r: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """A plain look at Gaussians through a camera, to check by eye: each solid one (alpha >= min_alpha) is a flat disc
+    of its base colour at its centre's pixel, two of its largest standard deviations wide (at most max_r pixels), and
+    the nearest wins each pixel. Returns (rgb 0-1, per pixel the index into `bodies`, -1 where none)."""
+    h, w = cam.h, cam.w
+    zbuf = np.full(h * w, np.inf)
+    groups = []
+    for i, s in enumerate(bodies):
+        keep = s.alpha >= min_alpha
+        u, v, z = cam.project(s.pos[keep].astype(float))
+        ok = (z > 1e-6) & (u > -max_r) & (u < w + max_r) & (v > -max_r) & (v < h + max_r)
+        r = np.clip(np.rint(2 * cam.f * np.exp(s.scales[keep][ok].astype(float)).max(1) / z[ok]), 0, max_r).astype(int)
+        groups.append((i, np.rint(u[ok]).astype(int), np.rint(v[ok]).astype(int), z[ok], r, s.rgb[keep][ok]))
+
+    def discs():
+        for i, u, v, z, r, rgb in groups:
+            for rad in np.unique(r):
+                sel = r == rad
+                for dy in range(-rad, rad + 1):
+                    for dx in range(-rad, rad + 1):
+                        if dx * dx + dy * dy > rad * rad + rad:
+                            continue
+                        x, y = u[sel] + dx, v[sel] + dy
+                        on = (x >= 0) & (x < w) & (y >= 0) & (y < h)
+                        yield i, (y[on] * w + x[on]), z[sel][on], rgb[sel][on]
+
+    for _, pix, z, _ in discs():
+        np.minimum.at(zbuf, pix, z)
+    out = np.zeros((h * w, 3))
+    ids = np.full(h * w, -1)
+    for i, pix, z, rgb in discs():
+        win = z <= zbuf[pix]
+        out[pix[win]] = rgb[win]
+        ids[pix[win]] = i
+    return out.reshape(h, w, 3), ids.reshape(h, w)
+
+
+def undistort_image(img: np.ndarray, cam: geo.Cam, k1: float) -> np.ndarray:
+    """A raw frame (or mask) resampled onto the pinhole grid of `cam` (its size): the calibration's lens puts the
+    pinhole pixel's normalised point xn at xn (1 + k1 |xn|^2)."""
+    import cv2
+
+    if k1 == 0:
+        return img.copy()
+    u, v = np.meshgrid(np.arange(cam.w, dtype=np.float32), np.arange(cam.h, dtype=np.float32))
+    xn, yn = (u - cam.cx) / cam.f, (v - cam.cy) / cam.f
+    d = 1 + k1 * (xn * xn + yn * yn)
+    return cv2.remap(img, (cam.cx + cam.f * xn * d).astype(np.float32), (cam.cy + cam.f * yn * d).astype(np.float32),
+                     cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def silhouette_iou(ids: np.ndarray, i: int, mask: np.ndarray) -> float:
+    """Intersection over union of body i's pixels in a render (render_splats' ids) and a mask."""
+    r = ids == i
+    union = int((r | mask).sum())
+    return float((r & mask).sum()) / union if union else 0.0
+
+
+def silhouette_piece(w: Writer, cfg: dict, players: list, camF: geo.Cam, k1F: float, width: int = 960) -> dict:
+    """Each player's splats seen from camera F against its own mask at F (players[].maskF in the config: a
+    segmentation of the raw source frame, undistorted here with F's k1): the silhouette IoU, a placement check by
+    numbers (P8 asks the same of the real render)."""
+    import cv2
+
+    masks = {p["id"]: cfg_player(cfg, p["id"]).get("maskF") for p in players}
+    if not any(masks.values()):
+        return {}
+    cam = camF.scaled(width)
+    _, ids = render_splats(cam, [sp.read_ply(w.root / p["splats"]) for p in players])
+    got = {}
+    for i, p in enumerate(players):
+        if not masks[p["id"]]:
+            continue
+        m = cv2.imread(str(expand(masks[p["id"]])), cv2.IMREAD_GRAYSCALE)
+        if m is None:
+            w.notes.append(f"player {p['id']}: its mask at F ({masks[p['id']]}) can't be read: no silhouette check")
+            continue
+        m = undistort_image(m, camF.scaled(m.shape[1]), k1F)
+        m = cv2.resize(m, (cam.w, cam.h), interpolation=cv2.INTER_AREA) >= 128
+        got[p["id"]] = w.pieces[f"player:{p['id']}"]["silhouetteIoU"] = round(silhouette_iou(ids, i, m), 3)
+    w.notes.append("silhouette IoU at F, splats vs the mask: " + ", ".join(f"{k} {v}" for k, v in got.items()))
+    return got
 
 
 def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None = None) -> list[Path]:
@@ -1325,7 +1492,42 @@ def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None 
         made.append(dst)
     dst = out_dir / "freeze-png.jpg"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(bundle / v["freeze"]), "-vf", f"scale={width}:-2", "-q:v", "3", str(dst)], check=True)
-    return made + [dst]
+    return made + [dst] + splats_at_f(bundle, out_dir, picks["at-F"])
+
+
+def splats_at_f(bundle: Path, out_dir: Path, n: int, width: int = 1280) -> list[Path]:
+    """The freeze's splats seen from camera F under the picture at F (freeze.png): the picture with the splats over it
+    at half strength, and the picture with each body's outline (players cyan, magenta; extras yellow; the ball
+    orange). Show frame n is F's (for the names)."""
+    import cv2
+
+    court = json.loads((bundle / "court.json").read_text())
+    v, fz = court["video"], court["freeze"]
+    frames = json.loads((bundle / v["frames"]).read_text())
+    cam = frame_camera(court["camera"], frames, v).scaled(width)
+    files = [p["splats"] for p in fz["players"]] + [o["file"] for o in fz.get("others", []) if str(o.get("file") or "").endswith(".ply")]
+    rgb, ids = render_splats(cam, [sp.read_ply(bundle / f) for f in files])
+    pic = cv2.resize(cv2.imread(str(bundle / v["freeze"]), cv2.IMREAD_COLOR), (cam.w, cam.h), interpolation=cv2.INTER_AREA)
+    under = pic.astype(np.float64)
+    on = ids >= 0
+    under[on] = 0.5 * under[on] + 0.5 * 255 * rgb[on][:, ::-1]
+    outline = pic.copy()
+    colours = [(255, 255, 0), (255, 0, 255)] + [(0, 255, 255)] * len(files)  # BGR
+    for i in range(len(files)):
+        m = (ids == i).astype(np.uint8)
+        edge = cv2.dilate(m - cv2.erode(m, np.ones((3, 3), np.uint8)), np.ones((2, 2), np.uint8)) > 0
+        outline[edge] = colours[i]
+    b = fz.get("ball")
+    if b:
+        u, vv, z = cam.project(np.asarray(b["centre"], float))
+        if z > 0:
+            cv2.circle(outline, (int(round(float(u))), int(round(float(vv)))), max(1, int(round(cam.f * b["radius"] / float(z)))), (0, 140, 255), 2)
+    made = []
+    for name, img in (("under", under), ("outline", outline)):
+        dst = out_dir / f"at-F-splats-{name}-show{n:04d}.jpg"
+        cv2.imwrite(str(dst), np.clip(img, 0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 88])
+        made.append(dst)
+    return made
 
 
 def report(bundle: Path) -> str:
@@ -1353,12 +1555,16 @@ def main(argv=None) -> int:
     ap.add_argument("--webxr", default=str(WEBXR), help="the apps/webxr checkout whose format.ts validates the bundle")
     ap.add_argument("--validate", action="store_true", help="check the assembled bundle (no assembly)")
     ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
+    ap.add_argument("--cap-pair", type=int, default=None, help="cut each pair body to this many Gaussians by contribution at F (plan 8: 200000)")
+    ap.add_argument("--cap-psnr", action="store_true", help="with --cap-pair: measure the cut's cost (PSNR, seat view and an 8-view orbit)")
     ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
     ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
     ap.add_argument("--check-frames", default=None, help="write small JPEGs of the assembled show (watch, mid-ease, F, the make) to this folder")
     ap.add_argument("--check-at", default="", help="with --check-frames: also these source frames, comma-separated")
     a = ap.parse_args(argv)
     cfg = json.loads(expand(a.config).read_text())
+    if a.cap_pair:
+        cfg = {**cfg, "capPair": a.cap_pair, "capPsnr": a.cap_psnr or cfg.get("capPsnr")}
     if not (a.out or cfg.get("out")):
         ap.error("no bundle folder: give --out or the config's `out`")
     out = expand(a.out or cfg["out"])
@@ -1376,12 +1582,14 @@ def main(argv=None) -> int:
         if a.validate:
             errs, pending, info = validate(out, expand(a.webxr), a.strict)
             for x in info:
-                print(f"INFO {x}")
+                print(x if x.startswith("WAIVED ") else f"INFO {x}")
             for x in pending:
                 print(f"PENDING {x}")
             for x in errs:
                 print(f"FAIL {x}")
-            print(f"VALIDATE {'OK' if not errs else 'FAILED'} {out} ({len(errs)} errors, {len(pending)} pending)")
+            waived = sorted({x.split()[1] for x in info if x.startswith("WAIVED ")})
+            note = f", waived {', '.join(waived)}: NOT SHIPPABLE" if waived else ""
+            print(f"VALIDATE {'OK' if not errs else 'FAILED'} {out} ({len(errs)} errors, {len(pending)} pending{note})")
             return 0 if not errs else 1
         return 0
     if not (expand(a.standin) / "court.json").exists():

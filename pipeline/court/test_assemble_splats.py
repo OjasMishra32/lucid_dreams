@@ -175,22 +175,137 @@ class Body(unittest.TestCase):
 
 
 class Proxy(unittest.TestCase):
-    def test_depth_mesh_sits_on_the_front_surface(self):
-        # a 0.4 m sphere of points 20 m in front of a camera: the mesh's centre vertex is on its near side
-        rng = np.random.default_rng(11)
+    def one(self, centre, scales, alpha=0.9, quat=(1.0, 0.0, 0.0, 0.0)) -> sp.Splats:
+        return sp.Splats.new(np.array([centre], np.float32), np.array([quat], np.float32), np.log(np.array([scales], np.float32)),
+                             np.array([math.log(alpha / (1 - alpha))], np.float32), np.zeros((1, 3), np.float32))
+
+    def test_coverage_is_each_gaussians_projected_footprint(self):
+        # one Gaussian 20 m down the axis, 1 cm by 4 cm across the view: its footprint is 10 x 40 px (sigma) at f 20000
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=20000.0)
+        s = self.one([0.0, 1.0, 0.0], [0.04, 0.01, 0.001], alpha=0.9)
+        box = (0.0, 0.0, 400.0, 400.0)
+        cov = sp.coverage_image(s, cam, box, 400, 400)
+        c = 200  # the centre texel (pixel centres at i + 0.5 - 0.5 = i ... texel 200 holds pixel 199.5..200.5)
+        self.assertAlmostEqual(cov[c, c], 0.9, delta=0.01)
+        # one sigma out: alpha * exp(-1/2), 40 px along u (the 4 cm axis, world x is image u), 10 px along v
+        self.assertAlmostEqual(cov[c, c + 40], 0.9 * math.exp(-0.5), delta=0.02)
+        self.assertAlmostEqual(cov[c + 10, c], 0.9 * math.exp(-0.5), delta=0.03)
+        self.assertLess(cov[c + 40, c], 0.01)
+        # two overlapping: 1 - (1 - a)(1 - b), whatever the order
+        two = sp.Splats(np.concatenate([s.table, self.one([0.0, 1.0, 0.5], [0.04, 0.01, 0.001], alpha=0.5).table]))
+        self.assertAlmostEqual(sp.coverage_image(two, cam, box, 400, 400)[c, c], 1 - 0.1 * 0.5, delta=0.01)
+
+    def test_render_composites_front_to_back(self):
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=200, h=200, f=20000.0)
+        near = self.one([0.0, 1.0, 0.0], [0.01, 0.01, 0.01], alpha=0.6)
+        far = self.one([0.0, 1.0, 0.5], [0.01, 0.01, 0.01], alpha=0.9)
+        red, green = np.float32([(1 - 0.5) / sp.C0, (0 - 0.5) / sp.C0, (0 - 0.5) / sp.C0]), np.float32([(0 - 0.5) / sp.C0, (1 - 0.5) / sp.C0, (0 - 0.5) / sp.C0])
+        near.table["f_dc_0"], near.table["f_dc_1"], near.table["f_dc_2"] = red
+        far.table["f_dc_0"], far.table["f_dc_1"], far.table["f_dc_2"] = green
+        for both in (np.concatenate([near.table, far.table]), np.concatenate([far.table, near.table])):
+            rgb, alpha = sp.render(sp.Splats(both), cam)
+            np.testing.assert_allclose(rgb[100, 100], [0.6, 0.4 * 0.9, 0.0], atol=0.01)
+            self.assertAlmostEqual(float(alpha[100, 100]), 1 - 0.4 * 0.1, delta=0.01)
+        self.assertLess(float(alpha[0, 0]), 1e-6)
+
+    def test_cap_keeps_the_largest_contributions(self):
+        rng = np.random.default_rng(12)
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=20000.0)
+        n = 1000
+        P = rng.normal(scale=0.1, size=(n, 3)) + [0.0, 1.0, 0.0]
+        sc = np.full((n, 3), math.log(0.002))
+        sc[:100] = math.log(0.02)  # the hundred that matter: ten times wider
+        logit = np.full(n, 2.0)
+        logit[100:200] = 4.0  # opaque but tiny: alpha alone would keep these
+        s = sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), sc.astype(np.float32), logit.astype(np.float32), np.zeros((n, 3), np.float32))
+        keep = sp.cap(s, cam, 150)
+        self.assertEqual(int(keep.sum()), 150)
+        self.assertTrue(keep[:100].all())
+        np.testing.assert_array_equal(sp.cap(s, cam, 5000), np.ones(n, bool))
+
+    def blob(self, n, centre, sigma, logit, spread=0.002, seed=13) -> sp.Splats:
+        P = np.asarray(centre, float) + np.random.default_rng(seed).normal(scale=spread, size=(n, 3))
+        return sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), np.full((n, 3), math.log(sigma), np.float32),
+                             np.full(n, logit, np.float32), np.zeros((n, 3), np.float32))
+
+    def test_the_proxy_box_holds_wide_splats_whole(self):
+        """Codex 1: the grid's box comes from the splats' own footprints, not a fixed margin: a body of 10 cm-sigma
+        Gaussians covers >= 0.5 well past 6 cm from their centres, and the mesh reaches as far as the coverage does."""
+        cam = look(np.array([-15.0, 1.0, 0.0]), [5.0, 1.0, 0.0], w=3840, h=2160, f=20000.0)
+        s = self.blob(150, [5.0, 1.0, 0.0], 0.1, 2.2)  # alpha 0.9
+        pos, idx, info = sp.proxy_mesh(s, cam, cell_m=0.01)
+        u, v, _ = cam.project(pos)
+        cu, cv, _ = cam.project(np.array([5.0, 1.0, 0.0]))
+        reach = float(np.hypot(u - cu, v - cv).max()) * 20.0 / cam.f  # metres at the blob
+        # the coverage itself, on a box far wider than the blob: how far does >= 0.5 go?
+        px = 0.01 * cam.f / 20.0
+        half = int(0.6 / 0.01)
+        box = (cu - half * px, cv - half * px, cu + half * px, cv + half * px)
+        cov = sp.coverage_image(s, cam, box, 2 * half, 2 * half)
+        jj, ii = np.nonzero(cov >= 0.5)
+        tu, tv = sp.texel_of(cu, cv, box, 2 * half, 2 * half)
+        truth = float(np.hypot(ii - tu, jj - tv).max()) * 0.01
+        self.assertGreater(truth, 0.15)
+        self.assertGreater(reach, truth - 0.02)
+
+    def test_a_footprint_wider_than_the_cap_is_still_whole(self):
+        """Codex 3: a Gaussian whose 3 sigma is past max_r texels is evaluated out to its own reach."""
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=1000.0)
+        s = self.one([0.0, 1.0, 0.0], [0.8, 0.8, 0.8], alpha=0.9)  # sigma 40 px = 40 texels: 3 sigma = 120 > 64
+        cov = sp.coverage_image(s, cam, (0.0, 0.0, 400.0, 400.0), 400, 400, max_r=64)
+        self.assertAlmostEqual(cov[200, 200 + 80], 0.9 * math.exp(-0.5 * (80.5 / 40.0) ** 2), delta=0.01)
+
+    def test_near_floaters_do_not_blow_up_the_grid(self):
+        """Codex 4: a few hundred splats a hair in front of the lens leave the grid the body's size, and a grid past
+        the size limit is refused, not allocated."""
+        rng = np.random.default_rng(14)
+        cam = look(np.array([-15.0, 1.0, 0.0]), [5.0, 1.0, 0.0], w=3840, h=2160, f=20000.0)
         d = rng.normal(size=(20000, 3))
-        centre = np.array([5.0, 1.0, 0.0])
-        P = d / np.linalg.norm(d, axis=1, keepdims=True) * 0.4 + centre
-        cam = look(np.array([-15.0, 1.0, 0.0]), centre, w=3840, h=2160, f=20000.0)
-        glb = sp.proxy_glb(P, np.ones(len(P)), cam, nu=16, nv=16, name="ball")
-        pos, idx = sp.read_glb(glb)
-        self.assertEqual(len(pos), 17 * 17)
-        self.assertEqual(len(idx), 16 * 16 * 6)
-        mid = pos[8 * 17 + 8]
-        self.assertAlmostEqual(np.linalg.norm(mid - cam.C), 20.0 - 0.4, delta=0.03)
-        # every vertex lies on the camera's ray through its grid pixel: its own pixel back
+        body = self.blob(20000, [5.0, 1.0, 0.0], 0.006, 4.0)
+        body.table["x"], body.table["y"], body.table["z"] = (d / np.linalg.norm(d, axis=1, keepdims=True) * 0.3 + [5.0, 1.0, 0.0]).T.astype(np.float32)
+        _, _, clean = sp.proxy_mesh(body, cam, cell_m=0.004)
+        near = self.blob(300, [-15.0 + 0.005, 1.0, 0.0], 0.0001, 4.0, spread=0.0002)  # 5 mm from the lens
+        both = sp.Splats(np.concatenate([body.table, near.table]))
+        _, _, got = sp.proxy_mesh(both, cam, cell_m=0.004)
+        self.assertLessEqual(got["texels"][0] * got["texels"][1], 1.5 * clean["texels"][0] * clean["texels"][1])
+        with self.assertRaises(ValueError):
+            sp.proxy_mesh(body, cam, cell_m=0.00001)
+
+    def test_proxy_is_fine_at_the_silhouette_and_open_where_no_body_is(self):
+        # two 0.3 m balls of splats 1 m apart, 20 m from the camera: the mesh covers each ball's front, nothing between
+        rng = np.random.default_rng(11)
+        cam = look(np.array([-15.0, 1.0, 0.0]), [5.0, 1.0, 0.0], w=3840, h=2160, f=20000.0)
+        balls = []
+        for z0 in (-0.5, 0.5):
+            d = rng.normal(size=(30000, 3))
+            balls.append(d / np.linalg.norm(d, axis=1, keepdims=True) * 0.3 + [5.0, 1.0, z0])
+        P = np.concatenate(balls)
+        n = len(P)
+        s = sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), np.full((n, 3), math.log(0.006), np.float32),
+                          np.full(n, 4.0, np.float32), np.zeros((n, 3), np.float32))
+        pos, idx, info = sp.proxy_mesh(s, cam, cell_m=0.004)
+        self.assertLessEqual(info["cellM"], 0.0041)
+        # the ray between the balls misses the mesh: no triangle covers that pixel
         u, v, z = cam.project(pos)
-        self.assertTrue(np.all(z > 0))
+        tri = idx.reshape(-1, 3)
+        cu, cv = u[tri].mean(1), v[tri].mean(1)
+        mu, mv, _ = cam.project(np.array([5.0, 1.0, 0.0]))
+        self.assertFalse(np.any((np.abs(cu - mu) < 20) & (np.abs(cv - mv) < 20)))
+        # the front of a ball is where the mesh is: its nearest vertex on the ball's own axis ray, 0.3 m short of its centre
+        bu, bv, _ = cam.project(np.array([5.0, 1.0, 0.5]))
+        k = np.argmin((u - bu) ** 2 + (v - bv) ** 2)
+        self.assertAlmostEqual(float(np.linalg.norm(pos[k] - cam.C)), float(np.linalg.norm(np.array([5.0, 1.0, 0.5]) - cam.C)) - 0.3, delta=0.02)
+        # the silhouette: the mesh reaches the ball's edge (0.3 m, plus the splats' own half-width), not a cell beyond
+        r_px = np.hypot(u - bu, v - bv)[np.hypot(u - bu, v - bv) < 0.5 * cam.f / 20.0]
+        edge_px = 0.3 * cam.f / 20.0
+        self.assertGreater(r_px.max(), edge_px)
+        self.assertLess(r_px.max(), edge_px + 2.5 * 0.006 * cam.f / 20.0 + 2 * info["cellPx"])
+        # and is light enough to ship
+        self.assertLess(len(pos), 120_000)
+        glb, ginfo = sp.proxy_glb(s, cam, cell_m=0.004, name="balls")
+        gpos, gidx = sp.read_glb(glb)
+        np.testing.assert_allclose(gpos, pos, atol=1e-5)
+        self.assertEqual(ginfo["cellM"], info["cellM"])
 
 
 if __name__ == "__main__":
