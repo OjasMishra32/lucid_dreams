@@ -89,6 +89,7 @@ export class XrButton {
     this.canvas.height = 160;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8; // stays sharp seen at an angle (a palm menu always is)
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.028), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false }));
     this.draw(false);
   }

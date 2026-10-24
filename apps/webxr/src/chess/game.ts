@@ -16,6 +16,7 @@ import { hashSeed } from "./person";
 import { FloatingNote } from "./room";
 import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
 import { TableSounds } from "./sound";
+import { XR_QUALITY } from "../xr/quality";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
 // you at the strength you choose, with a real clock (10 + 0) at your right. Hands only, and nothing moves unless you
@@ -713,6 +714,7 @@ export async function renderChess(root: HTMLElement) {
     g.fillText("Pinch to move the board", 256, 50);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
     const m = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.0225), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }));
     m.position.set(0, 0.032, HANDLE_Z + 0.004);
     m.rotation.x = -0.9; // tilted up toward your eyes
@@ -794,10 +796,11 @@ export async function renderChess(root: HTMLElement) {
 
   // ---------------- floating status panel in the room ----------------
   const panelCanvas = document.createElement("canvas");
-  panelCanvas.width = 1024;
-  panelCanvas.height = 160;
+  panelCanvas.width = 2048; // drawn at twice its layout size: crisp across the board
+  panelCanvas.height = 320;
   const panelTex = new THREE.CanvasTexture(panelCanvas);
   panelTex.colorSpace = THREE.SRGBColorSpace;
+  panelTex.anisotropy = 8;
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.05), new THREE.MeshBasicMaterial({ map: panelTex, transparent: true, depthWrite: false }));
   panel.position.set(0, 0.14, -SQUARE * 4 - 0.06);
   panel.rotation.x = -0.25;
@@ -805,6 +808,7 @@ export async function renderChess(root: HTMLElement) {
   table.add(panel);
   function drawPanel(text: string) {
     const c = panelCanvas.getContext("2d")!;
+    c.setTransform(2, 0, 0, 2, 0, 0);
     c.clearRect(0, 0, 1024, 160);
     c.fillStyle = "rgba(29,29,31,0.78)";
     c.beginPath();
@@ -889,6 +893,8 @@ export async function renderChess(root: HTMLElement) {
   if (navigator.xr && (await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))) $("#room").hidden = false;
   $("#room").addEventListener("click", async () => {
     const session = await navigator.xr!.requestSession("immersive-ar", { requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "anchors"] });
+    renderer.xr.setFramebufferScaleFactor(XR_QUALITY.res);
+    renderer.xr.setFoveation(XR_QUALITY.fov); // three's default is full foveation: the clock, the menu and the edges blurred
     await renderer.xr.setSession(session);
     placed = false;
     panel.visible = true;

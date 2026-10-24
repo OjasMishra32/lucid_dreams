@@ -128,7 +128,9 @@ export function sayNext(text: string): Promise<void> {
   });
 }
 
-/** The step card floating beside the person in the room: step count, title, tip, and a bar through your turn. */
+/** The step card floating beside the person in the room: where you are in the lesson, the step's name and tip, and a
+ * bar through your turn. Drawn large (1536 x 768 on a 56 cm card) and filtered for angles, so it reads crisp in the
+ * headset. */
 export class StepCard {
   mesh: THREE.Mesh;
   /** The coach's line (what you asked, then its answer), shown in place of the tip while there is one. */
@@ -137,55 +139,86 @@ export class StepCard {
   private tex: THREE.CanvasTexture;
 
   constructor() {
-    this.canvas.width = 1024;
-    this.canvas.height = 512;
+    this.canvas.width = 1536;
+    this.canvas.height = 768;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.28), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false }));
     this.mesh.renderOrder = 10;
   }
 
   draw(lesson: Lesson, now: number) {
     const c = this.canvas.getContext("2d")!;
-    const W = 1024, H = 512;
+    const W = 1536, H = 768, P = 96;
     c.clearRect(0, 0, W, H);
-    c.fillStyle = "rgba(29,29,31,0.8)";
+    // glass: deep and quiet, a hairline of light on its edge
+    const g = c.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "rgba(44,44,48,0.86)");
+    g.addColorStop(1, "rgba(22,22,24,0.86)");
+    c.fillStyle = g;
     c.beginPath();
-    c.roundRect(8, 8, W - 16, H - 16, 56);
+    c.roundRect(6, 6, W - 12, H - 12, 72);
     c.fill();
+    c.strokeStyle = "rgba(255,255,255,0.14)";
+    c.lineWidth = 3;
+    c.stroke();
     const s = lesson.step;
+    const turn = lesson.phase === "turn";
+    // where you are: a dot per step, the current one long
+    let x = P;
+    lesson.steps.forEach((_, k) => {
+      const on = k === lesson.i;
+      c.fillStyle = on ? (turn ? "#0a84ff" : "#f5f5f7") : "rgba(255,255,255,0.28)";
+      c.beginPath();
+      c.roundRect(x, 104, on ? 64 : 18, 18, 9);
+      c.fill();
+      x += (on ? 64 : 18) + 14;
+    });
     c.textAlign = "left";
     c.textBaseline = "alphabetic";
-    c.fillStyle = "#a1a1a6";
-    c.font = '500 36px -apple-system, "SF Pro Text", "Inter", sans-serif';
-    c.fillText(lesson.phase === "turn" ? "Your turn" : `Step ${lesson.i + 1} of ${lesson.steps.length}`, 64, 104);
+    c.fillStyle = turn ? "#409cff" : "#a1a1a6";
+    c.font = '600 44px -apple-system, "SF Pro Text", "Inter", sans-serif';
+    c.fillText(turn ? "Your turn" : `Step ${lesson.i + 1} of ${lesson.steps.length}`, x + 16, 124);
     c.fillStyle = "#f5f5f7";
-    c.font = '600 64px -apple-system, "SF Pro Display", "Inter", sans-serif';
-    c.fillText(s.title, 64, 190, W - 128);
+    c.font = '700 96px -apple-system, "SF Pro Display", "Inter", sans-serif';
+    fit(c, s.title, W - 2 * P, 96, 64, '700 %spx -apple-system, "SF Pro Display", "Inter", sans-serif');
+    c.fillText(s.title, P, 262, W - 2 * P);
     if (this.note) {
-      c.fillStyle = "#2997ff";
-      c.font = '600 32px -apple-system, "SF Pro Text", "Inter", sans-serif';
-      c.fillText(this.note.label, 64, 252, W - 128);
-      c.fillStyle = "#d1d1d6";
-      c.font = '400 38px -apple-system, "SF Pro Text", "Inter", sans-serif';
-      wrap(c, this.note.text, 64, 302, W - 128, 48, 3);
+      c.fillStyle = "#409cff";
+      c.font = '600 44px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      c.fillText(this.note.label, P, 352, W - 2 * P);
+      c.fillStyle = "#e5e5ea";
+      c.font = '400 52px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      wrap(c, this.note.text, P, 428, W - 2 * P, 68, 3);
     } else if (s.tip) {
-      c.fillStyle = "#d1d1d6";
-      c.font = '400 40px -apple-system, "SF Pro Text", "Inter", sans-serif';
-      wrap(c, s.tip, 64, 262, W - 128, 52, 3);
+      c.fillStyle = "#e5e5ea";
+      c.font = '400 56px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      wrap(c, s.tip, P, 368, W - 2 * P, 74, 3);
     }
-    if (lesson.phase === "turn") {
+    // your turn: a bar that empties as the time runs out
+    if (turn) {
       c.fillStyle = "rgba(255,255,255,0.14)";
       c.beginPath();
-      c.roundRect(64, H - 72, W - 128, 10, 5);
+      c.roundRect(P, H - 104, W - 2 * P, 16, 8);
       c.fill();
       c.fillStyle = "#0a84ff";
       c.beginPath();
-      c.roundRect(64, H - 72, (W - 128) * lesson.turnProgress(now), 10, 5);
+      c.roundRect(P, H - 104, Math.max(16, (W - 2 * P) * (1 - lesson.turnProgress(now))), 16, 8);
       c.fill();
     }
     this.tex.needsUpdate = true;
   }
+}
+
+/** A title that would run long gets a smaller size (down to `min` px) instead of being squeezed. */
+function fit(c: CanvasRenderingContext2D, text: string, max: number, size: number, min: number, font: string) {
+  while (size > min) {
+    c.font = font.replace("%s", String(size));
+    if (c.measureText(text).width <= max) return;
+    size -= 4;
+  }
+  c.font = font.replace("%s", String(min));
 }
 
 function wrap(c: CanvasRenderingContext2D, text: string, x: number, y: number, max: number, lh: number, lines: number) {

@@ -16,6 +16,7 @@ import { setMirrored } from "./mirror";
 import { WorldLock } from "./xr/anchor";
 import { handOccluder, XrButton } from "./xr/hands";
 import { HandMenu, handSides } from "./xr/menu";
+import { XR_QUALITY } from "./xr/quality";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
 // "local-floor" space, so y = 0 is the real floor and nothing is ever scaled: the person is exactly their real size.
@@ -646,6 +647,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
     // the page (View in your room calls toggleXr)
     element: document.createElement("button"),
     enableHands: true,
+    frameBufferScaleFactor: XR_QUALITY.res, // Spark's default is half resolution: people and text came out soft
+    fixedFoveation: XR_QUALITY.fov, // no blur toward the edges, where the step card and the palm menu sit
     sessionInit: { optionalFeatures: ["anchors"] },
     onEnterXr: () => {
       scene.background = null;

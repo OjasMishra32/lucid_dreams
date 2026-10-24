@@ -46,7 +46,7 @@ export class ChessClock {
       canvas.height = 128;
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
+      tex.anisotropy = 8;
       const face = new THREE.Mesh(new THREE.PlaneGeometry(0.052, 0.026), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
       face.rotation.x = -Math.PI / 2; // facing up, its text upright from the player's chair
       face.position.set(-0.014, BODY.y + 0.0004, sz * HALF_Z);

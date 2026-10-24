@@ -28,6 +28,7 @@ export class LegendCard {
     this.canvas.height = 288;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(LegendCard.W, LegendCard.H), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false }));
     this.draw(false);
   }
@@ -98,6 +99,7 @@ export class FloatingNote {
     this.canvas.height = 96;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.033), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false }));
     this.mesh.visible = false;
   }
