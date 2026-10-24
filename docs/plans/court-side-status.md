@@ -5,14 +5,17 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 9:07 AM. Vishal is up; the planning session keeps building.
+Updated Sat 9:11 AM. Vishal is up; the planning session keeps building.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
-Game 2, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60) at 6:15. Kept
+Game 2, from the low courtside camera in the team's own all-angles upload. Kept
 private, outside the repo.
 
 ## Asks for Ojasva (newest first)
 
+16. **Your noon rule ("two players passing by noon, else ship the main player alone"):** the Turbo views
+    (gate 2) land ~11 AM-noon and the full-quality freeze frames after ~1 PM. Apply the rule at gate 2 (both
+    players' Turbo views not mush), or name a later time for the full runs?
 15. **Court Side's tests outside `src/` (your lane):** `apps/webxr/scripts/court/` (run with
     `node --experimental-transform-types --test`), because `tsc` includes `src/` and the repo has no test runner or
     Node types; putting them in `src/court/` would break `npm run build`. Nothing else outside `src/court/` changes
@@ -116,6 +119,12 @@ Biggest risks: the video-to-3D hand-off matching to the pixel (calibration), Luk
 
 ## Decisions
 
+- **Where you sit (planning session, 9:10 AM):** the low camera stood ~25 m from the players on a very long lens,
+  so from its own spot the play is a postcard. The seat sits on that camera's line of sight ~5 m from the pair;
+  the footage is projected in layers (court, stands, a card per person) so it still lines up, and the 3D takes
+  over exactly at the freeze.
+- **Plan in git:** the full plan (with numbers measured from the broadcast) stays private; the branch gets a
+  redacted copy, per your "nothing derived from the broadcast in git".
 - **Made overnight by the planning session (Vishal can change any):** the watch is the play at real speed, then
   its own real slow motion from the seat with "Step into the court" live, so any press lands on the freeze; the
   splat budget is 500k visible until the Quest number says more; the main camera stays on the ball until it drops
