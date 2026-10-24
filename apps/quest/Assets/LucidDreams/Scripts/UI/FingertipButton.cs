@@ -29,6 +29,10 @@ namespace LucidDreams
         public Color focusColor = GlassUI.RaisedFocus;
         [Tooltip("Scale up a little on focus (cards).")]
         public bool growOnFocus;
+        [Tooltip("Only the right index fingertip presses it (the palm menu, which sits on your left hand).")]
+        public bool rightIndexOnly;
+        [Tooltip("A pinch on it, released over it, presses it too. Off for controls a busy hand could brush.")]
+        public bool pinchPress = true;
 
         public bool Focused { get; private set; }
 
@@ -74,7 +78,8 @@ namespace LucidDreams
                 foreach (var hand in hands.Hands)
                 {
                     bool inside = false;
-                    if (hand.Has(UnityEngine.XR.Hands.XRHandJointID.IndexTip))
+                    bool counts = !rightIndexOnly || hand.handedness == UnityEngine.XR.Hands.Handedness.Right;
+                    if (counts && hand.Has(UnityEngine.XR.Hands.XRHandJointID.IndexTip))
                     {
                         var local = transform.InverseTransformPoint(hand.IndexTip);
                         bool over = rect.Contains(new Vector2(local.x, local.y));
@@ -86,7 +91,7 @@ namespace LucidDreams
 
                     // Pinch on it and let go: fires on release, only if the pinch began and ended over it.
                     bool pinchOver = false;
-                    if (hand.tracked)
+                    if (pinchPress && counts && hand.tracked)
                     {
                         var p = transform.InverseTransformPoint(hand.pinchPoint);
                         pinchOver = rect.Contains(new Vector2(p.x, p.y)) && Mathf.Abs(p.z) < 45f;

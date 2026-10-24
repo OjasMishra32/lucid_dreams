@@ -97,97 +97,80 @@ namespace LucidDreams.Tests
             Check(!Seating.For(player.Body, askedToSit, askedToSit.intent).seated,
                 $"a person standing at full height stays standing even when the plan says sit ({player.Body.Height:F2} m tall)");
 
-            // Quick pinch in the room toggles playback.
+            // Hands locked down: no pinch or gesture changes anything by itself (a dance or a swing pinches by accident).
             bool wasPlaying = player.IsPlaying;
+            var start = root.position;
+            float yaw0 = root.eulerAngles.y;
             var air = new Vector3(0.3f, 1.3f, 1.6f);
             yield return Pinch(hands.right, air, air, 0.12f);
-            Check(player.IsPlaying != wasPlaying, "quick pinch toggles play/pause");
-
-            // A fingertip pushed through the play button presses it once, even resting there.
-            var button = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude)
-                .First(b => b.label.text == "Play" || b.label.text == "Pause");
-            wasPlaying = player.IsPlaying;
-            var front = button.transform.TransformPoint(new Vector3(0f, 0f, -30f));
-            var through = button.transform.TransformPoint(new Vector3(0f, 0f, 6f));
-            for (int i = 0; i <= 10; i++)
-            {
-                Point(hands.right, Vector3.Lerp(front, through, i / 10f));
-                yield return null;
-            }
-            yield return Frames(20);
-            Check(player.IsPlaying != wasPlaying, "fingertip push presses the button");
-            Check(player.IsPlaying != wasPlaying, "resting on the button doesn't fire again");
-            Point(hands.right, front);
-            yield return Frames(5);
-            Release(hands.right);
-
-            // Pinch-drag on the timeline scrubs.
-            yield return Pinch(hands.left, bar.TimelinePoint(0.1f), bar.TimelinePoint(0.75f), 0.4f);
-            Check(Mathf.Abs(player.NormalizedTime - 0.75f) < 0.05f && !player.IsPlaying, $"timeline scrub lands at 75% ({player.NormalizedTime:F2})");
-
-            // Pinch the person and drag: they slide along the floor.
-            var start = root.position;
+            Check(player.IsPlaying == wasPlaying, "a quick pinch in the air changes nothing");
             var chest = start + Vector3.up * 1.2f;
             yield return Pinch(hands.right, chest, chest + new Vector3(0.3f, 0.2f, -0.2f), 0.6f);
-            var moved = root.position - start;
-            Check(Mathf.Abs(moved.x - 0.3f) < 0.02f && Mathf.Abs(moved.z + 0.2f) < 0.02f && Mathf.Abs(root.position.y) < 1e-4f,
-                $"grab moves along the floor, never lifts ({moved})");
-
-            // Two hands on the person turn them.
-            float yaw0 = root.eulerAngles.y;
-            var c = root.position + Vector3.up * 1.1f;
-            yield return TwoHandTurn(c, 0.22f, 30f, 0.6f);
-            float turned = Mathf.DeltaAngle(yaw0, root.eulerAngles.y);
-            Check(Mathf.Abs(turned - 30f) < 2f, $"two-hand grab turns them ({turned:F1} degrees)");
-
-            // Long pinch pointing at the floor: they stand there, facing you.
-            var target = new Vector3(-0.8f, 0f, -0.5f);
+            yield return TwoHandTurn(start + Vector3.up * 1.1f, 0.22f, 30f, 0.6f);
             var eye = head.transform.position;
-            var aim = eye + (target - eye).normalized * 0.5f;
+            var aim = eye + (new Vector3(-0.8f, 0f, -0.5f) - eye).normalized * 0.5f;
             yield return Pinch(hands.right, aim, aim, 1.1f);
-            Check(Vector3.Distance(root.position, target) < 0.03f, $"long pinch re-places them where you point ({root.position})");
-            var toViewer = Vector3.ProjectOnPlane(eye - root.position, Vector3.up);
-            Check(Vector3.Angle(root.forward, toViewer) < 1f, "and they face you");
+            yield return new WaitForSeconds(HandTracker.LostS + 0.1f);
+            Check(Vector3.Distance(root.position, start) < 1e-4f && Mathf.Abs(Mathf.DeltaAngle(yaw0, root.eulerAngles.y)) < 0.01f
+                  && player.IsPlaying == wasPlaying, "pinch-dragging the person, turning them with two hands and a long pinch move nothing");
+            yield return PinchChecks();
 
-            // Reality check: a fingertip push loads the reality frames and swaps them in at the same frame.
-            placer.PlaceInFrontOfViewer();
-            player.Pause();
-            player.Scrub(0.4f);
-            int frameBefore = player.Frame;
-            var realityButton = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text == "Reality check");
-            Check(realityButton != null, "the rail has a Reality check button");
-            if (realityButton != null)
+            // The controls live on your left palm: turned toward your eyes for ~0.2 s, the menu opens just above it.
+            Check(!bar.IsOpen && bar.Find("Play") == null && bar.Find("Pause") == null, "no controls float in front of you until your palm asks");
+            var palm = new Vector3(0.12f, 1.25f, 1.62f); // in front of you, low, on your left (you face -Z here)
+            ShowPalm(palm, eye - palm);
+            yield return new WaitForSeconds(0.1f);
+            Check(!bar.IsOpen, "a palm turning past doesn't flash it open");
+            yield return new WaitForSeconds(0.25f);
+            var above = palm + (eye - palm).normalized * 0.06f;
+            Check(bar.IsOpen && Vector3.Distance(bar.transform.position, above) < 0.02f,
+                $"palm up for 0.2 s opens it, just above your palm ({Vector3.Distance(bar.transform.position, above) * 100f:F1} cm off)");
+            Render(Path.Combine(outputDir, "palm-menu-eye-view.png"));
+            var playButton = bar.Find(player.IsPlaying ? "Pause" : "Play");
+            Check(playButton != null && playButton.rightIndexOnly && !playButton.pinchPress, "only your right index fingertip presses it; pinches don't");
+            wasPlaying = player.IsPlaying;
+            yield return Push(playButton);
+            Check(player.IsPlaying != wasPlaying, "a fingertip push on Play / Pause toggles playback");
+            Check(bar.Find("1×") != null && bar.Find("Bring here") != null && bar.Find("Library") != null,
+                "Speed, Bring here and Library are on it");
+            Check((bar.Find("Reality check") != null) == player.HasReality, "Reality check only for a dream with reality frames");
+
+            // Bring here re-stands them in front of you (and pins them there).
+            placer.MoveTo(start + new Vector3(0.6f, 0f, -0.4f), yaw0 + 40f);
+            ShowPalm(palm, eye - palm);
+            yield return Push(bar.Find("Bring here"));
+            Check(Vector3.Distance(root.position, start) < 0.02f && Vector3.Angle(root.forward, Vector3.forward) < 1f,
+                $"Bring here stands them back in front of you, facing you ({root.position})");
+
+            if (player.HasReality)
             {
-                yield return Push(realityButton);
-                yield return Frames(3);
-            }
-            if (realityButton != null && !player.HasReality)
-            {
-                // A bundle with no reality frames (the committed sample): the popover says so, with nothing to toggle.
-                var unavailable = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Unavailable");
-                Check(unavailable != null && !player.ShowingReality, $"Reality check opens and says this dream has no imagined detail to show ({unavailable?.text})");
-                yield return Push(realityButton);
-            }
-            else if (realityButton != null)
-            {
-                var seen = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Seen");
-                Check(seen != null && seen.text == "50% seen by the camera · blue was imagined" && !player.ShowingReality,
-                    $"Reality check opens and says how much was seen, before anything is tinted ({seen?.text})");
-                var imagined = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text == "Show imagined detail");
-                Check(imagined != null, "with one toggle, Show imagined detail");
-                yield return Push(imagined);
+                player.Pause();
+                player.Scrub(0.4f);
+                int frameBefore = player.Frame;
+                ShowPalm(palm, eye - palm);
+                yield return Push(bar.Find("Reality check"));
                 until = Time.realtimeSinceStartup + 60f;
-                while (!player.ShowingReality && player.RealityError == null && Time.realtimeSinceStartup < until) yield return null;
+                while (!player.ShowingReality && player.RealityError == null && Time.realtimeSinceStartup < until)
+                {
+                    ShowPalm(palm, eye - palm);
+                    yield return null;
+                }
                 yield return Frames(5);
-                Check(player.ShowingReality, $"the toggle loads and shows the imagined detail in blue ({player.RealityError})");
-                Check(player.Frame == frameBefore, "same moment, just the reality version");
-                Render(Path.Combine(outputDir, "reality-popover-eye-view.png"));
+                Check(player.ShowingReality && player.Frame == frameBefore, $"Reality check shows the imagined detail in blue, same moment ({player.RealityError})");
                 Render(Path.Combine(outputDir, "reality-side-view.png"), root.position + new Vector3(2.4f, 1.1f, 0f), root.position + Vector3.up * 0.9f);
-                yield return Push(imagined);
+                ShowPalm(palm, eye - palm);
+                yield return Push(bar.Find("Reality check"));
                 yield return Frames(3);
-                Check(!player.ShowingReality, "toggling it off goes back to the real colours");
-                yield return Push(realityButton);
+                Check(!player.ShowingReality, "and back to the real colours");
             }
+
+            // Palm turned away: it closes after ~0.45 s, not at once (a hand that wobbles keeps it).
+            ShowPalm(palm, Vector3.down);
+            yield return new WaitForSeconds(0.25f);
+            Check(bar.IsOpen, "a wobble doesn't close it");
+            yield return new WaitForSeconds(0.4f);
+            Check(!bar.IsOpen && bar.Find("Bring here") == null, "palm turned away for ~0.45 s: it closes");
+            Release(hands.left);
 
             // A finger between your eyes and the person: the person must not draw over it.
             placer.PlaceInFrontOfViewer();
@@ -630,19 +613,30 @@ namespace LucidDreams.Tests
             Check(lesson.Index == 1 && !lesson.YourTurn && Mathf.Abs(Time.time - t0 - watch - turn) < 0.3f,
                 $"then the next step ({Time.time - t0:F2} s, expected {watch + turn:F2})");
 
-            var buttons = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude);
-            FingertipButton B(string label) => buttons.FirstOrDefault(b => b.label.text == label);
-            Check(B("Previous step") != null && B("Again") != null && B("Next step") != null, "the rail has Previous step / Again / Next step in a lesson");
-            yield return Push(B("Next step"));
-            Check(lesson.Index == 2, $"Next step goes forward (step {lesson.Index + 1})");
-            yield return Push(B("Next step"));
+            var palm = new Vector3(0.12f, 1.25f, 1.62f);
+            var eyes = head.transform.position;
+            FingertipButton B(string label)
+            {
+                ShowPalm(palm, eyes - palm); // the palm stays up between presses
+                return bar.Find(label);
+            }
+            ShowPalm(palm, eyes - palm);
+            yield return new WaitForSeconds(0.35f);
+            Check(B("Back") != null && B("Again") != null && B("Next") != null && B("1×") == null, "in a lesson the palm menu has Back / Again / Next (no Speed)");
+            yield return Push(B("Next"));
+            Check(lesson.Index == 2, $"Next goes forward (step {lesson.Index + 1})");
+            yield return Push(B("Next"));
             Check(lesson.Index == 0, "and wraps after the last step");
-            yield return Push(B("Previous step"));
-            Check(lesson.Index == 2, "Previous step goes back, wrapping too");
-            yield return Frames(10);
+            yield return Push(B("Back"));
+            Check(lesson.Index == 2, "Back goes back, wrapping too");
+            // Let the step run on, so a restart is unmistakable, then Again: it's back near the step's start (within the
+            // ~0.6 s a press takes, at the step's speed), not where it had got to.
+            yield return new WaitForSeconds(0.8f);
+            float startFrame = lesson.steps[2].start * player.Dream.fps;
+            float pressFrames = 0.6f * lesson.steps[2].Speed * player.Dream.fps + 2f;
             yield return Push(B("Again"));
-            Check(lesson.Index == 2 && lesson.Rep == 0 && !lesson.YourTurn && Mathf.Abs(player.Frame - lesson.steps[2].start * player.Dream.fps) <= 2f,
-                $"Again restarts the step (frame {player.Frame})");
+            Check(lesson.Index == 2 && lesson.Rep == 0 && !lesson.YourTurn && player.Frame >= startFrame - 2f && player.Frame <= startFrame + pressFrames,
+                $"Again restarts the step (frame {player.Frame}, the step starts at {startFrame:F0})");
         }
 
         void Check(bool ok, string what)
@@ -668,6 +662,38 @@ namespace LucidDreams.Tests
             }
             Release(hand);
             yield return Frames(3);
+        }
+
+        // Your left hand open (no pinch), its palm at the point and facing along normal.
+        void ShowPalm(Vector3 at, Vector3 normal)
+        {
+            hands.Simulate(hands.left, true, at + Vector3.up * 0.09f, at + new Vector3(0.06f, 0.02f, 0f));
+            hands.SimulatePalm(hands.left, at, normal);
+        }
+
+        // A held pinch rides out a moment of the fingers jittering apart or of lost tracking, and says when it opens.
+        IEnumerator PinchChecks()
+        {
+            var at = new Vector3(-0.3f, 1.2f, 1.6f);
+            void Fingers(float apart) => hands.Simulate(hands.right, true, at + Vector3.right * apart / 2f, at - Vector3.right * apart / 2f);
+            Fingers(0.008f);
+            yield return Frames(3);
+            bool held = hands.right.pinching;
+            Fingers(0.04f);
+            yield return new WaitForSeconds(0.03f);
+            bool throughJitter = hands.right.pinching && hands.right.opening;
+            Fingers(0.008f);
+            yield return Frames(2);
+            hands.Simulate(hands.right, false, Vector3.zero, Vector3.zero);
+            yield return new WaitForSeconds(0.15f);
+            bool throughLoss = hands.right.pinching;
+            Fingers(0.008f);
+            yield return Frames(2);
+            Fingers(0.04f);
+            yield return new WaitForSeconds(HandTracker.JitterS + 0.05f);
+            Check(held && throughJitter && throughLoss && !hands.right.pinching,
+                "a pinch rides out 30 ms of the fingers parting (and says it's opening) and 150 ms of lost tracking, then lets go");
+            Release(hands.right);
         }
 
         IEnumerator TwoHandTurn(Vector3 center, float halfSpan, float degrees, float seconds)

@@ -34,12 +34,11 @@ every state (never colour alone). Targets are at least 64 mm.
   with a coloured dot and words), newest first, paged. Selected = blue ring + check. Downloading says "Keep
   browsing". Empty: "No dreams yet" + **Make a dream** (opens the web app). Footer: **Captions** on / off and
   **Text size** Standard / Large (remembered).
-- **Playback rail:** 0.82 x 0.11 m, 0.65 m ahead and 0.65 m below your eyes, follows lazily, holds still while a hand
-  is near. Speed (1 / 0.5 / 0.25x), Previous / Next (steps in a lesson, else the previous / next person on the
-  headset), a 72 mm blue Play / Pause (labelled on first use), Again in a lesson, Reality check, Bring here, Library;
-  a labelled timeline below with a 32 mm touch corridor and a tick when a seek lands. Wraps to two rows if needed.
-- **Reality check:** a 0.36 m card above the rail: "Reality check", "N% seen by the camera · blue was imagined", and
-  one toggle, **Show imagined detail**. Without reality data: "Reality data is unavailable for this dream."
+- **Palm menu** (replaced the playback rail, Sat 5 AM): turn your left palm toward your eyes and, after ~0.2 s, a
+  0.21 m wide card of 92 x 34 mm buttons opens 6 cm above it, turned to you; it closes ~0.45 s after you turn the palm
+  away. Play / Pause (blue), Speed (1 / 0.5 / 0.25x) or, in a lesson, Again / Back / Next, Reality check (only when
+  the dream has reality frames; the card then says "N% seen by the camera · blue was imagined"), Bring here, Library.
+  Only the right index fingertip presses them, never a pinch.
 - **Captions:** at most 0.56 m wide, at least 0.10 m tall, 22 mm side padding, `#161617` 88%, 29 mm text (36 mm
   Large), two lines at most, nothing when a dream has none or captions are off.
 
@@ -146,16 +145,20 @@ The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experien
 
 ## Hands (no controllers needed)
 
-- **Quick pinch** anywhere: play / pause.
-- **Pinch the person and drag:** they slide along the floor (never lifted, never scaled). **Both hands:** turn them.
-- **Pinch and hold ~1 s pointing at the floor:** they stand there, facing you.
-- **Control bar** (floats low in front of you, follows when you turn): push a fingertip through **Play/Pause**,
-  **speed** (1 / 0.5 / 0.25x), **Reality check**, **Bring here** or **Library**; pinch the timeline and drag to scrub.
-  Buttons fire once per push. With more than five buttons it wraps into two rows.
-- **Reality check** (bundles with `frames.reality`): the first push loads the reality frames (same Gaussians, the ones
-  the camera never saw tinted blue) and swaps them in at the same moment; the bar shows `metrics.seenFraction`
-  ("62% seen by the camera · blue was imagined"). Push again for the real colours. It costs one more set of SPZ
-  frames on the GPU (56 B per Gaussian per frame) and counts against the same budget.
+Locked down (Ojasva's call after trying it with hands only): copying a dance, a tai chi form or a golf swing pinches by
+accident all the time, so **no pinch or gesture changes anything by itself**. Nothing moves, pauses or turns the
+person but a button.
+
+- **Palm menu:** turn your left palm up toward your face; press with your right index fingertip (see above).
+- **Bring here** stands them in front of you again; that's the only way to move them.
+- **Pinned to your room:** after every placement an AR anchor (`WorldLock`, OpenXR's Meta anchor feature) holds them
+  there, read back every frame, so a recenter or tracking drift never slides them. In the editor (no anchors) they
+  stay put in tracking space.
+- **Pinches that hold things** (the golf club, next) ride out ~70 ms of the fingers jittering apart and ~300 ms of lost
+  tracking (`HandTracker`), and `opening` turns on as soon as the fingers part, so a held thing lands where you let go.
+- **Reality check** (bundles with `frames.reality`): the first press loads the reality frames (same Gaussians, the
+  ones the camera never saw tinted blue) and swaps them in at the same moment; press again for the real colours. It
+  costs one more set of SPZ frames on the GPU (56 B per Gaussian per frame) and counts against the same budget.
 - Your real hands stay in front of the person: depth-only stand-ins (`HandOccluder`) hide what's behind them.
 - A soft contact shadow sits under the feet.
 
@@ -174,8 +177,9 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
   -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check [-format auto|ply|spz]
 ```
 
-`HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
-eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
+`HandsCheck` drives simulated hands in the real scene: pinches, drags and two-hand turns must change nothing, the
+palm menu must open and close on time just above the left palm and its buttons work, pinches must ride out jitter
+and lost tracking; it renders the menu and the eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
 instead: placement, step timing, your turn, Back / Again / Next and the voice; with a `voice` or `captions` it checks
 those (decode, mouth position, sync, quiet when paused or slowed, cue text); with `props` it checks the ball on its
 track, fades, the bounce and the hoop's regulation sizes; with a seat in the plan it checks seating (hips at bench

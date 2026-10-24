@@ -35,6 +35,7 @@ namespace LucidDreams.Editor
             "com.unity.openxr.feature.arfoundation-meta-camera", // passthrough
             "com.unity.openxr.feature.arfoundation-meta-plane", // floor
             "com.unity.openxr.feature.arfoundation-meta-raycast",
+            "com.unity.openxr.feature.arfoundation-meta-anchor", // the person stays where you put them
             "com.unity.openxr.feature.foveatedrendering",
             "com.unity.openxr.feature.input.oculustouch",
             "com.unity.openxr.feature.input.handinteraction",
@@ -230,6 +231,7 @@ namespace LucidDreams.Editor
             origin.RequestedTrackingOriginMode = XROrigin.TrackingOriginMode.Floor;
             var planes = originGo.AddComponent<ARPlaneManager>();
             planes.requestedDetectionMode = UnityEngine.XR.ARSubsystems.PlaneDetectionMode.Horizontal;
+            var anchors = originGo.AddComponent<ARAnchorManager>(); // pins the person to the room
 
             // Dream root sits on the floor and faces the viewer; the person is a child so placement and
             // grabbing never touch the splat transform.
@@ -237,6 +239,8 @@ namespace LucidDreams.Editor
             var placer = dreamGo.AddComponent<DreamPlacer>();
             placer.head = camGo.transform;
             placer.planes = planes;
+            placer.worldLock = dreamGo.AddComponent<WorldLock>();
+            placer.worldLock.anchors = anchors;
             var personGo = new GameObject("Person");
             personGo.transform.SetParent(dreamGo.transform, false);
             var splat = ObjectFactory.AddComponent<GaussianSplat3DRenderer>(personGo);
@@ -315,7 +319,8 @@ namespace LucidDreams.Editor
             secondShadow.shader = shadow.shader;
             secondShadow.player = secondPlayer;
 
-            // Hands: tracked in the camera offset's space, occluding the person, driving the bar and the person.
+            // Hands: tracked in the camera offset's space, occluding the person; the controls sit on the left palm
+            // (no gesture moves or pauses anything).
             var handsGo = new GameObject("Hands");
             handsGo.transform.SetParent(originGo.transform, false);
             var tracker = handsGo.AddComponent<HandTracker>();
@@ -324,7 +329,7 @@ namespace LucidDreams.Editor
             occluder.hands = tracker;
             occluder.depthOnly = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/DepthOnly.shader");
 
-            var barGo = new GameObject("Control Bar");
+            var barGo = new GameObject("Palm Menu");
             var bar = barGo.AddComponent<DreamControlBar>();
             bar.head = camGo.transform;
             bar.hands = tracker;
@@ -354,15 +359,6 @@ namespace LucidDreams.Editor
             steps.placer = placer;
             steps.voice = voice;
             steps.head = camGo.transform;
-
-            var interaction = dreamGo.AddComponent<DreamHands>();
-            interaction.hands = tracker;
-            interaction.placer = placer;
-            interaction.companion = companion;
-            interaction.player = player;
-            interaction.bar = bar;
-            interaction.library = libraryPanel;
-            interaction.head = camGo.transform;
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };

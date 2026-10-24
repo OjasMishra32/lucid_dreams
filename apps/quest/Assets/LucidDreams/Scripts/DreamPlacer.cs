@@ -17,6 +17,8 @@ namespace LucidDreams
 
         public Transform head;
         public ARPlaneManager planes;
+        [Tooltip("Pins the person to the room after every placement (an AR anchor), so a recenter never slides them.")]
+        public WorldLock worldLock;
         public Transform person;
         [Tooltip("Takes Place from the bundle's experience plan once it loads.")]
         public DreamSequencePlayer player;
@@ -78,7 +80,12 @@ namespace LucidDreams
                 floorY = y;
                 floorFromPlane = true;
                 // Keep wherever the person was put; only stand them exactly on the scanned floor.
-                if (placed) transform.position = new Vector3(transform.position.x, floorY, transform.position.z);
+                if (placed)
+                {
+                    worldLock?.Release();
+                    transform.position = new Vector3(transform.position.x, floorY, transform.position.z);
+                    worldLock?.Lock();
+                }
             }
 
             // Head pose is zero for the first frames while tracking starts.
@@ -113,8 +120,19 @@ namespace LucidDreams
                 front = head != null ? Vector3.ProjectOnPlane(head.position - spot, Vector3.up) : Vector3.back;
                 if (front.sqrMagnitude < 1e-4f) front = transform.forward;
             }
+            worldLock?.Release();
             transform.SetPositionAndRotation(spot, Quaternion.LookRotation(front.normalized, Vector3.up));
             placed = true;
+            worldLock?.Lock();
+        }
+
+        // Stands them at a floor point turned to a yaw (checks and scripted moves; no hand gesture moves them).
+        public void MoveTo(Vector3 point, float yawDegrees)
+        {
+            worldLock?.Release();
+            transform.SetPositionAndRotation(new Vector3(point.x, floorY, point.z), Quaternion.Euler(0f, yawDegrees, 0f));
+            placed = true;
+            worldLock?.Lock();
         }
 
         Vector3 ViewerForward()
@@ -124,12 +142,6 @@ namespace LucidDreams
             return forward.normalized;
         }
 
-        // Moves along the floor and turns about the vertical axis; height always stays on the floor.
-        public void MoveTo(Vector3 point, float yawDegrees)
-        {
-            transform.SetPositionAndRotation(new Vector3(point.x, floorY, point.z), Quaternion.Euler(0f, yawDegrees, 0f));
-            placed = true;
-        }
 
         // Without a scanned floor, the XR Origin's floor-level tracking puts the floor at its own y.
         bool TryFindFloor(out float y)
