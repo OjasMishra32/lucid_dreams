@@ -59,6 +59,10 @@ def parse_args(argv=None):
                    help="per frame: re-align the real camera to the views' person and let the real frame count only "
                         "where the two agree (no ghost limbs where 4DAnyone's person and the real one differ)")
     p.add_argument("--source-refine-steps", type=int, default=60, help="pose steps per frame with --source-agree")
+    p.add_argument("--extra-sources", type=Path, default=None,
+                   help="JSON list of more real cameras on the same moment (other angles), each solved like the clip's: "
+                        '[{"video": path, "offset": its frame = ours + offset, "masks": dir, "ignore": dir, '
+                        '"focal": px, "weight": 1.0}]; needs --source-video')
     p.add_argument("--source-focal", type=float, default=None,
                    help="the clip camera's known focal length in full-resolution pixels, held instead of solved")
     p.add_argument("--face-weight", type=float, default=0.0,
@@ -178,7 +182,7 @@ class Trainer:
         )
         return rgb.clamp(0, 1), alpha, info
 
-    def fit(self, params, rgba: torch.Tensor, iters: int, warm: bool, src: torch.Tensor | None = None, face=None):
+    def fit(self, params, rgba: torch.Tensor, iters: int, warm: bool, src: torch.Tensor | None = None, face=None, extras=None):
         from gsplat.strategy import MCMCStrategy
 
         a = self.args
@@ -219,6 +223,11 @@ class Trainer:
                 sbg = torch.rand(1, 3, device=self.device)
                 spred, salpha, _ = self.source.render(self, params, degree, sbg)
                 loss = loss + a.source_weight * real_view_loss(spred, salpha, src, sbg)
+            if extras and step % a.source_every == 0:  # more real cameras on the same moment (other angles)
+                for esv, etgt in extras:
+                    ebg = torch.rand(1, 3, device=self.device)
+                    epred, ealpha, _ = esv.render(self, params, degree, ebg)
+                    loss = loss + a.source_weight * esv.weight * real_view_loss(epred, ealpha, etgt, ebg)
             if face is not None:  # the face at the clip's own 4K detail, every step: a small render
                 ft, fK, (fw, fh) = face
                 fbg = torch.rand(1, 3, device=self.device)
@@ -309,6 +318,29 @@ def main(argv=None):
                             masks_dir=args.source_masks, ignore_dir=args.source_ignore, focal=args.source_focal)
         # every ring camera is a candidate: the clip's camera needn't be square to the subject (a 3/4 stance is common)
         front_ids = list(range(rig.views))
+    extras = []
+    if source is not None and args.extra_sources:
+        for e in json.loads(args.extra_sources.read_text()):
+            off = int(e.get("offset", 0))
+            sv = SourceView(Path(e["video"]), [f + off for f in frames.frame_ids], args.device, args.source_max_height,
+                            masks_dir=Path(e["masks"]) if e.get("masks") else None,
+                            ignore_dir=Path(e["ignore"]) if e.get("ignore") else None, focal=e.get("focal"))
+            sv.offset, sv.weight, sv.name = off, float(e.get("weight", 1.0)), Path(e["video"]).stem
+            extras.append(sv)
+        print(f"[source] {len(extras)} more real cameras: {[sv.name for sv in extras]}", flush=True)
+
+    def extra_targets(frame, params, refine):
+        out = []
+        for sv in extras:
+            if not sv.ready:
+                continue
+            f = frame + sv.offset
+            if refine and args.source_agree:
+                sv.refine(trainer, params, f, args.source_refine_steps)
+                out.append((sv, sv.agreeing(trainer, params, f)[0]))
+            else:
+                out.append((sv, sv.target(f)))
+        return out
     out_frames = args.out / "frames"
     out_frames.mkdir(parents=True, exist_ok=True)
     report = {"start": frames.frame_ids[0], "end": frames.frame_ids[-1] + 1, "prepSeconds": prep_s, "frames": []}
@@ -332,9 +364,10 @@ def main(argv=None):
             agree["sourceIou"] = round(source.refine(trainer, params, frame, args.source_refine_steps), 4)
             src, share = source.agreeing(trainer, params, frame)
             agree["sourceAgree"] = round(share, 4)
-            params = trainer.fit(params, rgba, args.iters_warm, True, src, face)
+            params = trainer.fit(params, rgba, args.iters_warm, True, src, face, extra_targets(frame, params, True))
         else:
-            params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src, face)
+            ex = extra_targets(frame, params, False) if warm else None
+            params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src, face, ex)
         if source is not None and not warm and source.solve(trainer, params, front_ids):
             trainer.source = source
             src = source.target(frame)
@@ -348,7 +381,21 @@ def main(argv=None):
                 except Exception as e:  # a face crop is a quality boost, never a blocker
                     print(f"[source] face crops off: {type(e).__name__}: {e}", flush=True)
             face = face_of(frame)
-            params = trainer.fit(params, rgba, args.source_iters, True, src, face)
+            for sv in extras:  # each other angle finds its own camera against the same Gaussians
+                if sv.solve(trainer, params, front_ids):
+                    print(f"[source] {sv.name}: solved, IoU {sv.report.get('iou')}", flush=True)
+                else:
+                    print(f"[source] {sv.name}: not solved; trained without it", flush=True)
+            params = trainer.fit(params, rgba, args.source_iters, True, src, face,
+                                 extra_targets(frame, params, args.source_agree))
+        if extras and not warm and not (source is not None and source.ready):
+            # the clip's own camera didn't solve: the other angles still can, each on its own
+            for sv in extras:
+                print(f"[source] {sv.name}: " + ("solved, IoU " + str(sv.report.get("iou")) if sv.solve(trainer, params, front_ids)
+                                                 else "not solved; trained without it"), flush=True)
+            ex = extra_targets(frame, params, args.source_agree)
+            if ex:
+                params = trainer.fit(params, rgba, args.source_iters, True, None, None, ex)
         metrics = trainer.evaluate(params, rgba) | agree
         if src is not None:
             src = source.target(frame)  # scored over every pixel that counts, agreeing or not, as before
@@ -377,6 +424,25 @@ def main(argv=None):
                         fpair = (torch.cat([fg[0], fp[0]], 1).clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
                         Image.fromarray(fpair).save(args.out / f"peek-face-{frame:06d}.jpg", quality=92)
                     (args.out / f"source-camera-{frame:06d}.json").write_text(json.dumps(source.camera))
+        with torch.no_grad():
+            deg = int(round(math.sqrt(params["shN"].shape[1] + 1))) - 1
+            white = torch.ones(1, 3, device=args.device)
+            for sv in extras:  # each other angle against its own real frame, with a truth | render strip
+                if not sv.ready:
+                    continue
+                et = sv.target(frame + sv.offset)
+                ep, _, _ = sv.render(trainer, params, deg, white)
+                eg = et[..., :3] * et[..., 3:4] + (1 - et[..., 3:4])
+                ev = et[..., 4:5] if et.shape[-1] > 4 else torch.ones_like(et[..., 3:4])
+                emse = float(((ep - eg) ** 2 * ev).sum() / (3 * ev.sum()).clamp_min(1))
+                metrics[f"sourcePsnr.{sv.name}"] = 10 * math.log10(1 / max(emse, 1e-10))
+                if not warm:
+                    from PIL import Image
+
+                    strip = (torch.cat([eg[0], ep[0]], 1).clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+                    Image.fromarray(strip).save(args.out / f"peek-source-{sv.name}-{frame:06d}.jpg", quality=90)
+                    report.setdefault("extraSources", {})[sv.name] = sv.report
+                    (args.out / f"source-camera-{sv.name}-{frame:06d}.json").write_text(json.dumps(sv.camera))
         if args.peek and not warm:
             trainer.peek(params, rgba, [int(v) for v in args.peek.split(",")], args.out / f"peek-{frame:06d}.jpg")
         g = Gaussians.from_params(params)
