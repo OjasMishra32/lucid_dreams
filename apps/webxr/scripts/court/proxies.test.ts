@@ -175,21 +175,23 @@ test("the light chunk: lightfield.ts's GLSL as given, with any helper the stub l
   const stub = "float courtLight(vec3 worldPos, float part) { return 1.0; }\n";
   const filled = lightChunk(stub);
   assert.ok(filled.startsWith(stub), "the field's own GLSL first");
-  for (const name of ["vec3 lightDither(", "float lightRoomStands(", "float lightRoomFloor(", "float lightPair("]) assert.ok(filled.includes(name), name);
-  const full = `${stub}float lightPair() { return uLightLevel.z; }\nfloat lightRoomStands() { return uLightView.y; }\nfloat lightRoomFloor() { return uLightView.z; }\nvec3 lightDither(vec3 rgb) { return rgb + 0.0; }\n`;
+  for (const name of ["vec3 lightDither(", "float lightRoomStands(", "float lightRoomFloor(", "float lightPair(", "float lightFilmedFloor("]) assert.ok(filled.includes(name), name);
+  const full = `${stub}float lightPair() { return uLightLevel.z; }\nfloat lightFilmedFloor(vec3 courtPos) { return 1.0; }\nfloat lightRoomStands() { return uLightView.y; }\nfloat lightRoomFloor() { return uLightView.z; }\nvec3 lightDither(vec3 rgb) { return rgb + 0.0; }\n`;
   assert.equal(lightChunk(full), full, "nothing added when the field has them all");
 });
 
-test("the two plate layers stacked are always the one plate at the frame's feathered alpha, See my room's fade included (P44)", () => {
-  for (const room of [1, 0.6, 0.2, 0])
-    for (const f of [0, 0.1, 0.37, 0.8, 1])
-      for (const v of [0, 0.01, 0.25, 0.5, 0.75, 0.99, 1]) {
-        const { video, background } = plateAlphas(v, f, room);
-        // the 3D's plates draw first (under the splats), the video's over them
-        const stacked = video + (1 - video) * background;
-        assert.ok(Math.abs(stacked - f * room) < 1e-9, `v ${v} f ${f} room ${room}: ${stacked}`);
-        assert.ok(Math.abs(video - v * f * room) < 1e-12, "the video layer at its opacity");
-      }
+test("the two plate layers stacked are always the one plate at the frame's feathered alpha, See my room's fade and the filmed floor's weight included (P44)", () => {
+  for (const filmed of [1, 0.5, 0])
+    for (const room of [1, 0.6, 0.2, 0])
+      for (const f of [0, 0.1, 0.37, 0.8, 1])
+        for (const v of [0, 0.01, 0.25, 0.5, 0.75, 0.99, 1]) {
+          const { video, background } = plateAlphas(v, f, room, filmed);
+          // the 3D's plates draw first (under the splats), the video's over them
+          const stacked = video + (1 - video) * background;
+          assert.ok(Math.abs(stacked - f * room * filmed) < 1e-9, `v ${v} f ${f} room ${room} filmed ${filmed}: ${stacked}`);
+          assert.ok(Math.abs(video - v * f * room * filmed) < 1e-12, "the video layer at its opacity");
+        }
+  assert.deepEqual(plateAlphas(0.5, 0.8, 0.6), plateAlphas(0.5, 0.8, 0.6, 1), "the weight is 1 unless given");
 });
 
 test("the floor plate stops at the stands: no floor behind a stands plane, where it would show through the stands from the seat", () => {
