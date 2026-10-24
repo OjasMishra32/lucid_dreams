@@ -14,6 +14,7 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | `motion.py` | `motion.json` read/write/validate; DiGS-Avatar packed SMPL-X <-> motion; turning a motion to face the viewer on the floor |
 | `idle.py` | Seamless idle loops so a person never freezes: standing (breathing, weight shift, head sway) and seated at the chess board (forearms on the table, looking at the board) |
 | `ik.py` | Closed-form two-bone arm IK (elbow can rest on a table) and head aim on the SMPL-X skeleton |
+| `ball.py` | The basketball's 3D path: pixel box of a 24 cm ball -> GVHMR camera -> GVHMR world (incam + global fits) -> any 4x4 |
 | `gaussian_ply.py` | Standard 3DGS binary PLY read/write |
 | `bundle.py` | Writes an avatar bundle; validates any bundle against the contract |
 | `digs_io.py` | Photo/NLF/DiGS glue: crop and intrinsics, DiGS reference JSON, rasterizer Gaussians to PLY, sanity checks |
@@ -92,6 +93,29 @@ frames composited on white (so absolute PSNR runs high; the before/after change 
 `hpg/digs-perform.sbatch` with `AVATAR=<some avatar's code.pt>`, `RUN_ID=<the run with the move>`, `ID`, `NAME`:
 the move's joint rotations play on the avatar unchanged, the root path scaled by leg length, turned to face the
 viewer, and dropped so the avatar's lowest Gaussian over the clip touches the floor (crouches and jumps stay).
+
+## Seated at the chess board
+
+`seated_idle(rest, betas)` (`idle.py`) is the opponent's idle: hips on a 0.45 m seat, feet on the floor, forearms on a
+0.75 m table, hands short of the board, looking at its centre, breathing and blinking. Same person frame as every
+bundle (hips over x = z = 0, facing -Z); the board centre is `BOARD_Z` = 0.72 m in front of the hips, so a player puts
+this origin 0.72 m behind the board centre on the opponent's side (the chess game's standing opponent uses 0.58 m,
+which is too close: the forearms would have to lie on the board). `rest` is the avatar's `skeleton.json` rest.
+
+On the approximate SMPL-X proportions in `tests/smplx_rest.py` (not yet checked on a real avatar's skeleton.json): the
+shoulder joint is about 0.64 m above the seat and the upper arm only about 0.26 m,
+so from a 0.45 m seat the elbows can't come down onto a 0.75 m table without folding the arms. `seated_rest_pose`
+therefore leans in (pelvis and spine, at most 0.5 rad) and, only if that isn't enough, lowers the seat (to 0.36 m at
+most; the chair is never drawn). Elbows and wrists then sit exactly on the table and stay put while the chest breathes.
+
+## The ball's 3D path (props)
+
+`ball_world(K, boxes, incam, global_, J0, world)` (`ball.py`): per frame, the ball's pixel box in the video GVHMR ran on
+(4DAnyone's input) -> distance from its angular size (24 cm ball) -> GVHMR's camera (`K_fullimg`) -> GVHMR's world, using
+the camera pose implied by GVHMR's two fits of the same body (`smpl_params_incam` and `smpl_params_global`; `J0` is
+`gvhmr_motion.rest_pelvis`) -> `world`: pass `[rot | t] @ motion_world_to_canonical_world` for bundle space (the
+export's `placement`). No box, or a box touching the image edge (with `width`/`height`), gives NaN. A hand over the ball
+or motion blur changes its size and so its distance: smooth the distance over time before trusting single frames.
 
 ## Showing an avatar in a player that can't skin yet
 
