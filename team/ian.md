@@ -4,6 +4,36 @@ You own what people actually see: photoreal people standing on the real floor in
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 
+## SUBMISSION (Sat 5:50 AM): the write-up is a night behind; bring it up to date (yours since Atina's hand-off)
+
+`demo/devpost.md` is from Fri 11:21 PM: its metrics table says "[pending]" and it predates most of what we'll demo.
+By **Sun 10 AM** (feature freeze, filming), update `demo/devpost.md`, `README.md`, `demo/video.md` and
+`demo/judges.md` with what is true now. Measured numbers (median over all 121 frames, from each run's
+`recon/recon-*.json`; "real frame" = our render from the solved source camera against the real 4K frame, held-out =
+generated views the fit never saw):
+
+| Dream | PSNR vs the real frame | Held-out PSNR | SSIM | Seen by the camera |
+| --- | --- | --- | --- | --- |
+| Tai chi (`taichi-01`) | 46.6 dB | 27.5 dB | 0.97 | 57% |
+| LeBron (`lebron-jumper-hq`) | 43.7 dB | 26.4 dB | 0.97 | 49% |
+| Dance (`dance-01`) | 40.3 dB | 30.3 dB | 0.98 | 53% |
+| Jump shot (`jump-shot-hq`) | 35.3 dB | 24.7 dB | 0.96 | 54% |
+| Golf (`golf-01`) | 33.0 dB | 25.8 dB | 0.96 | 49% |
+| Guitar (`guitar-01`) | (not solved) | 22.0 dB | 0.96 | 59% |
+
+What's new since your draft, all in the library or on main:
+- **Chess against the legends**: Bobby Fischer and Magnus Carlsen sit at the board as photoreal LHM++ avatars
+  (many freely licensed photos each; Fischer's black-and-white photos colourised with DDColor), labelled "Stockfish
+  at X's peak rating. Not affiliated.", silent; they open with their real repertoires, think, reach, press their
+  clock. Credits: LHM++ (code Apache-2.0, weights CC BY-NC 4.0), DDColor, the photographers in `demo/credits.md`.
+- **Hands only, locked down**: palm-up menu, everything pinned with anchors, no gesture acts on its own; chess pieces
+  by pinch with a ring and a lit landing square; captures go into your hand and you hit the clock with them.
+- **Golf**: a real 7-iron in your hands and a ball on a tee you can hit. **Basketball**: a ball you can shoot at the
+  regulation hoop (landing now). The real ball moves in LeBron's and the jump shots' hands (tracked in 3D).
+- **Five new full-quality people** (dance, golf, tai chi, guitar, LeBron) at 50-step 4DAnyone views.
+Rules for the text: numbers only from the table above (or newer logs), "not yet measured on a Quest" where true, no
+claims of real-time fps we haven't measured. Ojasva reviews by Sun 10 AM.
+
 ## TOP NOW (Sat 5:10 AM): lock the hands down (Ojasva tried it in the headset)
 
 Ojasva played on a Quest 3S with hands only. His words: things "keep randomly moving", the UI "isn't super
