@@ -14,12 +14,8 @@ import "./tech.css";
 // the equations the opening's strip runs through: one for each chapter below
 const MATH = [
   String.raw`\Sigma=R\,S\,S^{\top}R^{\top}`,
-  String.raw`\Sigma'=J\,W\,\Sigma\,W^{\top}J^{\top}`,
   String.raw`C=\sum_i c_i\,\alpha_i\prod_{j<i}(1-\alpha_j)`,
-  String.raw`\lambda\,\tilde{\mathbf x}=K\,[R\mid\mathbf t]\,\tilde{\mathbf X}`,
   String.raw`\mathcal L=0.8\,\mathcal L_1+0.2\,(1-\mathrm{SSIM})`,
-  String.raw`M(\boldsymbol\beta,\boldsymbol\theta)=W(\bar T+B_S+B_P,\,J,\,\boldsymbol\theta,\,\mathcal W)`,
-  String.raw`\dot{\mathbf v}=\mathbf g-k_D\lVert\mathbf v\rVert\mathbf v+k_L C_L\lVert\mathbf v\rVert^2\,\hat{\boldsymbol\omega}\times\hat{\mathbf v}`,
   String.raw`N_{\mathrm{px}}=\sum_i 4k^2\sigma_{1i}\sigma_{2i}(f/z_i)^2`,
 ];
 
@@ -32,10 +28,6 @@ function Eq({ tex, label }: { tex: string; label?: string }) {
       {label && <figcaption>{label}</figcaption>}
     </figure>
   );
-}
-/** Inline math. */
-function M({ tex }: { tex: string }) {
-  return <span dangerouslySetInnerHTML={{ __html: katex.renderToString(tex, { throwOnError: false, output: "html", strict: false }) }} />;
 }
 
 /** The technology chapters, a section of the one page (#technology): the real math, each idea with a live visual. */
@@ -56,11 +48,9 @@ export default function TechnologySection() {
           <p className="t-num">02</p>
           <h3>{n.toLocaleString("en-US")} per frame</h3>
           <p>
-            One real frame, rendered live. Each Gaussian has a position, rotation, scale, opacity and color, plus
-            degree-1 spherical harmonics so the color shifts with viewing angle. About 15 bytes each in SPZ, 4 MB a frame.
+            One real frame, rendered live. Each Gaussian has a position, rotation, scale, opacity and color. About 15
+            bytes each compressed, 4 MB a frame.
           </p>
-          <Eq tex={String.raw`\Theta=\{(\boldsymbol\mu_i,\ \mathbf q_i,\ \mathbf s_i,\ o_i,\ \mathbf k_i)\}_{i=1}^{N}`} />
-          <Eq tex={String.raw`c_i(\mathbf d)=\sum_{\ell=0}^{1}\sum_{m=-\ell}^{\ell}k_{i,\ell}^{m}\,Y_{\ell}^{m}(\mathbf d)`} />
         </>
       ),
     },
@@ -85,9 +75,9 @@ export default function TechnologySection() {
         <>
           <h3>Just the centers</h3>
           <p>
-            Dense on the face and hands, sparse on flat cloth. MCMC densification puts them there, capped at 300k per frame.
+            Dense on the face and hands, sparse on flat cloth. Training adds and moves them where the error is high, capped
+            at 300k per frame.
           </p>
-          <Eq tex={String.raw`\boldsymbol\mu \leftarrow \boldsymbol\mu-\eta\,\nabla_{\boldsymbol\mu}\mathcal L+\lambda\,\eta\,\sigma\!\big(-\kappa(o-t)\big)\,\Sigma\,\boldsymbol\varepsilon`} label="ε ~ N(0, I). Kheradmand et al., 2024" />
         </>
       ),
     },
@@ -102,8 +92,6 @@ export default function TechnologySection() {
             4DAnyone (Aug 2026) turns one video into 48 synced views: 3 rings of 16 at −10°, 15° and 35°, 2.8 m out. The
             cameras are known, so there&apos;s no structure-from-motion step.
           </p>
-          <Eq tex={String.raw`\lambda\begin{pmatrix}u\\v\\1\end{pmatrix}=K\,[\,R\mid\mathbf t\,]\begin{pmatrix}\mathbf X\\1\end{pmatrix}`} />
-          <Eq tex={String.raw`K=\begin{pmatrix}1735.6&0&352\\0&1735.6&640\\0&0&1\end{pmatrix}`} label="from 4DAnyone's cameras.json, 704 × 1280 per view" />
         </>
       ),
     },
@@ -114,11 +102,9 @@ export default function TechnologySection() {
         <>
           <h3>Body tracking</h3>
           <p>
-            GVHMR fits SMPL-X to the clip. We keep its 22 joints per frame, and lessons score your head and hands against
-            them. Avatars are skinned with dual quaternions so wrists don&apos;t collapse when they twist.
+            GVHMR fits a body model (SMPL-X) to the clip. We keep its 22 joints per frame, and lessons score your head and
+            hands against them.
           </p>
-          <Eq tex={String.raw`M(\boldsymbol\beta,\boldsymbol\theta)=W\!\big(\bar{T}+B_S(\boldsymbol\beta)+B_P(\boldsymbol\theta),\ J(\boldsymbol\beta),\ \boldsymbol\theta,\ \mathcal W\big)`} />
-          <Eq tex={String.raw`\hat{\mathbf q}_i=\frac{\sum_j w_{ij}\,\hat{\mathbf q}_j}{\big\lVert\sum_j w_{ij}\,\hat{\mathbf q}_j\big\rVert}`} />
         </>
       ),
     },
@@ -188,14 +174,11 @@ export default function TechnologySection() {
           <p className="t-num">04</p>
           <h2>Rendering a pixel</h2>
           <p>
-            Each Gaussian is projected to 2D (EWA splatting), blurred by 0.3 px² and drawn as a quad out to √8σ. As you
-            move, all 290k get re-sorted by distance and blended back to front, <M tex={String.raw`C\leftarrow\alpha c+(1-\alpha)\,C`} />.
+            Spark projects each Gaussian to a 2D ellipse and draws it as a quad. As you move, all 290k get re-sorted by
+            distance and blended: each pixel&apos;s color is every Gaussian&apos;s color, weighted by its alpha and by how
+            much light is left after the ones in front.
           </p>
-          <div className="eq-row">
-            <Eq tex={String.raw`\Sigma'=J\,W\,\Sigma\,W^{\top}J^{\top}+0.3\,I_2`} label="Zwicker et al., 2001" />
-            <Eq tex={String.raw`J=\begin{pmatrix}f/z&0&-f x/z^{2}\\0&f/z&-f y/z^{2}\end{pmatrix}`} />
-          </div>
-          <Eq tex={String.raw`\alpha_i(\mathbf p)=o_i\,\exp\!\Big(-\tfrac12\,\boldsymbol\delta^{\top}\Sigma_i'^{-1}\boldsymbol\delta\Big),\qquad T_i=\prod_{j<i}(1-\alpha_j)`} />
+          <Eq tex={String.raw`C=\sum_i c_i\,\alpha_i\,T_i,\qquad T_i=\prod_{j<i}(1-\alpha_j)`} />
           <p className="quiet">Drag the ray to move the pixel.</p>
         </div>
         <Compositing />
@@ -210,8 +193,7 @@ export default function TechnologySection() {
             each next one, starting from the last (about a minute per frame on a B200). The real video frame counts as one
             more camera, only where it agrees with the views.
           </p>
-          <Eq tex={String.raw`\begin{aligned}\mathcal L=\ &0.8\,\lVert\hat I-I\rVert_1+0.2\,\big(1-\operatorname{SSIM}(\hat I,I)\big)+0.1\,\lVert\hat A-A\rVert_1\\ +\ &0.3\,\mathcal L_{\text{VGG}}+0.01\,\overline{\sigma(o)}+0.01\,\overline{e^{s}}+\mathcal L_{\text{aniso}}\end{aligned}`} />
-          <Eq tex={String.raw`\operatorname{PSNR}=10\log_{10}\frac{1}{\operatorname{MSE}}\ \text{dB}`} />
+          <Eq tex={String.raw`\mathcal L=0.8\,\lVert\hat I-I\rVert_1+0.2\,\big(1-\operatorname{SSIM}(\hat I,I)\big)+0.1\,\lVert\hat A-A\rVert_1+\dots`} label="color error, structure (SSIM), and the person's outline; plus small regularizers" />
         </div>
         <div className="t-truth">
           <TruthSlider real="/media/truth-dance-real.jpg" render="/media/truth-dance-render.jpg" />
@@ -236,7 +218,7 @@ export default function TechnologySection() {
             Tennis runs at 240 Hz: gravity, drag and Magnus lift from spin, plus a grass bounce where friction trades
             speed for spin. Federer&apos;s AI uses the same model to read the ball.
           </p>
-          <Eq tex={String.raw`\dot{\mathbf v}=\mathbf g-\frac{\rho C_D A}{2m}\lVert\mathbf v\rVert\,\mathbf v+\frac{\rho A}{2m}\,C_L\lVert\mathbf v\rVert^{2}\,\frac{\boldsymbol\omega\times\mathbf v}{\lVert\boldsymbol\omega\times\mathbf v\rVert},\qquad C_L=\min\!\Big(0.32,\ \frac{1}{2+v/(r\omega)}\Big)`} />
+          <Eq tex={String.raw`\dot{\mathbf v}=\mathbf g\ -\ k_D\lVert\mathbf v\rVert\,\mathbf v\ +\ k_L\,C_L\lVert\mathbf v\rVert^{2}\,(\hat{\boldsymbol\omega}\times\hat{\mathbf v})`} label="gravity, drag, Magnus lift" />
         </div>
         <Trajectories />
       </section>
@@ -252,7 +234,7 @@ export default function TechnologySection() {
             Spark draws every Gaussian as a quad, even faint ones, so cost is total quad area. On the headset we keep the
             160k that matter most, render at 70%, and a governor shrinks splats and adds foveation when frames run late.
           </p>
-          <Eq tex={String.raw`N_{\text{px}}=\sum_i 4k^2\,\sigma_{1i}\sigma_{2i}\Big(\frac{f}{z_i}\Big)^{2},\qquad f=\frac{W}{2\tan(\mathrm{FOV}/2)}`} />
+          <Eq tex={String.raw`N_{\text{px}}=\sum_i 4k^2\,\sigma_{1i}\sigma_{2i}\Big(\frac{f}{z_i}\Big)^{2}`} label="pixels shaded: each quad's area, with σ the Gaussian's two biggest radii, z its distance, f the focal length" />
           <p className="quiet">Estimates from one real frame, face-on. Foveation not counted.</p>
         </div>
         <FillRate />
