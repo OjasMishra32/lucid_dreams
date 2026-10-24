@@ -137,3 +137,31 @@ def test_seen_from_camera_accepts_channel_first_renders():
     pos = np.zeros((3, 10, 10))
     pos[2] = 1.0
     assert D.seen_from_camera(np.array([[0.0, 0.0, 1.0]]), K, pos).tolist() == [True]
+
+
+def test_drop_floaters_keeps_the_body_and_fixes_height_and_floor():
+    # a fine-tuned cloud: a 1.7 m body, transparent Gaussians drifted metres away, and a visible one under the feet
+    rng = np.random.default_rng(2)
+    body = rng.uniform([-0.3, -1.3, -0.15], [0.3, 0.4, 0.15], size=(400, 3))
+    body[0, 1], body[1, 1] = -1.3, 0.4  # soles and crown
+    far = np.array([[0, 3.2, 0], [0, -1.6, 0.0], [2.0, 0, 0]])
+    xyz = np.concatenate([body, far])
+    logit = np.concatenate([np.full(400, 2.0), [-5.0, 3.0, -5.0]])
+    gap = np.concatenate([np.full(400, 0.02), [2.8, 0.3, 1.7]])  # distance to the nearest SMPL-X rest vertex
+    g = D.rendered_to_gaussians(xyz, np.full((403, 3), 0.5), 1 / (1 + np.exp(-logit)), np.full((403, 3), 0.01),
+                                np.tile([1.0, 0, 0, 0], (403, 1)))
+    kept, keep = D.drop_floaters(g, gap)
+    assert keep.sum() == 400 and not keep[400:].any()
+    for field in ("xyz", "f_dc", "f_rest", "opacity", "scale", "rotation"):
+        assert len(getattr(kept, field)) == 400
+    np.testing.assert_array_equal(kept.xyz, body)
+    assert D.stand_y(kept.xyz, kept.opacity) == pytest.approx(-body[:, 1].min())
+    assert "visible height 1.70 m" in D.cloud_summary(kept.xyz, kept.opacity)
+    assert "4.80 m" in D.cloud_summary(g.xyz, g.opacity)  # all Gaussians: the misleading number
+
+
+def test_drop_floaters_keeps_everything_on_a_clean_avatar():
+    g = D.rendered_to_gaussians(np.zeros((5, 3)), np.full((5, 3), 0.5), np.full(5, 0.9), np.full((5, 3), 0.01),
+                                np.tile([1.0, 0, 0, 0], (5, 1)))
+    kept, keep = D.drop_floaters(g, np.full(5, 0.24))
+    assert keep.all() and len(kept) == 5

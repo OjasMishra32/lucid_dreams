@@ -22,6 +22,7 @@ results table gains a column for it and face / hand crop rows, measured on the h
 from __future__ import annotations
 
 import argparse
+import json
 import random
 import sys
 import time
@@ -60,6 +61,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--detail-lr", type=float, default=0.01)
     p.add_argument("--detail-scale", type=float, default=2.0, help="crop focal length / the view's")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--export-only", action="store_true",
+                   help="no training: re-export the bundle from <id>.work/code.pt and results.json of an earlier run")
     return p.parse_args()
 
 
@@ -230,7 +233,6 @@ def main() -> int:
 
     import lpips
     from lucid.losses import ssim
-    from omegaconf import OmegaConf
 
     start = torch.load(args.start, map_location="cpu", weights_only=False)
     hand_mean = np.asarray(start["hand_mean"], dtype=np.float64).reshape(90)
@@ -246,6 +248,13 @@ def main() -> int:
     for p in model.parameters():
         p.requires_grad_(False)
     model.idol_decoder.renderer.image_size = [views.width, views.height]
+    if args.export_only:
+        saved = torch.load(work / "code.pt", map_location="cpu", weights_only=False)
+        if "idol_decoder" in saved:
+            model.idol_decoder.load_state_dict(saved["idol_decoder"])
+        after = json.loads((work / "results.json").read_text())["after"]
+        print(f"export only: {work / 'code.pt'}, held-out scores from results.json")
+        return export(args, model, config, demo, saved["code"].to(dev), motion, hand_mean, views, after, out, work, dev)
     # The clip's motion with the clip's body: GVHMR's betas pose the body where 4DAnyone's views see it.
     smpl = torch.as_tensor(to_digs_params(motion, hand_mean), dtype=torch.float32, device=dev)
     lpips_fn = lpips.LPIPS(net="vgg").to(dev).eval()
@@ -352,8 +361,13 @@ def main() -> int:
     if args.tune_decoder:  # digs_perform.py loads it back, so a performance matches what was measured
         tuned["idol_decoder"] = {k: v.cpu() for k, v in model.idol_decoder.state_dict().items()}
     torch.save(tuned, work / "code.pt")
+    return export(args, model, config, demo, code, motion, hand_mean, views, after, out, work, dev)
 
-    # The tuned avatar as a bundle, playing the clip it was tuned on, facing the viewer with its soles on the floor.
+
+def export(args, model, config, demo, code, motion, hand_mean, views, after, out, work, dev) -> int:
+    """The tuned avatar as a bundle, playing the clip it was tuned on, facing the viewer with its soles on the floor."""
+    from omegaconf import OmegaConf
+
     from lucid_avatars.retarget import place_on_floor
 
     for p in model.parameters():

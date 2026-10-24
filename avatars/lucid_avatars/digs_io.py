@@ -133,6 +133,26 @@ def largest_person(boxes) -> int:
     return int(np.argmax(boxes[:, 2] * boxes[:, 3]))
 
 
+MAX_FLOATER_GAP_M = 0.25  # a Gaussian this far from its SMPL-X body surface isn't part of the person
+
+
+def drop_floaters(g: Gaussians, gap_m: np.ndarray, max_gap: float = MAX_FLOATER_GAP_M) -> tuple[Gaussians, np.ndarray]:
+    """(the Gaussians within max_gap of the body, the keep mask). gap_m: each Gaussian's distance to its nearest SMPL-X
+    rest vertex. DiGS anchors every Gaussian on the body, but a fine-tune moves the ones the loss can't see (nearly
+    transparent, or hidden) freely, so some drift metres away and stretch the bounds or lift the soles off the floor."""
+    keep = np.asarray(gap_m, dtype=np.float64).reshape(len(g)) <= max_gap
+    return replace(g, xyz=g.xyz[keep], f_dc=g.f_dc[keep], f_rest=g.f_rest[keep], opacity=g.opacity[keep],
+                   scale=g.scale[keep], rotation=g.rotation[keep]), keep
+
+
+def cloud_summary(xyz: np.ndarray, opacity_logit: np.ndarray, min_alpha: float = 0.5) -> str:
+    """Height over the clearly visible Gaussians (what a viewer sees) and over all of them, for the job log."""
+    y = np.asarray(xyz, dtype=np.float64)[:, 1]
+    visible = 1 / (1 + np.exp(-np.asarray(opacity_logit, dtype=np.float64))) >= min_alpha
+    seen = f"visible height {np.ptp(y[visible]):.2f} m" if visible.any() else "nothing visible"
+    return f"{len(y)} Gaussians, {seen}, all {np.ptp(y):.2f} m"
+
+
 def rest_pose_errors(xyz: np.ndarray, opacity_logit: np.ndarray, min_alpha: float = 0.5) -> list[str]:
     """Reasons a captured rest-pose Gaussian cloud can't be a person in metres, for a loud failure
     instead of a plausible-looking wrong bundle."""

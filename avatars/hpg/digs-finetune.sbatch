@@ -13,6 +13,7 @@
 # 4DAnyone views, with PSNR / SSIM / LPIPS on 4 held-out views before and after. Needs digs-assets first.
 #   sbatch --export=ALL,RUN_ID=<run id> avatars/hpg/digs-finetune.sbatch
 # DETAIL_STEPS=300 adds the hands and face pass (2x face and hand crops) after the fine-tune; off until tried once.
+# EXPORT_ONLY=1 re-exports dreams/<run>-tuned from an earlier run's code.pt and results.json (minutes, no training).
 # Writes $OUT/: motion_world.json, views/ (8 frames x every view, cut out), photo.jpg, and dreams/<run>-photo and
 # dreams/<run>-tuned (bundles); the numbers are in dreams/<run>-tuned.work/results.md. Only consented people.
 set -euo pipefail
@@ -24,6 +25,7 @@ AV=$L/repos/lucid_dreams/avatars
 FRAMES=${FRAMES:-8}
 STEPS=${STEPS:-800}
 DETAIL_STEPS=${DETAIL_STEPS:-0}
+EXPORT_ONLY=${EXPORT_ONLY:-0}
 mkdir -p "$OUT/dreams"
 flock $L/repos/.lucid_dreams.lock git -C $L/repos/lucid_dreams pull -q --ff-only || echo "repo update skipped"
 git -C $L/repos/lucid_dreams log -1 --format='lucid_dreams at %h %s'
@@ -32,7 +34,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 
 # 1. 4DAnyone env, in a subshell so none of its modules or paths reach step 2: the clip's motion in the views'
 #    world, and the views cut out (kept for reruns).
-(
+[ "$EXPORT_ONLY" = 1 ] && [ -f "$OUT/motion_world.json" ] && [ -f "$OUT/views/cameras.json" ] || (
   set +u; source $L/code/pipeline/hpg/env.sh; set -u
   cd $L/repos/4DAnyone
   python -u $AV/gvhmr_motion.py --gvhmr "$RUN/views/gvhmr" --out "$OUT/motion_world.json"
@@ -45,9 +47,15 @@ module load conda/26.7
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/digs
 export HF_HOME=$L/cache/hf U2NET_HOME=$L/models/rembg TORCH_HOME=$L/cache/torch
+cd $L/repos/DiGS-Avatar
+if [ "$EXPORT_ONLY" = 1 ]; then
+  python -u $AV/digs_finetune.py --views "$OUT/views" --motion "$OUT/motion_world.json" \
+    --start "$OUT/dreams/$RUN_ID-photo.work/code.pt" --out "$OUT/dreams" --id "$RUN_ID-tuned" \
+    --name "$RUN_ID (fine-tuned)" --export-only
+  echo FINETUNE_EXPORT_OK; exit 0
+fi
 SRC=$( [ -f "$RUN/prepped.mp4" ] && echo "$RUN/prepped.mp4" || ls "$RUN"/input.* | head -1 )
 ffmpeg -loglevel error -y -i "$SRC" -frames:v 1 "$OUT/photo.jpg"
-cd $L/repos/DiGS-Avatar
 python -u $AV/digs_avatar.py --image "$OUT/photo.jpg" --id "$RUN_ID-photo" --name "$RUN_ID (one photo)" \
   --out "$OUT/dreams" --nlf $L/models/nlf/nlf_l_multi_0.3.2.patch6.torchscript
 python -u $AV/digs_finetune.py --views "$OUT/views" --motion "$OUT/motion_world.json" \

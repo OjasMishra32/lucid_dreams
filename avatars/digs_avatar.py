@@ -37,6 +37,7 @@ from lucid_avatars.idle import idle_loop  # noqa: E402
 
 HANDS_NOTE = "avatar.ply is the SMPL-X zero pose (flat hands); motion.json holds the hands in DiGS's relaxed hand mean"
 TURNTABLE_FILL = 1.15  # frame height / body height
+MAX_FLOATER_SHARE = 0.1  # more than this share far from the body means the rig is off, not floaters: keep all
 MAX_BODY_GAP_M = 0.1  # median Gaussian-to-SMPL-X-surface distance above this means the rig won't fit the avatar
 # Losing more than this share of a module's weights means it would run random: fail instead.
 MAX_MISSING_SHARE = 0.5
@@ -218,9 +219,8 @@ def capture_rest_gaussians(model, code, betas, hand_mean, camera_1x1x20):
     return D.rendered_to_gaussians(**got)
 
 
-def skin_avatar(model, gaussians, betas_np, dev):
-    """skin.bin records and skeleton.json for the rest-pose Gaussians, from DiGS's own SMPL-X model: each Gaussian
-    takes the inverse-distance blend of its 4 nearest rest vertices' skinning weights, then the top 4 joints."""
+def body_nearest(model, gaussians, betas_np, dev):
+    """(rest joints, indices, distances): each rest-pose Gaussian's 4 nearest rest vertices of DiGS's own SMPL-X."""
     bm = model.idol_decoder.deformer.body_model
     parents = bm.parents[: len(SMPLX_PARENTS)].tolist()
     parents[0] = -1
@@ -233,6 +233,13 @@ def skin_avatar(model, gaussians, betas_np, dev):
     nearest = [torch.cdist(c, vt).topk(4, largest=False) for c in pts.split(65536)]
     dist = torch.cat([n.values for n in nearest]).cpu().numpy()
     idx = torch.cat([n.indices for n in nearest]).cpu().numpy()
+    return joints, idx, dist
+
+
+def skin_avatar(model, joints, idx, dist):
+    """skin.bin records and skeleton.json from body_nearest: each Gaussian takes the inverse-distance blend of its 4
+    nearest rest vertices' skinning weights, then the top 4 joints."""
+    bm = model.idol_decoder.deformer.body_model
     gap = float(np.median(dist[:, 0]))
     print(f"skinning: median Gaussian-to-SMPL-X-vertex distance {gap * 100:.1f} cm")
     if gap > MAX_BODY_GAP_M:
@@ -289,14 +296,26 @@ def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out
     dev = code.device
     betas = torch.as_tensor(betas_np, dtype=torch.float32, device=dev)
     gaussians = capture_rest_gaussians(model, code, betas, hand_mean, any_camera.reshape(1, 1, 20))
+    if seen is not None and len(seen) != len(gaussians):
+        raise SystemExit(f"seen mask has {len(seen)} entries for {len(gaussians)} Gaussians")
+    print(f"captured: {D.cloud_summary(gaussians.xyz, gaussians.opacity)}")
+    joints, idx, dist = body_nearest(model, gaussians, betas_np, dev)
+    visible = gaussians.opacity >= 0  # alpha >= 0.5
+    kept, keep = D.drop_floaters(gaussians, dist[:, 0])
+    if keep.mean() < 1 - MAX_FLOATER_SHARE:  # that many isn't floaters: keep them all and let the checks below judge
+        print(f"[floaters] NOT dropped: {1 - keep.mean():.0%} of the Gaussians are over {D.MAX_FLOATER_GAP_M} m from "
+              "the SMPL-X body, so the rig may not fit this avatar (check ref_check.png)")
+    elif not keep.all():  # a fine-tune leaves Gaussians it can't see drifting; they stretch bounds or lift the soles
+        print(f"[floaters] dropped {int((~keep).sum())} ({int((~keep & visible).sum())} of them visible) more than "
+              f"{D.MAX_FLOATER_GAP_M} m from the body")
+        gaussians, idx, dist = kept, idx[keep], dist[keep]
+        seen = seen[keep] if seen is not None else None
     errors = D.rest_pose_errors(gaussians.xyz, gaussians.opacity)
     if errors:
         raise SystemExit("rest-pose capture looks wrong: " + "; ".join(errors))
     stand = D.stand_y(gaussians.xyz, gaussians.opacity)
-    skin, skeleton = skin_avatar(model, gaussians, betas_np, dev)
+    skin, skeleton = skin_avatar(model, joints, idx, dist)
     if seen is not None:  # reality.ply: the rest-pose avatar with everything the photo didn't see tinted blue
-        if len(seen) != len(gaussians):
-            raise SystemExit(f"seen mask has {len(seen)} entries for {len(gaussians)} Gaussians")
         tint = gaussians.f_dc.copy()
         tint[~seen] = 0.5 * tint[~seen] + 0.5 * (np.array([0.25, 0.45, 1.0]) - 0.5) / D.SH_C0
         write_ply(work / "reality.ply", replace(gaussians, f_dc=tint))
@@ -332,7 +351,7 @@ def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out
     problems = validate_bundle(root)
     for p in problems:
         print(f"[bundle] {p}")
-    print(f"{len(gaussians)} Gaussians, height {np.ptp(gaussians.xyz[:, 1]):.2f} m, stand_y {stand:.3f}")
+    print(f"{D.cloud_summary(gaussians.xyz, gaussians.opacity)}, stand_y {stand:.3f}")
     print(f"{'BUNDLE_FAIL' if problems else 'BUNDLE_OK'} {root}")
     return 1 if problems else 0
 
