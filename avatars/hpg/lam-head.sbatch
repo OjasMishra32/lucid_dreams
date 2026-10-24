@@ -101,6 +101,13 @@ for f in sorted(colour.glob("*.jpg")):
     shutil.copy(f, work / f"{name}-{f.name}")
 PY
 
+# LAM writes tracking_output/ and exps/ into its working directory, so two jobs in one checkout trip over each
+# other: each job runs from its own folder of links to the checkout
+CWD=$WORK/cwd
+rm -rf $CWD && mkdir -p $CWD
+for f in $R/*; do case ${f##*/} in exps|tracking_output|dumps) ;; *) ln -s $f $CWD/ ;; esac; done
+cd $CWD
+
 # one talking head per photo, driven by LAM's sample motion; save_img also writes the canonical head
 M=assets/sample_motion/export/$(ls assets/sample_motion/export | head -1)/
 python -m lam.launch infer.lam --config configs/inference/lam-20k-8gpu.yaml \
@@ -111,6 +118,6 @@ python -m lam.launch infer.lam --config configs/inference/lam-20k-8gpu.yaml \
   video_dump=$OUT/videos image_dump=$WORK/images mesh_dump=$WORK/meshes
 mkdir -p $OUT/heads
 cp exps/cano_gs/$NAME-*_gs_offset.ply exps/cano_gs/$NAME-*_shaped_mesh.obj $OUT/heads/ 2>/dev/null || true
-rm -rf $WORK/images exps/cano_gs/$NAME-* tracking_output/$NAME-*
+cd $R && rm -rf $WORK/images $CWD
 ls -la $OUT/videos $OUT/heads
 [ -n "$(ls $OUT/heads/*_gs_offset.ply 2>/dev/null)" ] && echo LAM_HEAD_OK
