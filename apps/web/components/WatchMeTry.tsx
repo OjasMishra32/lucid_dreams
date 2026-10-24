@@ -106,6 +106,8 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
   const trySrc =
     phase === "review" || phase === "sending" ? local?.url
     : attempt?.video ?? (local && sentFor === attempt?.id ? local.url : null);
+  // a file this browser can't play (an iPhone's HEVC .mov, say) shows a note; the Mac's re-encoded copy always plays
+  const tryShown = !!trySrc && (trySrc !== local?.url || local.playable);
   const lessonT = lesson?.orbit && clockS > 0 ? (lessonNow / scale) % clockS : lessonNow / scale; // an orbit render loops the move
   const step = steps.find((s) => lessonT >= s.start - 0.02 && lessonT < s.end);
 
@@ -258,7 +260,8 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
   }
 
   async function remove(a: Attempt) {
-    if (!window.confirm("Delete this try and its notes from this Mac?")) return;
+    const ask = a.added ? "Delete this try and its notes from this Mac? Its fix leaves the lesson too." : "Delete this try and its notes from this Mac?";
+    if (!window.confirm(ask)) return;
     const r = await fetch(`${base}/${encodeURIComponent(a.id)}`, { method: "DELETE" }).catch(() => null);
     if (r?.status === 204) {
       const rest = data.attempts.filter((x) => x.id !== a.id);
@@ -350,7 +353,7 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
                     </p>
                   )}
                 </>
-              ) : trySrc && (local?.playable ?? true) ? (
+              ) : trySrc && tryShown ? (
                 <video
                   ref={tryRef}
                   key={trySrc}
@@ -387,10 +390,10 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
         </div>
 
         <div className="try-bar">
-        {!filming && phase !== "review" && phase !== "sending" && lesson && (
+        {!filming && phase !== "sending" && (lesson || tryShown) && (
           <div className="try-controls">
             <button className="btn secondary btn-play" onClick={playBoth} aria-pressed={playing}>
-              {playing ? "Pause" : trySrc ? "Play both" : "Play the lesson"}
+              {playing ? "Pause" : tryShown && lesson ? "Play both" : tryShown ? "Play your try" : "Play the lesson"}
             </button>
             <div className="segmented" role="group" aria-label="Playback speed">
               {SPEEDS.map(([v, label]) => (
@@ -437,6 +440,7 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
                 onClick={() => {
                   setLocal(null);
                   setPhase("idle");
+                  if (live) void startCamera();
                 }}
               >
                 {live ? "Film again" : "Choose another"}
@@ -508,7 +512,7 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
                     <span>
                       {i === 0 && <span className="try-kicker">Main fix</span>}
                       <b>{n.note}</b>
-                      <small className="num">Lesson at {n.teacherS.toFixed(1)} s</small>
+                      <small className="num">Lesson at {(n.teacherS * scale).toFixed(1)} s</small>
                     </span>
                   </button>
                 </li>
@@ -517,7 +521,7 @@ export default function WatchMeTry({ id, steps, clockS, initial }: { id: string;
             {attempt.good && <p className="try-good"><b>Already there.</b> {attempt.good}</p>}
             {attempt.added && (
               <div className="try-added">
-                Your main fix is now the lesson&apos;s last step, &ldquo;Your fix&rdquo;, slowed down so you can copy it.
+                Your main fix is now a step in the lesson, &ldquo;Your fix&rdquo;, slowed down so you can copy it.
                 <ViewerLink query={`dream=${encodeURIComponent(id)}`} className="more">Practise it in your room</ViewerLink>
               </div>
             )}
