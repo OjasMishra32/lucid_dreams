@@ -579,7 +579,7 @@ class Identity:
 
 def identity_scores(ident: Identity, photo_embs: list, views: dict) -> dict:
     out = {}
-    for k in ("portrait_000", "portrait_045"):
+    for k in ("portrait_000", "portrait_045", "portrait_090"):
         e = ident.embed(views[k])
         out[k] = None if e is None or not photo_embs else round(float(np.mean([e @ p for p in photo_embs])), 3)
     return out
