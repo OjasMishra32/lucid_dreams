@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { appendFileSync, createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, extname } from "node:path";
 
@@ -32,11 +32,20 @@ function dreams(): Plugin {
 const TALK = process.env.LUCID_TALK ?? "http://localhost:5175";
 const TALK_HERE = new Set(["vishal"]);
 const talkToken = () => {
+  // beside this app in the repo; the headset's stable build is a copy of apps/webxr alone, whose dreams/ links back
+  // into the repo, so look there too
+  const homes = [process.env.LUCID_TALK_ENV, resolve(import.meta.dirname, "../talk/.env")];
   try {
-    return readFileSync(resolve(import.meta.dirname, "../talk/.env"), "utf8").match(/^TALK_TOKEN=(.*)$/m)?.[1]?.trim() ?? "";
+    homes.push(resolve(realpathSync(DREAMS), "../apps/talk/.env"));
   } catch {
-    return "";
+    // no dreams folder: no second place to look
   }
+  for (const f of homes) {
+    if (!f || !existsSync(f)) continue;
+    const t = readFileSync(f, "utf8").match(/^TALK_TOKEN=(.*)$/m)?.[1]?.trim();
+    if (t) return t;
+  }
+  return "";
 };
 async function relayTalk(req: any, res: any) {
   const url = new URL(req.url ?? "/", "http://talk");
