@@ -136,7 +136,7 @@ function plannable(d: Dream): boolean {
 }
 
 /** The original footage on this Mac: the upload, a clip dropped for the autopilot, or a pulled prepped.mp4. */
-function clipOf(d: Dream): { path: string; offsetS: number } | null {
+export function clipOf(d: Dream): { path: string; offsetS: number } | null {
   const job = getJob(d.id);
   if (job && VIDEO.test(job.file) && existsSync(job.file)) return { path: job.file, offsetS: job.startS ?? 0 };
   const dropped = dropped_(d.id, VIDEO);
@@ -146,7 +146,7 @@ function clipOf(d: Dream): { path: string; offsetS: number } | null {
 }
 
 /** An avatar's photo on this Mac: the upload, or one dropped for the autopilot (it keeps HEICs as JPEGs in dreams/.photos). */
-function photoOf(d: Dream): string | null {
+export function photoOf(d: Dream): string | null {
   const file = getJob(d.id)?.file;
   if (file && PHOTO.test(file) && existsSync(file)) return file;
   const dropped = dropped_(d.id, PHOTO);
@@ -253,7 +253,7 @@ function save(d: Dream, intent: string | null, e: Experience, cache: boolean) {
  * leaves the Mac: a small upload and no location metadata. Null when neither avconvert nor ffmpeg can (the whole clip
  * is never sent instead).
  */
-async function trim(src: { path: string; offsetS: number }, lengthS: number, out: string): Promise<string | null> {
+export async function trim(src: { path: string; offsetS: number }, lengthS: number, out: string): Promise<string | null> {
   const start = src.offsetS.toFixed(3);
   const length = lengthS.toFixed(3);
   try {
@@ -278,7 +278,7 @@ async function trim(src: { path: string; offsetS: number }, lengthS: number, out
  * The photo as Gemini gets it: a fresh JPEG, turned upright, with every metadata block dropped (an iPhone photo's
  * EXIF holds where it was taken, and sips keeps it when converting).
  */
-async function cleanPhoto(src: string, dir: string): Promise<string> {
+export async function cleanPhoto(src: string, dir: string): Promise<string> {
   const out = join(dir, "photo.jpg");
   let turn = 0;
   try {

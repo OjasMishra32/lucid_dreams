@@ -1,6 +1,9 @@
 import "server-only";
 import { FileState, GoogleGenAI, type File as GeminiFile } from "@google/genai";
-import { ENVIRONMENTS, STRENGTHS, type Environment, type Experience, type ExperienceMode, type Strength } from "../dream";
+import {
+  DEFECT_KINDS, ENVIRONMENTS, STRENGTHS, type Environment, type Experience, type ExperienceMode, type Realism, type RealismDefect,
+  type RealismView, type Strength,
+} from "../dream";
 
 // Gemini, the brain of the main goal: one sentence of intent plus the person's clip (or photo) in, experience.json out.
 // Models are tried in order, so a renamed or unavailable model never takes the step down.
@@ -226,6 +229,113 @@ function clean(raw: Record<string, unknown>, p: Plan): Omit<Experience, "created
     ...(objects.length ? { objects } : {}),
     category: str(raw.category) || undefined,
     durationS: p.durationS,
+  };
+}
+
+/** What the realism check compares: the source (one photo, or the clip window) and the render of the rebuilt person. */
+export interface Likeness {
+  source: { photo: string } | { clip: string }; // a cleaned JPEG, or the trimmed clip the person was built from
+  preview: string; // preview.mp4: the camera circles them once over its length
+  moments: Record<RealismView, number>; // seconds in preview.mp4: front, three-quarter, profile
+}
+
+const REALISM_SYSTEM = `You review how real a 3D reconstruction of a person looks, for the team that built it. You \
+compare the render with the source picture and list what gives the render away, so they can fix it.
+Never identify, name or guess who the person is, even if they seem famous: judge likeness and render quality only. \
+Parts of the person the source never showed (their back, the far side) were imagined by a model: judge those for \
+realism, not for likeness. Be concrete and honest; don't soften a bad result.`;
+
+const VIEWS = ["front", "three-quarter", "profile"] as const;
+const REALISM_SCHEMA = {
+  type: "object",
+  properties: {
+    samePerson: { type: "boolean", description: "Would someone who knows the person in the source say the render is them?" },
+    confidence: { type: "number", description: "How sure you are of samePerson, 0 to 1." },
+    summary: { type: "string", description: "One plain sentence on how real and how like them it looks, under 25 words." },
+    defects: {
+      type: "array",
+      maxItems: 10,
+      description: "Concrete defects, worst first. Empty when there are none.",
+      items: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: [...DEFECT_KINDS] },
+          view: { type: "string", enum: [...VIEWS] },
+          where: { type: "string", description: "Exactly where, from the person's point of view, e.g. 'left eye, inner corner', 'right hand, fingers', 'neck, collar line'." },
+          severity: { type: "string", enum: ["minor", "noticeable", "severe"] },
+          note: { type: "string", description: "One short sentence: what's wrong, e.g. 'Iris is grey and flat; the source shows brown eyes.'" },
+        },
+        required: ["kind", "view", "where", "severity", "note"],
+      },
+    },
+  },
+  required: ["samePerson", "confidence", "summary", "defects"],
+};
+
+/** Ask Gemini whether the render looks like the source, and what's wrong with it. Uploads are deleted afterwards. */
+export async function checkLikeness(l: Likeness): Promise<Omit<Realism, "createdAt">> {
+  const files: GeminiFile[] = [];
+  try {
+    const photo = "photo" in l.source;
+    const src = photo
+      ? await upload((l.source as { photo: string }).photo, "image/jpeg", files)
+      : await upload((l.source as { clip: string }).clip, "video/mp4", files);
+    const render = await upload(l.preview, "video/mp4", files);
+    const t = (v: number) => `${v.toFixed(2)} s`;
+    const parts: object[] = [
+      { text: photo ? "The source: a photo of the person." : "The source: the video the person was rebuilt from." },
+      { fileData: { fileUri: src.uri!, mimeType: src.mimeType ?? (photo ? "image/jpeg" : "video/mp4") } },
+      { text: "The render: the rebuilt 3D person on black, while a virtual camera circles them once over the video." },
+      { fileData: { fileUri: render.uri!, mimeType: render.mimeType ?? "video/mp4" }, videoMetadata: { fps: 4 } },
+      {
+        text:
+          `Judge the render at three moments: the front view at ${t(l.moments.front)}, the three-quarter view at ` +
+          `${t(l.moments["three-quarter"])} and the profile at ${t(l.moments.profile)}. Is it the same person as the ` +
+          `source, and how sure are you? Then list the defects that make it look less real or less like them: eyes ` +
+          `(glassy, misaligned, wrong colour), skin tone (shifted, patchy, not the source's), hairline, hands, seams ` +
+          `(where parts meet, e.g. a line at the neck), floaters (stray blobs around the body), face shape, teeth, ` +
+          `clothing. For each: the view, exactly where, how bad, and a short note.`,
+      },
+    ];
+    const { text, model } = await firstModel(MODELS, (model) =>
+      retry(2, () =>
+        ai().models.generateContent({
+          model,
+          contents: [{ role: "user", parts }],
+          config: {
+            systemInstruction: REALISM_SYSTEM,
+            responseMimeType: "application/json",
+            responseJsonSchema: REALISM_SCHEMA,
+            httpOptions: { timeout: 180_000 },
+          },
+        }),
+      ).then((r) => ({ text: r.text ?? "", model })),
+    );
+    return { ...cleanLikeness(JSON.parse(text)), source: photo ? "photo" : "clip", moments: l.moments, model };
+  } finally {
+    for (const f of files) ai().files.delete({ name: f.name! }).catch(() => {}); // nobody's photo stays on Google's side
+  }
+}
+
+function cleanLikeness(raw: Record<string, unknown>): Pick<Realism, "samePerson" | "confidence" | "summary" | "defects"> {
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const one = <T extends string>(v: unknown, of: readonly T[], or: T): T => ((of as readonly string[]).includes(str(v)) ? (str(v) as T) : or);
+  const confidence = Number(raw.confidence);
+  const defects: RealismDefect[] = (Array.isArray(raw.defects) ? raw.defects : [])
+    .map((d: Record<string, unknown>) => ({
+      kind: one(d?.kind, DEFECT_KINDS, "other"),
+      view: one(d?.view, VIEWS, "front"),
+      where: str(d?.where).slice(0, 80),
+      severity: one(d?.severity, ["minor", "noticeable", "severe"] as const, "noticeable"),
+      note: str(d?.note).slice(0, 200),
+    }))
+    .filter((d) => d.note)
+    .slice(0, 10);
+  return {
+    samePerson: raw.samePerson === true,
+    confidence: Number.isFinite(confidence) ? Math.min(Math.max(confidence, 0), 1) : 0,
+    summary: str(raw.summary).slice(0, 240),
+    defects,
   };
 }
 

@@ -6,9 +6,11 @@ import DreamStage from "@/components/DreamStage";
 import DreamExperience from "@/components/DreamExperience";
 import PlacesRow from "@/components/PlacesRow";
 import QuestUrl from "@/components/QuestUrl";
+import RealismPanel from "@/components/RealismPanel";
 import { heldIds, readDream } from "@/lib/bridge/dreams";
 import { ensureExperience } from "@/lib/bridge/experience";
 import { onThisMac, publicOrigin, viewerOrigin } from "@/lib/bridge/http";
+import { ensureRealism } from "@/lib/bridge/realism";
 import { dreamFile, formatCount, heightM, type Dream } from "@/lib/dream";
 import { formatDate, seenPercent } from "@/lib/format";
 
@@ -46,6 +48,7 @@ export default async function DreamPage({ params }: Props) {
   if (!d) notFound();
 
   const experience = ensureExperience(d.id);
+  const realism = d.private ? null : ensureRealism(d.id); // never on a family's private dream
   const h = await headers();
   const shareUrl = d.private ? null : `${publicOrigin(h)}/library/${encodeURIComponent(d.id)}`;
   const questUrl = `${viewerOrigin(h)}/?dream=${encodeURIComponent(d.id)}`;
@@ -124,6 +127,7 @@ export default async function DreamPage({ params }: Props) {
           <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl} initial={experience} />
           <PlacesRow id={d.id} planned={experience.state === "ready" ? experience.experience.environment : null} />
           <QuestUrl url={questUrl} />
+          {realism && <RealismPanel id={d.id} initial={realism} />}
 
           {d.private ? (
             <details className="quiet-details">

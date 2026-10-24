@@ -195,6 +195,33 @@ img, video { display: block; max-width: 100%; }
 .segmented button:hover { color: var(--text); }
 .segmented button.on { background: rgba(255, 255, 255, 0.18); color: var(--text); }
 
+/* ---------- realism check ---------- */
+.realism-verdict { display: grid; grid-template-columns: 12px 1fr; gap: 14px; align-items: start; padding: 18px 20px; border-radius: var(--radius); background: var(--surface); }
+.realism-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 7px; background: var(--muted); }
+.realism-verdict.ok .realism-dot { background: var(--ok); }
+.realism-verdict.warn .realism-dot { background: var(--warn); }
+.realism-verdict.bad .realism-dot { background: var(--bad); }
+.realism-verdict b { display: block; font-size: 19px; font-weight: 600; letter-spacing: -0.015em; }
+.realism-verdict span.num { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; }
+.realism-summary { font-size: 17px; color: var(--muted); margin: 14px 0 0; }
+.realism-defects { list-style: none; margin: 18px 0 0; padding: 0; border-top: 1px solid var(--hairline); }
+.realism-defects button {
+  width: 100%; display: grid; grid-template-columns: 96px 1fr; gap: 12px; text-align: left; padding: 14px 10px;
+  border-bottom: 1px solid var(--hairline); transition: background 0.2s ease;
+}
+.realism-defects button:hover { background: rgba(255, 255, 255, 0.04); }
+.realism-defects b { display: block; font-size: 17px; font-weight: 600; }
+.realism-where { display: block; font-size: 14px; color: var(--muted); margin-top: 1px; }
+.realism-note { display: block; font-size: 15px; color: var(--text); margin-top: 4px; }
+.realism-sev { font-size: 13px; font-weight: 600; padding-top: 3px; color: var(--muted); }
+.realism-sev.noticeable { color: var(--warn); }
+.realism-sev.severe { color: var(--bad); }
+.realism-sub { font-size: 15px; font-weight: 600; color: var(--muted); margin: 24px 0 8px; }
+.realism-candidates { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
+.realism-candidates li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--hairline); font-size: 15px; color: var(--muted); }
+.realism-candidates li.best { color: var(--text); }
+.realism-candidates li.best .num { color: var(--ok); }
+
 /* a private dream's numbers, folded away until asked for */
 .quiet-details { margin-top: 56px; }
 .quiet-details summary { display: inline-block; cursor: pointer; font-size: 15px; color: var(--muted); list-style: none; transition: color 0.2s ease; }

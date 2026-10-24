@@ -37,6 +37,7 @@ export interface Dream {
   experience?: string | null; // "experience.json": the plan written from the intent (see Experience below)
   captions?: string | null; // "captions.vtt": WebVTT of what the person says, on the clip's own clock
   private?: boolean; // a family's dream: never in the kiosk, the showcase or a share link; the library shows it on this Mac only
+  updatedAt?: string; // set when a bundle is rebuilt in place (a new head, say); the realism check is redone then
   createdAt?: string;
 }
 
@@ -74,6 +75,39 @@ export type ExperienceState =
   | { state: "working" }
   | { state: "failed"; message: string }
   | { state: "off" }; // no Gemini key, or nothing to plan from
+
+/** The realism check: does the rebuilt person look like the source, and what gives the render away (Gemini). */
+export type RealismView = "front" | "three-quarter" | "profile";
+export const DEFECT_KINDS = ["eyes", "skin-tone", "hairline", "hands", "seams", "floaters", "face-shape", "teeth", "clothing", "other"] as const;
+export interface RealismDefect {
+  kind: (typeof DEFECT_KINDS)[number];
+  view: RealismView;
+  where: string; // "left eye, inner corner"
+  severity: "minor" | "noticeable" | "severe";
+  note: string;
+}
+export interface Realism {
+  samePerson: boolean;
+  confidence: number; // 0-1: how sure Gemini is of samePerson
+  summary: string;
+  defects: RealismDefect[];
+  source: "photo" | "clip"; // what the render was compared with
+  moments: Record<RealismView, number>; // seconds in preview.mp4 that were judged
+  model?: string;
+  createdAt: string;
+}
+/** A candidate (the dream itself, or a head-swap bundle "<id>-head..."), ranked by same-person confidence. */
+export interface RankedCandidate {
+  id: string;
+  name: string;
+  samePerson: boolean;
+  confidence: number;
+}
+export type RealismState =
+  | { state: "ready"; realism: Realism; candidates?: RankedCandidate[] }
+  | { state: "working" }
+  | { state: "failed"; message: string }
+  | { state: "off" }; // no Gemini key, a private or test dream, or nothing on this Mac to compare with
 
 export type JobKind = "replay" | "avatar";
 export type JobState = "queued" | "running" | "done" | "failed";

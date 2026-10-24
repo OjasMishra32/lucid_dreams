@@ -4,6 +4,7 @@ import { slug } from "../dream";
 import type { Dream } from "../dream";
 import { bundleComplete, isRunId, readDream } from "./dreams";
 import { sweepExperiences } from "./experience";
+import { sweepRealism } from "./realism";
 import { mockStatus } from "./mock";
 import { remoteStatus, repairAvatars, runnerStatus, startRunnerJob } from "./runner";
 import { runName, runSubmittedAt, submittedRuns } from "./runs";
@@ -78,9 +79,13 @@ async function otherRuns(): Promise<ActiveJob[]> {
   return out.filter((x): x is ActiveJob => x !== null);
 }
 
-/** Whenever the library is listed: plan dreams that have no plan yet, and (runner mode) finish avatars missing .ply. */
+/**
+ * Whenever the library is listed: plan dreams that have no plan yet, check how real the new ones look, and (runner
+ * mode) finish avatars missing .ply.
+ */
 export function tend(dreams: Dream[]) {
   sweepExperiences(dreams);
+  sweepRealism(dreams);
   if (MODE === "runner") repairAvatars(dreams);
 }
 
