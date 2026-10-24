@@ -191,7 +191,7 @@ export default function TechnologySection() {
             each next one, starting from the last (about a minute per frame on a B200). The real video frame counts as one
             more camera, only where it agrees with the views.
           </p>
-          <Eq tex={String.raw`\mathcal L=0.8\,\lVert\hat I-I\rVert_1+0.2\,\big(1-\operatorname{SSIM}(\hat I,I)\big)+0.1\,\lVert\hat A-A\rVert_1+\dots`} label="color error, structure (SSIM), and the person's outline; plus small regularizers" />
+          <Eq tex={String.raw`\mathcal L=0.8\,\lVert\hat I-I\rVert_1+0.2\,\big(1-\operatorname{SSIM}(\hat I,I)\big)+0.1\,\lVert\hat A-A\rVert_1+\mathcal L_{\text{reg}}`} label="color error, structure (SSIM), the person's outline, and small penalties on opacity, size and stretch" />
         </div>
         <div className="t-truth">
           <TruthSlider real="/media/truth-dance-real.jpg" render="/media/truth-dance-render.jpg" />
