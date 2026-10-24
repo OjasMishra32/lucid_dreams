@@ -369,6 +369,7 @@ def extent(xyz: np.ndarray, alpha: np.ndarray, above_y: float, solid: float = 0.
 # smears, a stray tuft). There the hair is repainted from the hair the photos did see.
 BACK_Z = (-0.060, -0.045)  # FLAME z: fully repainted behind the first, untouched in front of the second
 NAPE_Y = (-0.080, -0.060)  # FLAME y: the nape hairline, fading in over this range
+NAPE_BACK_Z = (-0.10, -0.07)  # FLAME z: a lowered nape hairline (--nape-drop) applies fully behind the first
 SEEN_HAIR = {"zMin": -0.040, "yMin": 0.030}  # scalp Gaussians in front of zMin and above yMin: hair the photos saw
 STANDOFF_M = {"hair": 0.045, "back": 0.030, "other": 0.030}  # furthest from its FLAME vertex (UIKA
 # keeps the person's shape in offsets from the mean FLAME, so a face Gaussian may sit 2 cm off; a collar 4 cm)
@@ -379,6 +380,12 @@ COLLAR_REACH_M = 0.03  # a head model's neck under seam + this is checked agains
 SMOOTH_K = 256  # seen Gaussians averaged for a repainted colour (smooth across the back of the head)
 CHIN_GAP_M = 0.03  # the seam sits this far under the chin (UIKA's face and lips): the whole jaw and upper neck are
 # UIKA's, and the cross-fade to the body's neck falls low on the neck, by the collar
+
+
+def deep_back(z: np.ndarray) -> np.ndarray:
+    """0 at the sides of the neck, 1 well behind it (FLAME z): where a lowered nape hairline applies, so hair never
+    hangs beside the jaw."""
+    return np.clip((NAPE_BACK_Z[1] - np.asarray(z, dtype=np.float64)) / (NAPE_BACK_Z[1] - NAPE_BACK_Z[0]), 0, 1)
 
 
 def flame_regions(masks: dict, n: int) -> np.ndarray:
@@ -409,7 +416,7 @@ def edit_uika(g: Gaussians, alpha: np.ndarray, near: np.ndarray, dist: np.ndarra
     v = flame_rest[near]
     hair, neck = np.isin(reg, HAIR_REGIONS), np.isin(reg, NECK_REGIONS)
     behind = np.clip((BACK_Z[1] - v[:, 2]) / (BACK_Z[1] - BACK_Z[0]), 0, 1)
-    above_nape = np.clip((v[:, 1] - (NAPE_Y[0] - nape_drop)) / (NAPE_Y[1] - NAPE_Y[0]), 0, 1)
+    above_nape = np.clip((v[:, 1] - (NAPE_Y[0] - nape_drop * deep_back(v[:, 2]))) / (NAPE_Y[1] - NAPE_Y[0]), 0, 1)
     back_w = behind * above_nape * ((reg == "scalp") | neck)  # hair; not the ears
     skin_w = behind * (1 - above_nape) * neck  # the back of the neck under the hairline
     lum = rgb @ np.array([0.299, 0.587, 0.114])
@@ -474,7 +481,7 @@ def scalp_shell(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, seam_lo: 
     _, _, p, n = D.sample_surface(verts, faces, fids, SHELL_N, seed=seed)
     near = cKDTree(flame_a).query(p)[1]
     reg, v = regions[near], flame_rest[near]
-    back = (v[:, 2] < BACK_Z[1]) & (v[:, 1] > NAPE_Y[0] - nape_drop)
+    back = (v[:, 2] < BACK_Z[1]) & (v[:, 1] > NAPE_Y[0] - nape_drop * deep_back(v[:, 2]))
     ok = (((reg == "scalp") & (v[:, 2] < SHELL_FRONT_Z)) | (np.isin(reg, NECK_REGIONS) & back)) & (p[:, 1] > seam_lo)
     p, n = p[ok], n[ok]
     if len(solid_xyz) >= k:  # the local height of UIKA's hair over the scalp, along the scalp's normal
