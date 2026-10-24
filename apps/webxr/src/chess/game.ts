@@ -8,11 +8,16 @@ import { loadDream } from "../dream";
 import { fingertips, handOccluder, XrButton } from "../xr/hands";
 import { Engine, STRENGTHS, type Strength } from "./engine";
 import { board, localToSquare, pieceGeometries, pieceHeight, pieceMaterials, type PieceType, SQUARE, squareToLocal } from "./pieces";
+import { ChessClock } from "./clock";
+import { FloatingNote, LegendCard } from "./room";
 import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
+import { TableSounds } from "./sound";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
-// you at the strength you choose. On a laptop it's the same game with a mouse. ?opponent=<avatar dream id> seats a
-// rigged avatar across the table (seated.ts), who moves their own pieces by hand.
+// you at the strength you choose, with a real clock (10 + 0) at your right. On a laptop it's the same game with a
+// mouse. ?opponent=<avatar dream id> seats a rigged avatar across the table (seated.ts): they think with a fist under
+// the chin, move their own pieces, press their clock, set captured pieces aside, and shake your hand at the end.
+// They never speak: a legend is always labelled as Stockfish at that player's rating.
 
 const PINCH_ON = 0.018; // meters between thumb and index tips
 const PINCH_OFF = 0.03;
@@ -83,6 +88,14 @@ export async function renderChess(root: HTMLElement) {
   boardGroup.add(pieces);
   const hints = new THREE.Group();
   boardGroup.add(hints);
+  const taken = new THREE.Group(); // captured pieces, standing beside the board
+  boardGroup.add(taken);
+  const clock = new ChessClock(600); // 10 + 0
+  clock.group.position.set(SQUARE * 4 + 0.13, 0, 0); // at your right, beside the board
+  table.add(clock.group);
+  const sounds = new TableSounds(camera, scene);
+  const legendNote = new FloatingNote();
+  scene.add(legendNote.mesh);
 
   // someone across the table: any avatar bundle, seated on a chair on the far side, facing you. A legend's strength
   // brings their avatar (when it's been made); otherwise ?opponent=<id>, or nobody.
@@ -176,7 +189,28 @@ export async function renderChess(root: HTMLElement) {
   let side: "w" | "b" = "w";
   let thinking = false;
   const meshes = new Map<string, THREE.Object3D>(); // square -> piece
-  const tweens: { obj: THREE.Object3D; from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number }[] = [];
+  const tweens: { obj: THREE.Object3D; from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number; onDone?: () => void }[] = [];
+  let gameId = 0; // bumped by a new game or an undo: an engine answer for an older position is dropped
+  let lastEval: number | null = null; // the opponent's view of the position after its last move, centipawns
+  const other = (c: "w" | "b") => (c === "w" ? "b" : "w");
+  const isOver = () => chess.isGameOver() || !!clock.flagged;
+  const worldAt = (boardLocal: THREE.Vector3) => boardGroup.localToWorld(boardLocal.clone());
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+
+  // pieces taken off the board stand beside it in neat rows, each player's on their own end of the table, at your
+  // left (the clock is at your right)
+  const slot = (byPlayer: boolean, i: number) => {
+    const tl = new THREE.Vector3(-(SQUARE * 4 + 0.05 + Math.floor(i / 4) * 0.042), 0, (byPlayer ? 1 : -1) * (SQUARE * 3.5 - (i % 4) * 0.045));
+    boardGroup.updateMatrix();
+    return tl.applyMatrix4(boardGroup.matrix.clone().invert()); // table -> board (the board turns when you play black)
+  };
+  const takenPieces = () => {
+    const byPlayer: { type: PieceType; color: "w" | "b" }[] = [];
+    const byOpponent: { type: PieceType; color: "w" | "b" }[] = [];
+    for (const m of chess.history({ verbose: true })) if (m.captured) (m.color === side ? byPlayer : byOpponent).push({ type: m.captured as PieceType, color: other(m.color) });
+    return { byPlayer, byOpponent };
+  };
+  let takenMeshes: { byPlayer: THREE.Object3D[]; byOpponent: THREE.Object3D[] } = { byPlayer: [], byOpponent: [] };
 
   const makePiece = (type: PieceType, color: "w" | "b") => {
     const g = new THREE.Group();
@@ -209,10 +243,20 @@ export async function renderChess(root: HTMLElement) {
         const p = makePiece(cell.type as PieceType, cell.color);
         const target = squareToLocal(cell.square);
         p.position.copy(moving && cell.square === moving.to ? squareToLocal(moving.from) : target);
-        if (moving && cell.square === moving.to) tweens.push({ obj: p, from: p.position.clone(), to: target, t0: performance.now(), dur: 520 });
+        if (moving && cell.square === moving.to) tweens.push({ obj: p, from: p.position.clone(), to: target, t0: performance.now(), dur: 520, onDone: () => sounds.clack(worldAt(target)) });
         pieces.add(p);
         meshes.set(cell.square, p);
       }
+    taken.clear();
+    const t = takenPieces();
+    const place = (list: typeof t.byPlayer, byPlayer: boolean) =>
+      list.map((c, i) => {
+        const m = makePiece(c.type, c.color);
+        m.position.copy(slot(byPlayer, i));
+        taken.add(m);
+        return m;
+      });
+    takenMeshes = { byPlayer: place(t.byPlayer, true), byOpponent: place(t.byOpponent, false) };
     showHints(null);
     updateStatus();
   };
@@ -224,6 +268,7 @@ export async function renderChess(root: HTMLElement) {
   const updateStatus = () => {
     const who = strength.legend ? `${strength.legend} (engine, ${strength.elo})` : opponentName ? `${opponentName} (${strength.label})` : strength.label;
     if (reaching) return setStatus(`${who} is moving…`);
+    if (clock.flagged) return setStatus(clock.flagged === "near" ? "Out of time. Well played, engine." : "Out of time. You win.");
     if (chess.isCheckmate()) return setStatus(chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.");
     if (chess.isDraw()) return setStatus("Draw");
     if (thinking) return setStatus(`${who} is thinking…`);
@@ -231,46 +276,113 @@ export async function renderChess(root: HTMLElement) {
   };
 
   const engineMove = async () => {
-    if (chess.isGameOver() || chess.turn() === side) return;
+    if (isOver() || chess.turn() === side) return;
+    const id = gameId;
     thinking = true;
     updateStatus();
-    const uci = await engine.bestMove(chess.fen(), strength);
+    const t0 = performance.now();
+    // as the search deepens, the opponent learns what your last move did: a big drop for them is a nod for you
+    let deepest = { depth: 0, cp: 0 };
+    let judged = false;
+    const judge = (cp: number) => {
+      judged = true;
+      if (lastEval !== null && lastEval - cp > 150) seated?.nod();
+    };
+    const uci = await engine.bestMove(chess.fen(), strength, (depth, cp) => {
+      if (depth >= deepest.depth) deepest = { depth, cp };
+      if (!judged && depth >= 10) judge(cp);
+    });
+    if (id !== gameId) return; // a new game meanwhile
+    if (!judged && deepest.depth) judge(deepest.cp);
+    if (deepest.depth) lastEval = deepest.cp;
+    if (seated) await sleep(1500 - (performance.now() - t0)); // someone at the table takes a moment
+    if (id !== gameId) return;
     thinking = false;
-    if (!uci || uci === "(none)") return updateStatus();
-    const mv = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] ?? "q" });
-    if (!handMove(mv)) sync({ from: mv.from, to: mv.to });
+    if (!uci || uci === "(none)" || isOver()) return updateStatus();
+    let mv: Move;
+    try {
+      mv = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] ?? "q" });
+    } catch {
+      return updateStatus();
+    }
+    if (handMove(mv)) return;
+    sync({ from: mv.from, to: mv.to });
+    afterOpponentMove(true);
   };
 
-  // the opponent moves their own piece: the board keeps the old position until their hand lets go
+  // their move is on the board: your clock runs, or the game is over
+  const afterOpponentMove = (clickClock: boolean) => {
+    if (isOver()) {
+      clock.run(null);
+      updateStatus();
+      return ending();
+    }
+    clock.run("near");
+    if (clickClock) sounds.click(clock.worldPosition("far"));
+  };
+
+  // the opponent moves their own piece: the board keeps the old position until their hand lets go. A capture
+  // first goes beside the board; castling is the king, then the rook; then they press their clock.
   const handMove = (mv: Move): boolean => {
     const obj = meshes.get(mv.from);
     if (!seated || !obj) return false;
-    const carry = (o: THREE.Object3D, from: string, to: string, captured: THREE.Object3D | null = null): Carry => ({
+    const carry = (o: THREE.Object3D, from: THREE.Vector3, to: THREE.Vector3, soft = false): Carry => ({
       obj: o,
-      from: squareToLocal(from),
-      to: squareToLocal(to),
+      from,
+      to,
       height: o.userData.height as number,
-      captured,
       shadow: o.children[1],
+      onLand: () => sounds.clack(worldAt(to), soft),
     });
+    const carries: Carry[] = [];
     const takenOn = mv.flags.includes("e") ? mv.to[0] + mv.from[1] : mv.to; // en passant takes beside, not on, the square
-    const carries = [carry(obj, mv.from, mv.to, mv.captured ? (meshes.get(takenOn) ?? null) : null)];
+    const victim = mv.captured ? meshes.get(takenOn) : undefined;
+    if (victim) carries.push(carry(victim, victim.position.clone(), slot(false, takenPieces().byOpponent.length - 1), true));
+    carries.push(carry(obj, squareToLocal(mv.from), squareToLocal(mv.to)));
     if (mv.flags.includes("k") || mv.flags.includes("q")) {
       const [rf, rt] = mv.flags.includes("k") ? ["h", "f"] : ["a", "d"];
       const rook = meshes.get(rf + mv.from[1]);
-      if (rook) carries.push(carry(rook, rf + mv.from[1], rt + mv.from[1])); // the king first, then the rook
+      if (rook) carries.push(carry(rook, squareToLocal(rf + mv.from[1]), squareToLocal(rt + mv.from[1])));
     }
     reaching = true;
     updateStatus();
-    seated.play(carries, () => {
-      reaching = false;
-      sync(); // the real position, promotions included
-    });
+    const over = isOver();
+    seated.play(
+      carries,
+      () => {
+        reaching = false;
+        sync(); // the real position, promotions included
+        if (isOver()) afterOpponentMove(false);
+      },
+      over
+        ? undefined
+        : {
+            at: () => clock.buttonTop("far"),
+            onTap: () => {
+              sounds.click(clock.worldPosition("far"));
+              if (!isOver() && chess.turn() === side) clock.run("near");
+            },
+          },
+    );
     return true;
   };
 
+  // the game is over: if they lost they tip their king over, then (win, lose or draw) they offer a handshake
+  const ending = () => {
+    if (!seated) return;
+    const theyLost = (chess.isCheckmate() && chess.turn() !== side) || clock.flagged === "far";
+    let king: THREE.Object3D | undefined;
+    if (theyLost)
+      for (const row of chess.board()) for (const c of row) if (c && c.type === "k" && c.color !== side) king = meshes.get(c.square);
+    if (!king) return seated.endGame();
+    const k = king;
+    // it falls toward their right, along the board's edge
+    const fall = new THREE.Vector3(-1, 0, 0).applyQuaternion(boardGroup.quaternion.clone().invert());
+    seated.endGame({ obj: k, base: k.position.clone(), fall, height: k.userData.height as number, shadow: k.children[1], onTipped: () => sounds.clack(k.getWorldPosition(new THREE.Vector3()), true) });
+  };
+
   const tryMove = (from: Square, to: Square | null): boolean => {
-    if (!to || to === from) return false;
+    if (!to || to === from || isOver()) return false;
     let mv: Move | null = null;
     try {
       mv = chess.move({ from, to, promotion: "q" });
@@ -279,6 +391,25 @@ export async function renderChess(root: HTMLElement) {
     }
     if (!mv) return false;
     sync();
+    sounds.clack(worldAt(squareToLocal(mv.to)));
+    if (mv.captured) {
+      // your capture goes beside the board, to the end of your row
+      const m = takenMeshes.byPlayer[takenMeshes.byPlayer.length - 1];
+      const takenOn = mv.flags.includes("e") ? mv.to[0] + mv.from[1] : mv.to;
+      if (m) {
+        const dest = m.position.clone();
+        m.position.copy(squareToLocal(takenOn));
+        tweens.push({ obj: m, from: m.position.clone(), to: dest, t0: performance.now(), dur: 620, onDone: () => sounds.clack(worldAt(dest), true) });
+      }
+    }
+    if (isOver()) {
+      clock.run(null);
+      updateStatus();
+      ending();
+      return true;
+    }
+    clock.run("far"); // your move ends your turn (pressing your button does too)
+    seated?.glance(0.1, 1.0); // they look up at you, then back to the board
     void engineMove();
     return true;
   };
@@ -297,7 +428,12 @@ export async function renderChess(root: HTMLElement) {
   };
 
   const newGame = async () => {
+    gameId++;
+    thinking = false;
+    lastEval = null;
     chess.reset();
+    clock.reset();
+    seated?.cancel();
     engine.newGame();
     await engine.setStrength(strength);
     boardGroup.rotation.y = side === "w" ? 0 : Math.PI;
@@ -307,7 +443,7 @@ export async function renderChess(root: HTMLElement) {
 
   // ---------------- picking up pieces (mouse, hands, controllers) ----------------
   type Hold = { square: Square; obj: THREE.Object3D; offset: THREE.Vector3 };
-  const canTouch = (sq: string) => !thinking && !reaching && !chess.isGameOver() && chess.turn() === side && chess.get(sq as Square)?.color === side;
+  const canTouch = (sq: string) => !thinking && !reaching && !isOver() && chess.turn() === side && chess.get(sq as Square)?.color === side;
   const nearestPiece = (worldPoint: THREE.Vector3): string | null => {
     let best: string | null = null;
     let bestD = GRAB_RADIUS;
@@ -337,7 +473,8 @@ export async function renderChess(root: HTMLElement) {
   const release = (h: Hold) => {
     const local = h.obj.position.clone();
     if (!tryMove(h.square, localToSquare(local) as Square | null)) {
-      tweens.push({ obj: h.obj, from: h.obj.position.clone(), to: squareToLocal(h.square), t0: performance.now(), dur: 260 });
+      const back = squareToLocal(h.square);
+      tweens.push({ obj: h.obj, from: h.obj.position.clone(), to: back, t0: performance.now(), dur: 260, onDone: () => sounds.clack(worldAt(back), true) });
       showHints(null);
     }
   };
@@ -373,9 +510,11 @@ export async function renderChess(root: HTMLElement) {
     }
     return best;
   };
+  const pointerNdc = new THREE.Vector2(2, 2); // where the mouse is (off-screen until it moves)
   renderer.domElement.addEventListener("pointerdown", (e) => {
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
+    if (clock.hitNear(ray)) return pressClock();
     const sq = pickPiece();
     if (!sq) return;
     controls.enabled = false;
@@ -383,6 +522,7 @@ export async function renderChess(root: HTMLElement) {
     mouseHold = w ? { ...grab(sq, w), offset: new THREE.Vector3() } : null;
   });
   addEventListener("pointermove", (e) => {
+    pointerNdc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     if (!mouseHold) return;
     const w = pointerWorld(e, 0.03);
     if (w) moveHeld(mouseHold, w.add(new THREE.Vector3(0, (mouseHold.obj.userData.height as number) * 0.6 + 0.02, 0)));
@@ -460,6 +600,21 @@ export async function renderChess(root: HTMLElement) {
     panelTex.needsUpdate = true;
   }
 
+  // your clock button: a click; your move has already handed the time over
+  const pressClock = () => sounds.click(clock.worldPosition("near"));
+
+  const undo = () => {
+    if (thinking || reaching) return;
+    gameId++;
+    lastEval = null;
+    seated?.cancel();
+    chess.undo();
+    if (chess.turn() !== side) chess.undo();
+    clock.flagged = null;
+    if (clock.running) clock.run(chess.turn() === side ? "near" : "far");
+    sync();
+  };
+
   // ---------------- buttons you press with a fingertip (no controllers needed) ----------------
   const xrButtons: XrButton[] = [];
   const addButton = (id: string, label: string, x: number, onPress: () => void) => {
@@ -470,12 +625,7 @@ export async function renderChess(root: HTMLElement) {
     xrButtons.push(b);
   };
   addButton("new", "New game", -0.15, () => void newGame());
-  addButton("undo", "Undo", -0.05, () => {
-    if (thinking || reaching) return;
-    chess.undo();
-    if (chess.turn() !== side) chess.undo();
-    sync();
-  });
+  addButton("undo", "Undo", -0.05, () => undo());
   addButton("strength", strength.label, 0.065, () => {
     const i = STRENGTHS.findIndex((s) => s.id === strength.id);
     selectStrength(STRENGTHS[(i + 1) % STRENGTHS.length].id);
@@ -487,6 +637,19 @@ export async function renderChess(root: HTMLElement) {
   });
   xrButtons.forEach((b) => (b.mesh.visible = false));
   let movingBoard = false;
+  // pick a legend in the room: a card each, floating at your left; the chosen one takes the seat
+  const cards = STRENGTHS.filter((st) => st.legend).map((st, i) => {
+    const c = new LegendCard(st.id, st.legend!, `${st.elo} peak rating`, () => {
+      if (strength.id === st.id) return;
+      selectStrength(st.id);
+      void newGame();
+    });
+    c.mesh.position.set(-(SQUARE * 4 + 0.1) - i * 0.122, 0.15, 0.04);
+    c.mesh.rotation.set(-0.35, 0.45, 0, "YXZ"); // turned toward your chair
+    c.mesh.visible = false;
+    table.add(c.mesh);
+    return c;
+  });
 
   // ---------------- XR session ----------------
   let placed = false;
@@ -497,9 +660,11 @@ export async function renderChess(root: HTMLElement) {
     placed = false;
     panel.visible = true;
     xrButtons.forEach((b) => (b.mesh.visible = true));
+    cards.forEach((c) => (c.mesh.visible = true));
     session.addEventListener("end", () => {
       panel.visible = false;
       xrButtons.forEach((b) => (b.mesh.visible = false));
+      cards.forEach((c) => (c.mesh.visible = false));
       table.position.set(0, 0.75, 0);
       table.rotation.y = 0;
       frameView(); // the headset's projection was the camera's while presenting
@@ -511,6 +676,7 @@ export async function renderChess(root: HTMLElement) {
     strength = STRENGTHS.find((s) => s.id === id)!;
     $("#legend-note").textContent = strength.legend ? `Stockfish at ${strength.legend}'s peak rating (${strength.elo}). Not affiliated.` : "";
     xrButtons.find((b) => b.id === "strength")?.setLabel(strength.label);
+    cards.forEach((c) => c.setOn(c.id === id));
     root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
     void engine.setStrength(strength);
     setOpponent(strength.avatar ?? opponentId, strength.avatar ? opponentId : null);
@@ -525,12 +691,7 @@ export async function renderChess(root: HTMLElement) {
     }),
   );
   $("#new").addEventListener("click", () => void newGame());
-  $("#undo").addEventListener("click", () => {
-    if (thinking || reaching) return;
-    chess.undo();
-    if (chess.turn() !== side) chess.undo();
-    sync();
-  });
+  $("#undo").addEventListener("click", () => undo());
   selectStrength(strength.id);
   await newGame();
   // ---------------- loop ----------------
@@ -539,7 +700,17 @@ export async function renderChess(root: HTMLElement) {
     frameView();
   });
   const viewer = new THREE.Vector3();
+  let lastTime = 0;
+  clock.onFlag = () => {
+    updateStatus();
+    if (!reaching) ending(); // mid-move, their hand finishes first
+  };
+  const shakeRay = new THREE.Raycaster();
+  const handJoints = ["wrist", "index-finger-tip", "middle-finger-metacarpal", "thumb-tip"];
   const frame = (time: number) => {
+    const dt = lastTime ? Math.min(0.1, (time - lastTime) / 1000) : 0;
+    lastTime = time;
+    clock.update(dt);
     if (renderer.xr.isPresenting) {
       if (!placed) {
         const cam = renderer.xr.getCamera();
@@ -551,6 +722,8 @@ export async function renderChess(root: HTMLElement) {
       occluders.forEach((o) => o());
       const tips = fingertips(hands);
       for (const b of xrButtons) b.touch(tips, time);
+      for (const c of cards) c.touch(tips, time);
+      if (clock.touch(tips, time)) pressClock();
       for (const i of [0, 1]) {
         const p = pinchPoint(i);
         if (!p) continue;
@@ -587,20 +760,46 @@ export async function renderChess(root: HTMLElement) {
       const o = Math.min(1, (performance.now() - opponentSince) / 1400); // they arrive, not pop in
       opponent.mesh.opacity = o;
       seated.setOpacity(o);
+      // a hand held out: your hand (or the mouse) within about 12 cm of it, and you shake
+      if (seated.offering) {
+        const theirs = seated.handWorld;
+        let met = false;
+        if (renderer.xr.isPresenting) {
+          const p = new THREE.Vector3();
+          for (const h of hands) {
+            const joints = (h as unknown as { joints: Record<string, THREE.Object3D> }).joints ?? {};
+            for (const n of handJoints) if (joints[n]?.visible && joints[n].getWorldPosition(p).distanceTo(theirs) < 0.12) met = true;
+          }
+          for (const c of ctrls) if (c.visible && c.getWorldPosition(p).distanceTo(theirs) < 0.12) met = true;
+        } else if (Math.abs(pointerNdc.x) <= 1) {
+          shakeRay.setFromCamera(pointerNdc, camera);
+          met = shakeRay.ray.distanceToPoint(theirs) < 0.12;
+        }
+        if (met) seated.shake();
+      }
+    }
+    // a legend is always labelled: it's Stockfish at their rating, not them
+    legendNote.setText(strength.legend ? `Stockfish at ${strength.legend}'s peak rating (${strength.elo}). Not affiliated.` : "");
+    if (legendNote.mesh.visible) {
+      const at = opponent ? opponentGroup.localToWorld(new THREE.Vector3(0, 1.45, -0.12)) : table.localToWorld(new THREE.Vector3(0, 0.4, -0.35));
+      legendNote.place(at, renderer.xr.isPresenting ? renderer.xr.getCamera().getWorldPosition(new THREE.Vector3()) : camera.position);
     }
     for (let k = tweens.length - 1; k >= 0; k--) {
       const tw = tweens[k];
-      const u = Math.min(1, (time - tw.t0) / tw.dur);
+      const u = THREE.MathUtils.clamp((time - tw.t0) / tw.dur, 0, 1);
       const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
       tw.obj.position.lerpVectors(tw.from, tw.to, e);
       tw.obj.position.y = tw.to.y + Math.sin(Math.PI * e) * 0.03; // a small lift, like a hand moving it
-      if (u >= 1) tweens.splice(k, 1);
+      if (u >= 1) {
+        tweens.splice(k, 1);
+        tw.onDone?.();
+      }
     }
     renderer.render(scene, camera);
   };
   renderer.setAnimationLoop(frame);
   if (import.meta.env.DEV)
-    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking };
+    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame() };
 }
 
 function contactShadowTexture(): THREE.Texture {

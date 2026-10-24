@@ -62,13 +62,27 @@ export class Engine {
     await this.until("readyok", "isready");
   }
 
-  /** Best move for a FEN, in UCI notation (e.g. "e2e4", "e7e8q"). Thinks a little longer at higher strengths. */
-  async bestMove(fen: string, s: Strength): Promise<string> {
+  /**
+   * Best move for a FEN, in UCI notation (e.g. "e2e4", "e7e8q"). Thinks a little longer at higher strengths. onInfo
+   * hears each depth's evaluation as the search deepens: centipawns for the side to move (a mate is +-10000).
+   */
+  async bestMove(fen: string, s: Strength, onInfo?: (depth: number, cp: number) => void): Promise<string> {
     await this.ready;
     this.send(`position fen ${fen}`);
     const ms = s.elo === null ? 1500 : s.elo >= 2600 ? 1200 : s.elo >= 2200 ? 900 : 600;
-    const line = await this.until("bestmove", `go movetime ${ms}`);
-    return line.split(/\s+/)[1];
+    const info = (line: string) => {
+      const m = /^info .*?\bdepth (\d+)\b.*?\bscore (cp|mate) (-?\d+)/.exec(line);
+      if (!m || / (lower|upper)bound/.test(line)) return;
+      const n = Number(m[3]);
+      onInfo?.(Number(m[1]), m[2] === "cp" ? n : Math.sign(n || -1) * 10000);
+    };
+    if (onInfo) this.listeners.push(info);
+    try {
+      const line = await this.until("bestmove", `go movetime ${ms}`);
+      return line.split(/\s+/)[1];
+    } finally {
+      this.listeners = this.listeners.filter((x) => x !== info);
+    }
   }
 
   newGame() {
