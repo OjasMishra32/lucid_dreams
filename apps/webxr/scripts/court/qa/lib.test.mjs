@@ -205,7 +205,7 @@ test("validateChecklist: every P1-P44 once, with the required fields, no broadca
   assert.match(validateChecklist({ rows: dup }).join("\n"), /twice/);
   const noOwner = good.map((r) => (r.id === "P3" ? { ...r, owner: "" } : r));
   assert.match(validateChecklist({ rows: noOwner }).join("\n"), /P3.*owner/);
-  const leaked = good.map((r) => (r.id === "P5" ? { ...r, requirement: "seen in /Users/me/court-side-data/x frame 1602" } : r));
+  const leaked = good.map((r) => (r.id === "P5" ? { ...r, requirement: "seen in /Users/me/court-side-data/x frame 4321" } : r));
   assert.match(validateChecklist({ rows: leaked }).join("\n"), /P5.*private/);
   const badKind = good.map((r) => (r.id === "P7" ? { ...r, checks: [{ kind: "wat" }] } : r));
   assert.match(validateChecklist({ rows: badKind }).join("\n"), /P7.*kind/);
