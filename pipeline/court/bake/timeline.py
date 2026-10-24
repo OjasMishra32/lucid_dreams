@@ -82,6 +82,7 @@ class Timeline:
     hz: int
     pass2_speed: float
     freeze: int
+    make: int
     frames: list[DisplayFrame]
     segments: dict
     cutoff: int
@@ -96,7 +97,7 @@ class Timeline:
     def format_block(self) -> dict:
         """The court.json video fields this timeline decides (or a hz90 fallback's segments/cutoff)."""
         return {"displayHz": self.hz, "pass2Speed": self.pass2_speed, "segments": self.segments,
-                "cutoff": self.cutoff, "freezeSource": self.freeze}
+                "cutoff": self.cutoff, "freezeSource": self.freeze, "makeSource": self.make}
 
     def fallback_block(self) -> dict:
         """video.fallbacks.hz90's timeline fields (format.ts ShowFallbacks.hz90): its own speed, segments, cutoff."""
@@ -199,7 +200,7 @@ def build(cfg: BakeConfig, hz: int, cap: CapTime | None = None) -> Timeline:
     segs = {"pass1": [0, p2_first - 1], "pass2": [p2_first, p2_first + (m_hi - m_lo)],
             "resume": [r_first, len(rows) - 1], "eases": ease_meta}
     idr = sorted([0, p2_first, r_first] + [e["frames"][0] for e in ease_meta])
-    return Timeline(hz, v, cfg.freeze, frames, segs, ease_meta[-1]["start"], idr)
+    return Timeline(hz, v, cfg.freeze, cfg.make, frames, segs, ease_meta[-1]["start"], idr)
 
 
 # ---------------- checks (P6) ----------------
@@ -248,6 +249,10 @@ def check(tl: Timeline, cfg: BakeConfig) -> dict:
                 errors.append(f"{name}: motion max/median {ratio:.2f} (> 2.5)")
         if np.any(np.diff(ts) < -1e-12):
             errors.append(f"{name}: shown time goes backwards")
+    for seg in ("pass2", "resume"):
+        fr = tl.frames_of(seg)
+        if not (fr[0].src < cfg.make < fr[-1].src):
+            errors.append(f"{seg} never passes the make (source {cfg.make}): it shows {fr[0].src}-{fr[-1].src}")
     for i, e in enumerate(tl.segments["eases"]):
         last = tl.frames[e["frames"][1]]
         if last.interp or last.src != cfg.freeze:

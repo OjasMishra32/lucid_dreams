@@ -125,7 +125,8 @@ def test_idr_frames_are_the_segment_starts(tl):
 
 def test_format_block_has_the_contract_fields(tl):
     v = tl.format_block()
-    assert set(v) == {"displayHz", "pass2Speed", "segments", "cutoff", "freezeSource"}
+    assert set(v) == {"displayHz", "pass2Speed", "segments", "cutoff", "freezeSource", "makeSource"}
+    assert v["makeSource"] == CFG.make
     assert set(v["segments"]) == {"pass1", "pass2", "resume", "eases"}
     assert v["freezeSource"] == CFG.freeze and v["cutoff"] == tl.cutoff
 
@@ -185,3 +186,16 @@ def test_every_pass2_frame_at_90hz_with_075_is_real_except_the_strobes():
     assert {round(f.src) for f in r if f.interp} <= {330, 342}
     m = T.check(tl, CFG)
     assert m["errors"] == [] and m["max_speed_change"] <= 0.02 and m["max_motion_ratio"] <= 2.5
+
+
+def test_the_make_is_shown_in_pass2_and_the_resume_and_the_play_runs_on_after_it(tl):
+    for seg in ("pass2", "resume"):
+        fr = tl.frames_of(seg)
+        assert fr[0].src < CFG.make < fr[-1].src  # the make one-shot fires as the show passes it
+    assert T.check(tl, CFG)["errors"] == []
+
+
+def test_a_make_after_the_clip_end_is_reported():
+    cfg = dataclasses.replace(CFG, clip_end=CFG.make)
+    m = T.check(T.build(cfg, 72), cfg)
+    assert any("make" in e for e in m["errors"])
