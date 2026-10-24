@@ -1,7 +1,8 @@
-"""What the head swap's expressions need from FLAME 2023 (LAM's own copy), in one small npz: the template, the faces
-and the 100 expression directions. FLAME's pickle holds chumpy arrays, so this runs in LAM's env (it has chumpy):
+"""What blinks need from FLAME 2023, in one small npz: the template, the faces and the 100 expression directions.
+FLAME's pickle holds chumpy arrays; any env with numpy reads it (chumpy is used if present, else a stand-in keeps
+each array's values), so LAM's retired env isn't needed:
 
-  PYTHONPATH=avatars $L/envs/lam/bin/python avatars/flame_expr_npz.py flame2023.pkl FLAME_masks.pkl flame2023_expr.npz
+  PYTHONPATH=avatars python avatars/flame_expr_npz.py flame2023.pkl FLAME_masks.pkl flame2023_expr.npz
 
 hpg/head-swap.sbatch runs it once. It also checks face_expr's eye constants against FLAME itself (the eyeball ids
 against FLAME_masks.pkl, each eyelid list beside its eyeball, an opening round each eye with an upper and a lower
@@ -24,8 +25,44 @@ LID_NEAR_EYE = 2.0  # eyeball radii: every eyelid vertex sits this close to its 
 MAX_OPEN = 0.2  # a blink that leaves the template's eyes more open than this isn't shipped
 
 
+class _Stub:
+    """Stands in for a class this env doesn't have (chumpy's arrays, scipy's sparse matrices): keeps its state."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __setstate__(self, state):
+        if isinstance(state, dict):
+            self.__dict__.update(state)
+        else:
+            self._state = state
+
+
+class _Unpickler(pickle.Unpickler):
+    """FLAME's pickle without chumpy or scipy installed (LAM's env, which had chumpy, is gone)."""
+
+    def find_class(self, module, name):
+        if module.split(".")[0] in ("chumpy", "scipy"):
+            return _Stub
+        return super().find_class(module, name)
+
+
+def load_pickle(path: str) -> dict:
+    with open(path, "rb") as f:
+        try:
+            import chumpy  # noqa: F401  # the real thing when this env has it
+            return pickle.load(f, encoding="latin1")
+        except ImportError:
+            return _Unpickler(f, encoding="latin1").load()
+
+
 def arr(x) -> np.ndarray:
-    return np.asarray(getattr(x, "r", x))  # chumpy arrays hold their values in .r
+    """A plain array from a chumpy array (its values in .r, or in x when unpickled without chumpy) or an array."""
+    if isinstance(x, _Stub):
+        if "x" not in x.__dict__:
+            raise ValueError(f"a chumpy object without its values (state keys {sorted(x.__dict__)})")
+        return np.asarray(x.__dict__["x"])
+    return np.asarray(getattr(x, "r", x))
 
 
 def extract(model: dict, masks: dict) -> dict[str, np.ndarray]:
@@ -57,10 +94,7 @@ def extract(model: dict, masks: dict) -> dict[str, np.ndarray]:
 
 def main() -> int:
     pkl, masks_pkl, out = sys.argv[1:4]
-    with open(pkl, "rb") as f:
-        model = pickle.load(f, encoding="latin1")
-    with open(masks_pkl, "rb") as f:
-        masks = pickle.load(f, encoding="latin1")
+    model, masks = load_pickle(pkl), load_pickle(masks_pkl)
     z = extract(model, masks)
     np.savez(out, **z)
     print(f"[expr] FLAME extract: {len(z['faces'])} faces, {z['expr_dirs'].shape[2]} expressions -> {out}")

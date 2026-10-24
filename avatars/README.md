@@ -165,8 +165,9 @@ colours from the close-up (`toneShiftLab` in head_swap.json; scaling the colour 
 `bodyVisibleAboveSeam` counts, by joint, what of the old body still shows above the seam: a big number there is
 leftover DiGS hair or face doubling the head.
 
-**Life in the face** (`face_expr.py`, when FLAME is there: the job extracts LAM's FLAME 2023 once to
-`$L/models/flame/flame2023_expr.npz` with `flame_expr_npz.py`, in LAM's env; it never leaves HiPerGator). The bundle
+**Life in the face** (`face_expr.py`, when FLAME is there: the job fetches FLAME 2023's two files once
+from LAM's public assets into `$L/models/flame/` and extracts `flame2023_expr.npz` with `flame_expr_npz.py`, in any env:
+no chumpy needed; FLAME never leaves HiPerGator). The bundle
 gets `avatar/expr.bin` (format below) with ten channels per head Gaussian: FLAME's expressions 0-8 (LAM animates its
 heads with FLAME's first ten) and a blink. The blink is fitted to this person's eyelids: FLAME's expressions give the
 natural motion around the eye (capped at 0.3 mm outside the eye region), the eyelid margins meet exactly (the upper
