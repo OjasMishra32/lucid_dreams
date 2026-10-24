@@ -1,0 +1,381 @@
+{
+ "about": "Real tennis movement for the WebXR tennis game: SMPL-X motion.json clips (AGENTS.md, Dream bundle; avatars/README.md, motion.json and skinning) captured with GVHMR (the copy bundled in 4DAnyone) from freely licensed Pexels videos, cleaned by apps/webxr/scripts/tennis_motion/build.py.",
+ "fps": 30,
+ "coordinates": "Metres, +Y up, soles on y = 0, right-handed player, the opponent toward -Z. Clips start facing -Z with the pelvis over x = z = 0 (loops: centred over the cycle), except: serve is turned so the racket head travels toward -Z at contact (it starts side-on, left shoulder to the net, about 45 degrees), and celebrate faces -Z during its V.",
+ "body": {
+  "betas": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "model": "SMPL-X neutral",
+  "restPelvis": [
+   0.0031,
+   -0.3514,
+   0.012
+  ],
+  "legLength": 0.7788,
+  "skeleton": "dreams/test-avatar/avatar/skeleton.json (the same neutral rest joints)",
+  "retarget": "Joint rotations play on any SMPL-X avatar as they are. For an avatar whose rest skeleton has pelvis J0' and leg length L' (avatars/lucid_avatars/retarget.py leg_length): s = L' / legLength; root_t' = s * (root_t + restPelvis) - J0'; scale rootVelocity and contact positions by s too."
+ },
+ "frames": "frames[i] = {root_t, root_q [x,y,z,w], pose: 55 x axis-angle}, applied exactly as SMPL-X applies transl, global_orient and the joint rotations; pose[0] is zero. Right hand holds a racket grip (hand_poses fist at 0.9), left hand relaxed.",
+ "events": "Frame numbers (0-based, at fps). contact: racket meets ball. serve: tossRelease (ball leaves the left hand), tossPeak (ball at its highest), contact.",
+ "contactPose": "For strokes (contactFrame = events.contact), the racket hand at the contact frame in the clip's space: rightWrist (the joint), rightWristQuat (its world rotation, [x,y,z,w]), velocities in m/s, and an estimated racket: racketHead = grip + 0.50 m along racketDir, with racketDir fixed in the hand at 45 degrees between the fingers and the thumb (a shake-hands grip; GVHMR tracks neither fingers nor the racket, so treat it as a starting point and line the ball up with racketHead).",
+ "loops": "loop: true clips end one frame before they repeat (frame N-1 flows into frame 0). Travel loops (run, shuffles) are in place: root_t x/z are 0 and rootVelocity[i] = [vx, vz] m/s is the per-frame horizontal velocity of the footage (mean + surge); position += rootVelocity[i] * scale * dt. meanVelocity is its average and speed its length (m/s).",
+ "clips": {
+  "ready": {
+   "file": "ready.json",
+   "frames": 35,
+   "durationS": 1.1667,
+   "loop": true,
+   "events": {},
+   "bytes": 41206,
+   "about": "Ready stance between shots: knees bent, racket in front, weight shifting. Loops.",
+   "source": {
+    "creator": "Sapol Churanon",
+    "title": "Indoor Tennis Practice with Ball Machine",
+    "url": "https://www.pexels.com/video/38997478/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     487,
+     557
+    ]
+   }
+  },
+  "run": {
+   "file": "run.json",
+   "frames": 20,
+   "durationS": 0.6667,
+   "loop": true,
+   "events": {},
+   "bytes": 24022,
+   "about": "Forward run cycle (two steps). Travels toward -Z; the motion is in place and rootVelocity (per frame, m/s, x/z) carries the travel. Loops.",
+   "meanVelocity": [
+    0.0,
+    0.0,
+    -2.9884
+   ],
+   "speed": 2.988,
+   "source": {
+    "creator": "RDNE Stock project",
+    "title": "A Man Running in the Soccer Field",
+    "url": "https://www.pexels.com/video/7187058/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     88,
+     104
+    ]
+   }
+  },
+  "shuffleLeft": {
+   "file": "shuffleLeft.json",
+   "frames": 25,
+   "durationS": 0.8333,
+   "loop": true,
+   "events": {},
+   "bytes": 29916,
+   "about": "Lateral quick-feet shuffle in an athletic stance, facing -Z and moving to the player's left (-X). In place; rootVelocity carries the travel. Loops.",
+   "meanVelocity": [
+    -0.342,
+    0.0,
+    -0.0076
+   ],
+   "speed": 0.342,
+   "source": {
+    "creator": "RDNE Stock project",
+    "title": "Brawny Man Doing Ladder Exercise Outdoors",
+    "url": "https://www.pexels.com/video/8402119/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     98,
+     123
+    ]
+   }
+  },
+  "shuffleRight": {
+   "file": "shuffleRight.json",
+   "frames": 25,
+   "durationS": 0.8333,
+   "loop": true,
+   "events": {},
+   "bytes": 29930,
+   "about": "Lateral quick-feet shuffle in an athletic stance, facing -Z and moving to the player's right (+X). In place; rootVelocity carries the travel. Loops. Mirror image of shuffleLeft.",
+   "meanVelocity": [
+    0.342,
+    0.0,
+    -0.0076
+   ],
+   "mirrored": true,
+   "speed": 0.342,
+   "source": {
+    "creator": "RDNE Stock project",
+    "title": "Brawny Man Doing Ladder Exercise Outdoors",
+    "url": "https://www.pexels.com/video/8402119/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     98,
+     123
+    ]
+   }
+  },
+  "forehand": {
+   "file": "forehand.json",
+   "frames": 69,
+   "durationS": 2.2667,
+   "loop": false,
+   "events": {
+    "contact": 36
+   },
+   "bytes": 81282,
+   "about": "Right-handed forehand (a tennis forehand with a wooden racket, filmed on a squash court): ready facing -Z -> unit turn -> swing -> contact in front at hip height -> follow-through over the left shoulder -> back to ready.",
+   "contactFrame": 36,
+   "contactPose": {
+    "frame": 36,
+    "rightWrist": [
+     0.5097,
+     0.7584,
+     -0.3736
+    ],
+    "rightWristQuat": [
+     0.5011,
+     0.7829,
+     0.2145,
+     -0.2999
+    ],
+    "rightWristVelocity": [
+     -2.1931,
+     0.2331,
+     -1.7129
+    ],
+    "rightForearmDir": [
+     0.162,
+     -0.7656,
+     -0.6225
+    ],
+    "racketHead": [
+     0.5484,
+     0.695,
+     -0.9282
+    ],
+    "racketHeadVelocity": [
+     -7.3917,
+     0.5696,
+     -2.0886
+    ],
+    "racketDir": [
+     0.0448,
+     -0.0138,
+     -0.9989
+    ],
+    "pelvis": [
+     0.2046,
+     0.9118,
+     -0.048
+    ]
+   },
+   "source": {
+    "creator": "Artem Podrez",
+    "title": "Sportsman Hitting the Squash Ball with Racket",
+    "url": "https://www.pexels.com/video/7648646/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     186,
+     254
+    ]
+   }
+  },
+  "backhand": {
+   "file": "backhand.json",
+   "frames": 83,
+   "durationS": 2.7333,
+   "loop": false,
+   "events": {
+    "contact": 27
+   },
+   "bytes": 97661,
+   "about": "One-handed backhand: ready facing -Z -> shoulder turn -> swing -> wide follow-through (both arms out) -> recovery.",
+   "contactFrame": 27,
+   "contactPose": {
+    "frame": 27,
+    "rightWrist": [
+     0.3918,
+     0.6132,
+     -0.5142
+    ],
+    "rightWristQuat": [
+     0.5987,
+     0.6367,
+     0.0859,
+     -0.4784
+    ],
+    "rightWristVelocity": [
+     2.0859,
+     -0.8906,
+     0.4355
+    ],
+    "rightForearmDir": [
+     -0.0686,
+     -0.7487,
+     -0.6594
+    ],
+    "racketHead": [
+     0.1288,
+     0.5568,
+     -1.0048
+    ],
+    "racketHeadVelocity": [
+     4.1579,
+     -2.7624,
+     -0.4238
+    ],
+    "racketDir": [
+     -0.4814,
+     0.0014,
+     -0.8765
+    ],
+    "pelvis": [
+     0.1552,
+     0.8227,
+     -0.0386
+    ]
+   },
+   "source": {
+    "creator": "Artem Podrez",
+    "title": "A Man Playing Tennis",
+    "url": "https://www.pexels.com/video/7648844/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     164,
+     246
+    ]
+   }
+  },
+  "serve": {
+   "file": "serve.json",
+   "frames": 83,
+   "durationS": 2.7333,
+   "loop": false,
+   "events": {
+    "tossRelease": 30,
+    "tossPeak": 41,
+    "contact": 53
+   },
+   "bytes": 97690,
+   "about": "Flat first serve, ready stance side-on -> ball bounce done -> toss -> trophy -> contact -> landing on the front foot. Turned so the ball goes to -Z.",
+   "contactFrame": 53,
+   "contactPose": {
+    "frame": 53,
+    "rightWrist": [
+     0.3344,
+     1.9248,
+     -0.7082
+    ],
+    "rightWristQuat": [
+     0.6286,
+     -0.4614,
+     -0.3868,
+     0.4923
+    ],
+    "rightWristVelocity": [
+     0.0,
+     -1.46,
+     -4.5853
+    ],
+    "rightForearmDir": [
+     -0.0778,
+     0.9332,
+     -0.3507
+    ],
+    "racketHead": [
+     -0.1153,
+     2.2497,
+     -0.7805
+    ],
+    "racketHeadVelocity": [
+     1.8435,
+     -0.5517,
+     -11.7861
+    ],
+    "racketDir": [
+     -0.8595,
+     0.4942,
+     -0.1302
+    ],
+    "pelvis": [
+     0.1572,
+     1.058,
+     -0.3389
+    ]
+   },
+   "tossPeak": {
+    "frame": 41,
+    "leftWrist": [
+     -0.0199,
+     1.3796,
+     -0.8654
+    ]
+   },
+   "source": {
+    "creator": "Antoni Shkraba",
+    "title": "A Tennis layer Serving The Ball From The Baseline",
+    "url": "https://www.pexels.com/video/4902145/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     116,
+     184
+    ]
+   }
+  },
+  "celebrate": {
+   "file": "celebrate.json",
+   "frames": 140,
+   "durationS": 4.6333,
+   "loop": false,
+   "events": {},
+   "bytes": 163721,
+   "about": "Both fists thrown up in a V, held, then lowered (the long hold in the footage is cut and cross-faded). Faces -Z during the V; turns in from about 75 degrees to the right.",
+   "source": {
+    "creator": "Pavel Danilyuk",
+    "title": "Happy Man Celebrating His Win",
+    "url": "https://www.pexels.com/video/7334474/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     [
+      4,
+      84
+     ],
+     [
+      126,
+      168
+     ]
+    ]
+   }
+  },
+  "fistPump": {
+   "file": "fistPump.json",
+   "frames": 97,
+   "durationS": 3.2,
+   "loop": false,
+   "events": {},
+   "bytes": 113489,
+   "about": "'Yes!': fists clenched at the chest, leans back looking up, two pumps.",
+   "source": {
+    "creator": "Pavel Danilyuk",
+    "title": "Happy Man Celebrating His Win",
+    "url": "https://www.pexels.com/video/7334474/",
+    "license": "Pexels License (free to use and modify, no attribution required; credited anyway)",
+    "frames": [
+     240,
+     320
+    ]
+   }
+  }
+ }
+}
