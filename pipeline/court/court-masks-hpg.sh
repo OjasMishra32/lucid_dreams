@@ -6,7 +6,8 @@
 #   court-masks-hpg.sh sam <name> <upload dir>   upload a court_sam.py set (or folder of sets), submit court-sam-<name>
 #   court-masks-hpg.sh rematte <name>            the band matte again on court-sam-<name>'s masks (no upload)
 #   court-masks-hpg.sh bundle <x> <upload dir>   a CPU bundle (run.sh + files) as court-layers-<x>; IN=court-sam-<name>
-#                                              gives it that run's masks, AFTER=<job id> waits for it
+#                                              gives it that run's masks, AFTER=<job id> waits for it,
+#                                              OUT=<file>.tar names what run.sh leaves, JOB_ENV=NAME=v,... reaches run.sh
 #   court-masks-hpg.sh matte <clip> <masks dir> <staging dir> <name>...    pack, upload, submit the pair's soft edges
 #   court-masks-hpg.sh fetch people <dir>      masks-people.tar into <dir>, unpacked there (label/, prob/, objects.json)
 #   court-masks-hpg.sh fetch sam <name> <dir> [unpack flags]   masks-sam.tar into <dir>, unpacked there
@@ -22,7 +23,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 HOST=${HOST:-hpg}; L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 PASS=" L=$L"
-for v in ACCOUNT QOS PARTITION CPUS ENV_QOS ENV_PARTITION QUOTA_GROUP MIN_GB IN AFTER OUT; do
+for v in ACCOUNT QOS PARTITION CPUS ENV_QOS ENV_PARTITION QUOTA_GROUP MIN_GB IN AFTER OUT JOB_ENV; do
   [ -n "${!v:-}" ] && PASS="$PASS $v=$(printf %q "${!v}")"
 done
 SSH="ssh -o ControlMaster=no -o BatchMode=yes"

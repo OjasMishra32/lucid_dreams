@@ -11,7 +11,7 @@
 #   court-layers-<x>  a CPU bundle (court-cpu.sbatch): $L/data/court/court-layers-<x>/run.sh and its files, run in
 #                     node scratch; it leaves layers-<x>.tar (OUT=<file>.tar names another), the only file copied
 #                     back. IN=court-sam-<name> hands it that run's masks-sam.tar (unpacked) as run.sh's argument;
-#                     AFTER=<job id> waits for that job.
+#                     AFTER=<job id> waits for that job; JOB_ENV=NAME=value,... reaches run.sh (e.g. its switches).
 #   court-matte       soft edges for the pair's SAM masks (court-matte.sbatch); needs
 #                     $L/data/court/court-matte/crops.zip (court_matte.py pack, then rsync)
 # Nothing is submitted if a file is missing, a job was submitted before, or the group quota has less than MIN_GB (5)
@@ -68,6 +68,12 @@ case $ID in
       # with AFTER the SAM job is still running: its tar exists once afterok lets this one start
       [ -n "${AFTER:-}" ] || test -s "$L/runs/$IN/masks-sam.tar" ||
         fail "no $L/runs/$IN/masks-sam.tar (AFTER=<its job id>?)"
+    fi
+    if [ -n "${JOB_ENV:-}" ]; then
+      V='[A-Z][A-Z0-9_]*=[A-Za-z0-9._/-]*'
+      [[ $JOB_ENV =~ ^$V(,$V)*$ ]] || fail "JOB_ENV=$JOB_ENV (NAME=value[,NAME=value...])"
+      if [[ ,$JOB_ENV =~ ,(L|RUN|DATA|OUT_FILE|IN_TAR)= ]]; then fail "JOB_ENV may not set ${BASH_REMATCH[1]}"; fi
+      EXTRA="$EXTRA,$JOB_ENV"
     fi ;;
   court-sam-*)
     [[ $ID =~ ^court-sam-[a-z0-9][a-z0-9-]*$ ]] || fail "id '$ID'"

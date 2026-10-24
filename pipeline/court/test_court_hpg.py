@@ -251,6 +251,24 @@ class Masks(unittest.TestCase):
         self.assertIn(",OUT_FILE=layers-v9.tar ", c[0])
         self.assertIn(f"result: {L}/runs/court-layers-v9b/layers-v9.tar", p.stdout)
 
+    def test_a_bundle_takes_job_env(self):
+        L = fake_l(self.root, env_ready=False)
+        d = L / "data/court/court-layers-v9c"
+        d.mkdir()
+        (d / "run.sh").write_text("echo hi\n")
+        env = {**os.environ, "L": str(L), "SBATCH_LOG": str(L / "sbatch.log"),
+               "PATH": f"{L / 'bin'}:{os.environ['PATH']}"}
+        run = lambda je: subprocess.run(["bash", str(HERE / "court-hpg.sh"), "court-layers-v9c"], capture_output=True,
+                                        text=True, env={**env, "JOB_ENV": je})
+        for bad in ("X=1;rm -rf x", "lower=1", "A=1,,B=2", "RUN=/tmp/x", "OUT_FILE=y.tar", "A=$(id)"):
+            self.assertNotEqual(run(bad).returncode, 0, bad)
+        self.assertEqual((L / "sbatch.log").read_text(), "")  # nothing submitted
+        p = run("LAYERS_CLOSE=11,LAYERS_GROWFG=1")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        c = (L / "sbatch.log").read_text().splitlines()
+        self.assertEqual(len(c), 1)
+        self.assertIn(",OUT_FILE=layers-v9c.tar,LAYERS_CLOSE=11,LAYERS_GROWFG=1 ", c[0])
+
     def test_matte_needs_no_sam_env(self):
         rc, out = dryrun(make_upload(self.root, "court-matte"))
         self.assertEqual(rc, 0, out)
@@ -377,6 +395,15 @@ class Mac(unittest.TestCase):
         self.assertTrue(p.stdout.splitlines()[-1].endswith("OUT=layers-v9.tar bash /blue/iruchkin/vishalnaveen/lucid/"
                                                            "code/pipeline/court/court-hpg.sh court-layers-v9b"),
                         p.stdout)
+
+    def test_bundle_passes_job_env(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / "run.sh").write_text("true\n")
+        p = subprocess.run(["bash", str(HERE / "court-masks-hpg.sh"), "bundle", "v9c", tmp.name], capture_output=True,
+                           text=True, env={**os.environ, "DRY": "1", "JOB_ENV": "LAYERS_CLOSE=11,LAYERS_GROWFG=1"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(" JOB_ENV=LAYERS_CLOSE=11\\,LAYERS_GROWFG=1 bash ", p.stdout.splitlines()[-1])
 
     def test_rematte_and_its_fetch(self):
         out = self.mac("rematte", "pair")
