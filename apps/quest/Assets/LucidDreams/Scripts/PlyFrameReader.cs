@@ -90,22 +90,11 @@ namespace LucidDreams
                 for (int k = 1; k < coefficients; k++)
                     for (int c = 0; c < 3; c++)
                         shValues[k * 3 + c] = F(row, rest[c * restPerChannel + (k - 1)]);
-                PackHalves(shValues, frame.sh, i * shWords);
+                GaussianFrame.PackHalves(shValues, frame.sh, i * shWords);
             }
 
             frame.bounds = count > 0 ? new Bounds((min + max) * 0.5f, max - min) : new Bounds();
             return frame;
-        }
-
-        // Component 2n goes in the low 16 bits of word n, matching the renderer's LoadSourceSHComponent.
-        static void PackHalves(float[] values, uint[] dst, int start)
-        {
-            for (int i = 0; i < values.Length; i += 2)
-            {
-                uint lo = math.f32tof16(values[i]);
-                uint hi = i + 1 < values.Length ? math.f32tof16(values[i + 1]) : 0u;
-                dst[start + i / 2] = lo | (hi << 16);
-            }
         }
 
         static int ParseHeader(byte[] data, out int bodyStart, out int stride, out Dictionary<string, Property> props)

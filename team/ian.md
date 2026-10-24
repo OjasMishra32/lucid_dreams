@@ -91,11 +91,17 @@ Nice: Android OpenXR settings, Meta hand tracking and the batch APK build are in
 - **Replays load at runtime, not through editor import.** `DreamSequencePlayer` reads `frames/*.ply` from the
   headset's storage, StreamingAssets or the bridge, keeps every frame on the GPU in full float precision (72 B per
   Gaussian per frame at SH degree 1) and swaps frames through the renderer's deformation hook: no uploads while playing.
-  The same loader takes SPZ next (backlog item 2).
+  SPZ (`SpzFrameReader`, the exact inverse of `write_spz`) uses the same path; `Auto` picks PLY when every frame is
+  there, else SPZ. Verified against the sample's frame 0: identical up to SPZ quantization.
 - **GPU budget:** 121 frames x 300k Gaussians is about 2.5 GB. The player refuses anything over its budget (3 GB for
   now) and logs the per-frame cap that fits; the real Quest 3S number comes from item 8.
-- **Delivery size:** a 121-frame PLY replay at 300k is about 9 GB, too big for Wi-Fi to the headset. Real bundles
-  reach the Quest as SPZ once the runtime SPZ reader lands; PLY stays for development and editor checks.
+- **Delivery size:** a 121-frame PLY replay at 300k is about 9 GB, too big for Wi-Fi to the headset, so real
+  bundles reach the Quest as SPZ; PLY stays for development and editor checks.
+- **For Ojasva (SPZ fidelity):** the export writes SPZ at SH degree 0, so the Quest loses view-dependent colour that
+  the PLY has; `write_spz(..., sh_degree=1)` adds 9 bytes per Gaussian and the reader already handles it. On the
+  sample, 0.3% of colour values sit outside SPZ's range and get clamped (very bright or saturated spots).
+  Also, `gaussiansPerFrame` is the first frame's count, not the largest (sample: 13,527 vs 16,768); the player
+  copes by reloading, but the true max saves a reload.
 
 ## Update (Fri 9:10 PM): sequence player in, next is SPZ
 

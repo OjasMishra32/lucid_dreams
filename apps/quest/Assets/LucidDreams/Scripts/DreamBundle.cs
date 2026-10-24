@@ -19,6 +19,7 @@ namespace LucidDreams
         public DreamFrames frames;
         public DreamAvatar avatar;
         public string audio;
+        public string voice; // the speaking voice alone; players prefer it over audio
         public string preview;
         public string thumb;
         public DreamSource source;
@@ -31,10 +32,13 @@ namespace LucidDreams
         public static DreamBundle FromJson(string json) => JsonUtility.FromJson<DreamBundle>(json);
 
         // Path of a replay frame inside the bundle, relative to the bundle root, e.g. "frames/000000.ply".
-        public string FramePath(int index)
+        public string FramePath(int index) => FramePath(index, frames?.pattern);
+
+        // Same, for another per-frame pattern such as frames.spz or frames.reality.
+        public string FramePath(int index, string pattern)
         {
-            if (frames == null || string.IsNullOrEmpty(frames.dir)) return null;
-            return $"{frames.dir}/{FormatPattern(frames.pattern, index)}";
+            if (frames == null || string.IsNullOrEmpty(frames.dir) || string.IsNullOrEmpty(pattern)) return null;
+            return $"{frames.dir}/{FormatPattern(pattern, index)}";
         }
 
         // Supports the printf-style "%06d.ply" pattern the pipeline writes.
@@ -65,8 +69,11 @@ namespace LucidDreams
     public class DreamFrames
     {
         public string dir;
-        public string pattern;
+        public string pattern; // full-quality PLY, SH degree 1
+        public string spz; // about 10x smaller, colour only
+        public string reality; // SPZ with unseen Gaussians tinted blue, for "seen vs imagined"
         public int gaussiansPerFrame;
+        public long spzBytesTotal;
     }
 
     [Serializable]
@@ -75,6 +82,8 @@ namespace LucidDreams
         public string file;
         public string rig;
         public string motion;
+        public string skin;
+        public string skeleton;
     }
 
     [Serializable]
@@ -92,5 +101,6 @@ namespace LucidDreams
         public float ssim;
         public float lpips;
         public int views;
+        public float seenFraction;
     }
 }

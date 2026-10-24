@@ -18,16 +18,19 @@ Photoreal Gaussian people standing on your real floor in Meta Quest 3S passthrou
 
 ## Playing a replay
 
-`DreamSequencePlayer` loads every frame of a bundle (`frames/%06d.ply`) before it plays, keeps them all on the GPU
-in full float precision, and switches frames at the clip's fps through the renderer's deformation hook, so playback
-never uploads or stutters. **Bundle** can be:
+`DreamSequencePlayer` loads every frame of a bundle before it plays, keeps them all on the GPU in full float
+precision, and switches frames at the clip's fps through the renderer's deformation hook, so playback never uploads
+or stutters. **Format** picks the frames: `Auto` (default) uses the full-quality PLY frames (SH degree 1) when the
+bundle has all of them, otherwise the SPZ frames (about 10x smaller, colour only, what the bridge serves by default).
+**Bundle** can be:
 
 - a folder under the app's storage: `dreams/<id>` means `/sdcard/Android/data/com.luciddreams.quest/files/dreams/<id>`
   on the Quest (copy one there with `adb push <bundle> /sdcard/Android/data/com.luciddreams.quest/files/dreams/`),
 - a folder under `Assets/StreamingAssets/` (git-ignored, ships inside the APK),
 - the bridge: `http://<mac>:5170/dreams/<id>`, or an absolute folder in the editor.
 
-GPU cost is 72 bytes per Gaussian per frame (SH degree 1): 121 frames x 300k Gaussians is about 2.5 GB.
+GPU cost is 72 bytes per Gaussian per frame for PLY (SH degree 1) and 56 for SPZ: 121 frames x 300k Gaussians is
+about 2.5 GB or 1.9 GB.
 The player refuses bundles over `gpuBudgetMB` and logs the Gaussian count that would fit.
 
 Test controls until the in-headset UI lands (`DreamTestControls`): right controller **A** play/pause, **B** speed
@@ -43,7 +46,7 @@ views of a few frames to PNG:
 
 ```
 Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.PlaybackCheck.Run \
-  -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check
+  -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check [-format auto|ply|spz]
 ```
 
 The person stands 1.5 m in front of you on the scanned floor, facing you. Bundle files are right-handed

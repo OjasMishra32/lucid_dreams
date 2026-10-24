@@ -14,10 +14,18 @@ namespace LucidDreams
     [RequireComponent(typeof(GaussianSplat3DRenderer))]
     public class DreamSequencePlayer : MonoBehaviour
     {
+        public enum FrameFormat
+        {
+            Auto, // full-quality PLY when the bundle has every frame as PLY, otherwise SPZ
+            Ply,
+            Spz,
+        }
+
         public static readonly float[] Speeds = { 0.25f, 0.5f, 1f };
 
         [Tooltip("Bundle folder or URL, e.g. dreams/synthetic-test or http://<mac>:5170/dreams/<id>")]
         public string bundle = "dreams/synthetic-test";
+        public FrameFormat format = FrameFormat.Auto;
         public bool loadOnStart = true;
         public bool playWhenReady = true;
         public bool loop = true;
@@ -32,6 +40,7 @@ namespace LucidDreams
         public float Speed { get; private set; } = 1f;
         public float LoadProgress { get; private set; }
         public string Error { get; private set; }
+        public FrameFormat LoadedFormat { get; private set; }
         public int FrameCount => sequence?.FrameCount ?? 0;
         public int Frame => sequence?.Current ?? 0;
         public float Duration => Dream != null && Dream.fps > 0 ? FrameCount / Dream.fps : 0f;
@@ -116,6 +125,23 @@ namespace LucidDreams
                 yield break;
             }
 
+            var chosen = format;
+            if (chosen == FrameFormat.Auto)
+            {
+                bool hasPly = false;
+                if (!string.IsNullOrEmpty(Dream.frames.pattern))
+                    yield return Exists($"{baseUrl}/{Dream.FramePath(Dream.frameCount - 1)}", found => hasPly = found);
+                chosen = hasPly || string.IsNullOrEmpty(Dream.frames.spz) ? FrameFormat.Ply : FrameFormat.Spz;
+            }
+            string pattern = chosen == FrameFormat.Spz ? Dream.frames.spz : Dream.frames.pattern;
+            if (string.IsNullOrEmpty(pattern))
+            {
+                Fail($"'{Dream.id}' has no {chosen} frames");
+                yield break;
+            }
+            Func<byte[], GaussianFrame> decoder = chosen == FrameFormat.Spz ? SpzFrameReader.Read : PlyFrameReader.Read;
+            LoadedFormat = chosen;
+
             int capacity = Mathf.Max(1, Dream.frames.gaussiansPerFrame);
             while (true)
             {
@@ -127,9 +153,9 @@ namespace LucidDreams
                 IEnumerator LoadFrame(int index)
                 {
                     byte[] data = null;
-                    yield return Fetch($"{baseUrl}/{Dream.FramePath(index)}", bytes => data = bytes);
+                    yield return Fetch($"{baseUrl}/{Dream.FramePath(index, pattern)}", bytes => data = bytes);
                     if (data == null) yield break;
-                    var decode = Task.Run(() => PlyFrameReader.Read(data));
+                    var decode = Task.Run(() => decoder(data));
                     while (!decode.IsCompleted) yield return null;
                     if (decode.IsFaulted)
                     {
@@ -197,7 +223,7 @@ namespace LucidDreams
             time = 0f;
             sequence.Show(0);
             IsReady = true;
-            Debug.Log($"[Lucid Dreams] '{Dream.name}' ready: {Dream.frameCount} frames, {sequence.Capacity:N0} Gaussians, {sequence.GpuBytes >> 20} MB on the GPU.");
+            Debug.Log($"[Lucid Dreams] '{Dream.name}' ready: {Dream.frameCount} {LoadedFormat} frames, {sequence.Capacity:N0} Gaussians, {sequence.GpuBytes >> 20} MB on the GPU.");
             Ready?.Invoke();
             if (playWhenReady) Play();
         }
@@ -214,6 +240,19 @@ namespace LucidDreams
             yield return request.SendWebRequest();
             if (request.result != UnityWebRequest.Result.Success) Fail($"Couldn't load {url}: {request.error}");
             else received(request.downloadHandler.data);
+        }
+
+        // Local files are checked on disk; anything else (bridge, StreamingAssets in the APK) with a HEAD request.
+        IEnumerator Exists(string url, Action<bool> answer)
+        {
+            if (url.StartsWith("file://"))
+            {
+                answer(File.Exists(new Uri(url).LocalPath));
+                yield break;
+            }
+            using var request = UnityWebRequest.Head(url);
+            yield return request.SendWebRequest();
+            answer(request.result == UnityWebRequest.Result.Success);
         }
 
         void Fail(string message)

@@ -10,7 +10,7 @@ namespace LucidDreams.Editor
     // Headless end-to-end check of the sequence player, no headset needed: plays a bundle in the real scene,
     // checks it advances at the clip's fps, and renders front and side views of a few frames to PNG.
     //   Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.PlaybackCheck.Run
-    //     -dreamBundle /path/to/dreams/<id> -out /path/to/pngs
+    //     -dreamBundle /path/to/dreams/<id> -out /path/to/pngs [-format auto|ply|spz]
     [InitializeOnLoad]
     public static class PlaybackCheck
     {
@@ -34,6 +34,8 @@ namespace LucidDreams.Editor
             EditorSceneManager.OpenScene(EditorBuildSettings.scenes[0].path);
             var player = UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>();
             player.bundle = Path.GetFullPath(bundle); // in-memory only; the scene file is not saved
+            string format = OptionalArg("-format");
+            if (format != null) player.format = (DreamSequencePlayer.FrameFormat)Enum.Parse(typeof(DreamSequencePlayer.FrameFormat), format, true);
             EditorApplication.update += Tick;
             EditorApplication.EnterPlaymode();
         }
@@ -98,7 +100,7 @@ namespace LucidDreams.Editor
                     var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
                     tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
                     RenderTexture.active = null;
-                    File.WriteAllBytes(Path.Combine(dir, $"{player.Dream.id}-f{player.Frame:000}-{view}.png"), tex.EncodeToPNG());
+                    File.WriteAllBytes(Path.Combine(dir, $"{player.Dream.id}-{player.LoadedFormat.ToString().ToLowerInvariant()}-f{player.Frame:000}-{view}.png"), tex.EncodeToPNG());
                     UnityEngine.Object.DestroyImmediate(tex);
                 }
             }
@@ -114,12 +116,13 @@ namespace LucidDreams.Editor
             else EditorApplication.ExitPlaymode();
         }
 
-        static string Arg(string name)
+        static string Arg(string name) => OptionalArg(name) ?? throw new ArgumentException($"Pass {name} <value>");
+
+        static string OptionalArg(string name)
         {
             var args = Environment.GetCommandLineArgs();
             int i = Array.IndexOf(args, name);
-            if (i < 0 || i + 1 >= args.Length) throw new ArgumentException($"Pass {name} <value>");
-            return args[i + 1];
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
         }
     }
 }

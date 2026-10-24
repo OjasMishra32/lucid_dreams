@@ -1,3 +1,4 @@
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace LucidDreams
@@ -16,5 +17,16 @@ namespace LucidDreams
         public const int FloatsPerGaussian = 12;
         public static int SHWordsPerGaussian(int coefficientCount) => (coefficientCount * 3 + 1) / 2;
         public long GpuBytes => (long)count * (FloatsPerGaussian * 4 + SHWordsPerGaussian(coefficientCount) * 4);
+
+        // Component 2n goes in the low 16 bits of word n, matching the renderer's LoadSourceSHComponent.
+        public static void PackHalves(float[] values, uint[] dst, int start)
+        {
+            for (int i = 0; i < values.Length; i += 2)
+            {
+                uint lo = math.f32tof16(values[i]);
+                uint hi = i + 1 < values.Length ? math.f32tof16(values[i + 1]) : 0u;
+                dst[start + i / 2] = lo | (hi << 16);
+            }
+        }
     }
 }
