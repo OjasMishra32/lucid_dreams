@@ -2,6 +2,8 @@
 // you and following you lazily as you walk; the Reality check's panel (blue = never seen, the seen % per player, the
 // interpolated share of the show: P7, P23); and the palm menu (left palm up, right index; xr/menu.ts HandMenu, 2
 // columns, first row on top):
+//   [Change seat]                      every phase after Seat here: back to the setup page after a 2 s hold (HoldButton),
+//                                      for the presenter between judges
 //   [Walk closer] | [Next view]        while the world is open and you're not in the room: Walk closer before the walking
 //                                      anchoring, Next view after it, only where a second placement fits
 //   [Step into the court | Back to my seat, Reality check]
@@ -19,7 +21,7 @@ import type { Head, Phase } from "./types";
 export const BUILT = true;
 
 /** Every button, by what it does. */
-export type UiAction = "step" | "back" | "reality" | "replay" | "room" | "closer" | "nextView" | "seatHere";
+export type UiAction = "step" | "back" | "reality" | "replay" | "room" | "closer" | "nextView" | "seatHere" | "changeSeat";
 
 /** What the menu shows besides the phase. */
 export interface UiFlags {
@@ -285,6 +287,7 @@ export class Ui {
       closer: button("closer", "Walk closer"),
       nextView: button("nextView", "Next view"),
       seatHere: this.seatHere,
+      changeSeat: new HoldButton("changeSeat", "Hold to change seat", () => this.press("changeSeat")),
     };
     this.b.room.mesh.add(windowIcon());
     scene.add(this.caption.mesh);
@@ -364,7 +367,7 @@ export class Ui {
   private rows(): XrButton[][] {
     const b = this.b;
     if (this.flags.setup) return [[b.seatHere], [b.room]];
-    const rows: XrButton[][] = [];
+    const rows: XrButton[][] = [[b.changeSeat]];
     const open = this.phase === "open" || this.phase === "walking";
     if (this.phase === "open" && !this.flags.inRoom) rows.push([b.closer]);
     if (this.phase === "walking" && !this.flags.inRoom && this.flags.nextView) rows.push([b.nextView]);

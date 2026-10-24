@@ -156,9 +156,9 @@ export class Probe {
     window.__court = api;
   }
 
-  /** The dt every probed frame advances by: one display frame (or 1 / the rate setRate chose). */
-  dt(displayHz: number): number {
-    return 1 / (this.rate ?? displayHz);
+  /** The dt every probed frame advances by: one period of the headset's rate (or 1 / the rate setRate chose). */
+  dt(xrHz: number): number {
+    return 1 / (this.rate ?? xrHz);
   }
 
   /** Right after renderer.render, inside the XR frame: read back (capture), log, wake the waiters. */

@@ -32,8 +32,9 @@ browser.
 
 `e2e.mjs` starts `serve.mjs --dev` (the page from vite in dev, so IWER's `?emulate` loads; the bundle at `/bundle/`),
 opens `/?mode=court&emulate&probe=capture&bundle=/bundle/` in headless Chrome, clicks Enter (a real click) and drives
-the page through `window.__court` (`probe.ts`). With `?probe` every XR frame advances the show by exactly 1/72 s
-(IWER runs on the host's rAF, so the e2e never measures wall-clock timing) and in capture mode every frame is read
+the page through `window.__court` (`probe.ts`). With `?probe` every XR frame is one period of the session's frameRate,
+as on a headset (court.ts asks the session for the show's 72 Hz; `snapshot().xr` says what it offers and runs at; IWER
+runs on the host's rAF, so the e2e never measures wall-clock timing) and in capture mode every frame is read
 back in the page right after `renderer.render`: alpha min/mean, mean luma, a 16 x 9 luma grid, the phase machine's
 clocks (`still`, `lightsUp`, `tF`, `roomP`), the show frame handed to the video and the proxies (`fed`), the light
 field's beat and time (`lightBeat`, `lightT`) and the **view** it was drawn from, as a pinhole camera in court space
@@ -57,6 +58,8 @@ Exit 0 when every check that ran passed, 1 on a failure, 3 when every scenario a
 | `controls` | C | P21, P32 through IWER's hands | C's to write |
 | `walk` | C (P17: E) | no drift over a 17-pose walk; P17 once the freeze is built | drift written |
 | `wiring` | integrator | court.ts's wiring of C: seat.arrival, PersistentLock, the hands' light and draw order, seat.update's dt | written |
+| `rate` | integrator | the session runs at the show's rate when it offers it (court.ts asks for it); the show keeps the headset's time within one show frame over 10 s; run as is, `--query xrhz=90` and `--query "xrhz=90&xrrates=90,120"` (IWER's rate and offer) | written |
+| `reseat` | integrator | Change seat: a 2 s hold goes back to the setup page, the show stops, the world stays on its anchor; Seat here again takes a new seat, waits for the hand-over, starts from the top | written |
 | `freezehold` | integrator | the clock's frame reaches the video and the proxies every frame after F, See my room's jump lands the picture on F, a rushed fade never rushes the light (P44) | written; waits on video, proxies, handoff |
 
 `ctx` (see the top of `e2e.mjs`): `nextFrame()`, `frames(n)`, `until(phase, max)`, `save(name)` (the next frame as a

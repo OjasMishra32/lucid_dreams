@@ -22,6 +22,7 @@ import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { Probe, viewOf } from "./probe";
+import { judgeRate, wantRate, type XrRate } from "./rate";
 import { BUILT as PROXIES_BUILT, Proxies } from "./proxies";
 import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
 import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
@@ -101,6 +102,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let clockState: ClockState | null = null;
   let videoRef: ShowVideo | null = null;
   let lightRef: LightField | null = null;
+  // the headset's display rate (rate.ts): what the session runs at and offers, what court.ts asked for, the verdict
+  const xr: XrRate = { rate: null, supported: [], requested: null, showHz: 0, verdict: "unknown" };
   // every button, key and probe action waits for the top of the next XR frame (anchors need the XRFrame; one order)
   const queue: (() => void)[] = [];
   const actions = new Map<UiAction, () => void>();
@@ -115,6 +118,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
           fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)), mask: videoRef?.maskLevel ?? -1,
+          xr: { ...xr, supported: [...xr.supported] },
         }),
         seatHere: () => actions.get("seatHere")?.(),
         press: (action) => actions.get(action)?.(),
@@ -143,7 +147,10 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   }
   const { court, frames } = bundle;
   const hz = court.video.displayHz;
+  xr.showHz = hz;
   if (params.has("stats") || params.get("probe") === "timing") stats = new FrameStats(gl, hz);
+  // ?stats on the headset: remote devtools reads __courtStats.report() and __courtStats.xr (the display rate)
+  if (stats) (window as unknown as { __courtStats?: FrameStats }).__courtStats = stats;
 
   // ---------------- the modules ----------------
   const clock = new Clock(court, frames);
@@ -231,10 +238,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     freeze.reality(reality);
     ui.setPhase(phase, flags());
   });
-  // Replay, on the menu in every phase after the arrival (3.6): back to the dolly seat if the world is open, the
-  // picture back over the 3D, the hush lifted, the watch from pass 1
-  on("replay", () => {
-    if (setup || phase === "arrival") return;
+  // the show from the top (Replay, Change seat): back to the dolly seat if the world is open, the picture back over the
+  // 3D, the hush lifted, the clocks and the light at the start of the watch
+  const restart = () => {
     if (phase === "open" || phase === "walking" || phase === "returning") seat.restore();
     video.opacity = 1;
     video.mask(0); // the watch's edge (1 is lifted)
@@ -249,7 +255,22 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     rushed = false;
     restored = false;
     clock.restart();
+  };
+  // Replay, on the menu in every phase after the arrival (3.6): the watch from pass 1
+  on("replay", () => {
+    if (setup || phase === "arrival") return;
+    restart();
     go("watching");
+  });
+  // Change seat (the presenter, between judges): back to the setup page, the show stopped on its first frame and the
+  // world on its anchor until the next Seat here, which takes a new seat and waits for the next hand-over (seat.arrival)
+  on("changeSeat", () => {
+    if (setup) return;
+    restart();
+    feed(court.video.segments.pass1[0]);
+    setup = true;
+    lightsUp = -1;
+    go("arrival");
   });
   // See my room, per phase (3.6): arrival replays the lights-up on the way back; watching holds the clock and restarts
   // pass 1 on the way back; mid-ease or mid-hand-off jumps to F and finishes the hand-off under the fade
@@ -420,7 +441,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let lastTime = -1;
   let frameStart = 0;
   const onFrame = (time: number) => {
-    const dt = probe ? probe.dt(hz) : lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000);
+    // probed, every XR frame is one period of the headset's rate (the session's, else the show's), as on a headset
+    const dt = probe ? probe.dt(xr.rate ?? hz) : lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000);
     const interval = lastTime < 0 ? 0 : time - lastTime;
     lastTime = time;
     const eye = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
@@ -474,6 +496,32 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   status.textContent = supported ? court.title : "This browser has no immersive AR";
   if (probe) probe.api.ready = supported;
   let session: XRSession | null = null;
+  // the show's own display rate when the headset offers it (rate.ts): the clock shows one show frame per XR frame only
+  // there. A headset that can't run it takes the 90 Hz bake when the bundle has one (a reload on the setup page);
+  // otherwise the clock's cadence keeps the show's time, and the console and ?stats say so
+  const hz90 = fallback === "hz90" ? null : court.video.fallbacks?.hz90?.displayHz ?? null;
+  const judge = (s: XRSession) => {
+    xr.rate = s.frameRate ?? null;
+    xr.verdict = judgeRate(hz, xr.rate, xr.supported, hz90);
+    if (stats) stats.xr = { ...xr, supported: [...xr.supported] };
+    if (xr.verdict === "mismatch") console.error(`Court Side: the headset runs at ${xr.rate} Hz, the show is baked for ${hz} Hz (offered: ${xr.supported.join(", ") || "none"}): some show frames are held for two XR frames`);
+  };
+  const matchRate = async (s: XRSession) => {
+    xr.supported = s.supportedFrameRates ? Array.from(s.supportedFrameRates) : [];
+    const want = wantRate(hz, xr.supported);
+    if (want !== null && s.frameRate !== want && typeof s.updateTargetFrameRate === "function") {
+      xr.requested = want;
+      await s.updateTargetFrameRate(want).catch((e: unknown) => console.warn(`Court Side: the headset would not run at ${want} Hz:`, e));
+    }
+    judge(s);
+    if (xr.verdict === "hz90" && setup) {
+      status.textContent = `This headset can't run ${hz} Hz: loading the 90 Hz show`;
+      const url = new URL(location.href);
+      url.searchParams.set("hz", "90");
+      await s.end().catch(() => {});
+      location.replace(url);
+    }
+  };
   const enter = async () => {
     if (!xrSystem || session) return;
     renderer.xr.setReferenceSpaceType("local-floor");
@@ -486,11 +534,13 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     session = s;
     // the session is kept through `visible-blurred` and `hidden` (headset off, the system menu): only its end ends it
     s.addEventListener("visibilitychange", () => seat.arrival.visibility(s.visibilityState)); // the hand-over (P27, P38)
+    s.addEventListener("frameratechange", () => judge(s));
     s.addEventListener("end", () => {
       session = null;
       status.textContent = court.title;
     });
     await renderer.xr.setSession(s);
+    await matchRate(s);
     scene.background = null;
     lastTime = -1;
     if (setup) go("arrival"); // a re-entry after Seat here keeps the phase, the anchor and the seat (9)

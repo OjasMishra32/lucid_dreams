@@ -3,6 +3,7 @@
 // and dropped frames against the display rate. From S6 (court-spikes/s6-quest/spike6/stats.ts, gputimer.ts). On the
 // Quest it is read with remote devtools (Q1-Q3); on desktop it is informational only (P15 is a headset number).
 // Integrator, T0.
+import type { XrRate } from "./rate";
 
 export interface Interval {
   p50: number;
@@ -85,6 +86,8 @@ export class FrameStats {
   readonly gpu: GpuTimer;
   private readonly hz: number;
   private readonly phases = new Map<string, { intervals: number[]; cpu: number[]; gpu: number[] }>();
+  /** The headset's display rate against the show's (court.ts sets it at the session's start and on every change). */
+  xr: XrRate | null = null;
 
   constructor(gl: WebGL2RenderingContext, hz: number) {
     this.gpu = new GpuTimer(gl);
@@ -107,8 +110,9 @@ export class FrameStats {
 
   report(): Record<string, { intervals: Interval; dropped: { count: number; pct: number }; cpu: Interval; gpu: Interval | null }> {
     const out: ReturnType<FrameStats["report"]> = {};
+    const hz = this.xr?.rate ?? this.hz; // a frame is late against the rate the headset runs at, when it says
     for (const [phase, p] of this.phases)
-      out[phase] = { intervals: summarize(p.intervals), dropped: dropped(p.intervals, this.hz), cpu: summarize(p.cpu), gpu: this.gpu.available ? summarize(p.gpu) : null };
+      out[phase] = { intervals: summarize(p.intervals), dropped: dropped(p.intervals, hz), cpu: summarize(p.cpu), gpu: this.gpu.available ? summarize(p.gpu) : null };
     return out;
   }
 }
