@@ -1005,7 +1005,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
     if (talk) {
       talk.update(dt);
-      talkCaption.set(talk.text, talk.reply ? "AI voice" : "");
+      talkCaption.set(talk.text, talk.reply ? "AI voice" : "", talk.reply ? talk.english : "");
       talkCaption.fade(!!talk.text, dt);
     }
     props?.update(t, dt, reveal);

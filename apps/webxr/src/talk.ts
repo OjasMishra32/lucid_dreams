@@ -32,6 +32,8 @@ export class Talk {
   level = 0;
   /** The words beside them (empty: nothing to show), and whether they're their reply (tagged AI voice) or a hint. */
   text = "";
+  /** The reply in English, for someone speaking another language (empty when it's the same words). */
+  english = "";
   reply = false;
   onState: (s: TalkState) => void = () => {};
   private rec: MediaRecorder | null = null;
@@ -161,10 +163,11 @@ export class Talk {
     const signal = this.abort.signal;
     try {
       const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(this.who)}?session=${this.session}`, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob, signal });
-      const j = (await r.json()) as { heard?: string; reply?: string; audio?: string | null; error?: string };
+      const j = (await r.json()) as { heard?: string; reply?: string; english?: string; audio?: string | null; error?: string };
       if (!r.ok || j.error) throw new Error(j.error || `Talk ${r.status}`);
       if (!j.reply) return this.say("I didn't catch that. Press Talk and try again.");
       this.text = j.reply;
+      this.english = j.english && j.english.trim() !== j.reply.trim() ? j.english.trim() : "";
       this.reply = true;
       if (j.audio) {
         const bytes = await (await fetch(j.audio, { signal })).arrayBuffer();
@@ -193,20 +196,24 @@ export class Talk {
 
   private say(text: string) {
     this.text = text;
+    this.english = "";
     this.reply = false;
     this.textUntil = performance.now() + 5000;
     this.set("idle");
   }
 }
 
-/** Their words beside them, wrapped to four lines, with an AI voice tag: every reply is AI, and says so. */
+/**
+ * Their words beside them, wrapped to four lines, with an AI voice tag (every reply is AI, and says so), and the
+ * English under them, smaller, when they speak another language.
+ */
 export class TalkCaption {
   readonly mesh: THREE.Mesh;
   private canvas = document.createElement("canvas");
   private tex: THREE.CanvasTexture;
   private text = "";
   private static readonly W = 1280;
-  private static readonly H = 420;
+  private static readonly H = 600;
 
   constructor() {
     this.canvas.width = TalkCaption.W;
@@ -220,28 +227,40 @@ export class TalkCaption {
     this.mesh.renderOrder = 10;
   }
 
-  set(text: string, tag: string) {
-    const key = `${tag}|${text}`;
+  set(text: string, tag: string, english = "") {
+    const key = `${tag}|${text}|${english}`;
     if (key === this.text) return;
     this.text = key;
     const c = this.canvas.getContext("2d")!;
     const { W, H } = TalkCaption;
     c.clearRect(0, 0, W, H);
     if (!text) return void (this.tex.needsUpdate = true);
-    c.font = '500 50px -apple-system, "SF Pro Text", "Inter", sans-serif';
-    const lines: string[] = [];
-    for (const word of text.split(/\s+/)) {
-      const last = lines[lines.length - 1];
-      if (last !== undefined && c.measureText(`${last} ${word}`).width < W - 140) lines[lines.length - 1] = `${last} ${word}`;
-      else lines.push(word);
-    }
-    if (lines.length > 4) {
-      lines.length = 4;
-      lines[3] = `${lines[3].replace(/\s+\S*$/, "")}…`;
-    }
+    const wrap = (s: string, font: string, max: number) => {
+      c.font = font;
+      const lines: string[] = [];
+      for (const word of s.split(/\s+/)) {
+        const last = lines[lines.length - 1];
+        if (last !== undefined && c.measureText(`${last} ${word}`).width < W - 140) lines[lines.length - 1] = `${last} ${word}`;
+        else lines.push(word);
+      }
+      if (lines.length > max) {
+        lines.length = max;
+        lines[max - 1] = `${lines[max - 1].replace(/\s+\S*$/, "")}…`;
+      }
+      return lines;
+    };
+    const MAIN = '500 50px -apple-system, "SF Pro Text", "Inter", sans-serif';
+    const SUB = '400 36px -apple-system, "SF Pro Text", "Inter", sans-serif';
+    const lines = wrap(text, MAIN, 4);
+    const sub = english ? wrap(english, SUB, 3) : [];
     const lineH = 64;
-    const h = 92 + lines.length * lineH + (tag ? 18 : 0);
-    const w = Math.min(W - 16, Math.max(...lines.map((l) => c.measureText(l).width)) + 110);
+    const subH = 46;
+    const h = 92 + lines.length * lineH + (tag ? 18 : 0) + (sub.length ? 22 + sub.length * subH : 0);
+    c.font = MAIN;
+    const wMain = Math.max(...lines.map((l) => c.measureText(l).width));
+    c.font = SUB;
+    const wSub = sub.length ? Math.max(...sub.map((l) => c.measureText(l).width)) : 0;
+    const w = Math.min(W - 16, Math.max(wMain, wSub) + 110);
     const top = (H - h) / 2;
     c.fillStyle = "rgba(29,29,31,0.82)";
     c.beginPath();
@@ -253,11 +272,18 @@ export class TalkCaption {
       c.textAlign = "center";
       c.fillText(tag.toUpperCase(), W / 2, top + 50);
     }
-    c.font = '500 50px -apple-system, "SF Pro Text", "Inter", sans-serif';
+    c.font = MAIN;
     c.fillStyle = "#f5f5f7";
     c.textAlign = "center";
     c.textBaseline = "middle";
-    lines.forEach((l, i) => c.fillText(l, W / 2, top + (tag ? 96 : 60) + i * lineH + lineH / 2 - 14, W - 64));
+    const y0 = top + (tag ? 96 : 60);
+    lines.forEach((l, i) => c.fillText(l, W / 2, y0 + i * lineH + lineH / 2 - 14, W - 64));
+    if (sub.length) {
+      c.font = SUB;
+      c.fillStyle = "#a1a1a6";
+      const y1 = y0 + lines.length * lineH + 22;
+      sub.forEach((l, i) => c.fillText(l, W / 2, y1 + i * subH + subH / 2 - 14, W - 64));
+    }
     this.tex.needsUpdate = true;
   }
 
