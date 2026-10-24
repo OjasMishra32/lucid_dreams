@@ -56,8 +56,10 @@ class BakeConfig:
 
     def validate(self) -> list[str]:
         e = []
-        if not (self.clip_first <= self.play_start < self.pass2_start < self.freeze <= self.make <= self.clip_end):
-            e.append("expected clip_first <= play_start < pass2_start < freeze <= make <= clip_end")
+        if not (self.clip_first <= self.pass2_start < self.freeze <= self.make <= self.clip_end):
+            e.append("expected clip_first <= pass2_start < freeze <= make <= clip_end")
+        if not self.clip_first <= self.play_start:
+            e.append("expected clip_first <= play_start")
         if not (self.play_start < self.f_end <= self.clip_end):
             e.append("expected play_start < pass1_end <= clip_end")
         if self.freeze % self.repeat_mod == self.repeat_phase:
@@ -81,7 +83,7 @@ def _coerce(name: str, value):
 
 def from_dict(d: dict) -> BakeConfig:
     names = {f.name for f in dataclasses.fields(BakeConfig)}
-    unknown = sorted(set(d) - names - {"_comment"})
+    unknown = sorted(k for k in set(d) - names if not k.startswith("_"))
     if unknown:
         raise ValueError(f"bake config: unknown keys {unknown}")
     cfg = BakeConfig(**{k: _coerce(k, v) for k, v in d.items() if k in names})

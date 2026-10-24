@@ -99,3 +99,25 @@ def test_check_repeat_phase_reports_a_wrong_phase():
     d = _fake_diffs(420, 11, 4, 1)
     errors = check_repeat_phase(d, CFG)
     assert errors and "phase" in errors[0]
+
+
+def test_config_round_trips_and_validates(tmp_path):
+    import json
+
+    from pipeline.court.bake import config
+
+    p = tmp_path / "c.json"
+    d = config.to_dict(CFG)
+    d["_comment"] = "notes are allowed"
+    d["play_start"] = 150  # pass 1 may start after pass 2's start (a later start of play)
+    p.write_text(json.dumps(d))
+    cfg = config.load(p)
+    assert cfg.play_start == 150 and cfg.strobes == CFG.strobes and cfg.f_end == CFG.freeze
+    d["freeze"] = 299  # a repeat frame
+    p.write_text(json.dumps(d))
+    with pytest.raises(ValueError, match="repeat"):
+        config.load(p)
+    d["freeze"], d["bogus"] = 300, 1
+    p.write_text(json.dumps(d))
+    with pytest.raises(ValueError, match="unknown"):
+        config.load(p)

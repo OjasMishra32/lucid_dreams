@@ -1,0 +1,160 @@
+"""timeline: every display frame at n / displayHz -> a source time, per segment (synthetic config only)."""
+import dataclasses
+import math
+
+import pytest
+
+from pipeline.court.bake.captime import CapTime
+from pipeline.court.bake.config import BakeConfig
+from pipeline.court.bake import timeline as T
+
+CFG = BakeConfig()  # synthetic: shot 11-400, pass 2 from 120, F 300, make 380, strobes 330 (+331 repeat), 342
+
+
+@pytest.fixture(scope="module", params=[72, 90])
+def tl(request):
+    return T.build(CFG, request.param)
+
+
+def test_ease_lengths_follow_the_clock_contract():
+    assert [T.ease_frame_count(s, 72) for s in CFG.ease_seconds] == [86, 72, 58]
+    assert [T.ease_frame_count(s, 90) for s in CFG.ease_seconds] == [108, 90, 72]
+    # the ease of n frames entered at 0.6x covers 0.6 n / hz / 2 seconds of real time (1.2 s -> ~0.36 s)
+    assert T.ease_tau(0, 86, 72, 0.6) == pytest.approx(-0.6 * 86 / 72 / 2)
+    assert T.ease_tau(86, 86, 72, 0.6) == 0.0
+    assert T.resume_tau(58, 58, 72, 0.6) == pytest.approx(0.6 * 58 / 72 / 2)
+
+
+def test_segments_are_inclusive_contiguous_and_never_overlap(tl):
+    s = tl.segments
+    ranges = [s["pass1"], s["pass2"]] + [e["frames"] for e in s["eases"]] + [s["resume"]]
+    assert ranges[0][0] == 0
+    for prev, nxt in zip(ranges, ranges[1:]):
+        assert nxt[0] == prev[1] + 1
+    assert ranges[-1][1] == len(tl.frames) - 1
+    for i, f in enumerate(tl.frames):
+        assert f.i == i
+
+
+def test_pass1_is_real_speed_from_the_start_of_play_to_F(tl):
+    c = CapTime.from_config(CFG)
+    p = tl.frames_of("pass1")
+    assert p[-1].src == CFG.freeze and not p[-1].interp
+    assert c.time_of(CFG.play_start) <= p[0].t < c.time_of(CFG.play_start) + 1 / tl.hz
+    steps = {round(b.t - a.t, 9) for a, b in zip(p, p[1:])}
+    assert steps == {round(1 / tl.hz, 9)}
+
+
+def test_pass2_runs_from_its_start_through_the_make_to_the_clip_end(tl):
+    c = CapTime.from_config(CFG)
+    p = tl.frames_of("pass2")
+    assert c.time_of(CFG.pass2_start) <= p[0].t < c.time_of(CFG.pass2_start) + CFG.pass2_speed / tl.hz
+    assert p[-1].t <= c.time_of(CFG.clip_end) < p[-1].t + CFG.pass2_speed / tl.hz + 1e-9
+    assert any(f.src == CFG.freeze and not f.interp for f in p)  # F lies on pass 2's grid
+    steps = {round(b.t - a.t, 9) for a, b in zip(p, p[1:])}
+    assert steps == {round(CFG.pass2_speed / tl.hz, 9)}
+
+
+def test_every_pass2_frame_at_72hz_is_real_except_the_strobes():
+    tl = T.build(CFG, 72)
+    p = tl.frames_of("pass2")
+    interp = [f for f in p if f.interp]
+    assert {round(f.src) for f in interp} == {330, 342}
+    assert all(float(f.src).is_integer() for f in interp)  # strobe replacements keep their own whole index
+    assert all(float(f.src).is_integer() for f in p)
+
+
+def test_each_ease_starts_from_a_pass2_frame_and_lands_exactly_on_F(tl):
+    eases = tl.segments["eases"]
+    p2 = tl.segments["pass2"]
+    assert [e["seconds"] for e in eases] == [pytest.approx(s, abs=1 / tl.hz) for s in CFG.ease_seconds]
+    starts = [e["start"] for e in eases]
+    assert starts == sorted(starts) and len(set(starts)) == 3
+    for e in eases:
+        assert p2[0] <= e["start"] <= p2[1]
+        first, last = e["frames"]
+        n = last - first + 1
+        assert n == T.ease_frame_count(e["seconds"], tl.hz)
+        entry = tl.frames[e["start"]]
+        # the entry frame is exactly where the ease's speed curve starts: n/2 pass-2 steps before F
+        assert entry.tau == pytest.approx(-CFG.pass2_speed * n / tl.hz / 2, abs=1e-12)
+        assert not tl.frames[last].interp and tl.frames[last].src == CFG.freeze
+        assert tl.frames[last].tau == 0.0
+    assert tl.cutoff == starts[-1]
+
+
+def test_resume_ramps_from_F_to_pass2_speed_then_steady_to_the_clip_end(tl):
+    r = tl.frames_of("resume")
+    n = T.ease_frame_count(CFG.resume_ramp_s, tl.hz)
+    assert r[0].tau > 0 and r[0].tau < 1e-3  # first resume frame barely leaves F
+    steady = r[n:]
+    steps = {round(b.tau - a.tau, 9) for a, b in zip(steady, steady[1:])}
+    assert steps == {round(CFG.pass2_speed / tl.hz, 9)}
+    c = CapTime.from_config(CFG)
+    assert r[-1].t <= c.time_of(CFG.clip_end)
+
+
+def test_after_the_resume_ramp_every_72hz_frame_is_real_except_strobes():
+    tl = T.build(CFG, 72)
+    r = tl.frames_of("resume")[T.ease_frame_count(CFG.resume_ramp_s, 72):]
+    assert {round(f.src) for f in r if f.interp} <= {330, 342}
+
+
+def test_real_frames_are_whole_and_in_betweens_carry_their_bracket(tl):
+    c = CapTime.from_config(CFG)
+    for f in tl.frames:
+        if not f.interp:
+            assert float(f.src).is_integer() and c.is_usable(int(f.src)) and f.a == f.b == f.src
+        else:
+            assert c.is_usable(f.a) and c.is_usable(f.b) and f.a < f.b and 0 <= f.w <= 1
+            assert c.time_of(f.a) <= f.t <= c.time_of(f.b)
+
+
+def test_speed_and_motion_rules_hold(tl):
+    m = T.check(tl, CFG)
+    assert m["errors"] == []
+    assert m["max_speed_change"] <= 0.02
+    assert m["max_motion_ratio"] <= 2.5
+
+
+def test_idr_frames_are_the_segment_starts(tl):
+    s = tl.segments
+    want = sorted([s["pass1"][0], s["pass2"][0], s["resume"][0]] + [e["frames"][0] for e in s["eases"]])
+    assert tl.idr == want
+
+
+def test_format_block_has_the_contract_fields(tl):
+    v = tl.format_block()
+    assert set(v) == {"displayHz", "pass2Speed", "segments", "cutoff", "freezeSource"}
+    assert set(v["segments"]) == {"pass1", "pass2", "resume", "eases"}
+    assert v["freezeSource"] == CFG.freeze and v["cutoff"] == tl.cutoff
+
+
+def test_an_odd_ease_frame_count_is_refused():
+    cfg = dataclasses.replace(CFG, ease_seconds=(1.2, 1.0, 0.8125))  # 0.8125 * 72 = 58.5 -> 58 ok; use 90 Hz: 73
+    with pytest.raises(ValueError, match="even"):
+        T.build(cfg, 90)
+
+
+def test_pass2_too_short_for_the_longest_ease_is_refused():
+    cfg = dataclasses.replace(CFG, pass2_start=290)
+    with pytest.raises(ValueError, match="pass 2"):
+        T.build(cfg, 72)
+
+
+def test_pass1_start_is_a_single_config_value():
+    later = dataclasses.replace(CFG, play_start=100)
+    a, b = T.build(CFG, 72), T.build(later, 72)
+    assert len(b.frames_of("pass1")) < len(a.frames_of("pass1"))
+    assert b.frames_of("pass2")[0].src == a.frames_of("pass2")[0].src
+
+
+def test_ease_curve_matches_clock_ts_when_node_is_available():
+    from pipeline.court.bake import cameras
+
+    got = cameras.run_clock_ts_curves([(86, 72), (58, 72), (108, 90)], 0.6)
+    if got is None:
+        pytest.skip("node or origin/court-side's clock.ts not available")
+    for (n, hz), curve in got.items():
+        ours = [T.ease_tau(k, n, hz, 0.6) for k in range(n + 1)] + [T.resume_tau(k, n, hz, 0.6) for k in range(1, n + 3)]
+        assert max(abs(x - y) for x, y in zip(ours, curve)) < 1e-12
