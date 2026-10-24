@@ -165,6 +165,125 @@ class Bundle(unittest.TestCase):
         self.assertEqual([p.name.split("-show")[0] for p in made[:3]], ["watch", "mid-ease", "at-F"])
         self.assertTrue(all(p.stat().st_size > 1000 for p in made))
 
+    def staged_show(self, name: str) -> tuple[Path, dict]:
+        S = json.loads((STANDIN / "court.json").read_text())
+        show = self.tmp / name
+        shutil.copytree(STANDIN / "video", show / "video")
+        cam = S["camera"]
+        manifest = {"video": json.loads(json.dumps(S["video"])), "camera": {"centre": cam["centre"], "sourceFps": cam["sourceFps"],
+                                                                             "captureFps": cam["captureFps"], "slow": cam["slow"]}}
+        return show, manifest
+
+    def stage(self, show: Path, manifest: dict) -> None:
+        (show / "video.json").write_text(json.dumps(manifest))
+        old = 1_700_000_000
+        for p in [show / "video.json", *(show / "video").iterdir()]:
+            os.utime(p, (old, old), follow_symlinks=False)
+
+    def assemble_with(self, name: str, **cfg_over) -> tuple[int, Path]:
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        cfg.update({"out": str(self.tmp / name / "court-side"), **cfg_over})
+        (self.tmp / f"{name}.json").write_text(json.dumps(cfg))
+        return A.main(["--config", str(self.tmp / f"{name}.json")]), Path(cfg["out"])
+
+    def test_a_manifest_path_leaving_the_bundle_copies_nothing(self):
+        show, manifest = self.staged_show("show-leak")
+        (self.tmp / "leaked.h264").write_bytes(b"private")
+        manifest["video"]["fallbacks"]["element"] = "../../leaked.h264"
+        self.stage(show, manifest)
+        code, out = self.assemble_with("leak", show=str(show))
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(asm["pieces"]["show"]["source"], "stand-in")
+        self.assertTrue(any("leaked.h264" in n for n in asm["notes"]), asm["notes"])
+        self.assertEqual([p for p in out.parent.parent.rglob("leaked.h264")], [self.tmp / "leaked.h264"])
+
+    def test_a_show_found_in_the_bundle_stays_findable(self):
+        show, manifest = self.staged_show("show-inplace")
+        self.stage(show, manifest)
+        code, out = self.assemble_with("inplace", show=str(show))
+        self.assertTrue((out / "video" / "video.json").exists())
+        old = 1_700_000_000
+        for p in (out / "video").iterdir():
+            os.utime(p, (old, old))
+        cfg = json.loads((self.tmp / "inplace.json").read_text())
+        cfg.pop("show")
+        (self.tmp / "inplace.json").write_text(json.dumps(cfg))
+        self.assertEqual(A.main(["--config", str(self.tmp / "inplace.json")]), 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(asm["pieces"]["show"]["source"], "real")
+        self.assertTrue((out / "video" / "video.json").exists())
+
+    def test_a_show_changing_while_copied_is_not_taken(self):
+        show, manifest = self.staged_show("show-moving")
+        self.stage(show, manifest)
+        real_copy = A.Writer.copy
+
+        def copy_and_touch(w, src, rel, within=None):  # the producer rewrites frames.json while we copy
+            r = real_copy(w, src, rel, within=within)
+            if rel.endswith("frames.json"):
+                f = show / "video" / "frames.json"
+                f.write_text(f.read_text() + " ")
+            return r
+
+        A.Writer.copy = copy_and_touch
+        try:
+            code, out = self.assemble_with("moving", show=str(show))
+        finally:
+            A.Writer.copy = real_copy
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(asm["pieces"]["show"]["source"], "stand-in")
+        self.assertTrue(any("changed while" in n for n in asm["notes"]), asm["notes"])
+
+    def test_an_extras_declared_foot_and_height_are_kept(self):
+        court = json.loads((self.out / "court.json").read_text())
+        others = {o["id"]: o for o in court["freeze"]["others"]}
+        self.assertEqual(others["x-one"]["foot"], [9.0, 0.0, -3.0])
+        self.assertEqual(others["x-one"]["height"], 2.0)
+
+    def test_a_relief_off_the_court_fails(self):
+        bad = self.copy_bad("relief")
+        court = json.loads((bad / "court.json").read_text())
+        pos = np.array([[105.0, 0.0, 0.0], [105.5, 0.0, 0.0], [105.0, 1.9, 0.1]], np.float32)
+        (bad / "others").mkdir(exist_ok=True)
+        (bad / "others" / "r.glb").write_bytes(sp.glb(pos, np.array([0, 1, 2]), "r"))
+        court["freeze"]["others"].append({"id": "r", "kind": "relief", "file": "others/r.glb", "reality": "others/r.glb", "pose": "A",
+                                          "foot": [5.0, 0.0, 1.0], "height": 1.9, "maxRayAngle": 5.0,
+                                          "shadow": court["freeze"]["others"][0]["shadow"], "reflection": court["freeze"]["others"][0]["reflection"]})
+        (bad / "court.json").write_text(json.dumps(court))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any(e.startswith("r:") and "foot" in e for e in errs), errs)
+        self.assertTrue(any(e.startswith("r:") and "off the court" in e for e in errs), errs)
+
+    def test_a_stream_changing_size_mid_way_fails(self):
+        import subprocess
+
+        bad = self.copy_bad("resize")
+        court = json.loads((bad / "court.json").read_text())
+        main = bad / court["video"]["file"]
+        extra = self.tmp / "other-size.h264"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=640x900:d=0.04:r=25", "-frames:v", "1",
+                        "-c:v", "libx264", "-x264-params", "aud=1", "-pix_fmt", "yuv420p", "-bsf:v", "h264_mp4toannexb", "-f", "h264",
+                        str(extra)], check=True)
+        main.write_bytes(main.read_bytes() + extra.read_bytes())
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any(court["video"]["file"] in e and "640x900" in e for e in errs), errs)
+
+    def test_a_stream_without_access_unit_delimiters_fails(self):
+        bad = self.copy_bad("noaud")
+        court = json.loads((bad / "court.json").read_text())
+        main = bad / court["video"]["file"]
+        data = main.read_bytes()
+        units = A.annexb_units(data)
+        keep = bytearray()
+        starts = [o - 3 for _, o in units] + [len(data)]  # the 3-byte start code before each NAL payload
+        for (t, o), a, b in zip(units, starts, starts[1:]):
+            if t != 9:
+                keep += data[a:b]
+        main.write_bytes(bytes(keep))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any(court["video"]["file"] in e and "access unit delimiter" in e for e in errs), errs)
+
     def copy_bad(self, name: str) -> Path:
         bad = self.tmp / name
         shutil.copytree(self.out, bad)

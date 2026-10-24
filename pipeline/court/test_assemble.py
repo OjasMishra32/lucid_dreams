@@ -293,6 +293,57 @@ class Paths(unittest.TestCase):
             A.guard_out(Path(d) / "court-side")  # outside every checkout: fine
 
 
+class Safety(unittest.TestCase):
+    def test_writer_paths_stay_inside_the_bundle(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        with tempfile.TemporaryDirectory() as d:
+            w = A.Writer(Path(d) / "b")
+            (Path(d) / "b").mkdir()
+            for bad in ("../leak.h264", "/etc/x", "video/../../x", "~/x", "a\\b", "http://x/y", ""):
+                with self.assertRaises(ValueError, msg=bad):
+                    w.path(bad)
+            src = Path(d) / "src"
+            src.mkdir()
+            (src / "real.bin").write_bytes(b"x")
+            (Path(d) / "secret.bin").write_bytes(b"s")
+            (src / "link.bin").symlink_to(Path(d) / "secret.bin")
+            w.copy(src / "real.bin", "video/real.bin", within=src)
+            with self.assertRaises(ValueError):  # a symlink in a producer's folder
+                w.copy(src / "link.bin", "video/link.bin", within=src)
+            with self.assertRaises(ValueError):  # a source outside the producer's folder
+                w.copy(Path(d) / "secret.bin", "video/s.bin", within=src)
+            self.assertEqual(sorted(p.name for p in (Path(d) / "b").rglob("*") if p.is_file()), ["real.bin"])
+
+    def test_a_previous_bundle_is_renamed_never_deleted(self):
+        import tempfile
+        from pathlib import Path
+
+        import assemble as A
+
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "court-side"
+            out.mkdir()
+            with self.assertRaises(ValueError):  # not a bundle this tool made: left alone
+                A.rotate_into(out, Path(d) / "new")
+            self.assertTrue(out.exists())
+            (out / "assembly.json").write_text(json.dumps({"assembledAt": "x", "pieces": {}}))
+            old_prev = Path(d) / "court-side.prev"
+            old_prev.mkdir()
+            (old_prev / "keep.txt").write_text("k")
+            new = Path(d) / ".court-side.tmp-1"
+            new.mkdir()
+            (new / "assembly.json").write_text(json.dumps({"assembledAt": "y", "pieces": {}}))
+            prev = A.rotate_into(out, new)
+            self.assertTrue(prev.name.startswith("court-side.prev-"))
+            self.assertEqual(json.loads((prev / "assembly.json").read_text())["assembledAt"], "x")
+            self.assertEqual(json.loads((out / "assembly.json").read_text())["assembledAt"], "y")
+            self.assertTrue((old_prev / "keep.txt").exists())  # nothing deleted
+
+
 class StandsMask(unittest.TestCase):
     def test_floor_is_black_and_the_rest_white(self):
         import assemble as A
