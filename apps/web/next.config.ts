@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const config: NextConfig = {
+  // A second server (a preview beside the live one) builds into its own folder: NEXT_DIST_DIR=.next-preview
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // Builds only from apps/web (ignore lockfiles further up the disk).
   turbopack: { root: __dirname },
   // The bridge runs on Ojasva's Mac and is opened from laptops and the Quest on the same Wi-Fi.

@@ -1,10 +1,12 @@
 import Link from "next/link";
 import HomeStory from "@/components/home/HomeStory";
 import HomeMotion from "@/components/home/HomeMotion";
+import HomeCast from "@/components/home/HomeCast";
+import PlayReel from "@/components/home/PlayReel";
 import SceneGallery, { type GroupCopy } from "@/components/home/SceneGallery";
 import { MeasuredTable, TruthSlider } from "@/components/home/Measured";
 import { ViewerLink } from "@/components/ViewInRoom";
-import { heroFrames, measured, rigCameras, scenes } from "@/lib/scenes";
+import { castCards, heroFrames, measured, playClips, rigCameras, scenes } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
 import "./home.css";
 
@@ -25,6 +27,8 @@ export default function Home() {
   const cards = scenes();
   const rows = measured();
   const cams = rigCameras() as RigCamera[];
+  const cast = castCards();
+  const clips = playClips();
   const lead = rows.find((r) => r.id === "dance-01") ?? rows[0];
   const card = (key: string) => cards.find((c) => c.key === key);
 
@@ -40,14 +44,14 @@ export default function Home() {
       key: "play",
       eyebrow: "Games",
       headline: "Your move.",
-      intro: "Real games at real size: chess at the peak ratings of two legends, and a set of tennis on full-size grass. Every legend is a likeness, labelled as one, and never speaks.",
+      intro: "Real games at real size: chess at the peak ratings of two legends, and a set of tennis on full-size grass. Every legend is a likeness, labelled as one, and stays silent.",
       banner: { image: card("chess-carlsen")?.image ?? null },
     },
     {
       key: "relive",
       eyebrow: "Moments",
       headline: "Stop time. Walk around it.",
-      intro: "A replay is the moment itself, life size on your floor. Freeze it at the top of the jump and see what the one camera never could.",
+      intro: "A replay is the moment itself, life size on your floor. Freeze it at the top of the jump and walk all the way round it.",
       banner: null,
     },
     {
@@ -75,6 +79,17 @@ export default function Home() {
         <Words text="Learn their move. Play them at their game. Or simply spend time with them." from={1} of={2} />
       </section>
 
+      <HomeCast cast={cast} />
+
+      {clips.length > 0 && (
+        <section className="play-section" aria-labelledby="play-title">
+          <p className="eyebrow-x reveal">In the headset</p>
+          <h2 id="play-title" className="section-head reveal">See it played.</h2>
+          <p className="section-sub reveal">Recorded straight from the app: the real people, the real games, the real physics.</p>
+          <div className="reveal"><PlayReel clips={clips} /></div>
+        </section>
+      )}
+
       <div id="scenes" className="scenes">
         <SceneGallery groups={groups} cards={cards} />
       </div>
@@ -97,7 +112,7 @@ export default function Home() {
             </div>
           </div>
           <p className="pipe-cap cap-1"><b>One video.</b> Five seconds of one person, from a single camera. A phone is enough.</p>
-          <p className="pipe-cap cap-2"><b>Forty-eight views it never filmed.</b> 4DAnyone imagines a dome of cameras around her, every frame in step.</p>
+          <p className="pipe-cap cap-2"><b>Forty-eight imagined views.</b> 4DAnyone imagines a dome of cameras around her, every frame in step.</p>
         </div>
       </section>
 
@@ -112,7 +127,7 @@ export default function Home() {
       </section>
 
       <section className="truth-section">
-        <h2 className="section-head reveal">Measured, not claimed.</h2>
+        <h2 className="section-head reveal">Measured on every frame.</h2>
         <p className="section-sub reveal">The same camera at the same instant. Drag between the real frame and our render.</p>
         <div className="reveal"><TruthSlider real="/media/truth-dance-real.jpg" render="/media/truth-dance-render.jpg" /></div>
         {rows.length > 0 && (

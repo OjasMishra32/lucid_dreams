@@ -41,7 +41,7 @@ const lerp = THREE.MathUtils.lerp;
  * Shader inputs for one splat mesh: a scan band (shown between lo and hi, with a soft bright line at its edges), size,
  * and the exploded view (every Gaussian pushed out from her centre, each by its own share of `explode` metres).
  */
-function makeUniforms() {
+export function makeUniforms() {
   return {
     lo: dyno.dynoFloat(-1),
     hi: dyno.dynoFloat(-1),
@@ -51,9 +51,9 @@ function makeUniforms() {
     explode: dyno.dynoFloat(0),
   };
 }
-type Uniforms = ReturnType<typeof makeUniforms>;
+export type Uniforms = ReturnType<typeof makeUniforms>;
 
-function modifier(u: Uniforms) {
+export function modifier(u: Uniforms) {
   return dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const d = new dyno.Dyno({
       inTypes: { gsplat: dyno.Gsplat, lo: "float", hi: "float", edge: "float", glow: "float", size: "float", explode: "float" },
@@ -84,7 +84,7 @@ function modifier(u: Uniforms) {
   });
 }
 
-async function loadSplat(url: string, u: Uniforms, onProgress?: (f: number) => void): Promise<SplatMesh> {
+export async function loadSplat(url: string, u: Uniforms, onProgress?: (f: number) => void): Promise<SplatMesh> {
   const mesh = new SplatMesh({
     url,
     objectModifier: modifier(u),

@@ -141,3 +141,36 @@ export function rigCameras(): unknown[] {
     return [];
   }
 }
+
+/** The cast for the live 3D line: every public replay in the library, one frame each from the middle of their move. */
+export function castCards(): { id: string; frame: string; name: string; said: string; what: string }[] {
+  const ready = new Map(listReady().map((d) => [d.id, d]));
+  const order = ["dance-01", "taichi-01", "golf-01", "lebron-shot", "guitar-01", "jump-shot-hq", "ian-grandma"];
+  const out: { id: string; frame: string; name: string; said: string; what: string }[] = [];
+  for (const id of order) {
+    const d = ready.get(id);
+    const f = d?.frames;
+    if (!d || !f?.spz || d.kind !== "replay") continue;
+    const at = `${f.dir}/${f.spz.replace("%06d", String(Math.floor(d.frameCount * 0.45)).padStart(6, "0"))}`;
+    if (!existsSync(join(DREAMS_DIR, d.id, at))) continue;
+    const s = SCENES.find((x) => x.ids.includes(id));
+    out.push({ id, frame: mediaUrl(d, at)!, name: s?.title ?? d.name, said: s?.said ?? "", what: s?.what ?? "" });
+  }
+  return out;
+}
+
+/** Real gameplay recorded from the app (public/media/play-*.mp4), the ones that exist. */
+export function playClips(): { key: string; title: string; line: string; src: string; poster: string | null }[] {
+  const all = [
+    { key: "tennis", title: "Tennis", line: "A rally with Federer on full-size grass. His strokes come from real tennis footage." },
+    { key: "chess", title: "Chess", line: "Magnus thinks, reaches across the board, moves his piece and presses the clock." },
+    { key: "basketball", title: "Basketball", line: "LeBron's real jump shot, with the ball tracked in 3D and a regulation hoop." },
+    { key: "golf", title: "Golf", line: "A slow-motion swing, step by step, with his tempo measured against yours." },
+    { key: "guitar", title: "Guitar", line: "A strum lesson, timed from the teacher's own audio." },
+    { key: "taichi", title: "Tai chi", line: "Follow the form at half speed, scored against the clip's own joints." },
+  ];
+  const dir = join(process.cwd(), "public", "media");
+  return all
+    .filter((c) => existsSync(join(dir, `play-${c.key}.mp4`)))
+    .map((c) => ({ ...c, src: `/media/play-${c.key}.mp4`, poster: existsSync(join(dir, `play-${c.key}.jpg`)) ? `/media/play-${c.key}.jpg` : null }));
+}

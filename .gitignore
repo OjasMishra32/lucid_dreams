@@ -16,6 +16,7 @@
 # tooling
 node_modules/
 .next/
+.next-preview/
 __pycache__/
 .venv/
 .DS_Store
