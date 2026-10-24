@@ -9,9 +9,9 @@ corners sample outside the raw frame (about 2-3% at the corners): those pixels a
 zero for mattes, and `undistort_valid` says which they are.
 
 Order of operations for a live frame: the watermark is a broadcast overlay in raw pixels, so it is inpainted in raw
-space first (its box is in raw source px); in-betweens (and strobe replacements) are interpolated on the inpainted
-raw neighbours (interp.py); the result is undistorted with its own focal (an in-between's is the lerp of its two
-real frames'). Plates and mattes from the layers agent (raw, distorted, at layers scale) go through the same
+space first (its box is in raw source px), then the frame is undistorted. In-betweens (and strobe replacements) are
+interpolated from the RAW neighbours (RIFE on HiPerGator or DIS here, interp.py) and then get exactly that clean-up:
+watermark out, undistorted with their own focal (the lerp of their two real frames'). Plates and mattes from the layers agent (raw, distorted, at layers scale) go through the same
 functions: `Source.undistort_layer(img, src, kind)`; the output keeps the input's size (layers scale).
 
 Entry points (bake-stack):
@@ -264,7 +264,10 @@ class Source:
         self._time_of = time_of
         self._cache, self._cache_n = {}, cache
         self.watermark_model = watermark_model
-        self.inbetweens = interp.Inbetweens(self.raw_inpainted, rife_dir=rife_dir, method=method)
+        self._raw_cache = {}
+        # in-betweens are made from the RAW frames (RIFE on HiPerGator sees exactly these) and cleaned afterwards in
+        # clean_between, so a RIFE result and a DIS one get the same treatment as a real frame
+        self.inbetweens = interp.Inbetweens(self.raw_cached, rife_dir=rife_dir, method=method)
 
     @classmethod
     def from_config(cls, cfg, f_of: Callable[[float], float] | None = None, **kw) -> "Source":
@@ -332,12 +335,20 @@ class Source:
             raise FileNotFoundError(self.path(src))
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+    def raw_cached(self, src: int) -> np.ndarray:
+        src = int(src)
+        if src not in self._raw_cache:
+            if len(self._raw_cache) >= self._cache_n:
+                self._raw_cache.pop(next(iter(self._raw_cache)))
+            self._raw_cache[src] = self.raw(src)
+        return self._raw_cache[src]
+
     def raw_inpainted(self, src: int) -> np.ndarray:
         src = int(src)
         if src not in self._cache:
             if len(self._cache) >= self._cache_n:
                 self._cache.pop(next(iter(self._cache)))
-            self._cache[src] = self.dewatermark(self.raw(src))
+            self._cache[src] = self.dewatermark(self.raw_cached(src))
         return self._cache[src]
 
     def dewatermark(self, img: np.ndarray) -> np.ndarray:
@@ -394,7 +405,10 @@ class Source:
                                                           "method": "real", "f": f * self.f_scale}
 
     def clean_between(self, a: int, b: int, w: float):
+        """An in-between of the raw frames a, b (RIFE result or DIS), then exactly a real frame's clean-up: the
+        watermark removed in raw pixels, then undistorted with the in-between's own (lerped) focal."""
         mid, how = self.inbetweens.get(int(a), int(b), float(w))
+        mid = self.dewatermark(mid)
         f = self.focal_between(a, b, w, mid.shape[1])
         return undistort(mid, f, self.k1, self.f_scale), {"interp": True, "a": int(a), "b": int(b), "w": float(w),
                                                           "method": how, "f": f * self.f_scale}

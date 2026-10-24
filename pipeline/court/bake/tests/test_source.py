@@ -215,3 +215,52 @@ def test_calib_focal_interpolates_and_clamps(written):
     assert fo(fr[0]["source_frame"] - 50) == pytest.approx(fr[0]["f"])
     assert fo(fr[-1]["source_frame"] + 50) == pytest.approx(fr[-1]["f"])
     assert fo.width == SPEC.width and fo.k1 == pytest.approx(SPEC.k1)
+
+
+def box_err(img, truth, box):
+    x0, y0, x1, y1 = box
+    return np.abs(img[y0:y1, x0:x1].astype(int) - truth[y0:y1, x0:x1].astype(int)).mean()
+
+
+def test_rife_inbetween_is_cleaned_like_a_real_frame(written, clip, tmp_path):
+    """RIFE runs on the raw frames (watermark and lens distortion in). Its result must leave source.py exactly as a
+    DIS in-between of the same raw frames does: watermark removed, then undistorted with the lerped focal."""
+    cfg = json.loads((written / "bake_config.json").read_text())
+    uniq = [s for s in clip.unique if s not in clip.flash_srcs]
+    a, b, w = uniq[6], uniq[7], 0.4
+    raw_mid = interp.interpolate(clip.frame(a), clip.frame(b), w)  # what an in-between of the raw frames looks like
+    rdir = tmp_path / "rife"
+    man = interp.write_needs([(a, b, w)], rdir / "needs.json", ext=".png")
+    cv2.imwrite(str(rdir / man["pairs"][0]["out"]), cv2.cvtColor(raw_mid, cv2.COLOR_RGB2BGR))
+    img_r, info_r = source.Source.from_config(cfg, rife_dir=rdir).clean_between(a, b, w)
+    img_d, info_d = source.Source.from_config(cfg).clean_between(a, b, w)
+    assert info_r["method"] == "rife" and info_d["method"] == "dis"
+    assert np.array_equal(img_r, img_d)  # same raw in-between -> same treatment
+    truth = clip.gt_at(a, b, w)
+    box = source.scaled_box(clip.watermark_box, SPEC.width, SPEC.width, SPEC.height)
+    left_in = source.undistort(raw_mid, info_r["f"], SPEC.k1)  # undistorted, watermark NOT removed
+    assert box_err(img_r, truth, box) < 0.8 * box_err(left_in, truth, box)
+    # and the same as a real frame gets: a "RIFE result" that is exactly raw frame a comes out as clean(a) does
+    # (up to the focal lerped 1e-4 of the way to b's)
+    man0 = interp.write_needs([(a, b, 1e-4)], rdir / "needs.json", ext=".png")
+    cv2.imwrite(str(rdir / man0["pairs"][0]["out"]), cv2.cvtColor(clip.frame(a), cv2.COLOR_RGB2BGR))
+    img0, info0 = source.Source.from_config(cfg, rife_dir=rdir).clean_between(a, b, 1e-4)
+    real, _ = source.Source.from_config(cfg).clean(a)
+    assert info0["method"] == "rife"
+    assert np.abs(img0.astype(int) - real.astype(int)).max() <= 2
+
+
+def test_dis_inbetweens_and_strobe_replacements_are_watermark_free(written, clip):
+    cfg = json.loads((written / "bake_config.json").read_text())
+    src = source.Source.from_config(cfg)
+    box = source.scaled_box(clip.watermark_box, SPEC.width, SPEC.width, SPEC.height)
+    uniq = [s for s in clip.unique if s not in clip.flash_srcs]
+    a, b = uniq[9], uniq[10]
+    img, info = src.clean_between(a, b, 0.5)
+    truth = clip.gt_at(a, b, 0.5)
+    raw_mid = interp.interpolate(clip.frame(a), clip.frame(b), 0.5)
+    assert box_err(img, truth, box) < 0.8 * box_err(source.undistort(raw_mid, info["f"], SPEC.k1), truth, box)
+    for s in SPEC.strobes:
+        img, info = src.clean(s)
+        assert info["interp"] and info["method"] == "dis"
+        assert box_err(img, clip.gt(s), box) < 0.8 * box_err(source.undistort(clip.frame(info["a"]), info["f"], SPEC.k1), clip.gt(s), box)
