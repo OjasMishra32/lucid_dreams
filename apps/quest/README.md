@@ -13,9 +13,38 @@ Photoreal Gaussian people standing on your real floor in Meta Quest 3S passthrou
 1. Open `apps/quest` in Unity 6000.6.0f1.
 2. **Lucid Dreams > Set Up Project** (safe to run again). It configures URP with the Gaussian pass, OpenXR for
    Android and desktop, the Android player settings and `Assets/LucidDreams/Scenes/Dream.unity`.
-3. **Lucid Dreams > Import Dream Bundle...** and pick a bundle folder (the one with `dream.json`). The first frame
-   (or the avatar's rest pose) is imported at high fidelity into `Assets/Dreams/<id>/` (git-ignored) and put in the scene.
-4. Switch to Android, plug in the Quest, **Build And Run**.
+3. Point the player at a bundle (`Dream/Person`, **Dream Sequence Player > Bundle**), then **Build And Run** on the
+   Quest, or **Lucid Dreams > Build APK**.
+
+## Playing a replay
+
+`DreamSequencePlayer` loads every frame of a bundle (`frames/%06d.ply`) before it plays, keeps them all on the GPU
+in full float precision, and switches frames at the clip's fps through the renderer's deformation hook, so playback
+never uploads or stutters. **Bundle** can be:
+
+- a folder under the app's storage: `dreams/<id>` means `/sdcard/Android/data/com.luciddreams.quest/files/dreams/<id>`
+  on the Quest (copy one there with `adb push <bundle> /sdcard/Android/data/com.luciddreams.quest/files/dreams/`),
+- a folder under `Assets/StreamingAssets/` (git-ignored, ships inside the APK),
+- the bridge: `http://<mac>:5170/dreams/<id>`, or an absolute folder in the editor.
+
+GPU cost is 72 bytes per Gaussian per frame (SH degree 1): 121 frames x 300k Gaussians is about 2.5 GB.
+The player refuses bundles over `gpuBudgetMB` and logs the Gaussian count that would fit.
+
+Test controls until the in-headset UI lands (`DreamTestControls`): right controller **A** play/pause, **B** speed
+(0.25 / 0.5 / 1x), thumbstick left/right scrubs, trigger re-places the person in front of you. In the editor:
+Space, S, arrow keys, P.
+
+## Checking without a headset
+
+**Lucid Dreams > Import Dream Bundle...** puts a bundle's first frame in the scene for an edit-mode preview.
+
+`PlaybackCheck` plays a bundle in the real scene, checks it advances at the clip's fps, and renders front and side
+views of a few frames to PNG:
+
+```
+Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.PlaybackCheck.Run \
+  -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check
+```
 
 The person stands 1.5 m in front of you on the scanned floor, facing you. Bundle files are right-handed
-(meters, +Y up, facing -Z); `DreamPlacer` mirrors Z into Unity's left-handed space.
+(meters, +Y up, front faces -Z); `DreamPlacer` mirrors Z into Unity's left-handed space.

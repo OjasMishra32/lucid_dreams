@@ -84,3 +84,15 @@ Nice: Android OpenXR settings, Meta hand tracking and the batch APK build are in
 4. **Real hands in front of virtual things:** in passthrough, render the tracked hand mesh depth-only (a material
    with colour writes off, drawn first) so your real fingers stay visible in front of a person or object you reach
    past. Meta's hand mesh + a `ColorMask 0` shader does it in Unity.
+
+## Decisions (Ian, apps/quest)
+
+- **Unity 6000.6.0f1**, not 2022.3: the VR Gaussian renderer needs Unity 6000.3 or later.
+- **Replays load at runtime, not through editor import.** `DreamSequencePlayer` reads `frames/*.ply` from the
+  headset's storage, StreamingAssets or the bridge, keeps every frame on the GPU in full float precision (72 B per
+  Gaussian per frame at SH degree 1) and swaps frames through the renderer's deformation hook: no uploads while playing.
+  The same loader takes SPZ next (backlog item 2).
+- **GPU budget:** 121 frames x 300k Gaussians is about 2.5 GB. The player refuses anything over its budget (3 GB for
+  now) and logs the per-frame cap that fits; the real Quest 3S number comes from item 8.
+- **Delivery size:** a 121-frame PLY replay at 300k is about 9 GB, too big for Wi-Fi to the headset. Real bundles
+  reach the Quest as SPZ once the runtime SPZ reader lands; PLY stays for development and editor checks.

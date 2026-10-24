@@ -61,7 +61,7 @@ namespace LucidDreams.Editor
             var scenePath = EditorBuildSettings.scenes.Length > 0 ? EditorBuildSettings.scenes[0].path : null;
             if (string.IsNullOrEmpty(scenePath)) return;
             var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-            var splat = UnityEngine.Object.FindFirstObjectByType<GaussianSplat3DRenderer>();
+            var splat = UnityEngine.Object.FindAnyObjectByType<GaussianSplat3DRenderer>();
             if (splat == null)
             {
                 Debug.LogWarning("[Lucid Dreams] No Gaussian renderer in the scene; run Lucid Dreams > Set Up Project.");

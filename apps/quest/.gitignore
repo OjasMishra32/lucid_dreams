@@ -11,3 +11,6 @@ MemoryCaptures/
 Assets/Dreams/
 Assets/Dreams.meta
 .utmp/
+# bundles copied in for testing are large
+Assets/StreamingAssets/
+Assets/StreamingAssets.meta

@@ -136,13 +136,13 @@ namespace LucidDreams.Editor
 
         static void ConfigureXR()
         {
-            EditorBuildSettings.TryGetConfigObject(XRGeneralSettings.k_SettingsKey, out XRGeneralSettingsPerBuildTarget perTarget);
+            EditorBuildSettings.TryGetConfigObject(XRGeneralSettings.settingsKey, out XRGeneralSettingsPerBuildTarget perTarget);
             if (perTarget == null)
             {
                 Directory.CreateDirectory("Assets/XR");
                 perTarget = ScriptableObject.CreateInstance<XRGeneralSettingsPerBuildTarget>();
                 AssetDatabase.CreateAsset(perTarget, "Assets/XR/XRGeneralSettingsPerBuildTarget.asset");
-                EditorBuildSettings.AddConfigObject(XRGeneralSettings.k_SettingsKey, perTarget, true);
+                EditorBuildSettings.AddConfigObject(XRGeneralSettings.settingsKey, perTarget, true);
             }
 
             foreach (var group in new[] { BuildTargetGroup.Android, BuildTargetGroup.Standalone })
@@ -175,7 +175,9 @@ namespace LucidDreams.Editor
                 foreach (var feature in openxr.GetFeatures())
                 {
                     if (feature is UnityEngine.XR.Hands.OpenXR.HandTracking) feature.enabled = true;
+#pragma warning disable CS0618 // deprecated, which is why it must stay off
                     if (feature is UnityEngine.XR.OpenXR.Features.Interactions.MicrosoftHandInteraction) feature.enabled = false;
+#pragma warning restore CS0618
                 }
                 EditorUtility.SetDirty(openxr);
             }
@@ -227,6 +229,10 @@ namespace LucidDreams.Editor
             var splat = ObjectFactory.AddComponent<GaussianSplat3DRenderer>(personGo);
             ConfigureSplatRenderer(splat);
             placer.person = personGo.transform;
+            var player = personGo.AddComponent<DreamSequencePlayer>();
+            var controls = dreamGo.AddComponent<DreamTestControls>();
+            controls.player = player;
+            controls.placer = placer;
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
