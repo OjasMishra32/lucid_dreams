@@ -99,7 +99,10 @@ if (DEV) {
   process.env.LUCID_HTTP = "1"; // vite.config.ts: no self-signed certificate, this server is plain http
   const { createServer: createVite } = await import("vite");
   // HMR's socket rides on this server (same host and port; vite checks the Host and its token on the upgrade itself)
-  vite = await createVite({ root: WEBXR, configFile: join(WEBXR, "vite.config.ts"), appType: "spa", logLevel: "warn", server: { middlewareMode: true, ws: { server } } });
+  // its own dependency cache per checkout (git-ignored): worktrees share node_modules through a symlink, and two vites
+  // re-optimizing one node_modules/.vite answer each other's pages with 504 "Outdated Optimize Dep"
+  const cacheDir = join(WEBXR, "scripts", "court", "out", "vite-deps");
+  vite = await createVite({ root: WEBXR, configFile: join(WEBXR, "vite.config.ts"), appType: "spa", logLevel: "warn", cacheDir, server: { middlewareMode: true, ws: { server } } });
 }
 
 server.on("request", (req, res) => {

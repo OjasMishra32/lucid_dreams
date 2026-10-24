@@ -154,6 +154,13 @@ function makeContext(page, check, report, bundleJson) {
   };
 }
 
+/** The page every scenario opens: the court in IWER, probed, the bundle from serve.mjs, plus --query. */
+function pageUrl(port) {
+  const q = new URLSearchParams({ mode: "court", emulate: "", probe: TIMING ? "timing" : "capture", bundle: "/bundle/" });
+  for (const [k, v] of new URLSearchParams(QUERY)) q.set(k, v);
+  return `http://127.0.0.1:${port}/?${q.toString().replace(/=(&|$)/g, "$1")}`;
+}
+
 async function main() {
   const scenarios = await loadScenarios();
   const asked = opt("--only", "smoke");
@@ -175,6 +182,17 @@ async function main() {
       headless: true,
       args: ["--ignore-gpu-blocklist", "--use-angle=metal", "--enable-gpu", "--autoplay-policy=no-user-gesture-required"],
     });
+    // warm the dev server with one throwaway load of the same page: vite optimizes the dependencies it discovers on a
+    // first load and answers a page that raced it with 504 "Outdated Optimize Dep"; no scenario should be that page
+    const warm = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    try {
+      await warm.goto(pageUrl(port), { waitUntil: "load" });
+      await warm.waitForFunction(() => window.__court && (window.__court.ready || window.__court.error), null, { timeout: 90000, polling: 200 });
+    } catch (e) {
+      console.log(`(warm-up: ${String(e?.message ?? e).split("\n")[0]})`);
+    } finally {
+      await warm.close();
+    }
     for (const name of only) {
       const scenario = scenarios[name];
       const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
@@ -204,9 +222,7 @@ async function main() {
         checks.push({ what, ok: !!ok, detail });
         console.log(`${ok ? "PASS" : "FAIL"} ${name}: ${what}: ${detail}`);
       };
-      const q = new URLSearchParams({ mode: "court", emulate: "", probe: TIMING ? "timing" : "capture", bundle: "/bundle/" });
-      for (const [k, v] of new URLSearchParams(QUERY)) q.set(k, v);
-      const url = `http://127.0.0.1:${port}/?${q.toString().replace(/=(&|$)/g, "$1")}`;
+      const url = pageUrl(port);
       let skip = null;
       try {
         await page.goto(url, { waitUntil: "load" });
