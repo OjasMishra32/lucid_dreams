@@ -96,6 +96,32 @@ export function pieceMaterials() {
   };
 }
 
+/**
+ * A piece's radius (meters) at height y above its base: its lathe profile, with the king's cross and the rook's
+ * crenellations. A knight's head is a profile extruded across the board (as knight() builds it: up to 1.6 cm along
+ * the files' direction, under 1 cm across it), so give the direction (dx, dz, board or table axes) to get its reach
+ * that way; without one, its widest. 0 above it.
+ */
+export function pieceRadius(t: PieceType, y: number, dx = 1, dz = 0) {
+  const h = HEIGHT[t];
+  if (y < 0 || y > h + (t === "k" ? 0.014 : t === "r" ? 0.005 : 0)) return 0;
+  if (t === "n") {
+    if (y <= 0.3 * h) return R * (y < 0.07 * h ? 1 : 0.8);
+    const l = Math.hypot(dx, dz) || 1;
+    return 1 / Math.hypot(dx / l / 0.0158, dz / l / 0.0096); // an ellipse round its widest
+  }
+  if (t === "k" && y > 0.89 * h) return 0.0055;
+  if (t === "r" && y > h) return 0.82 * R;
+  const prof = PROFILES[t];
+  let r = 0;
+  for (let i = 1; i < prof.length; i++) {
+    const [r0, y0] = prof[i - 1];
+    const [r1, y1] = prof[i];
+    if (y >= y0 * h && y <= y1 * h) r = Math.max(r, y1 > y0 ? r0 + ((y / h - y0) / (y1 - y0)) * (r1 - r0) : Math.max(r0, r1));
+  }
+  return r * R;
+}
+
 export function pieceHeight(t: PieceType) {
   return HEIGHT[t] + (t === "k" ? 0.014 : 0);
 }

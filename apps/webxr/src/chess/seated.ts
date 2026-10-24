@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import type { Skeleton, SkinnedAvatar } from "../avatar";
-import { SQUARE } from "./pieces";
+import { type PieceType, SQUARE, pieceRadius } from "./pieces";
 import { BodyShape } from "./body";
+import { type FingerPose, PINCH, POINT, fingerQuat } from "./fingers";
 import { type Hesitation, type IdleKind, type Mode, type Position, type Style, Rng, SIDED, hashSeed, holdSeconds, pickHesitation, pickIdle, pickStyle, thinkTime } from "./person";
 
 // The opponent as a person at the table: seated on a chair, breathing, moving their own pieces with whichever hand is
@@ -10,6 +11,15 @@ import { type Hesitation, type IdleKind, type Mode, type Position, type Style, R
 // back), never the same way twice in a row. All of it is procedural on the avatar's SMPL-X rig (the motion file only
 // lends the fingers their relaxed pose) and sized from the rest skeleton, so any avatar sits and reaches the same way.
 // The habits themselves (think time, styles, which idle comes next) are in person.ts, drawn from a seeded random.
+//
+// Nothing of theirs goes through anything (scripts/check_chess_poses.ts measures it on the real avatars): hands rest on
+// the table between the board and its edge, never over the pieces; every path goes up, over and down, high enough for
+// the hand (its own shape: balls along each finger, from the rig and the avatar's Gaussians) and the piece in it to
+// clear what's under them; a piece is taken by its head between thumb and index, the pinch fitted to its real profile
+// (pieces.ts), the other three fingers curled out of the way; the clock is pressed with the index; arms swivel up off
+// the table and the pieces; a far reach leans in, then slides and half rises rather than put the chest into the table;
+// and the joints stay where the skin renders well (twist in the forearm, not the wrist; the shoulder blade lifting with
+// a raised arm; the head never thrown back).
 //
 // Spaces. "Table": the chess table group's local space (board centre at the origin, playing surface at y = 0, the
 // player on +z, the opponent on -z; the opponent's left is +x). "Bundle": the avatar mesh's own space (+Y up, front
@@ -22,6 +32,17 @@ const BOARD_EDGE = SQUARE * 4 + 0.018; // the board's far edge, frame included
 const HIPS_BEHIND_EDGE = 0.45;
 /** How far behind the board's centre the opponent's hip joints are: where the chair goes. */
 export const SEAT_DISTANCE = BOARD_EDGE + HIPS_BEHIND_EDGE;
+/**
+ * The table the board stands on, table-local: its top is the board's underside, and on their side it ends 18 cm past
+ * the board, a hand's width in front of their belly (where a real table's edge would be for someone sitting there).
+ * Nothing of theirs goes through it: hands rest on it, forearms lie on it, elbows over it stay above it.
+ */
+export const TABLE_TOP = -0.012;
+export const TABLE_EDGE = BOARD_EDGE + 0.18;
+/** The table's footprint across (table-local x): a 1.2 m table. */
+const TABLE_HALF_X = 0.6;
+const BOARD_TOP = 0.0005;
+const GAP = 0.008; // meters every hand, arm and carried piece keeps above anything it passes over
 
 /** One piece a hand moves: board-local base positions, as squareToLocal gives them. */
 export interface Carry {
@@ -53,15 +74,33 @@ const R_FINGERS: [number, number][] = [
   [46, 0.95], [47, 1.0], [48, 0.6], // pinky
   [49, 0.85], [50, 1.0], [51, 0.6], // ring
 ];
-const L_FINGERS: [number, number][] = R_FINGERS.map(([j, a]) => [j - 15, a]);
+const CURL = R_FINGERS.map(([, a]) => a); // by finger joint 0..11 of a hand (the thumb, 12..14, never curls)
+/** How far a piece's head reaches from its axis where it's held (pieces.ts profiles, at 75-90% of its height). */
+const HEAD_R: Record<string, number> = { p: 0.0105, b: 0.0098, n: 0.011, r: 0.0144, q: 0.0122, k: 0.011 };
+const PIECE_R = 0.0175; // a piece's base
+/** pieceRadius (pieces.ts) tabulated every half millimetre: the pinch is fitted against it many times over. */
+const PROFILE = new Map<string, Float32Array>();
+function profileR(type: PieceType, y: number, dx = 1, dz = 0) {
+  if (type === "n") return pieceRadius(type, y, dx, dz); // (a knight's head isn't round)
+  let t = PROFILE.get(type);
+  if (!t) {
+    t = new Float32Array(200);
+    for (let i = 0; i < 200; i++) t[i] = pieceRadius(type, i * 0.0005);
+    PROFILE.set(type, t);
+  }
+  const i = Math.round(y / 0.0005);
+  return i < 0 || i >= 200 ? 0 : t[i];
+}
 const BODY = 22; // joints 0..21 are posed here; the rest (jaw, eyes, fingers) come from the motion
 
 const BASE_LEAN = 0.2; // radians forward, pelvis + spine, at rest
 const MAX_LEAN = 0.75; // what a far reach may add
+const MAX_SLIDE = 0.1; // meters forward on the seat for a reach further than that
+const MAX_RISE = 0.14; // meters up off the seat, half standing, for a reach the chest would otherwise take into the table
 const MAX_BEND = 2.6; // elbow / knee
 const ELBOW_REST = 0.04; // the elbow joint above the table when that elbow rests on it (the arm's own thickness)
 const CLEAR = 0.04; // meters every hand and forearm keeps from the body (the face and torso), past its own thickness
-const GRIP = 0.5; // finger curl holding a piece: a gentle pinch (a hand's Gaussians stretch when its fingers bend hard)
+const REST_CLEAR = 0.012; // the same for an arm resting on the table
 const REST_CURL = 0.08; // fingers resting: barely more than the avatar's own relaxed hand
 
 // bundle-space directions of the seated body (it faces -Z)
@@ -204,7 +243,7 @@ class Rig {
   legs: [Limb, Limb];
   forearm: [THREE.Vector3, THREE.Vector3]; // elbow -> wrist, rest space, unit
   hands: [HandRest, HandRest];
-  grasp: [THREE.Vector3, THREE.Vector3]; // wrist -> the pinch point between thumb and index, rest space
+  relaxed: [THREE.Quaternion[], THREE.Quaternion[]] = [[], []]; // each hand's 15 finger joints as the motion holds them
 
   constructor(s: Skeleton) {
     this.rest = s.rest.map((r) => new THREE.Vector3(r[0], r[1], r[2]));
@@ -230,9 +269,6 @@ class Rig {
       return { dir, palm: DOWN.clone().addScaledVector(dir, -DOWN.dot(dir)).normalize() };
     };
     this.hands = [hand(L_WRIST, L_MIDDLE1), hand(R_WRIST, R_MIDDLE1)];
-    const grasp = (side: 0 | 1, wrist: number, middle: number) =>
-      this.hands[side].dir.clone().multiplyScalar(R[middle].distanceTo(R[wrist]) * 1.25).addScaledVector(this.hands[side].palm, 0.028);
-    this.grasp = [grasp(0, L_WRIST, L_MIDDLE1), grasp(1, R_WRIST, R_MIDDLE1)];
   }
 }
 
@@ -241,7 +277,8 @@ interface Held {
   c: Carry;
   fromTL: THREE.Vector3; // table-local base positions
   toTL: THREE.Vector3;
-  grip: number; // the pinch point's height above the piece's base
+  grip: number; // the pinch point's height above the piece's base (raise included)
+  raise?: number; // how much higher on it the hand ended up taking it (easePinch), already in grip
   offset: THREE.Vector3; // board-local: where the piece was vs. where the hand put it, shrinking to zero in the carry
   decay: number;
   landed: boolean; // set down at least once (its sound has played)
@@ -258,6 +295,7 @@ interface Tip {
   axis: THREE.Vector3;
   grip: number;
   angle: number;
+  back?: THREE.Vector3; // where on its head the finger is, from its axis (board-local, upright)
 }
 type Look = THREE.Vector3 | "viewer" | null;
 /** One step of one hand. Its path runs from wherever the hand was when it began to end() (table-local pinch point). */
@@ -268,7 +306,10 @@ interface Seg {
   k?: Held | null;
   tip?: Tip;
   w1: number; // reach weight at the end (0 = the idle pose has the hand, 1 = reaching or offered, with lean and twist)
-  c1: number | "idle"; // finger curl at the end (-0.3 open, 0 relaxed, 1 pinch or fist), or the idle pose's own
+  c1: number | "idle"; // finger curl at the end (-0.3 open, 0 relaxed, 1 fist), or the idle pose's own
+  pin1?: number; // pinch pose at the end (0 the avatar's own relaxed hand, 1 thumb tip on index tip, < 0 spread)
+  tuck1?: number; // the other three fingers curled in, at the end (0..1)
+  pt1?: number; // pointing pose at the end (the index straight, the rest curled: it presses the clock)
   o1?: number; // 0 = fingers down at a piece, 1 = the hand held out to shake
   lift?: number; // meters the path rises in the middle
   bow?: number; // meters the path arcs sideways in the middle (signed: < 0 bows the other way)
@@ -282,6 +323,8 @@ interface Seg {
   places?: boolean; // release: this puts its piece down for good
   settle?: boolean; // reach: before touching something, wait (briefly) until the hand is really there
   planned?: number; // its duration as planned, before any settling
+  prep?: () => void; // runs first when the step begins (plans heights from where everything is by then)
+  clear?: boolean; // its lift is raised, when it begins, until the hand (and a piece in it) clears what it passes over
   until?: () => boolean; // wait: ends (after `after` seconds) once this is true; dur is the cap
   after?: number;
   look?: () => Look; // what the eyes are on (table-local), or the player
@@ -290,6 +333,9 @@ interface Seg {
   from?: THREE.Vector3;
   w0?: number;
   c0?: number;
+  pin0?: number;
+  pt0?: number;
+  tuck0?: number;
   o0?: number;
   b0?: number;
   r0?: number;
@@ -354,23 +400,61 @@ function copyIdle(d: Idle, s: Idle) {
   return d;
 }
 
+/** How a hand's fingers are held: the pinch pose's weight, the pointing pose's, and the old curl (a fist, at the face). */
+interface FingerState {
+  pin: number; // the pinch pose's weight for thumb and index (< 0 spreads them wider than the relaxed hand)
+  pt: number;
+  curl: number;
+  tuck?: number; // the pinch pose's weight for the other three fingers: curled out of the way while it takes a piece
+  thumb?: number; // the pinch pose's weight for the thumb alone, when it isn't pin's
+}
+/** A hand in some finger state, in its wrist's rest frame (the wrist at the origin, turned as in the rest pose). */
+interface HandShape {
+  pts: THREE.Vector3[]; // balls along the palm and every finger, centres
+  r: number[]; // and radii (measured from the avatar: body.ts)
+  contact: THREE.Vector3; // between the thumb and index tips (what a pinch holds), or the index tip (pointing)
+  gap: number; // thumb tip to index tip, centres
+  thumb: THREE.Vector3;
+  index: THREE.Vector3;
+}
+/** Something on the table a hand, an arm or a carried piece stays above: a piece (round), the clock (boxes). Table-local. */
+interface Thing {
+  obj: THREE.Object3D | null;
+  x: number;
+  z: number;
+  hx: number; // half extents (round: its radius)
+  hz: number;
+  round: boolean;
+  top: number;
+}
+const FAR_BUTTON = new THREE.Object3D(); // their clock button, among the things: a press may touch it
+const HEAD_BACK = 0.3; // radians the head may tip back past the chest's forward
+const TIP_LET_GO = 0.55; // radians a resigning king is tipped by hand before it's let go to fall the rest of the way
+const _fq = new THREE.Quaternion();
+const _bq = new THREE.Quaternion();
+
 /** One hand's state: its queue of steps and where it is asked to be. */
 class Hand {
   segs: Seg[] = [];
   p = new THREE.Vector3(); // the pinch point asked for, table-local
   w = 0;
   curl = 0;
+  pin = 0; // pinch pose weight
+  pt = 0; // pointing pose weight
+  tuck = 0; // middle, ring and pinky curled in
+  contact = new THREE.Vector3(); // the hand's contact point in its wrist's rest frame, this frame (shape().contact)
   o = 0;
   beta = 0.9;
   roll = 0.35;
   held: Held | null = null;
-  graspB = new THREE.Vector3(); // bundle: the pinch target before posing, where it really is after
+  graspB = new THREE.Vector3(); // bundle: the contact point's target before posing, where it really is after
   world = new THREE.Vector3(); // where the pinch point really is, world
   wrist = new THREE.Vector3(); // wrist target, bundle
   q = new THREE.Quaternion(); // hand turn target, bundle
   pole = new THREE.Vector3();
   lean = 0; // the lean this hand's reach asks of the body
   twist = 0; // the torso turn it asks
+  scapula = 0; // radians the collar lifts with the arm raised past level (the shoulder blade turning up with it)
   err = 0; // meters between where the pinch point was asked to be and where the arm got it, last frame
   constructor(readonly side: 0 | 1) {}
 }
@@ -423,6 +507,10 @@ export class SeatedOpponent {
   private dt = 0;
   private leanS = 0; // the reach lean the body actually has: it follows what the hands ask, with a body's inertia
   private leanV = 0;
+  private riseS = 0; // meters the hips are up off the seat (the same spring as the lean)
+  private riseV = 0;
+  private slideS = 0; // meters the hips have slid forward on the seat
+  private slideV = 0;
 
   // gaze
   private gazeTL = new THREE.Vector3(0, 0.02, 0);
@@ -449,6 +537,12 @@ export class SeatedOpponent {
   private verified = false;
   private guardPush = 0; // this frame: how far the guard moved a hand to keep it clear of the body
   private guardResid = 0; // and how deep any hand or forearm still is inside it (0: clear)
+
+  // the hands' own shape (finger poses), and what's on the table under them, this frame
+  private shapes = new Map<string, HandShape>();
+  private pinGap: [number[], number[]] = [[], []]; // thumb-to-index gap at pinch 0, 0.05, .. 1
+  private things: Thing[] = [];
+  private restMemo = new Map<string, { wristT: THREE.Vector3; q: THREE.Quaternion }>();
   /** Meters between where a hand was asked to be and where the arm got it (0 when every reach is exact). */
   reachError = 0;
 
@@ -467,8 +561,9 @@ export class SeatedOpponent {
     private table: THREE.Object3D,
     private boardGroup: THREE.Object3D,
   ) {
-    avatar.pose(0, (_l, _t, s) => {
+    avatar.pose(0, (l, _t, s) => {
       this.rig = new Rig(s);
+      for (const side of [0, 1] as const) this.rig.relaxed[side] = Array.from({ length: 15 }, (_, i) => l[(side === 0 ? 25 : 40) + i]?.clone() ?? new THREE.Quaternion());
     });
     this.body = BodyShape.measure(avatar.mesh, this.rig.rest);
     // a bulkier body (a jacket, a fuller belly) sits back by the extra depth, so there's room in front of it
@@ -605,22 +700,33 @@ export class SeatedOpponent {
     const rng = new Rng(hashSeed(this.seed, "end", this.moveCount));
     const right: Seg[] = [];
     if (tip) {
-      const fall = tip.fall.clone().setY(0).normalize();
-      const t: Tip = { obj: tip.obj, base: tip.base.clone(), pivot: tip.base.clone().addScaledVector(fall, 0.0175), axis: new THREE.Vector3(0, 1, 0).cross(fall).normalize(), grip: tip.height * 0.85, angle: 0 };
+      // a king on their left goes over under the left hand; the right one still offers the handshake
+      const ts: 0 | 1 = this.boardToTable(tip.base).x > 0.1 ? 0 : 1;
+      // over it goes the way asked if there's room for it there, else whichever way there is: never onto a piece
+      const fall = this.roomyFall(tip.base, tip.fall, tip.height, tip.obj);
+      const fr = this.body.finger[ts];
+      // they push it over with the index fingertip on the far side of its head, and it falls away from the finger
+      const t: Tip = { obj: tip.obj, base: tip.base.clone(), pivot: tip.base.clone().addScaledVector(fall, 0.0175), axis: new THREE.Vector3(0, 1, 0).cross(fall).normalize(), grip: (tip.height - 0.014) * 0.9, angle: 0, back: fall.clone().multiplyScalar(-(HEAD_R.k + fr + 0.006)) };
       const top = () => this.tipGrip(t);
       const look = () => up(this.boardToTable(t.base), 0.03);
       if (tip.shadow) tip.shadow.visible = false;
       let tipped = false;
+      const pointSt: FingerState = { pin: 0, pt: 1, curl: 0 };
+      const above = new THREE.Vector3();
+      const prep = () => {
+        const g = top();
+        above.copy(g).setY(Math.max(g.y + 0.03, this.floor(ts, pointSt, this.reachTurnT(ts, g, 1.0, 0.2), g.x, g.z, new Set([tip.obj]))));
+      };
       const segs: Seg[] = [
-        { kind: "reach", dur: rng.range(0.55, 0.8), end: () => up(top(), 0.04), w1: 1, c1: -0.06, lift: 0.03, beta: 0.9, roll: 0.35, look },
-        { kind: "descend", dur: 0.18, end: top, w1: 1, c1: -0.06, skew: -0.2, look },
-        { kind: "grip", dur: 0.12, end: top, w1: 1, c1: GRIP, hold: false, look },
-        { kind: "tip", dur: rng.range(0.65, 0.9), end: top, tip: t, w1: 1, c1: GRIP, look },
-        { kind: "release", dur: 0.2, end: top, w1: 1, c1: 0.05, look, onBegin: () => ((tipped = true), tip.onTipped?.()) },
+        { kind: "reach", dur: rng.range(0.6, 0.85), end: () => above, w1: 1, c1: 0, pt1: 1, lift: 0.03, beta: 1.0, roll: 0.2, look, prep, clear: true, settle: true },
+        { kind: "descend", dur: 0.22, end: top, w1: 1, c1: 0, pt1: 1, skew: -0.2, look },
+        { kind: "grip", dur: 0.12, end: top, w1: 1, c1: 0, pt1: 1, hold: false, look },
+        { kind: "tip", dur: rng.range(0.65, 0.9), end: top, tip: t, w1: 1, c1: 0, pt1: 1, look },
+        { kind: "release", dur: 0.2, end: () => this.letGo(t), w1: 1, c1: 0, pt1: 1, look, onBegin: () => ((tipped = true), tip.onTipped?.()) },
+        { kind: "lift", dur: 0.3, end: () => up(this.letGo(t), 0.02), w1: 1, c1: 0, pt1: 0.6, skew: 0.1, look },
       ];
-      // a king on their left goes over under the left hand; the right one still offers the handshake
-      if (this.boardToTable(t.base).x > 0.1) {
-        this.hands[0].segs = [...segs, this.returnSeg(0, top())];
+      if (ts === 0) {
+        this.hands[0].segs = [...segs, this.returnSeg(0, this.letGo(t))];
         right.push({ kind: "wait", dur: 8, end: () => this.idleOut.hands[1].p, w1: 0, c1: "idle", until: () => tipped, after: rng.range(0.2, 0.5) });
       } else right.push(...segs);
     }
@@ -631,6 +737,24 @@ export class SeatedOpponent {
       this.returnSeg(1, OFFER),
     );
     this.hands[1].segs = right;
+  }
+
+  /** Which way a tipped piece falls (board-local, unit): the way asked if there's room, else the first of the others with room. */
+  private roomyFall(base: THREE.Vector3, want: THREE.Vector3, height: number, obj: THREE.Object3D) {
+    const f = want.clone().setY(0).normalize();
+    const a = this.boardToTable(base);
+    for (const d of [f, f.clone().negate(), new THREE.Vector3(-f.z, 0, f.x), new THREE.Vector3(f.z, 0, -f.x)]) {
+      const b = this.boardToTable(base.clone().addScaledVector(d, height + 0.012));
+      const free = this.things.every((t) => {
+        if (t.obj === obj || !t.round) return true;
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const u = clamp(((t.x - a.x) * dx + (t.z - a.z) * dz) / (dx * dx + dz * dz), 0, 1);
+        return Math.hypot(t.x - a.x - u * dx, t.z - a.z - u * dz) > t.hx + PIECE_R + 0.003;
+      });
+      if (free) return d;
+    }
+    return f;
   }
 
   /** Their hand met the player's: a few small shakes, then back to rest. */
@@ -712,6 +836,7 @@ export class SeatedOpponent {
   private step(dt: number, ctx: { viewer: THREE.Vector3 | null; watch?: THREE.Vector3 | null }, first: boolean) {
     const now = this.now;
     this.dt = dt;
+    this.gather();
     this.updateMode(now);
     this.scheduleIdle(now);
     this.evalIdle(this.idleInst, this.idleLive);
@@ -767,11 +892,14 @@ export class SeatedOpponent {
 
   private chooseHand(rng: Rng, from: THREE.Vector3, to: THREE.Vector3): 0 | 1 {
     // the hand nearer the piece's file, most of the time (right-handed: the middle files go to the right); +x is their left
+    // (only near the middle does the other hand come into it: nobody reaches across their body to a far corner)
     const x = 0.75 * from.x + 0.25 * to.x;
-    let pLeft = 0.12 + 0.76 / (1 + Math.exp(-(x - 0.04) / 0.03));
+    let pLeft = 0.03 + 0.94 / (1 + Math.exp(-(x - 0.04) / 0.035));
     const k = this.idleInst;
     if ((k.kind === "chin" || k.kind === "cheek") && !this.idleFrom) pLeft += k.side === 1 ? 0.2 : -0.2; // the hand under the chin tends to stay
-    return rng.chance(clamp(pLeft, 0.05, 0.92)) ? 0 : 1;
+    if (x < -0.09) return 1; // the outer files on their right: always the right hand
+    if (x > 0.13) return 0;
+    return rng.chance(clamp(pLeft, 0.05, 0.95)) ? 0 : 1;
   }
 
   /** A move starts: the free hand stays where it rests (or under the chin, if it was there). */
@@ -995,42 +1123,39 @@ export class SeatedOpponent {
     return off.clone().applyQuaternion(this.G[j]).add(this.P[j]);
   }
 
-  /** A hand pose given by its wrist (bundle) and turn: its pinch point, table-local. */
+  /** A hand pose given by its wrist (bundle), turn and curl: its contact point, table-local. */
   private fromWrist(side: 0 | 1, wristB: THREE.Vector3, out: HandIdle) {
-    out.p.copy(this.rig.grasp[side]).applyQuaternion(out.q).add(wristB).applyMatrix4(this.fromBundle);
+    out.p.copy(this.shape(side, { pin: 0, pt: 0, curl: out.curl }).contact).applyQuaternion(out.q).add(wristB).applyMatrix4(this.fromBundle);
   }
 
   private defaultPole(side: 0 | 1, out: THREE.Vector3) {
-    return out.copy(DOWN).addScaledVector(OUT[side], 0.75).addScaledVector(BACK, 0.3).normalize();
+    return out.copy(DOWN).addScaledVector(OUT[side], 0.95).addScaledVector(BACK, 0.3).normalize();
   }
 
-  /** Resting on the table just behind the board's far edge, fingers in toward the middle. inward: meters nearer it. */
+  /** Resting on the table in front of them, a little differently each time (a, b: 0..1). inward: meters nearer the middle. */
   private restHand(side: 0 | 1, out: HandIdle, a: number, b: number, inward = 0) {
-    const s = side === 0 ? 1 : -1; // the person's left is table +x
-    const wrist = new THREE.Vector3(s * (0.15 - inward + (a - 0.5) * 0.06), 0.042, -BOARD_EDGE - 0.12 + (b - 0.5) * 0.05).applyMatrix4(this.toBundle);
-    const dir = new THREE.Vector3(-s * 0.55, -0.1, 0.75).applyQuaternion(this.qToBundle);
-    this.handPose(this.rig.hands[side], dir, DOWN, (side === 1 ? 0.25 : -0.25) + (a - 0.5) * 0.15, out.q);
-    this.fromWrist(side, wrist, out);
-    out.curl = REST_CURL + 0.05 * b;
-    this.defaultPole(side, out.pole);
+    this.tableHand(side, out, REST_CURL + 0.05 * b, 0.72 + (a - 0.5) * 0.2, 0.05 + 0.03 * (1 - a) - inward * 0.5, 0.02 + 0.02 * b);
+    this.restPole(side, out.pole);
     out.elbow = 0;
     out.head = 0;
   }
 
   /**
-   * Where the hands rest whatever the body is doing: low on the table in front of him, either side, fingers in toward
-   * the middle, still. The same place in every idle pose, so leaning in or back moves the body, not the hands.
+   * Where the hands rest whatever the body is doing: on the table between the board and its edge, either side,
+   * fingers in toward the middle, never over the pieces. The same place in every idle pose, so leaning in or back moves
+   * the body, not the hands.
    */
   private lowHand(side: 0 | 1, out: HandIdle) {
-    const s = side === 0 ? 1 : -1; // the person's left is table +x
-    const wrist = new THREE.Vector3(s * 0.19, 0.035, -BOARD_EDGE - 0.07).applyMatrix4(this.toBundle);
-    const dir = new THREE.Vector3(-s * 0.5, -0.12, 0.85).applyQuaternion(this.qToBundle);
-    this.handPose(this.rig.hands[side], dir, DOWN, side === 1 ? 0.22 : -0.22, out.q);
-    this.fromWrist(side, wrist, out);
-    out.curl = REST_CURL;
-    out.pole.copy(OUT[side]).multiplyScalar(0.9).addScaledVector(DOWN, 1).addScaledVector(BACK, 0.15).normalize(); // elbows out, off the body
+    // leaning far in for a piece, the chest comes over the table: the hands slide out to the sides, out of its way
+    this.tableHand(side, out, REST_CURL, 0.72, 0.05, 0.02, 0.17 * smooth(clamp((this.leanS - 0.2) / 0.45, 0, 1)));
+    this.restPole(side, out.pole);
     out.elbow = 0;
     out.head = 0;
+  }
+
+  /** A resting arm's elbow: out from the body and back, past the table's edge, where it hangs at the side. */
+  private restPole(side: 0 | 1, out: THREE.Vector3) {
+    return out.copy(OUT[side]).multiplyScalar(1.1).addScaledVector(DOWN, 0.5).addScaledVector(BACK, 0.5).normalize();
   }
 
   /** A loose fist under the chin, that elbow down on the table. */
@@ -1051,8 +1176,8 @@ export class SeatedOpponent {
     this.handPose(this.rig.hands[side], dir, IN[side], 0, out.q);
     // the heel of the hand under the jaw, the palm along the cheek
     const wrist = this.bodyPoint(HEAD, this.rig.cheekOff[side]).addScaledVector(dir, -0.07).addScaledVector(OUT[side], 0.05).addScaledVector(FWD, 0.03 + 0.01 * a);
-    this.fromWrist(side, wrist, out);
     out.curl = 0.15 + 0.15 * a;
+    this.fromWrist(side, wrist, out);
     out.pole.copy(DOWN).addScaledVector(FWD, 0.1).addScaledVector(OUT[side], 0.3).normalize(); // the elbow straight down, never out over the board
     out.elbow = 1;
     out.head = 1;
@@ -1065,8 +1190,8 @@ export class SeatedOpponent {
       const h = out.hands[side];
       const wrist = c.clone().addScaledVector(DOWN, 0.085).addScaledVector(OUT[side], 0.032).addScaledVector(BACK, 0.012);
       this.handPose(this.rig.hands[side], c.clone().sub(wrist), IN[side], 0, h.q);
-      this.fromWrist(side, wrist, h);
       h.curl = 0.62;
+      this.fromWrist(side, wrist, h);
       h.pole.copy(DOWN).addScaledVector(FWD, 0.55).addScaledVector(OUT[side], 0.35).normalize();
       h.elbow = 1;
       h.head = 0.5;
@@ -1084,8 +1209,8 @@ export class SeatedOpponent {
       const wrist = new THREE.Vector3(-s * 0.07, 0.036, zE + (front ? 0.025 : -0.03)).applyMatrix4(this.toBundle);
       const dir = new THREE.Vector3(-s, -0.05, front ? -0.1 : -0.14).applyQuaternion(this.qToBundle);
       this.handPose(this.rig.hands[side], dir, DOWN, 0, h.q);
-      this.fromWrist(side, wrist, h);
       h.curl = front ? 0.35 : 0.45;
+      this.fromWrist(side, wrist, h);
       h.pole.copy(OUT[side]).addScaledVector(DOWN, 0.6).addScaledVector(BACK, 0.25).normalize();
       h.elbow = 1;
       h.head = 0;
@@ -1109,8 +1234,8 @@ export class SeatedOpponent {
       const dir = across.clone().multiplyScalar(0.8).addScaledVector(fb, -0.45).addScaledVector(ub, top ? 0.05 : -0.1);
       const palm = top ? fb.clone().negate().addScaledVector(ub, -1) : fb.clone().negate();
       this.handPose(this.rig.hands[side], dir, palm, 0, h.q);
-      this.fromWrist(side, wrist, h);
       h.curl = top ? 0.4 : 0.55;
+      this.fromWrist(side, wrist, h);
       h.pole.copy(ub).negate().addScaledVector(OUT[side], 0.9).addScaledVector(fb, 0.25).normalize();
       h.elbow = 0;
       h.head = 0;
@@ -1139,84 +1264,198 @@ export class SeatedOpponent {
 
   private carrySegs(list: Seg[], side: 0 | 1, at: THREE.Vector3[], c: Carry, rng: Rng, st: Style, opt: { quick?: boolean; hes?: Hesitation | null; adjust?: boolean; onLift?: () => void }) {
     const sp = st.speed * rng.range(0.9, 1.1) * (opt.quick ? 1.1 : 1);
-    const k: Held = { c, fromTL: this.boardToTable(c.from), toTL: this.boardToTable(c.to), grip: clamp(c.height * rng.range(0.74, 0.88), 0.03, 0.075), offset: new THREE.Vector3(), decay: 1, landed: false, setAt: null, yaw: 0, spin: rng.range(-0.12, 0.12), yawNow: 0 };
-    const hover = st.hover * rng.range(0.85, 1.25);
-    const pinch = up(k.fromTL, k.grip);
-    let above = up(k.fromTL, k.grip + hover);
+    // taken by the top of its head (fingers lower down on it would curl over its top and into it)
+    const k: Held = { c, fromTL: this.boardToTable(c.from), toTL: this.boardToTable(c.to), grip: clamp(c.height * rng.range(0.86, 0.92), 0.034, 0.08), offset: new THREE.Vector3(), decay: 1, landed: false, setAt: null, yaw: 0, spin: rng.range(-0.12, 0.12), yawNow: 0 };
+    const hover = st.hover * rng.range(0.85, 1.25) + (opt.hes === "hover" ? rng.range(0.012, 0.025) : 0);
     const bowSide = side === 0 ? 1 : -1;
     const aim = { beta: st.beta + rng.range(-0.08, 0.08), roll: st.roll + rng.range(-0.08, 0.08) };
-    const open = st.open + rng.range(-0.06, 0.06);
+    // thumb and index take the piece by its head from either side, a little wider open on the way in and out; the
+    // other three fingers curl out of the way
+    const type = ((c.obj.userData?.type as string) ?? "p") as PieceType;
+    const head = HEAD_R[type] ?? 0.011;
+    const fr = this.body.finger[side];
+    // to start with: by its head's width; once the hand's turn is known, fitted to the piece's real shape (pinchFit)
+    let pinHold = this.pinFor(side, 2 * (head + fr));
+    let pinOpen = this.pinFor(side, 2 * (head + fr) + 0.024);
+    const holdSt: FingerState = { pin: pinHold, pt: 0, curl: 0, tuck: 1 };
+    const openSt: FingerState = { pin: pinOpen, pt: 0, curl: 0, tuck: 1 };
+    const fit = (q: THREE.Quaternion) => {
+      const f = this.pinchFit(side, type, c.height, q, k.grip);
+      if (!f) return;
+      k.grip = f.grip;
+      pinHold = holdSt.pin = f.pin;
+      pinOpen = openSt.pin = this.pinFor(side, this.shape(side, holdSt).gap + 0.024);
+      for (const s of segs) {
+        if (s.pin1 === undefined || s.pt1) continue;
+        s.pin1 = s.kind === "grip" || s.kind === "carry" || s.kind === "adjust" ? pinHold : s.kind === "set" || (s.kind === "hover" && s !== segs[1]) ? (pinHold + pinOpen) / 2 : s.kind === "lift" ? pinOpen * 0.6 : pinOpen;
+      }
+    };
     const lookFrom = () => up(k.fromTL, 0.02);
     const lookTo = () => up(k.toTL, 0.02);
-    const reachDur = (a: THREE.Vector3, b: THREE.Vector3) => ((0.28 + 0.5 * a.distanceTo(b) + this.farTime(side, b)) / sp) * rng.range(0.92, 1.1);
-    const bow = (a: THREE.Vector3, b: THREE.Vector3) => clamp(rng.range(0.06, 0.13) * st.bow * Math.hypot(b.x - a.x, b.z - a.z), 0, 0.05) * (rng.chance(0.2) ? -0.6 : 1);
-    const reach = (to: THREE.Vector3, from: THREE.Vector3, look: () => Look, dur = reachDur(from, to), w1 = 1): Seg => ({
-      kind: "reach", dur, end: () => to, k, w1, c1: open, lift: rng.range(0.015, 0.04), bow: bow(from, to), bowSide, skew: st.skew + rng.range(-0.08, 0.08), ...aim, look,
-    });
-    const cur = at[side].clone();
-    // a second thought: the hand stops a moment just above the piece (low, briefly) before coming down
-    if (opt.hes === "hover") above = up(k.fromTL, k.grip + hover + rng.range(0.012, 0.025));
-    list.push({ ...reach(above, cur, lookFrom), settle: true });
-    if (opt.hes === "hover") list.push({ kind: "hover", dur: rng.range(0.35, 0.7), end: () => above, k, w1: 1, c1: open, drift: 0.003, look: lookFrom });
-    list.push(
-      { kind: "descend", dur: ((0.1 + 1.6 * (above.y - pinch.y)) / sp) * rng.range(0.9, 1.1), end: () => pinch, k, w1: 1, c1: open, skew: -0.2, look: lookFrom },
-      { kind: "grip", dur: rng.range(0.06, 0.1), end: () => pinch, k, w1: 1, c1: GRIP, look: lookFrom },
-    );
-    // the carry: lifted (a knight hops higher), carried on a slight arc, set down softly
-    const d = Math.hypot(k.toTL.x - k.fromTL.x, k.toTL.z - k.fromTL.z);
-    const knight = c.obj.userData?.type === "n";
-    const lift = (knight ? Math.max(0.05, 0.03 + 0.2 * d) : Math.min(0.07, 0.018 + 0.22 * d)) * st.lift * rng.range(0.85, 1.15);
-    let dest = up(k.toTL, k.grip);
+    const offUp = rng.range(0.01, 0.025);
+    const offBack = rng.range(0.005, 0.02);
     if (opt.adjust) {
       // set down a few millimetres off and a little turned, then straightened with the fingertips
       const a = rng.range(0, 2 * Math.PI);
       const off = rng.range(0.003, 0.006);
       k.setAt = c.to.clone().add(new THREE.Vector3(Math.cos(a) * off, 0, Math.sin(a) * off));
       k.yaw = rng.range(0.06, 0.14) * rng.sign();
-      dest = up(this.boardToTable(k.setAt), k.grip);
     }
-    list.push({
-      kind: "carry", dur: ((0.26 + 0.6 * d) / sp) * rng.range(0.9, 1.12), end: () => dest, k, w1: 1, c1: GRIP, lift,
-      bow: clamp(rng.range(0.03, 0.08) * d * st.bow, 0, 0.025) * (rng.chance(0.3) ? -1 : 1), bowSide,
-      skew: st.skew * 0.6 + rng.range(-0.05, 0.05), over: st.overshoot * rng.range(0.6, 1.2), look: lookTo, onBegin: opt.onLift,
+    // the heights, worked out when the hand sets off (by then an earlier piece of the same move is where it went):
+    // as high on the piece as the hand needs to keep off the pieces beside it, here and where it goes (past that, the
+    // fingers come down more steeply); above it high enough that the open hand clears its head and its neighbours, so it
+    // comes straight down onto it; and, once it's let go, straight up until the hand clears it again
+    const P = { above: new THREE.Vector3(), pinch: new THREE.Vector3(), dest: new THREE.Vector3(), final: new THREE.Vector3(), off: new THREE.Vector3(), ok: false };
+    const segs: Seg[] = [];
+    // turn: the hand's real turn once it's there (a wrist only turns so far), else the one it's asked for
+    const heights = (turn: THREE.Quaternion | null) => {
+      const from = k.fromTL;
+      const to = k.toTL;
+      const destTL = k.setAt ? this.boardToTable(k.setAt) : to;
+      const skip = new Set<THREE.Object3D | null>([c.obj]);
+      const q = (p: THREE.Vector3) => turn ?? this.reachTurnT(side, p, aim.beta, aim.roll);
+      if (turn) {
+        fit(turn);
+        let need = -Infinity;
+        for (const fs of [holdSt, openSt]) need = Math.max(need, this.floor(side, fs, turn, from.x, from.z, skip, 0.004) - from.y);
+        // and the forearm, coming down with the hand (all of it at the wrist, none at the elbow), off the pieces
+        const drop = P.above.y - (from.y + k.grip);
+        const [el, wr] = side === 0 ? [L_ELBOW, L_WRIST] : [R_ELBOW, R_WRIST];
+        const e = this.P[el].clone().applyMatrix4(this.fromBundle);
+        const w = this.P[wr].clone().applyMatrix4(this.fromBundle);
+        const pt = new THREE.Vector3();
+        for (const u of [0.6, 0.75, 0.9, 1]) {
+          const r = lerp(this.body.arm[side], this.body.cuff[side], u);
+          pt.lerpVectors(e, w, u);
+          const under = this.ground(pt.x, pt.z, r, skip) + r + 0.004 - (pt.y - drop * u);
+          if (under > 0) need = Math.max(need, k.grip + under / u);
+        }
+        if (need > k.grip) k.grip = Math.min(need, c.height * 0.95);
+      }
+      P.pinch.copy(up(from, k.grip));
+      if (!turn) P.above.copy(up(from, Math.max(k.grip + hover, this.floor(side, openSt, q(P.pinch), from.x, from.z) - from.y)));
+      P.dest.copy(up(destTL, k.grip));
+      P.final.copy(up(to, k.grip));
+      const placed: Thing = { obj: null, x: to.x, z: to.z, hx: PIECE_R, hz: 0, round: true, top: to.y + c.height };
+      const offY = Math.max(k.grip + offUp, this.floor(side, openSt, q(P.final), to.x, to.z, skip, GAP, [placed]) - to.y);
+      P.off.copy(up(to, offY));
+      P.off.z -= offBack;
+    };
+    const plan = () => {
+      if (P.ok) return P;
+      P.ok = true;
+      const from = k.fromTL;
+      const to = k.toTL;
+      const destTL = k.setAt ? this.boardToTable(k.setAt) : to;
+      const skip = new Set<THREE.Object3D | null>([c.obj]);
+      const rollJitter = rng.range(-0.04, 0.04);
+      fit(this.reachTurnT(side, up(from, k.grip), aim.beta, aim.roll)); // (once here; again once the hand is there)
+      for (let i = 0; i < 6; i++) {
+        aim.roll = this.levelRoll(side, holdSt, up(from, k.grip), aim.beta, aim.roll) + rollJitter;
+        let need = -Infinity;
+        for (const p of [from, destTL])
+          for (const fs of [holdSt, openSt]) need = Math.max(need, this.floor(side, fs, this.reachTurnT(side, up(p, k.grip), aim.beta, aim.roll), p.x, p.z, skip, 0.004) - p.y);
+        if (need <= k.grip) break;
+        if (need <= c.height * 0.92) {
+          k.grip = need;
+          break;
+        }
+        k.grip = c.height * 0.92;
+        aim.beta = Math.min(1.35, aim.beta + 0.12);
+      }
+      heights(null);
+      for (const s of segs) {
+        if (s.beta !== undefined) s.beta = aim.beta;
+        if (s.roll !== undefined) s.roll = aim.roll;
+        if (s.kind === "descend") s.dur = ((0.1 + 1.6 * (P.above.y - P.pinch.y)) / sp) * rng.range(0.9, 1.1);
+      }
+      return P;
+    };
+    const reachDur = (a: THREE.Vector3, b: THREE.Vector3) => ((0.28 + 0.5 * a.distanceTo(b) + this.farTime(side, b)) / sp) * rng.range(0.92, 1.1);
+    const bow = (a: THREE.Vector3, b: THREE.Vector3) => clamp(rng.range(0.06, 0.13) * st.bow * Math.hypot(b.x - a.x, b.z - a.z), 0, 0.05) * (rng.chance(0.2) ? -0.6 : 1);
+    const cur = at[side].clone();
+    const roughAbove = up(k.fromTL, k.grip + hover);
+    segs.push({
+      kind: "reach", dur: reachDur(cur, roughAbove), end: () => plan().above, k, w1: 1, c1: 0, pin1: pinOpen, tuck1: 1, lift: rng.range(0.015, 0.04), bow: bow(cur, roughAbove), bowSide,
+      skew: st.skew + rng.range(-0.08, 0.08), ...aim, look: lookFrom, settle: true, prep: plan, clear: true,
     });
-    const final = up(k.toTL, k.grip);
+    // a second thought: the hand stops a moment just above the piece before coming down
+    if (opt.hes === "hover") segs.push({ kind: "hover", dur: rng.range(0.35, 0.7), end: () => P.above, k, w1: 1, c1: 0, pin1: pinOpen, tuck1: 1, drift: 0.003, look: lookFrom });
+    segs.push(
+      { kind: "descend", dur: (0.1 + 1.6 * hover) / sp, end: () => up(P.pinch, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinOpen, tuck1: 1, skew: -0.2, look: lookFrom, prep: () => heights(this.hands[side].q), settle: true },
+      { kind: "grip", dur: rng.range(0.07, 0.11), end: () => up(P.pinch, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold, tuck1: 1, look: lookFrom },
+    );
+    // the carry: lifted (a knight hops higher), carried on a slight arc, set down softly; never lower than it takes
+    // to clear what's on the way (begin() raises it)
+    const d = Math.hypot(k.toTL.x - k.fromTL.x, k.toTL.z - k.fromTL.z);
+    const knight = c.obj.userData?.type === "n";
+    const lift = (knight ? Math.max(0.05, 0.03 + 0.2 * d) : Math.min(0.07, 0.018 + 0.22 * d)) * st.lift * rng.range(0.85, 1.15);
+    segs.push({
+      kind: "carry", dur: ((0.26 + 0.6 * d) / sp) * rng.range(0.9, 1.12), end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold, tuck1: 1, lift,
+      bow: clamp(rng.range(0.03, 0.08) * d * st.bow, 0, 0.025) * (rng.chance(0.3) ? -1 : 1), bowSide,
+      skew: st.skew * 0.6 + rng.range(-0.05, 0.05), over: st.overshoot * rng.range(0.6, 1.2), look: lookTo, onBegin: opt.onLift, clear: true,
+      settle: true, // (it's set down where the hand really is: so the hand has to be there)
+    });
     if (opt.adjust)
-      list.push(
-        { kind: "set", dur: rng.range(0.06, 0.09), end: () => dest, k, w1: 1, c1: 0.1, look: lookTo },
-        { kind: "hover", dur: rng.range(0.12, 0.3), end: () => dest, k, w1: 1, c1: 0.1, look: lookTo },
-        { kind: "grip", dur: 0.08, end: () => dest, k, w1: 1, c1: GRIP * 0.9, hold: false, look: lookTo },
-        { kind: "adjust", dur: rng.range(0.22, 0.38), end: () => final, k, w1: 1, c1: GRIP * 0.9, look: lookTo },
+      segs.push(
+        { kind: "set", dur: rng.range(0.06, 0.09), end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: (pinHold + pinOpen) / 2, tuck1: 1, look: lookTo },
+        { kind: "hover", dur: rng.range(0.12, 0.3), end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: (pinHold + pinOpen) / 2, tuck1: 1, look: lookTo },
+        { kind: "grip", dur: 0.08, end: () => up(P.dest, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold, tuck1: 1, hold: false, look: lookTo },
+        { kind: "adjust", dur: rng.range(0.22, 0.38), end: () => up(P.final, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinHold, tuck1: 1, look: lookTo },
       );
-    list.push({ kind: "release", dur: rng.range(0.05, 0.09), end: () => final, k, w1: 1, c1: 0.05, places: true, look: lookTo });
-    const off = up(k.toTL, k.grip + rng.range(0.025, 0.045));
-    off.z -= rng.range(0.005, 0.02);
-    list.push({ kind: "lift", dur: st.settle * rng.range(0.8, 1.25), end: () => off, w1: 1, c1: 0.08, skew: 0.1, look: lookTo });
-    at[side] = off;
+    segs.push(
+      { kind: "release", dur: rng.range(0.06, 0.1), end: () => up(P.final, k.raise ?? 0), k, w1: 1, c1: 0, pin1: pinOpen, tuck1: 1, places: true, look: lookTo },
+      // straight up off it, the fingers opening, until the hand is clear of it
+      {
+        kind: "lift", dur: st.settle * rng.range(0.8, 1.25) + 0.08, end: () => P.off, w1: 1, c1: 0, pin1: pinOpen * 0.6, tuck1: 1, skew: 0.1, look: lookTo,
+        prep: () => P.off.setY(Math.max(P.off.y, this.floor(side, openSt, this.hands[side].q, k.toTL.x, k.toTL.z))),
+      },
+    );
+    list.push(...segs);
+    at[side] = up(k.toTL, k.grip + 0.04); // roughly where it ends (the next step starts from wherever it really is)
   }
 
-  /** The clock, with the hand that moved: over to the button, a press, and a look up at the player. */
+  /** The clock, with the hand that moved: over to the button, a press with the index finger, and a look up at the player. */
   private tapSegs(list: Seg[], side: 0 | 1, at: THREE.Vector3[], tap: Tap, rng: Rng, st: Style) {
     const sp = st.speed * rng.range(0.92, 1.15);
-    const hov = rng.range(0.025, 0.045);
-    const above = () => up(tap.at(), hov);
-    const pressed = () => up(tap.at(), -0.007);
+    const hov = rng.range(0.018, 0.032);
     const look = rng.chance(0.55) ? () => up(tap.at(), 0) : undefined; // otherwise their eyes stay on the move
-    const c1 = rng.range(0.12, 0.25);
+    const pressSt: FingerState = { pin: 0, pt: 1, curl: 0 };
+    const fr = this.body.finger[side];
+    const aim = { beta: rng.range(0.55, 0.8), roll: st.roll * 0.6 };
+    // the index pad pushes the button down most of its travel (6.5 mm); the rest of the hand stays off the clock (the
+    // fingers come down more steeply if they'd touch it), and it comes down onto the button from straight above
+    const P = { above: new THREE.Vector3(), pressed: new THREE.Vector3(), ok: false };
+    const segs: Seg[] = [];
+    const plan = () => {
+      if (P.ok) return P;
+      P.ok = true;
+      const b = tap.at();
+      P.pressed.copy(b).setY(b.y - 0.0055 + fr);
+      const skip = new Set<THREE.Object3D | null>([FAR_BUTTON]);
+      for (let i = 0; i < 5; i++) {
+        if (this.floor(side, pressSt, this.reachTurnT(side, P.pressed, aim.beta, aim.roll), b.x, b.z, skip, 0.006) <= P.pressed.y) break;
+        aim.beta = Math.min(1.3, aim.beta + 0.12);
+      }
+      P.above.copy(b).setY(Math.max(b.y + fr + hov, this.floor(side, pressSt, this.reachTurnT(side, P.pressed, aim.beta, aim.roll), b.x, b.z)));
+      for (const s of segs) if (s.beta !== undefined) s.beta = aim.beta;
+      return P;
+    };
     const start = at[side];
     const d = start.distanceTo(tap.at());
-    list.push(
-      { kind: "reach", settle: true, dur: ((0.28 + 0.45 * d + this.farTime(side, tap.at())) / sp) * rng.range(0.9, 1.1), end: above, w1: 1, c1, lift: rng.range(0.02, 0.04), bow: clamp(rng.range(0.04, 0.1) * st.bow * d, 0, 0.04), bowSide: side === 0 ? 1 : -1, skew: st.skew, beta: rng.range(0.55, 0.8), roll: st.roll * 0.6, look },
-      { kind: "press", dur: rng.range(0.06, 0.1) / sp, end: pressed, w1: 1, c1, skew: 0.3, look },
+    segs.push(
+      { kind: "reach", settle: true, dur: ((0.28 + 0.45 * d + this.farTime(side, tap.at())) / sp) * rng.range(0.9, 1.1), end: () => plan().above, w1: 1, c1: 0, pin1: 0, pt1: 1, lift: rng.range(0.02, 0.04), bow: clamp(rng.range(0.04, 0.1) * st.bow * d, 0, 0.04), bowSide: side === 0 ? 1 : -1, skew: st.skew, beta: aim.beta, roll: aim.roll, look, prep: plan, clear: true },
+      { kind: "press", dur: (rng.range(0.07, 0.11) + 1.2 * hov) / sp, end: () => P.pressed, w1: 1, c1: 0, pt1: 1, skew: 0.3, look },
       {
-        kind: "press", dur: rng.range(0.09, 0.14), end: above, w1: 1, c1,
+        kind: "press", dur: rng.range(0.1, 0.15), end: () => P.above, w1: 1, c1: 0, pt1: 1,
         onBegin: () => {
           tap.onTap();
           this.lookAtPlayer(rng.range(0.1, 0.35), rng.range(0.9, 1.8));
         },
       },
     );
-    at[side] = up(tap.at(), hov);
+    list.push(...segs);
+    at[side] = up(tap.at(), hov + fr);
   }
 
   /** Extra seconds for a target past the arm's easy reach (table-local): the lean takes time. */
@@ -1227,7 +1466,7 @@ export class SeatedOpponent {
 
   private returnSeg(side: 0 | 1, from: THREE.Vector3, rng?: Rng, dur?: number): Seg {
     const d = from.distanceTo(this.idleOut.hands[side].p);
-    return { kind: "return", dur: dur ?? (0.32 + 0.4 * d + 0.6 * this.farTime(side, from)) * (rng ? rng.range(0.9, 1.15) : 1), end: () => this.idleOut.hands[side].p, w1: 0, c1: "idle", o1: 0, lift: 0.03, skew: 0.1 };
+    return { kind: "return", dur: dur ?? (0.32 + 0.4 * d + 0.6 * this.farTime(side, from)) * (rng ? rng.range(0.9, 1.15) : 1), end: () => this.idleOut.hands[side].p, w1: 0, c1: "idle", o1: 0, lift: 0.03, skew: 0.1, clear: true };
   }
 
   private advance(h: Hand, now: number) {
@@ -1253,16 +1492,24 @@ export class SeatedOpponent {
     h.w = 0;
     h.o = 0;
     h.curl = idle.curl;
+    h.pin = 0;
+    h.pt = 0;
+    h.tuck = 0;
   }
 
   private begin(h: Hand, s: Seg, now: number) {
     if (s.t0 === undefined) s.t0 = now;
+    s.prep?.();
     s.from = h.p.clone();
     s.w0 = h.w;
     s.c0 = h.curl;
+    s.pin0 = h.pin;
+    s.pt0 = h.pt;
+    s.tuck0 = h.tuck;
     s.o0 = h.o;
     s.b0 = h.beta;
     s.r0 = h.roll;
+    if (s.clear) s.lift = Math.max(s.lift ?? 0, this.pathLift(h, s));
     const k = s.k;
     if (s.kind === "grip" && k && s.hold !== false) {
       // take hold: the piece moves with the hand from here, any gap between them closing during the carry
@@ -1318,24 +1565,18 @@ export class SeatedOpponent {
         p.lerpVectors(a, idle.p, kk);
         h.w = s.w0! * (1 - kk);
         h.curl = s.c0! + (idle.curl - s.c0!) * kk;
+        h.pin = s.pin0! * (1 - kk);
+        h.pt = s.pt0! * (1 - kk);
+        h.tuck = s.tuck0! * (1 - kk);
         h.o = s.o0! * (1 - kk);
         return;
       }
       case "carry": {
         // lift first, travel, and come down softly: height 6.75 u (1 - u)^2 peaks a third of the way
-        p.lerpVectors(a, b, e);
-        p.y = a.y + (b.y - a.y) * e + (s.lift ?? 0) * 6.75 * u * (1 - u) * (1 - u);
-        this.bow(p, a, b, s, e);
-        if (s.over) {
-          const dx = b.x - a.x;
-          const dz = b.z - a.z;
-          const L = Math.hypot(dx, dz);
-          const o = L > 0.01 ? s.over * Math.sin(Math.PI * clamp((e - 0.55) / 0.45, 0, 1)) : 0;
-          p.x += (dx / (L || 1)) * o;
-          p.z += (dz / (L || 1)) * o;
-        }
+        this.pathAt(s, a, b, u, p);
+        p.y += (s.lift ?? 0) * this.hump(s, u);
         if (s.k) {
-          s.k.decay = 1 - e;
+          s.k.decay = 0; // (it went into the fingers as they closed)
           s.k.yawNow = s.k.setAt ? s.k.yaw * e : s.k.spin * Math.sin(Math.PI * e);
           const cap = s.k.c.captured;
           if (cap) {
@@ -1351,6 +1592,10 @@ export class SeatedOpponent {
         p.lerpVectors(a, b, e);
         break;
       case "grip":
+        // closing on it: if the hand is a little off, the fingers draw the piece in, so it's in them for the carry
+        if (s.k && h.held === s.k) s.k.decay = 1 - smooth(u);
+        p.copy(b);
+        break;
       case "set":
       case "release":
         p.copy(b);
@@ -1375,13 +1620,14 @@ export class SeatedOpponent {
         break;
       }
       case "tip": {
-        // over it goes, about the edge of its base, the fingers riding its head down
+        // over it goes, about the edge of its base: the fingers ride its head down most of the way, then let it go and
+        // it falls the rest by itself (fingers pressed onto a piece lying on the board would be in it, or in the board)
         const t = s.tip!;
         t.angle = (Math.PI / 2 + 0.08) * (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
         const q = new THREE.Quaternion().setFromAxisAngle(t.axis, t.angle);
         t.obj.quaternion.copy(q);
         t.obj.position.copy(t.base).sub(t.pivot).applyQuaternion(q).add(t.pivot);
-        p.copy(this.tipGrip(t));
+        p.copy(this.letGo(t)).y -= 0.035 * (1 - smooth(clamp((t.angle - TIP_LET_GO) / 0.6, 0, 1)));
         break;
       }
       case "hold":
@@ -1392,15 +1638,18 @@ export class SeatedOpponent {
         p.copy(b);
         p.y += 0.028 * Math.sin(2 * Math.PI * 3 * u) * Math.sin(Math.PI * u);
         break;
-      default: // reach, lift, return: an eased path that rises and bows a little, never a straight line
-        p.lerpVectors(a, b, e);
-        this.bow(p, a, b, s, e);
-        p.y += (s.lift ?? 0) * Math.sin(Math.PI * e);
+      default: // reach, lift, return: an eased path that bows a little, never a straight line, and rises early and
+        // comes down late (in time, not distance), so it goes up, over and down onto what it's going to
+        this.pathAt(s, a, b, u, p);
+        p.y += (s.lift ?? 0) * this.hump(s, u);
     }
     const m = smooth(u);
     h.w = s.w0! + (s.w1 - s.w0!) * m;
     const c1 = s.c1 === "idle" ? this.idleOut.hands[h.side].curl : s.c1;
     h.curl = s.c0! + (c1 - s.c0!) * m;
+    h.pin = s.pin0! + ((s.pin1 ?? 0) - s.pin0!) * m;
+    h.pt = s.pt0! + ((s.pt1 ?? 0) - s.pt0!) * m;
+    h.tuck = s.tuck0! + ((s.tuck1 ?? 0) - s.tuck0!) * m;
     h.o = s.o0! + ((s.o1 ?? 0) - s.o0!) * m;
     if (s.beta !== undefined) h.beta = s.b0! + (s.beta - s.b0!) * m;
     if (s.roll !== undefined) h.roll = s.r0! + (s.roll - s.r0!) * m;
@@ -1424,10 +1673,19 @@ export class SeatedOpponent {
     p.z += nz * amt;
   }
 
+  /** Table-local: where the fingers let a tipping piece go, and a little above it (where they rise to as it falls). */
+  private letGo(t: Tip) {
+    const a = t.angle;
+    t.angle = Math.min(a, TIP_LET_GO);
+    const g = this.tipGrip(t);
+    t.angle = a;
+    return up(g, 0.035);
+  }
+
   /** Table-local: where the fingers hold a tipping piece (just under its head). */
   private tipGrip(t: Tip) {
     const q = new THREE.Quaternion().setFromAxisAngle(t.axis, t.angle);
-    const g = t.base.clone().setY(t.base.y + t.grip).sub(t.pivot).applyQuaternion(q).add(t.pivot);
+    const g = t.base.clone().setY(t.base.y + t.grip).add(t.back ?? _r.set(0, 0, 0)).sub(t.pivot).applyQuaternion(q).add(t.pivot);
     return this.boardToTable(g);
   }
 
@@ -1561,6 +1819,441 @@ export class SeatedOpponent {
     this.breath = x < 0.4 ? smooth(x / 0.4) : 1 - smooth((x - 0.4) / 0.6);
   }
 
+  // ---------------- the hand's own shape, and what's under it ----------------
+
+  /** One finger joint's turn (i: 0..14 of that hand) in a finger state, from the turn the motion gives it (q, changed). */
+  private fingerTurn(side: 0 | 1, i: number, st: FingerState, q: THREE.Quaternion) {
+    const w = i >= 3 && i < 12 ? Math.max(st.pin, st.tuck ?? 0) : i >= 12 ? (st.thumb ?? st.pin) : st.pin;
+    if (Math.abs(w) > 1e-4) q.slerp(fingerQuat(PINCH, side, i, _fq), clamp(w, -0.6, 1));
+    if (st.pt > 1e-4) q.slerp(fingerQuat(POINT, side, i, _fq), clamp(st.pt, 0, 1));
+    if (st.curl && i < 12) q.multiply(rot(0, 0, (side === 1 ? 1 : -1) * st.curl * CURL[i]));
+    return q;
+  }
+
+  /**
+   * The hand in a finger state: balls along its palm and every finger, from the rest skeleton turned the way the
+   * fingers are (forward kinematics from the wrist), sized from the avatar's own Gaussians; and its contact point.
+   */
+  private shape(side: 0 | 1, st: FingerState): HandShape {
+    const key = `${side}|${st.pin.toFixed(3)}|${st.pt.toFixed(3)}|${st.curl.toFixed(3)}|${(st.tuck ?? 0).toFixed(3)}|${st.thumb?.toFixed(3)}`;
+    const memo = this.shapes.get(key);
+    if (memo) return memo;
+    const R = this.rig.rest;
+    const B = this.body;
+    const wr = side === 0 ? L_WRIST : R_WRIST;
+    const base = side === 0 ? 25 : 40;
+    const fr = B.finger[side] + 0.0015; // (a little more than the measured radius: a Gaussian finger is soft at its edge)
+    const pr = B.palm[side];
+    const pts: THREE.Vector3[] = [new THREE.Vector3()];
+    const r: number[] = [Math.max(pr * 1.2, B.cuff[side] * 0.8)]; // the heel of the hand, where the forearm meets it
+    const tips: THREE.Vector3[] = [];
+    for (let f = 0; f < 5; f++) {
+      const i = 3 * f;
+      const [j1, j2, j3] = [base + i, base + i + 1, base + i + 2];
+      const q1 = this.fingerTurn(side, i, st, this.rig.relaxed[side][i].clone());
+      const q2 = q1.clone().multiply(this.fingerTurn(side, i + 1, st, this.rig.relaxed[side][i + 1].clone()));
+      const q3 = q2.clone().multiply(this.fingerTurn(side, i + 2, st, this.rig.relaxed[side][i + 2].clone()));
+      const p1 = R[j1].clone().sub(R[wr]);
+      const p2 = R[j2].clone().sub(R[j1]).applyQuaternion(q1).add(p1);
+      const p3 = R[j3].clone().sub(R[j2]).applyQuaternion(q2).add(p2);
+      const rf = f === 4 ? fr * 1.15 : fr;
+      const tip = R[j3].clone().sub(R[j2]).normalize().multiplyScalar(Math.max(B.tip[side] - rf, 0.004)).applyQuaternion(q3).add(p3);
+      pts.push(p1, p1.clone().multiplyScalar(0.5));
+      r.push(pr, pr);
+      pts.push(p1.clone().lerp(p2, 0.5), p2, p2.clone().lerp(p3, 0.5), p3, p3.clone().lerp(tip, 0.5), tip);
+      r.push(rf, rf, rf, rf, rf, rf);
+      tips.push(tip);
+    }
+    const index = tips[0];
+    const thumb = tips[4];
+    const out: HandShape = { pts, r, contact: index.clone().add(thumb).multiplyScalar(0.5).lerp(index, clamp(st.pt, 0, 1)), gap: index.distanceTo(thumb), thumb, index };
+    if (this.shapes.size > 600) this.shapes.clear();
+    this.shapes.set(key, out);
+    return out;
+  }
+
+  /** The pinch weight that leaves `gap` meters between the thumb and index tips (centres): from spread (-0.6) to 1. */
+  private pinFor(side: 0 | 1, gap: number) {
+    const g = this.pinGap[side];
+    const w = (i: number) => -0.6 + i / 20;
+    if (!g.length) for (let i = 0; i <= 32; i++) g.push(this.shape(side, { pin: w(i), pt: 0, curl: 0, tuck: 1 }).gap);
+    if (gap >= g[0]) return w(0);
+    for (let i = 1; i <= 32; i++) if (g[i] <= gap) return w(i - 1) + (g[i - 1] - gap) / Math.max(g[i - 1] - g[i], 1e-6) / 20;
+    return 1;
+  }
+
+  /** A hand's balls, table-local and relative to its contact point, when it's turned by q (bundle). */
+  private balls(side: 0 | 1, st: FingerState, q: THREE.Quaternion) {
+    const sh = this.shape(side, st);
+    const t = _bq.copy(this.qToBundle).invert().multiply(q);
+    return { o: sh.pts.map((p) => p.clone().sub(sh.contact).applyQuaternion(t)), r: sh.r };
+  }
+
+  /** What's on the table this frame (table-local): every piece standing or lying there but the ones in a hand, the clock. */
+  private gather() {
+    this.things.length = 0;
+    const held = new Set(this.hands.map((h) => h.held?.c.obj));
+    const p = new THREE.Vector3();
+    this.boardGroup.updateWorldMatrix(true, true);
+    this.boardGroup.traverseVisible((o) => {
+      const h = o.userData?.height;
+      if (typeof h !== "number" || held.has(o)) return;
+      if (Math.abs(o.quaternion.x) + Math.abs(o.quaternion.z) > 0.03) {
+        // tipped over (a resigning king): about its length, wherever it lies
+        this.table.worldToLocal(o.localToWorld(p.set(0, h * 0.5, 0)));
+        this.things.push({ obj: o, x: p.x, z: p.z, hx: h * 0.5 + PIECE_R, hz: 0, round: true, top: p.y + PIECE_R });
+        return;
+      }
+      this.table.worldToLocal(o.getWorldPosition(p));
+      this.things.push({ obj: o, x: p.x, z: p.z, hx: PIECE_R * o.scale.x, hz: 0, round: true, top: p.y + h * o.scale.y });
+    });
+    if (this.clockAt) {
+      // clock.ts: a 0.095 x 0.034 x 0.18 body, their button 3.1 cm off its middle and 4.5 cm toward them, yours opposite
+      const b = this.clockAt();
+      this.things.push({ obj: null, x: b.x - 0.031, z: b.z + 0.045, hx: 0.048, hz: 0.091, round: false, top: b.y - 0.0145 });
+      this.things.push({ obj: FAR_BUTTON, x: b.x, z: b.z, hx: 0.015, hz: 0.026, round: false, top: b.y });
+      this.things.push({ obj: null, x: b.x, z: b.z + 0.09, hx: 0.015, hz: 0.026, round: false, top: b.y });
+    }
+  }
+
+  /**
+   * The top of whatever is under a ball of radius rad at table-local (x, z): table, board, piece, clock; -Infinity off
+   * the table. fixed: only what never moves (the table, the board, the clock), not the pieces.
+   */
+  private ground(x: number, z: number, rad: number, skip?: Set<THREE.Object3D | null>, extra?: Thing[], fixed = false) {
+    let y = Math.abs(x) < TABLE_HALF_X + rad && z > -TABLE_EDGE - rad ? TABLE_TOP : -Infinity;
+    if (Math.abs(x) < BOARD_EDGE + rad && Math.abs(z) < BOARD_EDGE + rad) y = Math.max(y, BOARD_TOP);
+    for (const list of extra ? [this.things, extra] : [this.things])
+      for (const t of list) {
+        if (t.top <= y || (t.obj && skip?.has(t.obj)) || (fixed && t.round)) continue;
+        const dx = Math.abs(x - t.x);
+        const dz = Math.abs(z - t.z);
+        if (t.round ? dx * dx + dz * dz < (t.hx + rad) ** 2 : dx < t.hx + rad && dz < t.hz + rad) y = t.top;
+      }
+    return y;
+  }
+
+  /**
+   * The lowest a hand's contact point may be at table-local (x, z), turned by q (bundle), in finger state st: every
+   * part of the hand `gap` above what's under it. skip: what it may touch; extra: things not on the table yet.
+   */
+  private floor(side: 0 | 1, st: FingerState, q: THREE.Quaternion, x: number, z: number, skip?: Set<THREE.Object3D | null>, gap = GAP, extra?: Thing[]) {
+    const { o, r } = this.balls(side, st, q);
+    let need = -Infinity;
+    for (let i = 0; i < o.length; i++) need = Math.max(need, this.ground(x + o[i].x, z + o[i].z, r[i], skip, extra) + r[i] + gap - o[i].y);
+    return need;
+  }
+
+  /** How a hand is turned reaching for something at graspB (bundle): fingers down at it by beta, the thumb side up by roll. */
+  private reachTurn(side: 0 | 1, graspB: THREE.Vector3, beta: number, roll: number, out = new THREE.Quaternion()) {
+    const f = graspB.clone().sub(this.seat).addScaledVector(OUT[side], -0.17).setY(0);
+    if (f.lengthSq() < 1e-4) f.copy(FWD);
+    f.normalize();
+    const dir = f.clone().multiplyScalar(Math.cos(beta)).addScaledVector(DOWN, Math.sin(beta));
+    const palm = DOWN.clone().multiplyScalar(Math.cos(beta)).addScaledVector(f, -Math.sin(beta));
+    return this.handPose(this.rig.hands[side], dir, palm, side === 1 ? roll : -roll, out);
+  }
+
+  /**
+   * The roll (as reachTurn takes it) nearest `near` that holds the thumb and index tips level with each other, so a
+   * pinch takes a piece's head from its two sides rather than over its top and under its collar.
+   */
+  private levelRoll(side: 0 | 1, st: FingerState, atT: THREE.Vector3, beta: number, near: number) {
+    const sh = this.shape(side, st);
+    const v = new THREE.Vector3();
+    const tilt = (roll: number) => {
+      v.copy(sh.index).sub(sh.thumb).applyQuaternion(this.reachTurnT(side, atT, beta, roll));
+      return v.y / Math.max(v.length(), 1e-6);
+    };
+    let best = near;
+    let bestD = Infinity;
+    let flat = near;
+    let flatT = Infinity;
+    let prev = tilt(near - 1.2);
+    for (let i = 1; i <= 48; i++) {
+      const a = near - 1.2 + (i - 1) * 0.05;
+      const b = a + 0.05;
+      const cur = tilt(b);
+      if (Math.abs(cur) < flatT) [flat, flatT] = [b, Math.abs(cur)];
+      if (Math.sign(cur) !== Math.sign(prev)) {
+        let lo = a;
+        let hi = b;
+        for (let j = 0; j < 12; j++) {
+          const mid = (lo + hi) / 2;
+          if (Math.sign(tilt(mid)) === Math.sign(tilt(lo))) lo = mid;
+          else hi = mid;
+        }
+        const root = (lo + hi) / 2;
+        if (Math.abs(root - near) < bestD) [best, bestD] = [root, Math.abs(root - near)];
+      }
+      prev = cur;
+    }
+    return Number.isFinite(bestD) ? best : flat; // (no roll levels them: the one that comes nearest)
+  }
+
+  /**
+   * How to take a piece by its head with the hand turned by q (bundle): the pinch (as tight as fits) and the height
+   * on the piece (near `grip`) where the thumb and index tips rest on its sides and no other part of the hand is in it,
+   * by its real lathe profile (pieces.ts). null if nothing fits.
+   */
+  private pinchFit(side: 0 | 1, type: PieceType, height: number, q: THREE.Quaternion, grip: number) {
+    const t = this.qToBundle.clone().invert().multiply(q);
+    const v = new THREE.Vector3();
+    const inPiece = (pin: number, at: number) => {
+      const sh = this.shape(side, { pin, pt: 0, curl: 0, tuck: 1 });
+      let worst = -Infinity;
+      for (let i = 0; i < sh.pts.length; i++) {
+        v.copy(sh.pts[i]).sub(sh.contact).applyQuaternion(t);
+        const d = Math.hypot(v.x, v.z);
+        const r = sh.r[i];
+        if (d > r + PIECE_R) continue;
+        for (let k = -2; k <= 2; k++) {
+          const dy = (k / 2) * r * 0.9;
+          const pr = profileR(type, at + v.y + dy, v.x, v.z);
+          if (pr > 0) worst = Math.max(worst, pr + Math.sqrt(r * r - dy * dy) - d);
+        }
+      }
+      return worst;
+    };
+    let best: { pin: number; grip: number } | null = null;
+    for (const f of [0, 0.04, -0.04, 0.08, -0.08, 0.13]) {
+      const at = clamp(grip / height + f, 0.62, 0.98) * height;
+      // from the firmest pinch down in steps of 0.1, then back up in 0.025s: the firmest that fits
+      for (let pin = 1; pin >= -0.6 - 1e-6; pin -= 0.1)
+        if (inPiece(pin, at) <= 0.0015) {
+          let p = pin;
+          for (let q = pin + 0.025; q < pin + 0.1 - 1e-6 && q <= 1; q += 0.025) if (inPiece(q, at) <= 0.0015) p = q;
+          if (!best || p > best.pin + 0.12) best = { pin: p, grip: at };
+          break;
+        }
+      if (best && best.pin > 0.3) break; // a good firm hold near where it was asked: take it
+    }
+    return best;
+  }
+
+  /**
+   * A hand holding a piece: if, turned as it is now, its fingers would be in the piece, the pinch opens until they
+   * aren't (the turn drifts a little on the way, and the piece is held by its sides, not through them).
+   */
+  private easePinch(h: Hand, k: Held) {
+    const type = k.c.obj.userData?.type as PieceType | undefined;
+    if (!type) return;
+    const t = this.qToBundle.clone().invert().multiply(h.q);
+    const v = new THREE.Vector3();
+    // where the hand really is against the piece (coming down onto it, or short of it on a far reach)
+    // (across: where it really was last frame, short of its target on a far reach; up and down: where it's going this
+    // frame, so a hand coming down is judged where it's coming down to)
+    const piece = this.table.worldToLocal(k.c.obj.getWorldPosition(new THREE.Vector3()));
+    const at = this.table.worldToLocal(h.world.clone()).sub(piece);
+    at.y = h.p.y - piece.y;
+    if (h.held === k) at.set(0, k.grip, 0);
+    for (let n = 0; n < 20; n++) {
+      const sh = this.shape(h.side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck });
+      let worst = -Infinity;
+      for (let i = 0; i < sh.pts.length; i++) {
+        v.copy(sh.pts[i]).sub(sh.contact).applyQuaternion(t).add(at);
+        const d = Math.hypot(v.x, v.z);
+        const r = sh.r[i];
+        if (d > r + PIECE_R) continue;
+        for (let j = -2; j <= 2; j++) {
+          const dy = (j / 2) * r * 0.9;
+          const pr = profileR(type, v.y + dy, v.x, v.z);
+          if (pr > 0) worst = Math.max(worst, pr + Math.sqrt(r * r - dy * dy) - d);
+        }
+      }
+      if (worst <= 0.0015) return;
+      if (h.pin <= -0.6) {
+        // as wide as the fingers go and still in it: the hand takes it a little higher on its head instead
+        if ((k.raise ?? 0) < 0.025) {
+          const r = Math.min(0.004, 0.025 - (k.raise ?? 0));
+          k.raise = (k.raise ?? 0) + r;
+          k.grip += r;
+          at.y += r;
+          continue;
+        }
+        return;
+      }
+      h.pin = Math.max(-0.6, h.pin - 0.04);
+    }
+  }
+
+  /** reachTurn for a table-local point. */
+  private reachTurnT(side: 0 | 1, atT: THREE.Vector3, beta: number, roll: number) {
+    return this.reachTurn(side, atT.clone().applyMatrix4(this.toBundle), beta, roll);
+  }
+
+  /** The shape of a step's path over its time fraction u: how much of its lift it has risen. */
+  private hump(s: Seg, u: number) {
+    // a carry lifts the piece first, carries it level and sets it down last: flat-topped, so clearing a row of pieces
+    // late on the way doesn't take a tall arc (a piece taken off goes over the whole back rank to beside the board)
+    return s.kind === "carry" ? smooth(clamp(u / 0.3, 0, 1)) * smooth(clamp((1 - u) / 0.25, 0, 1)) : Math.sin(Math.PI * u);
+  }
+
+  /** Where a step's path is at time fraction u, from a to b, before its lift (what evaluate() moves along). */
+  private pathAt(s: Seg, a: THREE.Vector3, b: THREE.Vector3, u: number, out: THREE.Vector3) {
+    const e = ease(u, s.skew ?? 0);
+    out.lerpVectors(a, b, e);
+    this.bow(out, a, b, s, e);
+    if (s.kind === "carry" && s.over) {
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const L = Math.hypot(dx, dz);
+      const o = L > 0.01 ? s.over * Math.sin(Math.PI * clamp((e - 0.55) / 0.45, 0, 1)) : 0;
+      out.x += (dx / (L || 1)) * o;
+      out.z += (dz / (L || 1)) * o;
+    }
+    return out;
+  }
+
+  /**
+   * How high a step's path must rise in the middle (its lift) for the hand, and a piece in it, to clear everything
+   * they pass over. Sampled along the way with the hand as it will be there (turned toward where it is, its fingers
+   * part-way between how they start and end); the ends are what they are (planned with the piece they go to), so the
+   * path only has to be no worse than them in between.
+   */
+  private pathLift(h: Hand, s: Seg) {
+    const a = s.from!;
+    const b = s.end();
+    const side = h.side;
+    const k = s.kind === "carry" ? (s.k ?? h.held) : null;
+    const skip = new Set<THREE.Object3D | null>(k ? [k.c.obj] : []);
+    const idle = this.idleOut.hands[side];
+    const c1 = s.c1 === "idle" ? idle.curl : s.c1;
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const deficit = (u: number, at: THREE.Vector3, gap: number) => {
+      const m = smooth(u);
+      const w = clamp(s.w0! + (s.w1 - s.w0!) * m, 0, 1);
+      const st: FingerState = { pin: lerp(h.pin, s.pin1 ?? 0, m), pt: lerp(h.pt, s.pt1 ?? 0, m), curl: lerp(h.curl, c1, m), tuck: lerp(h.tuck, s.tuck1 ?? 0, m) };
+      const beta = s.beta !== undefined ? lerp(s.b0!, s.beta, m) : h.beta;
+      const roll = s.roll !== undefined ? lerp(s.r0!, s.roll, m) : h.roll;
+      q.copy(idle.q).slerp(this.reachTurnT(side, at, beta, roll), smooth(w));
+      const { o, r } = this.balls(side, st, q);
+      let need = -Infinity;
+      for (let j = 0; j < o.length; j++) need = Math.max(need, this.ground(at.x + o[j].x, at.z + o[j].z, r[j], skip) + r[j] + gap - o[j].y);
+      if (k) need = Math.max(need, this.ground(at.x, at.z, PIECE_R, skip) + gap + k.grip);
+      return need - at.y;
+    };
+    const d0 = Math.max(0, deficit(0, a, 0));
+    const d1 = Math.max(0, deficit(1, b, 0));
+    let lift = 0;
+    for (let i = 1; i < 32; i++) {
+      const u = i / 32;
+      const hm = this.hump(s, u);
+      if (hm < 0.05) continue;
+      this.pathAt(s, a, b, u, p);
+      const allowed = lerp(d0, d1, ease(u, s.skew ?? 0));
+      const d = deficit(u, p, GAP * Math.min(1, hm / 0.5)) - allowed;
+      lift = Math.max(lift, d / hm);
+    }
+    return Math.min(lift, 0.3);
+  }
+
+  /**
+   * Turns an arm about its shoulder-wrist line (the wrist stays where it is) until the elbow and the forearm are clear
+   * of what's under them: lying on the table is fine, going into it, the board or a piece isn't. The smallest turn
+   * that does it, raising the elbow the outward way round.
+   */
+  private liftArm(h: Hand, gA: THREE.Quaternion, lB: THREE.Quaternion) {
+    const L = this.rig.arms[h.side];
+    const A = this.P[L.a];
+    const B = this.body;
+    const side = h.side;
+    const skip = new Set<THREE.Object3D | null>(h.held ? [h.held.c.obj] : []);
+    const e = new THREE.Vector3();
+    const w = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const t = new THREE.Vector3();
+    const deficit = (g: THREE.Quaternion) => {
+      e.copy(L.v1).applyQuaternion(g).add(A);
+      w.copy(L.v2).applyQuaternion(q.copy(g).multiply(lB)).add(e);
+      let worst = -Infinity;
+      for (const u of [0.55, 0.8, 1]) {
+        t.lerpVectors(A, e, u).applyMatrix4(this.fromBundle);
+        worst = Math.max(worst, this.ground(t.x, t.z, B.upper[side], skip) + B.upper[side] - t.y);
+      }
+      for (const u of [0.2, 0.45, 0.7, 0.85]) {
+        const r = lerp(B.arm[side], B.cuff[side], u);
+        t.lerpVectors(e, w, u).applyMatrix4(this.fromBundle);
+        worst = Math.max(worst, this.ground(t.x, t.z, r, skip) + r - t.y);
+      }
+      return worst;
+    };
+    const d0 = deficit(gA);
+    if (d0 <= 0.001) return;
+    const axis = w.clone().sub(A).normalize();
+    e.copy(L.v1).applyQuaternion(gA);
+    const turn = axis.clone().cross(e);
+    const sgn = Math.abs(turn.y) > 0.02 * e.length() ? Math.sign(turn.y) : Math.sign(turn.dot(OUT[side])) || 1;
+    const rq = new THREE.Quaternion();
+    const at = (phi: number) => q.setFromAxisAngle(axis, phi).multiply(gA).clone();
+    let lo = 0;
+    let hi = 0;
+    let best = 0;
+    let bestD = d0;
+    for (let i = 1; i <= 16; i++) {
+      const phi = sgn * 0.1 * i;
+      const d = deficit(at(phi));
+      if (d < bestD) [best, bestD] = [phi, d];
+      if (d <= 0.001) {
+        [lo, hi] = [sgn * 0.1 * (i - 1), phi];
+        break;
+      }
+    }
+    if (hi !== 0) {
+      for (let i = 0; i < 7; i++) {
+        const mid = (lo + hi) / 2;
+        if (deficit(at(mid)) <= 0.001) hi = mid;
+        else lo = mid;
+      }
+      best = hi;
+    }
+    gA.premultiply(rq.setFromAxisAngle(axis, best));
+  }
+
+  /**
+   * A hand resting on the table between the board and the table's edge: the forearm lying on the table, the wrist on
+   * its cuff, the hand tipped down from it until it rests too; fingers turned in toward the middle (yaw: + toward the
+   * board), its front edge `back` behind the board's frame and its inner edge `inX` from the middle.
+   */
+  private tableHand(side: 0 | 1, out: HandIdle, curl = REST_CURL, yaw = 0.72, inX = 0.05, back = 0.02, slide = 0) {
+    const key = `${side}|${curl.toFixed(3)}|${yaw.toFixed(3)}|${inX.toFixed(3)}|${back.toFixed(3)}|${this.qToBundle.toArray().map((v) => v.toFixed(3))}`;
+    let m = this.restMemo.get(key);
+    if (!m) {
+      const s = side === 0 ? 1 : -1;
+      const sh = this.shape(side, { pin: 0, pt: 0, curl });
+      const toT = this.qToBundle.clone().invert();
+      const dirT = new THREE.Vector3(-s * Math.cos(yaw), 0, Math.sin(yaw));
+      const turn = (pitch: number) => {
+        const d = dirT.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(DOWN, Math.sin(pitch)).applyQuaternion(this.qToBundle);
+        return this.handPose(this.rig.hands[side], d, DOWN, side === 1 ? 0.2 : -0.2, new THREE.Quaternion());
+      };
+      const offs = (q: THREE.Quaternion) => sh.pts.map((p) => p.clone().applyQuaternion(_bq.copy(toT).multiply(q)));
+      const low = (q: THREE.Quaternion) => Math.min(...offs(q).map((v, i) => v.y - sh.r[i]));
+      const want = TABLE_TOP + 0.0015 - (TABLE_TOP + this.body.cuff[side] + 0.002); // lowest ball below the wrist
+      let lo = -0.5;
+      let hi = 0.6;
+      if (low(turn(lo)) <= want) hi = lo;
+      else
+        for (let i = 0; i < 24; i++) {
+          const mid = (lo + hi) / 2;
+          if (low(turn(mid)) > want) lo = mid;
+          else hi = mid;
+        }
+      const q = turn(hi);
+      const o = offs(q);
+      const y = TABLE_TOP + 0.0015 - Math.min(...o.map((v, i) => v.y - sh.r[i]));
+      const z = -BOARD_EDGE - back - Math.max(...o.map((v, i) => v.z + sh.r[i]));
+      const x = side === 0 ? inX - Math.min(...o.map((v, i) => v.x - sh.r[i])) : -inX - Math.max(...o.map((v, i) => v.x + sh.r[i]));
+      m = { wristT: new THREE.Vector3(x, y, z), q };
+      if (this.restMemo.size > 200) this.restMemo.clear();
+      this.restMemo.set(key, m);
+    }
+    out.q.copy(m.q);
+    out.curl = curl;
+    this.fromWrist(side, m.wristT.clone().add(new THREE.Vector3((side === 0 ? 1 : -1) * slide, 0, -0.3 * slide)).applyMatrix4(this.toBundle), out);
+  }
+
   // ---------------- posing ----------------
 
   /** A hand's target turn and wrist for this frame: the idle pose's, a reach's (fingers down at a piece), or a handshake. */
@@ -1571,12 +2264,7 @@ export class SeatedOpponent {
     h.graspB.copy(h.p).applyMatrix4(this.toBundle);
     const reachQ = new THREE.Quaternion();
     if (h.w > 0) {
-      const f = h.graspB.clone().sub(this.seat).addScaledVector(OUT[side], -0.17).setY(0);
-      if (f.lengthSq() < 1e-4) f.copy(FWD);
-      f.normalize();
-      const dir = f.clone().multiplyScalar(Math.cos(h.beta)).addScaledVector(DOWN, Math.sin(h.beta));
-      const palm = DOWN.clone().multiplyScalar(Math.cos(h.beta)).addScaledVector(f, -Math.sin(h.beta));
-      this.handPose(r.hands[side], dir, palm, side === 1 ? h.roll : -h.roll, reachQ);
+      this.reachTurn(side, h.graspB, h.beta, h.roll, reachQ);
       if (side === 1 && h.o > 0) {
         // palm sideways, thumb up, fingers toward the player
         const offerQ = this.handPose(r.hands[1], FWD.clone().addScaledVector(DOWN, 0.15), LEFT, 0, new THREE.Quaternion());
@@ -1585,7 +2273,10 @@ export class SeatedOpponent {
     }
     const m = smooth(h.w);
     h.q.slerpQuaternions(idle.q, reachQ, m);
-    h.wrist.copy(r.grasp[side]).applyQuaternion(h.q).negate().add(h.graspB);
+    const sk = h.segs[0]?.k && ["descend", "grip", "carry", "set", "hover", "adjust", "release"].includes(h.segs[0].kind) ? h.segs[0].k : null;
+    if (h.held || sk) this.easePinch(h, h.held ?? sk!);
+    h.contact.copy(this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck }).contact);
+    h.wrist.copy(h.contact).applyQuaternion(h.q).negate().add(h.graspB);
     h.pole.copy(idle.pole).lerp(this.defaultPole(side, new THREE.Vector3()), m).normalize();
     // the reaching shoulder comes forward: the torso turns a little toward the target, more for the far side
     const az = Math.atan2(-h.graspB.x, -h.graspB.z); // + toward the person's left
@@ -1611,7 +2302,7 @@ export class SeatedOpponent {
   }
 
   /** Pelvis, spine, collars, neck and head: the idle pose's carriage, a reach's lean, breathing, a slow sway. */
-  private torso(local: THREE.Quaternion[], rootT: THREE.Vector3, reach: number) {
+  private torso(local: THREE.Quaternion[], rootT: THREE.Vector3, reach: number, rise = this.riseS, slide = this.slideS) {
     const t = this.now;
     const r = this.rig;
     const I = this.idleOut;
@@ -1620,19 +2311,21 @@ export class SeatedOpponent {
     const [hl, hr] = this.hands;
     const tw = I.twist + hl.twist + hr.twist;
     const sway = I.roll + 0.012 * Math.sin(t * 0.37 + this.phase) + 0.006 * Math.sin(t * 0.83 + 2 * this.phase); // weight shifting
-    const pl = 0.1 * smooth(hl.w) + 0.3 * (Math.min(hl.lean, reach) / MAX_LEAN); // a reaching shoulder comes forward
-    const pr = 0.1 * smooth(hr.w) + 0.3 * (Math.min(hr.lean, reach) / MAX_LEAN);
+    const pl = 0.1 * smooth(hl.w) + 0.25 * (Math.min(hl.lean, reach) / MAX_LEAN); // a reaching shoulder comes forward
+    const pr = 0.1 * smooth(hr.w) + 0.25 * (Math.min(hr.lean, reach) / MAX_LEAN);
     local[PELVIS].copy(YAW).multiply(rot(L * 0.34, tw * 0.15, sway * 0.6));
     local[SPINE1].copy(rot(L * 0.26, tw * 0.3, sway * 0.25));
     // breathing in: the chest lifts (spine2-3 extend) and the shoulders rise about 2.5 mm; the neck keeps the head still
     local[SPINE2].copy(rot(L * 0.22 - br * 0.01, tw * 0.3, sway * 0.15));
     local[SPINE3].copy(rot(L * 0.18 - br * 0.02, tw * 0.25, 0));
-    local[L_COLLAR].copy(rot(0, -pl + I.retract, br * 0.02 + I.shrug));
-    local[R_COLLAR].copy(rot(0, pr - I.retract, -br * 0.02 - I.shrug));
+    local[L_COLLAR].copy(rot(0, -pl + I.retract, br * 0.02 + I.shrug + hl.scapula));
+    local[R_COLLAR].copy(rot(0, pr - I.retract, -br * 0.02 - I.shrug - hr.scapula));
     local[NECK].copy(rot(0.12 + I.neck + br * 0.025, 0, -sway * 0.7));
     local[HEAD].copy(rot(0.1 + I.headPitch, 0, I.headRoll + 0.015 * Math.sin(t * 0.53 + this.phase)));
     // root_t from the rest skeleton: the hip joints land on the seat point, whatever the body's size
     rootT.copy(this.seat).sub(r.rest[PELVIS]).sub(_r.copy(r.hipMid).sub(r.rest[PELVIS]).applyQuaternion(local[PELVIS]));
+    rootT.y += rise; // half rising off the seat, for a reach the chest would otherwise take into the table
+    rootT.z -= slide; // and forward on it (bundle -z is their front)
     for (const j of [PELVIS, L_HIP, R_HIP, SPINE1, SPINE2, SPINE3, NECK, L_COLLAR, R_COLLAR, HEAD, L_SHOULDER, R_SHOULDER]) this.fk(local, rootT, j);
   }
 
@@ -1644,6 +2337,7 @@ export class SeatedOpponent {
     // far squares a little more than the arm strictly needs, from the hips and the shoulders
     let reach = 0;
     let wmax = 0;
+    let slide = 0;
     for (const h of this.hands) {
       const m = smooth(h.w);
       wmax = Math.max(wmax, m);
@@ -1660,8 +2354,24 @@ export class SeatedOpponent {
       };
       let lean = 0;
       if (need(0) > 0) {
-        if (need(MAX_LEAN) > 0) lean = MAX_LEAN;
-        else {
+        if (need(MAX_LEAN) > 0) {
+          lean = MAX_LEAN;
+          // further than leaning reaches: they slide forward on the seat for it (feet where they are)
+          const far = (sl: number) => {
+            this.torso(local, rootT, MAX_LEAN, this.riseS, sl);
+            return P[sh].distanceTo(h.wrist) - most;
+          };
+          let lo = 0;
+          let hi = MAX_SLIDE;
+          if (far(hi) > 0) lo = hi;
+          else
+            for (let i = 0; i < 10; i++) {
+              const mid = (lo + hi) / 2;
+              if (far(mid) > 0) lo = mid;
+              else hi = mid;
+            }
+          slide = Math.max(slide, wr * hi);
+        } else {
           let lo = 0;
           let hi = MAX_LEAN;
           for (let i = 0; i < 14; i++) {
@@ -1679,12 +2389,56 @@ export class SeatedOpponent {
     // the trunk is heavy: it follows the lean the hands ask for on a critically damped spring, never faster than
     // about 1.6 rad/s (the reaches are timed so it keeps up)
     const asked = Math.max(reach, 0.06 * wmax);
+    // leaning that far in, a bulky chest would go over the table's edge and into it: they rise a little off the seat
+    // instead (up to 14 cm: half standing), and if even that isn't enough, lean no further
+    let rise = 0;
+    let lean = asked;
+    if (asked > 0.25 && this.chestInTable(local, rootT, asked, 0, slide) > 0) {
+      if (this.chestInTable(local, rootT, asked, MAX_RISE, slide) > 0) {
+        rise = MAX_RISE;
+        let lo = 0;
+        let hi = asked;
+        for (let i = 0; i < 10; i++) {
+          const mid = (lo + hi) / 2;
+          if (this.chestInTable(local, rootT, mid, rise, slide) > 0) hi = mid;
+          else lo = mid;
+        }
+        lean = lo;
+      } else {
+        let lo = 0;
+        let hi = MAX_RISE;
+        for (let i = 0; i < 10; i++) {
+          const mid = (lo + hi) / 2;
+          if (this.chestInTable(local, rootT, asked, mid, slide) > 0) lo = mid;
+          else hi = mid;
+        }
+        rise = hi;
+      }
+    }
     const steps = Math.ceil(this.dt / 0.02);
     for (let i = 0; i < steps; i++) {
       const h = this.dt / steps;
       const om = 11;
-      this.leanV = clamp(this.leanV + (om * om * (asked - this.leanS) - 2 * om * this.leanV) * h, -1.6, 1.6);
+      this.leanV = clamp(this.leanV + (om * om * (lean - this.leanS) - 2 * om * this.leanV) * h, -1.6, 1.6);
       this.leanS += this.leanV * h;
+      this.riseV = clamp(this.riseV + (om * om * (rise - this.riseS) - 2 * om * this.riseV) * h, -0.3, 0.3);
+      this.riseS += this.riseV * h;
+      this.slideV = clamp(this.slideV + (om * om * (slide - this.slideS) - 2 * om * this.slideV) * h, -0.4, 0.4);
+      this.slideS += this.slideV * h;
+    }
+    // and never less than the body as it is right now needs (the springs don't keep perfect step with each other)
+    if (this.leanS > 0.25 && this.chestInTable(local, rootT, this.leanS, this.riseS, this.slideS) > 0) {
+      let lo = this.riseS;
+      let hi = MAX_RISE;
+      if (this.chestInTable(local, rootT, this.leanS, hi, this.slideS) > 0) lo = hi;
+      else
+        for (let i = 0; i < 9; i++) {
+          const mid = (lo + hi) / 2;
+          if (this.chestInTable(local, rootT, this.leanS, mid, this.slideS) > 0) lo = mid;
+          else hi = mid;
+        }
+      this.riseS = hi;
+      this.riseV = Math.max(this.riseV, 0);
     }
     this.torso(local, rootT, this.leanS);
 
@@ -1699,7 +2453,7 @@ export class SeatedOpponent {
     local[NECK].copy(G[SPINE3]).invert().multiply(G[NECK]);
     this.fk(local, rootT, HEAD);
     want.copy(this.gazeB).sub(eye(HEAD)).normalize();
-    G[HEAD].premultiply(swing(Z.clone().applyQuaternion(G[HEAD]), want, 0.9 * turn));
+    G[HEAD].premultiply(swing(Z.clone().applyQuaternion(G[HEAD]), want, 0.85 * turn));
     local[HEAD].copy(G[NECK]).invert().multiply(G[HEAD]);
     const nod = (this.now - this.nodAt) / 1.5; // a small, slow nod: down, and back up
     if (nod >= 0 && nod < 1) {
@@ -1709,6 +2463,17 @@ export class SeatedOpponent {
     const shake = (this.now - this.shakeAt) / 1.4; // a slight shake of the head: hm, no
     if (shake >= 0 && shake < 1) {
       local[HEAD].multiply(rot(0, 0.07 * Math.sin(2 * Math.PI * 1.5 * shake) * Math.sin(Math.PI * shake), 0));
+      G[HEAD].multiplyQuaternions(G[NECK], local[HEAD]);
+    }
+    // the head never tips back more than about 17 degrees past the chest's forward (looking up from a lean is the
+    // eyes' job): further back the neck's skin stretches and, from behind, the face shows over the head
+    const fc = Z.clone().applyQuaternion(G[HEAD]).applyQuaternion(_bq.copy(G[SPINE3]).invert());
+    const back = Math.atan2(fc.y, Math.hypot(fc.x, fc.z)) - HEAD_BACK;
+    if (back > 0) {
+      local[NECK].multiply(rot(back * 0.5, 0, 0));
+      G[NECK].multiplyQuaternions(G[SPINE3], local[NECK]);
+      this.fk(local, rootT, HEAD);
+      local[HEAD].premultiply(rot(back * 0.5, 0, 0));
       G[HEAD].multiplyQuaternions(G[NECK], local[HEAD]);
     }
 
@@ -1721,7 +2486,7 @@ export class SeatedOpponent {
     for (const side of [0, 1]) {
       const s = side === 0 ? 1 : -1;
       const L = r.legs[side];
-      const target = P[L.a].clone().addScaledVector(FWD, 0.53 * (L.v1.length() + L.v2.length()) + this.idleOut.feet).addScaledVector(LEFT, s * 0.04);
+      const target = P[L.a].clone().addScaledVector(FWD, 0.53 * (L.v1.length() + L.v2.length()) + this.idleOut.feet - this.slideS).addScaledVector(LEFT, s * 0.04);
       target.y = r.ankleHeight;
       const pole = FWD.clone().addScaledVector(UP, 0.4).addScaledVector(LEFT, s * 0.15);
       solveLimb(L, P[L.a], target, pole, gA, lB);
@@ -1749,17 +2514,33 @@ export class SeatedOpponent {
       for (let fix = 0; ; fix++) {
         this.armIK(h, gA, lB, inv, wl);
         if (fix === 4) break;
-        const need = this.clearance(side, contact, CLEAR, way);
+        // a moving arm keeps well clear (it sweeps past the body); one resting on the table only off it
+        const need = this.clearance(side, contact, lerp(REST_CLEAR, CLEAR, smooth(h.w)), way);
         if (need.d < 0.002) break;
         if (need.elbow || h.w > 0.5) {
           // the elbow is in the body, or the hand is at a piece: the elbow goes out instead
           h.pole.addScaledVector(way, 1.2).normalize();
           if (h.w > 0.5 && !need.elbow) continue;
         }
+        if (h.w < 0.5 && !this.idleOut.hands[side].head) {
+          // a hand on the table slides along it, out of the way: never up off it or down into it
+          way.y = 0;
+          if (way.lengthSq() < 0.04) break;
+          way.normalize();
+        }
         const m = Math.min(need.d, 0.06);
         h.wrist.addScaledVector(way, m);
         h.graspB.addScaledVector(way, m);
         pushed += m;
+      }
+      // a hand on the table rests on it, whatever its turn ended up as (a wrist turns only so far) and however the
+      // body moves above it; and no hand ever goes into the table or the board (nor, resting, into a piece)
+      for (let n = 0; n < 3; n++) {
+        const settle = this.settle(h, contact);
+        if (!settle) break;
+        h.wrist.y += settle;
+        h.graspB.y += settle;
+        this.armIK(h, gA, lB, inv, wl);
       }
       this.guardPush = Math.max(this.guardPush, pushed);
       this.guardResid = Math.max(this.guardResid, this.clearance(side, contact, 0, way, true).d);
@@ -1767,14 +2548,84 @@ export class SeatedOpponent {
       local[L.b].copy(lB);
       local[L.c].copy(wl);
       G[L.c].multiplyQuaternions(G[L.b], local[L.c]);
-      h.graspB.copy(r.grasp[side]).applyQuaternion(G[L.c]).add(P[L.c]);
+      h.graspB.copy(h.contact).applyQuaternion(G[L.c]).add(P[L.c]);
     }
 
-    // fingers: barely open on the way in, a gentle pinch while holding, loose at rest
+    // an arm raised past level takes its shoulder blade with it (a third of the way past level, as a body's does), so
+    // the shoulder joint itself never turns so far that the skin over it folds; next frame's collars carry it
     for (const h of this.hands) {
-      const sg = h.side === 1 ? 1 : -1;
-      for (const [j, amt] of h.side === 1 ? R_FINGERS : L_FINGERS) if (local[j]) local[j].multiply(rot(0, 0, sg * h.curl * amt));
+      const [sh, el] = h.side === 0 ? [L_SHOULDER, L_ELBOW] : [R_SHOULDER, R_ELBOW];
+      const down = _r.set(0, -1, 0).applyQuaternion(G[h.side === 0 ? L_COLLAR : R_COLLAR]);
+      const raise = Math.acos(clamp(P[el].clone().sub(P[sh]).normalize().dot(down), -1, 1)) + (h.scapula || 0);
+      const want = clamp(0.55 * (raise - 1.35), 0, 0.5);
+      h.scapula += (want - h.scapula) * (1 - Math.exp(-this.dt / 0.08));
     }
+
+    // fingers: the avatar's own relaxed hand at rest; thumb and index open around a piece's head on the way in and
+    // closing on it to hold it, the other three curled out of the way; the index alone for the clock
+    for (const h of this.hands) {
+      const base = h.side === 0 ? 25 : 40;
+      const st: FingerState = { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck };
+      for (let i = 0; i < 15; i++) if (local[base + i]) this.fingerTurn(h.side, i, st, local[base + i]);
+    }
+  }
+
+  /**
+   * How far (meters, + up) a posed hand has to move for every part of it to be just on what's under it: resting on
+   * the table (or a little higher, never lower), or, when it's reaching, at least not in the table, the board, the
+   * clock or a piece it isn't taking (the plan keeps it off them; this is for what a wrist's limits change).
+   */
+  private settle(h: Hand, contact: boolean) {
+    const side = h.side;
+    const idle = this.idleOut.hands[side];
+    if (contact || idle.head > 0 || idle.elbow > 0) return 0;
+    const wrist = side === 0 ? L_WRIST : R_WRIST;
+    const sh = this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck });
+    const resting = 1 - smooth(clamp(h.w * 2, 0, 1)); // 1: the idle pose has it on the table
+    const seg = h.segs[0];
+    // the piece it's taking it may touch from the moment it comes down onto it (on the way there it goes over it)
+    const taking = seg?.k && seg.kind !== "reach" ? seg.k.c.obj : null;
+    const skip = new Set<THREE.Object3D | null>([h.held?.c.obj ?? null, taking, seg?.tip?.obj ?? null, FAR_BUTTON]);
+    const p = new THREE.Vector3();
+    let gap = Infinity;
+    for (let i = 0; i < sh.pts.length; i++) {
+      p.copy(sh.pts[i]).applyQuaternion(this.G[wrist]).add(this.P[wrist]).applyMatrix4(this.fromBundle);
+      const g = this.ground(p.x, p.z, sh.r[i], skip);
+      gap = Math.min(gap, p.y - sh.r[i] - g);
+    }
+    if (!Number.isFinite(gap)) return 0;
+    const want = resting > 0.5 ? 0.0015 : 0.003;
+    if (gap < want - 0.0005) return want - gap; // in it: up
+    if (resting > 0 && gap > want + 0.0005) return -(gap - want) * resting; // above it while resting: down onto it
+    return 0;
+  }
+
+  /**
+   * How far (meters) the front of the trunk would be in the table (or the board) at this reach lean and rise: the front
+   * faces of the measured torso blocks (body.ts), where they're over the table. 0 when clear.
+   */
+  private chestInTable(local: THREE.Quaternion[], rootT: THREE.Vector3, lean: number, rise: number, slide: number) {
+    this.torso(local, rootT, lean, rise, slide);
+    const p = new THREE.Vector3();
+    let worst = 0;
+    const test = () => {
+      p.applyMatrix4(this.fromBundle);
+      const top = Math.abs(p.x) < BOARD_EDGE && Math.abs(p.z) < BOARD_EDGE ? BOARD_TOP : Math.abs(p.x) < TABLE_HALF_X && p.z > -TABLE_EDGE ? TABLE_TOP : -Infinity;
+      worst = Math.max(worst, top + 0.012 - p.y);
+    };
+    // the front of the trunk as the avatar's own Gaussians have it, and the measured blocks' front faces
+    for (const f of this.body.frontPts) {
+      p.copy(f.o).applyQuaternion(this.G[f.j]).add(this.P[f.j]);
+      test();
+    }
+    for (const b of this.body.boxes) {
+      if (b.head) continue;
+      for (const [fx, fy] of [[0, -0.9], [0, 0], [0, 0.9], [-0.6, -0.9], [0.6, -0.9], [-0.6, 0], [0.6, 0]]) {
+        p.set(b.c.x + fx * b.r.x, b.c.y + fy * b.r.y, b.c.z + 0.92 * b.r.z).applyQuaternion(this.G[b.j]).add(this.P[b.j]);
+        test();
+      }
+    }
+    return worst;
   }
 
   /** One arm's two-bone IK to its wrist target, with the forearm's twist and the wrist's limits (writes G, P, lB, wl). */
@@ -1787,6 +2638,7 @@ export class SeatedOpponent {
     const hr = r.hands[side];
     for (let pass = 0; ; pass++) {
       solveLimb(L, P[L.a], h.wrist, h.pole, gA, lB);
+      this.liftArm(h, gA, lB);
       G[L.b].multiplyQuaternions(gA, lB);
       // most of the hand's turn about the forearm is the forearm's (pronation, supination): the elbow joint carries
       // it in SMPL-X, and turning about the forearm's own axis leaves the wrist where the IK put it
@@ -1798,7 +2650,7 @@ export class SeatedOpponent {
       // a hand turned further than a wrist bends: take the nearest turn it can, and move the wrist so the
       // fingers still land where they were going
       h.q.copy(G[L.b]).multiply(wl);
-      h.wrist.copy(r.grasp[side]).applyQuaternion(h.q).negate().add(h.graspB);
+      h.wrist.copy(h.contact).applyQuaternion(h.q).negate().add(h.graspB);
     }
     P[L.b].copy(L.v1).applyQuaternion(gA).add(P[L.a]);
     P[L.c].copy(L.v2).applyQuaternion(G[L.b]).add(P[L.b]);
@@ -1816,7 +2668,6 @@ export class SeatedOpponent {
     const G = this.G;
     const el = P[side === 0 ? L_ELBOW : R_ELBOW];
     const wr = P[side === 0 ? L_WRIST : R_WRIST];
-    const tipDir = this.rig.hands[side].dir.clone().applyQuaternion(G[side === 0 ? L_WRIST : R_WRIST]);
     const pt = new THREE.Vector3();
     const dir = new THREE.Vector3();
     let best = 0;
@@ -1832,7 +2683,6 @@ export class SeatedOpponent {
       }
     };
     const arm = B.arm[side];
-    const hand = B.hand[side];
     // the forearm from a third of the way out (nearer the elbow it's an arm at his side, against the body as anyone's
     // is), the full clearance from halfway
     for (const t of [0.35, 0.55, 0.75, 1]) {
@@ -1848,11 +2698,15 @@ export class SeatedOpponent {
       way.copy(dir);
       elbow = true;
     }
-    // the hand, wrist to fingertips
-    for (const t of [0.35, 0.7, 1]) {
-      pt.copy(wr).addScaledVector(tipDir, B.handLen[side] * t);
-      const c = bare ? 0 : clear;
-      test(hand + c, contact ? hand * (bare ? 0.2 : 0.35) : hand + c, 1);
+    // the hand, every ball of it (palm, fingers, thumb) as its fingers are now
+    const h = this.hands[side];
+    const sh = this.shape(side, { pin: h.pin, pt: h.pt, curl: h.curl, tuck: h.tuck });
+    const gw = G[side === 0 ? L_WRIST : R_WRIST];
+    const c = bare ? 0 : clear;
+    for (let i = 0; i < sh.pts.length; i++) {
+      pt.copy(sh.pts[i]).applyQuaternion(gw).add(wr);
+      const r = sh.r[i];
+      test(r + c, contact ? r * (bare ? 0.2 : 0.35) : r + c, 1);
     }
     return { d: best, elbow };
   }
@@ -1885,7 +2739,7 @@ export class SeatedOpponent {
           this.idleInst = inst;
           this.idleFrom = null;
           this.idleT0 = this.now;
-          this.elbowAdj = this.elbowW = this.leanS = this.leanV = 0;
+          this.elbowAdj = this.elbowW = this.leanS = this.leanV = this.riseS = this.riseV = this.slideS = this.slideV = 0;
           for (const h of this.hands) {
             h.segs = [];
             h.w = h.o = h.lean = h.twist = 0;
@@ -1898,6 +2752,7 @@ export class SeatedOpponent {
             for (const h of this.hands) {
               h.p.copy(this.idleOut.hands[h.side].p);
               h.curl = this.idleOut.hands[h.side].curl;
+              h.pin = h.pt = h.tuck = 0;
               this.aimHand(h);
             }
             this.gazeB.copy(i % 40 < 20 ? board : player);
@@ -1921,7 +2776,7 @@ export class SeatedOpponent {
     this.now = t0;
     this.idleInst = { kind: "rest", side: 1, r: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] };
     this.idleFrom = null;
-    this.elbowAdj = this.elbowW = this.leanS = this.leanV = 0;
+    this.elbowAdj = this.elbowW = this.leanS = this.leanV = this.riseS = this.riseV = this.slideS = this.slideV = 0;
     for (const h of this.hands) {
       h.w = h.o = h.lean = h.twist = 0;
       h.segs = queued[h.side];
@@ -1934,12 +2789,15 @@ export class SeatedOpponent {
   // ---------------- the chair ----------------
 
   private buildChair(): THREE.Group {
-    // dark, minimal: a lacquered seat, four slim legs, two back posts and a curved-feeling rail. Front faces -Z.
+    // dark, minimal: a dark leather seat, four slim legs, two back posts and a curved-feeling rail. Front faces -Z.
+    // Matte all over, the seat darkest: it shows under their jacket and past their trousers from the side and behind,
+    // and must never read lighter than them or catch the room's reflections as a highlight
     const g = new THREE.Group();
-    const mat = new THREE.MeshPhysicalMaterial({ color: 0x232325, roughness: 0.5, clearcoat: 0.35, clearcoatRoughness: 0.4 });
-    this.chairMats.push(mat);
-    const add = (geo: THREE.BufferGeometry, x: number, y: number, z: number, rx = 0) => {
-      const m = new THREE.Mesh(geo, mat);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, roughness: 0.82, metalness: 0, envMapIntensity: 0.3 });
+    const seat = new THREE.MeshStandardMaterial({ color: 0x121213, roughness: 0.95, metalness: 0, envMapIntensity: 0.12 });
+    this.chairMats.push(mat, seat);
+    const add = (geo: THREE.BufferGeometry, x: number, y: number, z: number, rx = 0, material: THREE.Material = mat) => {
+      const m = new THREE.Mesh(geo, material);
       m.position.set(x, y, z);
       m.rotation.x = rx;
       g.add(m);
@@ -1947,7 +2805,7 @@ export class SeatedOpponent {
     const seatFront = -0.3;
     const seatBack = 0.12;
     const zc = (seatFront + seatBack) / 2;
-    add(new RoundedBoxGeometry(0.44, 0.03, seatBack - seatFront, 3, 0.01), 0, SEAT_HEIGHT - 0.015, zc);
+    add(new RoundedBoxGeometry(0.44, 0.03, seatBack - seatFront, 3, 0.01), 0, SEAT_HEIGHT - 0.015, zc, 0, seat);
     const legH = SEAT_HEIGHT - 0.03;
     const leg = new THREE.CylinderGeometry(0.012, 0.009, legH, 14);
     for (const x of [-0.19, 0.19]) {
@@ -1979,16 +2837,17 @@ function angleAbout(q: THREE.Quaternion, axis: THREE.Vector3) {
 }
 
 /**
- * The forearm's share (65%) of a hand's turn about it, within what a forearm turns: + about the right forearm's axis
+ * The forearm's share (80%) of a hand's turn about it, within what a forearm turns: + about the right forearm's axis
  * turns the palm up (supination, up to about 150 degrees from the rest pose's palm-down), - about the left's; the
  * rest pose is already near the end of pronation.
  */
 function forearmTwist(rel: THREE.Quaternion, axis: THREE.Vector3, side: 0 | 1) {
-  const t = twistAbout(rel, axis).slerp(ID, 0.35);
+  const t = twistAbout(rel, axis).slerp(ID, 0.2);
   const [lo, hi] = side === 1 ? [-0.4, 2.6] : [-2.6, 0.4];
   return t.setFromAxisAngle(axis, clamp(angleAbout(t, axis), lo, hi));
 }
 
+const WRIST_TWIST = 0.4;
 const _tw = new THREE.Quaternion();
 const _swg = new THREE.Quaternion();
 const _ax = new THREE.Vector3();
@@ -1996,7 +2855,8 @@ const _fl = new THREE.Vector3();
 const _dv = new THREE.Vector3();
 /**
  * A wrist's turn relative to its forearm (q), within what a wrist does: flexion toward the palm up to 1.2 rad,
- * extension 1.0, side to side 0.5 (an ellipse between them), and 0.5 of twist left over from the forearm. dir and
+ * extension 1.0, side to side 0.5 (an ellipse between them), and 0.4 of twist left over from the forearm (SMPL-X has
+ * no twist joints along the forearm, so a twisted wrist pinches the skin there: most of the twist is the forearm's). dir and
  * palm: the hand's rest direction and palm normal. Writes the allowed turn to out; true when it had to limit.
  */
 function limitWrist(q: THREE.Quaternion, dir: THREE.Vector3, palm: THREE.Vector3, out: THREE.Quaternion): boolean {
@@ -2018,9 +2878,9 @@ function limitWrist(q: THREE.Quaternion, dir: THREE.Vector3, palm: THREE.Vector3
     dev = sa * _ax.dot(_dv);
   }
   const k = (flex / (flex > 0 ? 1.2 : 1.0)) ** 2 + (dev / 0.5) ** 2;
-  if (k <= 1 && Math.abs(ta) <= 0.5) return false;
+  if (k <= 1 && Math.abs(ta) <= WRIST_TWIST) return false;
   if (sn > 1e-6) _swg.setFromAxisAngle(_ax, k > 1 ? sa / Math.sqrt(k) : sa);
   else _swg.identity();
-  out.copy(_swg).multiply(_tw.setFromAxisAngle(dir, clamp(ta, -0.5, 0.5)));
+  out.copy(_swg).multiply(_tw.setFromAxisAngle(dir, clamp(ta, -WRIST_TWIST, WRIST_TWIST)));
   return true;
 }

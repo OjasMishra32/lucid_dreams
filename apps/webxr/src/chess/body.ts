@@ -37,6 +37,13 @@ export class BodyShape {
   hand: [number, number] = [0.03, 0.03]; // half the hand's thickness and width, about its axis
   handLen: [number, number] = [0.18, 0.18]; // wrist to fingertips
   front = 0.167; // how far the belly (jacket and all) reaches in front of the lower spine joints, rest frame
+  finger: [number, number] = [0.0085, 0.0085]; // a finger's radius about its bones
+  palm: [number, number] = [0.015, 0.015]; // half the palm's thickness, about the wrist -> knuckles line
+  tip: [number, number] = [0.02, 0.02]; // how far a fingertip reaches past its last joint
+  cuff: [number, number] = [0.03, 0.03]; // the forearm's radius at the wrist end (sleeve and all)
+  upper: [number, number] = [0.05, 0.05]; // the upper arm's radius
+  /** Points on the front of the trunk (belly, chest, jacket), each on its joint: offset from that joint's rest position. */
+  frontPts: { j: number; o: THREE.Vector3 }[] = [];
 
   /** Measured from a skinned avatar mesh (rest-pose centres, the skin's strongest bone per Gaussian). */
   static measure(mesh: SplatMesh, rest: THREE.Vector3[]): BodyShape {
@@ -75,6 +82,30 @@ export class BodyShape {
       });
     };
     for (const j of TORSO) box(j, [j], false);
+    // the front of the trunk: per joint, in 3 cm bands of height, the furthest-forward Gaussians (what a lean in takes
+    // into a table's edge first)
+    for (const j of [0, 3, 6, 9]) {
+      const pts = byBone.get(j) ?? [];
+      const bands = new Map<number, THREE.Vector3[]>();
+      for (const p of pts) {
+        const k = Math.round(p.y / 0.03);
+        if (!bands.has(k)) bands.set(k, []);
+        bands.get(k)!.push(p);
+      }
+      for (const band of bands.values()) {
+        if (band.length < 20) continue;
+        const zs = band.map((p) => p.z);
+        const zf = pct(zs, 0.97);
+        for (const xq of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+          const xs = band.filter((p) => p.z >= zf - 0.02).map((p) => p.x);
+          if (!xs.length) continue;
+          const x = pct(xs, xq);
+          const near = band.filter((p) => Math.abs(p.x - x) < 0.03).map((p) => p.z);
+          const y = Math.round(band[0].y / 0.03) * 0.03; // the band's middle
+          if (near.length) body.frontPts.push({ j, o: new THREE.Vector3(x, y, pct(near, 0.95)).sub(rest[j]) });
+        }
+      }
+    }
     const belly = body.boxes.filter((b) => b.j === 3 || b.j === 6).map((b) => b.c.z + b.r.z);
     if (belly.length) body.front = Math.max(...belly);
     box(NECK, [NECK], true);
@@ -89,10 +120,52 @@ export class BodyShape {
       const [el, wr] = side === 0 ? [L_ELBOW, L_WRIST] : [R_ELBOW, R_WRIST];
       const mid = FINGERS[side][3]; // middle1
       body.arm[side] = THREE.MathUtils.clamp(radius([el], rest[el], rest[wr]) ?? 0.045, 0.035, 0.09);
+      const sh = side === 0 ? 16 : 17;
+      body.upper[side] = THREE.MathUtils.clamp(radius([sh], rest[sh], rest[el]) ?? 0.05, 0.035, 0.1);
+      {
+        const axis = rest[wr].clone().sub(rest[el]);
+        const len = axis.length();
+        axis.divideScalar(len);
+        const d = (byBone.get(el) ?? []).flatMap((p) => {
+          const t = _l.copy(p).sub(rest[el]).dot(axis);
+          return t > 0.7 * len && t < 1.05 * len ? [_l.addScaledVector(axis, -t).length()] : [];
+        });
+        body.cuff[side] = THREE.MathUtils.clamp(d.length > 30 ? pct(d, 0.85) + SPLAT / 2 : body.arm[side] * 0.75, 0.022, body.arm[side]);
+      }
       // a flat hand is wide, not thick: as one radius around its axis, at most 4.5 cm
       body.hand[side] = THREE.MathUtils.clamp(radius([wr, ...FINGERS[side]], rest[wr], rest[mid]) ?? 0.03, 0.02, 0.045);
       const tips = (byBone.get(FINGERS[side][5]) ?? []).map((p) => p.distanceTo(rest[wr])); // middle3
       body.handLen[side] = THREE.MathUtils.clamp(tips.length > 10 ? pct(tips, 0.95) : rest[mid].distanceTo(rest[wr]) * 1.9, 0.14, 0.24);
+      // the hand's own thickness, for resting it on a table and taking a piece between two fingertips: each finger's
+      // radius about its bones, how far its tip reaches past the last joint, and the palm's half thickness (in the
+      // rest pose the palm faces down, so that's vertical)
+      const radii: number[] = [];
+      const reach: number[] = [];
+      for (let f = 0; f < 4; f++) {
+        const [j1, j2, j3] = [FINGERS[side][3 * f], FINGERS[side][3 * f + 1], FINGERS[side][3 * f + 2]];
+        const dir = rest[j3].clone().sub(rest[j2]).normalize();
+        for (const [j, a, b] of [[j1, rest[j1], rest[j2]], [j2, rest[j2], rest[j3]], [j3, rest[j3], rest[j3].clone().addScaledVector(dir, 0.02)]] as const) {
+          const axis = b.clone().sub(a);
+          const len = axis.length();
+          axis.divideScalar(len);
+          for (const p of byBone.get(j) ?? []) {
+            const t = _l.copy(p).sub(a).dot(axis);
+            if (j === j3) reach.push(t);
+            if (t < 0 || t > len) continue;
+            radii.push(_l.copy(p).sub(a).addScaledVector(axis, -t).length());
+          }
+        }
+      }
+      if (radii.length > 40) body.finger[side] = THREE.MathUtils.clamp(pct(radii, 0.8), 0.006, 0.014);
+      if (reach.length > 20) body.tip[side] = THREE.MathUtils.clamp(pct(reach, 0.95), 0.012, 0.03);
+      const axis = rest[mid].clone().sub(rest[wr]);
+      const len = axis.length();
+      axis.divideScalar(len);
+      const thick = (byBone.get(wr) ?? []).flatMap((p) => {
+        const t = _l.copy(p).sub(rest[wr]).dot(axis);
+        return t > 0.2 * len && t < len ? [Math.abs(p.y - (rest[wr].y + axis.y * t))] : [];
+      });
+      if (thick.length > 40) body.palm[side] = THREE.MathUtils.clamp(pct(thick, 0.85), 0.01, 0.022);
     }
     return body;
   }
