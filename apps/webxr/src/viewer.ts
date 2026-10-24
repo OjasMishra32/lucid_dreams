@@ -6,6 +6,7 @@ import { SkinnedAvatar } from "./avatar";
 import { HeadLook } from "./look";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { Coach, coachAvailable, type CoachState } from "./coach";
+import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAvailable } from "./talk";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
 import { nextPlace, type Place, Places, startingPlace } from "./places";
@@ -62,6 +63,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       <div class="step-nav"><button class="pill" id="step-back">Back</button><button class="pill" id="step-again">Again</button><button class="pill" id="step-next">Next</button></div>
       <button class="ask" id="ask" hidden aria-pressed="false" title="Ask the coach about this step (A)">${MIC}<span id="ask-label">${ASK.idle[0]}</span><span class="ask-level" aria-hidden="true"><i></i><i></i><i></i></span></button>
     </aside>
+    <button class="ask talk-btn" id="talk" hidden aria-pressed="false" title="Talk with them: press, speak, press again to send">${MIC}<span id="talk-label">Talk</span></button>
     <p class="cue" id="cue" hidden></p>
     <div class="controls" id="controls" hidden>
       <button class="play" id="play" aria-label="Play">${PAUSE}</button>
@@ -514,6 +516,33 @@ export async function renderViewer(root: HTMLElement, id: string) {
         ccBtn.hidden = cues.length === 0;
       })
       .catch(() => {});
+  // ---------------- Talk: say something, they answer in their own cloned voice (talk.ts) ----------------
+  // Only someone who agreed to it and whose talk may go through this server (the relay in vite.config.ts says so).
+  const talkWho = avatar ? (dream.talk?.who ?? (/^vishal(-|$)/.test(dream.id) ? "vishal" : null)) : null;
+  // their mouth: under the jaw joint of their rig, standing (an avatar's bounds are its T-pose, hair included)
+  const jawRest = avatar?.skeleton.rest[22];
+  const mouthY = avatar && jawRest ? jawRest[1] + avatar.motion.frames[0].root_t[1] - 0.05 : dream.bounds ? dream.bounds.max[1] - 0.13 : 1.6;
+  const talk = talkWho ? new Talk(talkWho, listener, person, new THREE.Vector3(0, mouthY, -0.08)) : null;
+  const talkCaption = new TalkCaption();
+  // beside their face, on their left (your right), turned to you (their front is -Z)
+  talkCaption.mesh.position.set(-0.56, mouthY - 0.02, -0.12);
+  talkCaption.mesh.rotation.y = Math.PI;
+  if (talk) person.add(talkCaption.mesh);
+  const talkBtn = $("#talk");
+  let xrTalk: XrButton | null = null;
+  if (talk) {
+    talk.onState = (s) => {
+      $("#talk-label").textContent = TALK_LABEL[s];
+      talkBtn.classList.toggle("on", s !== "idle");
+      talkBtn.setAttribute("aria-pressed", String(s !== "idle"));
+      xrTalk?.setLabel(TALK_LABEL[s]);
+      xrTalk?.setOn(s !== "idle");
+    };
+    talkBtn.addEventListener("click", () => {
+      void listener.context.resume().catch(() => {});
+      talk.press();
+    });
+  }
   ccBtn.addEventListener("click", () => {
     captionsOn = !captionsOn;
     ccBtn.classList.toggle("on", captionsOn);
@@ -590,6 +619,18 @@ export async function renderViewer(root: HTMLElement, id: string) {
       if (!on) return console.info("Ask is off: the bridge on :5170 has no Gemini key, or isn't running.");
       askBtn.hidden = false;
       menu.add(xrAsk!);
+    });
+  }
+  // Talk joins the menu once the Talk server answers for them
+  if (talk) {
+    xrTalk = new XrButton("talk", "Talk", () => {
+      void listener.context.resume().catch(() => {});
+      talk.press();
+    });
+    void talkAvailable(talkWho!).then(({ on }) => {
+      if (!on) return console.info("Talk is off: the Talk server (apps/talk, :5175) isn't answering.");
+      talkBtn.hidden = false;
+      menu.add(xrTalk!);
     });
   }
   // what you placed stays where you put it in your real room (WebXR anchors), even through a recenter
@@ -907,10 +948,18 @@ export async function renderViewer(root: HTMLElement, id: string) {
         (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(eye);
         shownAvatar.mesh.worldToLocal(eye);
         if (mirrored) eye.x = -eye.x; // they're drawn flipped: look where you'd be in their unflipped space
-        shownAvatar.pose(t, (local, rootT, skeleton) => look.apply(local, rootT, skeleton, eye, dt));
-      } else shownAvatar.pose(t);
+        shownAvatar.pose(t, (local, rootT, skeleton) => {
+          look.apply(local, rootT, skeleton, eye, dt);
+          if (talk) openJaw(local, skeleton, talk.level);
+        });
+      } else shownAvatar.pose(t, talk ? (local, _r, skeleton) => openJaw(local, skeleton, talk.level) : undefined);
       shownAvatar.mesh.opacity = reveal;
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
+    if (talk) {
+      talk.update(dt);
+      talkCaption.set(talk.text, talk.reply ? "AI voice" : "");
+      talkCaption.fade(!!talk.text, dt);
+    }
     props?.update(t, dt, reveal);
     places.update(dt);
     if (coach?.state === "listening") askBtn.style.setProperty("--level", coach.level.toFixed(2));
@@ -919,7 +968,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, tempo, lane, hands, setMirror, lesson, props, ghost, beatRing, stepCard, stepCardGroup, xr, state: () => ({ playing, mirrored, placeMode, t, speed, reality: realityBtn.classList.contains("on") }) };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { talk, camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, follow, tempo, lane, hands, setMirror, lesson, props, ghost, beatRing, stepCard, stepCardGroup, xr, state: () => ({ playing, mirrored, placeMode, t, speed, reality: realityBtn.classList.contains("on") }) };
 }
 
 /** How far from their middle the person reaches on the floor (their bounds), at least 25 cm. */

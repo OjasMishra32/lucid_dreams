@@ -196,6 +196,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 .ask[hidden] { display: none; }
 .ask:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 .ask > svg { width: 14px; height: 14px; fill: currentColor; flex: none; }
+/* Talk with them: above the playback bar, centred */
+.talk-btn {
+  position: fixed; left: 50%; bottom: calc(max(28px, env(safe-area-inset-bottom)) + 76px); transform: translateX(-50%);
+  z-index: 10; width: auto; margin: 0; padding: 11px 20px; font-size: 15px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+}
 .ask-level { display: none; align-items: center; gap: 2px; height: 14px; }
 .ask[data-state="listening"] .ask-level { display: inline-flex; }
 .ask-level i { display: block; width: 3px; border-radius: 2px; background: currentColor; height: calc(4px + var(--level, 0) * 6px); transition: height 90ms linear; }

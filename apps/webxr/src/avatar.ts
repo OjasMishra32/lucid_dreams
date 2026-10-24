@@ -70,7 +70,7 @@ export class SkinnedAvatar {
   private constructor(
     readonly mesh: SplatMesh,
     private skinning: SplatSkinning,
-    private skeleton: Skeleton,
+    readonly skeleton: Skeleton,
     readonly motion: Motion,
   ) {
     this.local = localRotations(motion);

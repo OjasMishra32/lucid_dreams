@@ -55,6 +55,8 @@ export HF_HOME=$L/cache/hf TORCH_HOME=$L/cache/torch PIP_CACHE_DIR=$TMP/pip COND
 export TORCH_CUDA_ARCH_LIST="8.9" FORCE_CUDA=1 MAX_JOBS=8
 module load conda/26.7 cuda/12.4.1 gcc/12.2.0
 eval "$(conda shell.bash hook)"
+# envs/uika may be a conda env (built below) or a venv layered on envs/lam (as the legends' UIKA runs left it)
+use_uika() { if [ -f $E/pyvenv.cfg ]; then . $E/bin/activate; else set +u; conda activate $E; set -u; fi; }
 exec 9>$L/repos/.uika.lock
 flock 9
 [ -d $U/.git ] || git clone -q https://github.com/ant-research/UIKA.git $U
@@ -65,7 +67,7 @@ if [ ! -f $E/.ok ]; then
   echo "[uika] building $E (first run; about an hour). The exact steps:"
   set -x
   [ -d $E ] || mamba create -y -q -p $E -c conda-forge python=3.10 ffmpeg
-  set +u; conda activate $E; set -u
+  use_uika
   pip install -q torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
   pip install -q -U xformers==0.0.26.post1 --index-url https://download.pytorch.org/whl/cu121
   pip install -q Cython wheel ninja "setuptools==80.10.2"  # its requirements build with --no-build-isolation
@@ -88,7 +90,7 @@ print('UIKA env OK', torch.__version__, torch.version.cuda)")
   set +x
   touch $E/.ok
 else
-  set +u; conda activate $E; set -u
+  use_uika
 fi
 pip list 2>/dev/null | grep -iE '^(torch|torchvision|xformers|numpy|transformers|diffusers|pytorch3d) ' || true
 

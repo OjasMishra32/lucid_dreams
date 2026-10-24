@@ -26,7 +26,66 @@ function dreams(): Plugin {
   };
 }
 
+// Talk with them (apps/talk on :5175, src/talk.ts) for the people whose talk may go through this server, which a
+// tunnel makes public: the Talk server's token is added here from apps/talk/.env, so it never reaches a page. Never a
+// family's: grandma's talk is the Quest app's, over USB.
+const TALK = process.env.LUCID_TALK ?? "http://localhost:5175";
+const TALK_HERE = new Set(["vishal"]);
+const talkToken = () => {
+  try {
+    return readFileSync(resolve(import.meta.dirname, "../talk/.env"), "utf8").match(/^TALK_TOKEN=(.*)$/m)?.[1]?.trim() ?? "";
+  } catch {
+    return "";
+  }
+};
+async function relayTalk(req: any, res: any) {
+  const url = new URL(req.url ?? "/", "http://talk");
+  const send = (code: number, body: string | Buffer, type = "application/json") => {
+    res.statusCode = code;
+    res.setHeader("Content-Type", type);
+    res.setHeader("Cache-Control", "no-store");
+    res.end(body);
+  };
+  const headers = { "x-talk-token": talkToken() };
+  try {
+    const audio = url.pathname.match(/^\/audio\/([\w-]+)\.wav$/);
+    if (audio && req.method === "GET") {
+      const r = await fetch(`${TALK}/api/talk/audio/${audio[1]}.wav`, { headers });
+      return send(r.status, Buffer.from(await r.arrayBuffer()), r.headers.get("content-type") ?? "audio/wav");
+    }
+    const m = url.pathname.match(/^\/([\w-]+)(\/health|\/reset)?$/);
+    if (!m || !TALK_HERE.has(m[1])) return send(404, JSON.stringify({ error: "nobody to talk to by that name here" }));
+    const who = m[1];
+    if (m[2] === "/health") {
+      const r = await fetch(`${TALK}/api/health`, { headers });
+      const j = (await r.json()) as { ok?: boolean; people?: Record<string, { voice?: boolean }> };
+      return send(r.ok ? 200 : 502, JSON.stringify({ ok: !!j.ok && !!j.people?.[who], voice: !!j.people?.[who]?.voice }));
+    }
+    if (req.method !== "POST") return send(405, JSON.stringify({ error: "POST what you said" }));
+    const parts: Buffer[] = [];
+    let size = 0;
+    for await (const c of req as AsyncIterable<Buffer>) {
+      size += c.length;
+      if (size > 10 * 1024 * 1024) return send(413, JSON.stringify({ error: "too long: keep it under a minute" }));
+      parts.push(c);
+    }
+    const session = encodeURIComponent((url.searchParams.get("session") ?? "default").slice(0, 64));
+    const path = m[2] === "/reset" ? "/api/talk/reset" : "/api/talk";
+    const r = await fetch(`${TALK}${path}?who=${who}&session=${session}`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": req.headers["content-type"] ?? "audio/webm" },
+      body: Buffer.concat(parts),
+    });
+    const j = (await r.json()) as { audio?: string | null };
+    if (j.audio) j.audio = j.audio.replace(/^\/api\/talk\/audio\//, "/talk/audio/");
+    return send(r.status, JSON.stringify(j));
+  } catch {
+    return send(502, JSON.stringify({ error: "the Talk server isn't answering" }));
+  }
+}
+
 function serveDreams(middlewares: { use: (path: string, fn: (req: any, res: any, next: () => void) => void) => void }) {
+  middlewares.use("/talk", (req, res) => void relayTalk(req, res));
   // errors from the headset (src/xr/report.ts) land in ~/Library/Logs/lucid-xr-errors.log, one JSON line each
   middlewares.use("/__log", (req, res) => {
     let body = "";

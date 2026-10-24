@@ -16,6 +16,7 @@ export interface Dream {
   voice?: string | null; // the speaking voice, separated from background noise and music
   captions?: string | null; // WebVTT of what the person says, in the clip's own time
   intent?: string | null; // what the user wants to do with this person ("teach me this strum")
+  talk?: { who: string } | null; // they can be talked to (apps/talk; their own consent, their cloned voice)
   experience?: string | null; // experience.json: the plan written from the intent
   createdAt?: string;
   updatedAt?: string; // set when a bundle is changed in place (recoloured, re-exported)

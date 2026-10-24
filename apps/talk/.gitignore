@@ -1,3 +1,4 @@
 # private: never commit
 .env
 persona.md
+persona-*.md
