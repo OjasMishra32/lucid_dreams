@@ -121,3 +121,37 @@ def test_validate_rejects_bool_and_infinite_fps():
     assert M.validate_motion_dict(d)
     d["fps"] = True
     assert M.validate_motion_dict(d)
+
+
+def test_expr_is_optional_and_roundtrips(tmp_path):
+    m = random_motion()
+    assert "expr" not in m.to_dict()["frames"][0]  # no expression: the field isn't written at all
+    m.expr = np.random.default_rng(5).normal(size=(m.num_frames, 10))
+    m.save(tmp_path / "motion.json")
+    back = M.Motion.load(tmp_path / "motion.json")
+    np.testing.assert_allclose(back.expr, m.expr, atol=1e-6)
+    assert M.Motion.from_dict(random_motion().to_dict()).expr is None
+
+
+def test_validate_checks_expr_shape_and_consistency():
+    d = random_motion(n=3).to_dict()
+    d["frames"][0]["expr"] = [0.0] * 10
+    assert any("expr" in e for e in M.validate_motion_dict(d))  # some frames have it, some don't
+    for f in d["frames"]:
+        f["expr"] = [0.0] * 10
+    assert M.validate_motion_dict(d) == []
+    d["frames"][1]["expr"] = [0.0] * 9
+    assert any("expr" in e for e in M.validate_motion_dict(d))
+
+
+def test_digs_params_carry_expression():
+    rng = np.random.default_rng(6)
+    hand_mean = rng.normal(scale=0.1, size=90)
+    packed = rng.normal(scale=0.3, size=(3, DIGS_PARAM_DIM))
+    packed[:, 0] = 1.0
+    packed[:, 70:80] = packed[0, 70:80]
+    m = M.from_digs_params(packed, fps=25, hand_mean=hand_mean)
+    np.testing.assert_allclose(m.expr, packed[:, 179:189])
+    np.testing.assert_allclose(M.to_digs_params(m, hand_mean)[:, 179:189], packed[:, 179:189])
+    packed[:, 179:189] = 0
+    assert M.from_digs_params(packed, fps=25, hand_mean=hand_mean).expr is None

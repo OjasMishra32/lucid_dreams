@@ -4,6 +4,7 @@ Conventions (to confirm with the Quest app):
 - root_t and root_q are SMPL-X `transl` and `global_orient`, applied exactly as the SMPL-X model applies them.
 - pose[0] (the pelvis) is always zero; the root rotation lives only in root_q, so nothing is applied twice.
 - pose holds absolute joint rotations, hands included (no hand-mean offset, no PCA).
+- expr (optional, every frame or none) is the 10 SMPL-X expression coefficients, e.g. for blinking.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from .rotations import aa_to_quat, quat_mul, quat_to_aa, rotate_by_quat, yaw_qua
 from .smplx_layout import (
     DIGS_BETAS,
     DIGS_BODY,
+    DIGS_EXPR,
     DIGS_EYES,
     DIGS_HANDS,
     DIGS_JAW,
@@ -37,6 +39,7 @@ class Motion:
     root_t: np.ndarray  # (N, 3)
     root_q: np.ndarray  # (N, 4) x, y, z, w
     pose: np.ndarray    # (N, 55, 3) axis-angle
+    expr: np.ndarray | None = None  # (N, 10) SMPL-X expression, optional
 
     @property
     def num_frames(self) -> int:
@@ -44,14 +47,11 @@ class Motion:
 
     def to_dict(self) -> dict:
         r = lambda a: np.round(np.asarray(a, dtype=np.float64), 6).tolist()
-        return {
-            "fps": self.fps,
-            "betas": r(self.betas),
-            "frames": [
-                {"root_t": r(t), "root_q": r(q), "pose": r(p)}
-                for t, q, p in zip(self.root_t, self.root_q, self.pose)
-            ],
-        }
+        frames = [{"root_t": r(t), "root_q": r(q), "pose": r(p)} for t, q, p in zip(self.root_t, self.root_q, self.pose)]
+        if self.expr is not None:
+            for f, e in zip(frames, self.expr):
+                f["expr"] = r(e)
+        return {"fps": self.fps, "betas": r(self.betas), "frames": frames}
 
     @classmethod
     def from_dict(cls, d: dict) -> Motion:
@@ -65,6 +65,7 @@ class Motion:
             root_t=np.asarray([f["root_t"] for f in frames], dtype=np.float64),
             root_q=np.asarray([f["root_q"] for f in frames], dtype=np.float64),
             pose=np.asarray([f["pose"] for f in frames], dtype=np.float64),
+            expr=np.asarray([f["expr"] for f in frames], dtype=np.float64) if "expr" in frames[0] else None,
         )
 
     def save(self, path: str | Path) -> None:
@@ -114,6 +115,11 @@ def validate_motion_dict(d: dict) -> list[str]:
         pose = f.get("pose")
         if not (isinstance(pose, list) and len(pose) == NUM_JOINTS and all(is_vec(p, 3) for p in pose)):
             errors.append(f"frame {i}: pose must be {NUM_JOINTS} x 3 finite numbers")
+        if "expr" in f and not is_vec(f["expr"], 10):
+            errors.append(f"frame {i}: expr must be 10 finite numbers")
+    with_expr = sum(isinstance(f, dict) and "expr" in f for f in frames)
+    if 0 < with_expr < len(frames):
+        errors.append(f"expr is in {with_expr} of {len(frames)} frames; it goes in every frame or none")
     return errors
 
 
@@ -140,11 +146,12 @@ def from_digs_params(packed: np.ndarray, fps: float, hand_mean: np.ndarray) -> M
         root_t=packed[:, DIGS_TRANS].copy(),
         root_q=aa_to_quat(packed[:, DIGS_ROOT]),
         pose=pose,
+        expr=packed[:, DIGS_EXPR].copy() if packed[:, DIGS_EXPR].any() else None,
     )
 
 
 def to_digs_params(m: Motion, hand_mean: np.ndarray) -> np.ndarray:
-    """Motion to DiGS-Avatar packed frames (N, 189), e.g. to drive a DiGS render. Expression is zero."""
+    """Motion to DiGS-Avatar packed frames (N, 189), e.g. to drive a DiGS render. Expression is zero without expr."""
     n = m.num_frames
     out = np.zeros((n, DIGS_PARAM_DIM))
     out[:, DIGS_SCALE] = 1.0
@@ -155,6 +162,8 @@ def to_digs_params(m: Motion, hand_mean: np.ndarray) -> np.ndarray:
     out[:, DIGS_HANDS] = m.pose[:, 25:55].reshape(n, 90) - np.asarray(hand_mean).reshape(90)
     out[:, DIGS_JAW] = m.pose[:, 22]
     out[:, DIGS_EYES] = m.pose[:, 23:25].reshape(n, 6)
+    if m.expr is not None:
+        out[:, DIGS_EXPR] = m.expr
     return out
 
 

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from lucid_avatars.idle import idle_loop
 from lucid_avatars.motion import validate_motion_dict
@@ -41,3 +42,17 @@ def test_idle_loop_wraps_when_seconds_is_not_whole_frames():
     m = idle_loop(betas=np.zeros(10), seconds=0.5, fps=25)
     steps = np.abs(np.diff(m.pose, axis=0)).max()
     assert np.abs(m.pose[0] - m.pose[-1]).max() <= steps * 1.05
+
+
+def test_idle_loop_blinks_along_the_given_direction():
+    closed = np.zeros(10)
+    closed[2] = 1.5
+    m = idle_loop(np.zeros(10), seconds=8.0, fps=30, blink_expr=closed)
+    assert validate_motion_dict(m.to_dict()) == []
+    amount = m.expr[:, 2] / 1.5
+    np.testing.assert_allclose(np.delete(m.expr, 2, axis=1), 0)
+    assert amount.max() == pytest.approx(1.0) and amount.min() == 0.0
+    closed_frames = int((amount > 0.5).sum())
+    assert 2 <= closed_frames <= 12  # a couple of quick blinks in 8 s, not a long squint
+    assert amount[0] == 0.0 and amount[-1] == 0.0  # wraps with eyes open
+    assert idle_loop(np.zeros(10), seconds=2.0).expr is None

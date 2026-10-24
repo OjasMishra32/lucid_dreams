@@ -81,4 +81,6 @@ M_j = G_j [I | -rest_j] + [0 | root_t]         x = sum_k (w_k / 255) M_{i_k} x_r
 Rotate each Gaussian's own rotation by the blended M's 3x3 as well; scales stay. Weights come from the SMPL-X
 template: each Gaussian blends its 4 nearest rest vertices' weights by inverse distance, top 4 joints kept.
 
-Still open: an optional `expr` (10 floats per frame) in `motion.json` for blinking.
+Optional `expr` (10 SMPL-X expression floats, in every frame or none) carries blinks: `idle_loop(..., blink_expr=v)`
+blinks every few seconds along `v`, the expression that closes this avatar's eyes. DiGS renders it; a skinning-only
+player needs per-Gaussian expression blendshapes to show it, which `skin.bin` doesn't carry, so it can ignore `expr`.
