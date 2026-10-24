@@ -1,6 +1,7 @@
 // The pure half of qa/run.mjs: the status model, parsing of the test runners' output, the table and the exit rule.
 // No I/O besides scanBuilt (reads src/court/*.ts); everything else takes plain objects, so lib.test.mjs needs no browser.
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, writeSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -33,7 +34,9 @@ export function parseE2e(text) {
   const out = [];
   for (const line of String(text).split("\n")) {
     const m = line.match(/^(PASS|FAIL) (\S+): (.+?): (.*)$/);
-    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsOf(m[3]), pending: m[1] === "FAIL" && /\bnot (written|built|implemented)( yet)?\b/i.test(m[4]) });
+    // a check's name can hold colons ("arrival: opaque again (P33)"), so name and detail can't be split reliably:
+    // the tags come from the whole line; the placeholder marker is the harness's exact ": not written yet"
+    if (m) out.push({ scenario: m[2], ok: m[1] === "PASS", what: m[3], detail: m[4], tags: tagsOf(line.slice(m[1].length + m[2].length + 2)), pending: m[1] === "FAIL" && /: not written yet\b/.test(line) });
   }
   return out;
 }
@@ -51,14 +54,18 @@ export function parseE2eSkips(text) {
 /**
  * What one e2e.mjs child run says about each scenario it was asked for: { name: { exists, ran, notYet?, lines } }.
  * A scenario e2e skipped is not run (its reason is kept); one that never printed its closing "console clean" line did
- * not finish (a crash, a kill, a timeout) and FAILs, whatever PASS lines it printed before. A child that died (any exit but 0, 1 or 3,
- * or "E2E RUN FAILED") leaves its unfinished scenarios FAILed; an exit 1 with no failing check fails every scenario
- * that did not skip.
+ * not finish (a crash, a kill, a timeout) and FAILs, whatever PASS lines it printed before. A child that did not end cleanly (an exit
+ * but 0, 1 or 3, "E2E RUN FAILED", no summary line) FAILs every scenario that did not skip; so does exit 1 with no
+ * failing line at all.
  */
 export function assignE2eRun(names, { stdout = "", stderr = "", code }) {
   const lines = parseE2e(stdout);
   const skips = parseE2eSkips(stdout);
-  const oddExit = code === 1 && !lines.some((l) => !l.ok); // exit 1 says a check failed, but none did
+  // e2e.mjs ends with one summary line, then exits 0 (all passed), 1 (a check failed) or 3 (all skipped): anything
+  // else (a kill, a crash, exit 2), a missing summary, or exit 1 with no real failing check means the run is not trustworthy
+  const completed = /^E2E (OK|FAIL|NOTHING CHECKED)/m.test(stdout) && !/E2E RUN FAILED/.test(`${stdout}\n${stderr}`);
+  const badRun = !(code === 0 || code === 1 || code === 3) || !completed;
+  const oddExit = code === 1 && !lines.some((l) => !l.ok); // a placeholder FAIL counts: e2e exits 1 for it
   const reason = `child exit ${code ?? "killed"}${stderr.trim() ? `: ${stderr.trim().split("\n")[0].slice(0, 80)}` : ""}`;
   const out = {};
   for (const name of names) {
@@ -69,7 +76,7 @@ export function assignE2eRun(names, { stdout = "", stderr = "", code }) {
       continue;
     }
     const finished = mine.some((l) => /^console clean/.test(l.what));
-    const extra = !finished || oddExit ? [{ scenario: name, ok: false, what: "runs", detail: finished ? `${reason}, no failing check` : `did not finish (${reason})`, tags: [], pending: false }] : [];
+    const extra = !finished || badRun || oddExit ? [{ scenario: name, ok: false, what: "runs", detail: !finished ? `did not finish (${reason})` : badRun ? `the run did not end cleanly (${reason})` : `${reason}, no failing check`, tags: [], pending: false }] : [];
     out[name] = { exists: true, ran: true, lines: [...mine, ...extra] };
   }
   return out;
@@ -148,6 +155,9 @@ export function judgeFallback(rows, runs, coverage = {}) {
     if (!names.length) return { id, status: NOT_YET, measured: "no e2e scenario checks this row yet" };
     const ran = names.filter((n) => runs[n]?.ran);
     if (!ran.length) return { id, status: NOT_YET, measured: `${names.join("/")}: ${runs[names[0]]?.notYet ?? "not run"}` };
+    // a real FAIL tagged with this row fails it whichever scenario printed it (a P25 FAIL in `room`, say)
+    const anywhere = Object.values(runs).filter((r) => r.ran).flatMap((r) => r.lines).filter((l) => l.tags.includes(id) && !l.ok && !l.pending);
+    if (anywhere.length) return { id, status: FAIL, measured: short(anywhere.map((l) => `${l.scenario}: ${l.detail}`).join("; ")) };
     return { id, ...judgeRowLines(ran.flatMap((n) => runs[n].lines), id) };
   });
   const status = combine(per.map((p) => p.status));
@@ -342,7 +352,8 @@ export class ChildRegistry {
   add(child, { group = false } = {}) {
     const entry = { child, group };
     this.children.add(entry);
-    child.once("exit", () => this.children.delete(entry));
+    // a group stays until killAll: its leader exiting leaves descendants in the group, and kill(-pgid) still reaches them
+    if (!group) child.once("exit", () => this.children.delete(entry));
     return child;
   }
   killAll() {
@@ -361,4 +372,24 @@ export class ChildRegistry {
 export function withDeadline(promise, ms, label) {
   let timer;
   return Promise.race([promise, new Promise((_, fail) => (timer = setTimeout(() => fail(new Error(`${label} timed out after ${Math.round(ms / 1000)} s`)), ms)))]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Write a file under a fresh random name (O_EXCL, never following a link) and rename it into place: a symlink at `path`
+ * is replaced, not written through, so an output folder can never be used to overwrite some other file.
+ */
+export function writeFresh(path, data) {
+  const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
+    writeSync(fd, data);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, path);
+}
+
+/** Where the "latest run" pointer goes: beside the run folder's real location, never beside a symlink's spelling. */
+export function latestPath(out) {
+  return join(dirname(realpathLoose(out)), "latest.txt");
 }

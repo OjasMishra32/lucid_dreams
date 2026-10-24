@@ -14,14 +14,14 @@
 // scripts/court/scenarios/ (each declares `needs`: court.ts modules that must be BUILT); they run through e2e.mjs
 // (`--only <names>`, `--bundle`, `--query` for a fallback flag). checklist.json has each row's checks and the fallback flags.
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { children } from "./harness.mjs";
 import { QA_SCENARIOS, runFallback, STANDIN } from "./scenarios.mjs";
 import {
-  assignE2eRun, checkoutRoots, discoverScenarios, exitCode, overlapsReal, parseBundleArg, parseTap, renderTable, resolveRow, scanBuilt, suiteStatus, summarize, validateChecklist,
+  assignE2eRun, checkoutRoots, discoverScenarios, exitCode, overlapsReal, parseBundleArg, parseTap, realpathLoose, latestPath, renderTable, resolveRow, scanBuilt, suiteStatus, summarize, validateChecklist, writeFresh,
 } from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -138,7 +138,7 @@ async function runE2e(names, query = "", suffix = "e2e") {
   if (!names.length) return {};
   const argv = [join(COURT, "e2e.mjs"), "--only", names.join(","), "--out", e2eRunOut(suffix), ...(BUNDLE ? ["--bundle", BUNDLE] : []), ...(query ? ["--query", query] : [])];
   const r = await run(process.execPath, argv, { timeoutS: 240 * names.length + 90 });
-  writeFileSync(join(OUT, `${suffix}.log`), `${r.stdout}\n${r.stderr}`);
+  writeFresh(join(OUT, `${suffix}.log`), `${r.stdout}\n${r.stderr}`);
   return assignE2eRun(names, r);
 }
 
@@ -237,10 +237,10 @@ const fails = [...results, ...suites, ...scenarios, ...fallbacks].filter((r) => 
 if (fails.length) out.push("FAIL detail:", ...fails.map((f) => `  ${f.id}: ${f.measured}`));
 out.push(`exit ${code}   results: ${OUT}`);
 const text = out.join("\n");
-writeFileSync(join(OUT, "results.json"), JSON.stringify({ at: new Date().toISOString(), commit: git("rev-parse", "HEAD"), bundle: BUNDLE ?? "standin", counts, ...report }, null, 2));
-writeFileSync(join(OUT, "table.txt"), `${text}\n`);
+writeFresh(join(OUT, "results.json"), JSON.stringify({ at: new Date().toISOString(), commit: git("rev-parse", "HEAD"), bundle: BUNDLE ?? "standin", counts, ...report }, null, 2));
+writeFresh(join(OUT, "table.txt"), `${text}\n`);
 try {
-  writeFileSync(join(dirname(OUT), "latest.txt"), `${OUT}\n`);
+  writeFresh(latestPath(OUT), `${realpathLoose(OUT)}\n`);
 } catch {
   // the pointer is a convenience
 }

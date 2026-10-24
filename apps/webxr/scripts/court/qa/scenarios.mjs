@@ -5,7 +5,7 @@
 //                 flag's own P-rows.
 // never-public returns lines { ok, what, detail, tags } like e2e.mjs prints.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -32,26 +32,53 @@ function get(host, port, path, headers = {}, timeout = 5000) {
 }
 
 /**
- * Paths that climb out of the bundle folder (percent-encoded dots, 1 to 4 levels up: the folder's parent, its parent's
- * and so on) and come back down to the canary file planted in the stand-in's parent folder.
+ * Raw request paths that climb out of the bundle folder and come back down to `canaryFile`, 1 to 3 levels up. The slashes
+ * are percent-encoded (%2f), because a server's URL parser collapses "%2e%2e/" before the handler ever sees it, so those
+ * probes test the parser, not the bundle handler; "..%2f" survives the parser and only the handler's own decode and
+ * containment check stand in the way. Send them with a raw http.request (get below), which normalises nothing.
  */
 export function traversalPaths(bundleDir, canaryFile) {
   const out = [];
   let ancestor = bundleDir;
-  for (let n = 1; n <= 4; n++) {
+  for (let n = 1; n <= 3; n++) {
     ancestor = dirname(ancestor);
-    out.push(`/bundle/${"%2e%2e/".repeat(n)}${relative(ancestor, canaryFile).split("/").join("/")}`);
+    const down = relative(ancestor, canaryFile).split("/").join("%2f");
+    for (const up of ["..%2f", "%2e%2e%2f", ".%2e%2f"]) out.push(`/bundle/${up.repeat(n)}${down}`);
   }
   return out;
+}
+
+/** The probes that got the canary (or a bundle file) back: [`<path> -> <status> <type> <bytes>`]. */
+export async function probeLeaks(port, paths, token) {
+  const leaked = [];
+  for (const p of paths) {
+    const r = await get("127.0.0.1", port, p);
+    if (leaksBundle(r, { tokens: [token] })) leaked.push(`${p} -> ${r.status} ${(r.type ?? "").split(";")[0]} ${r.body.length} bytes`);
+  }
+  return leaked;
+}
+
+/**
+ * Everything the P36 server check writes lives in one temp folder outside every checkout: the dist stub, a one-file
+ * bundle (the stand-in's court.json) and the canary one level above the bundle folder.
+ */
+export function makeSandbox() {
+  const tmp = mkdtempSync(join(tmpdir(), "qa-p36-"));
+  const dist = join(tmp, "dist");
+  const bundle = join(tmp, "bundle");
+  mkdirSync(dist);
+  mkdirSync(bundle);
+  writeFileSync(join(dist, "index.html"), "<!doctype html><title>qa</title>");
+  copyFileSync(join(STANDIN, "court.json"), join(bundle, "court.json"));
+  return { tmp, dist, bundle, canary: join(tmp, "canary.txt") };
 }
 
 async function serveCheck(extra, label) {
   const lines = [];
   const add = (ok, what, detail) => lines.push({ ok, what: `${what} (P36)`, detail: `${label}: ${detail}`, tags: ["P36"] });
-  const dist = mkdtempSync(join(tmpdir(), "qa-dist-"));
-  writeFileSync(join(dist, "index.html"), "<!doctype html><title>qa</title>");
+  const { tmp, dist, bundle, canary } = makeSandbox();
   const port = await freePort();
-  const child = children.add(spawn(process.execPath, [SERVE, "--bundle", STANDIN, "--standin", "--dist", dist, "--port", String(port), ...extra], { stdio: ["ignore", "pipe", "pipe"] }));
+  const child = children.add(spawn(process.execPath, [SERVE, "--bundle", bundle, "--dist", dist, "--port", String(port), ...extra], { stdio: ["ignore", "pipe", "pipe"] }));
   let log = "";
   child.stdout.on("data", (d) => (log += d));
   child.stderr.on("data", (d) => (log += d));
@@ -68,20 +95,11 @@ async function serveCheck(extra, label) {
     add(evil.status >= 400 && evil.status < 500, "serve.mjs refuses a foreign Host", `Host evil.example -> ${evil.status ?? evil.error}`);
     // a leak is the canary file's own content (or a bundle file): vite's index.html fallback (200 for any unknown path
     // in --dev) is the app shell, not a leak
-    const canary = join(dirname(STANDIN), `qa-canary-${randomBytes(6).toString("hex")}.txt`);
     const token = `QA-CANARY-${randomBytes(12).toString("hex")}`;
     writeFileSync(canary, token);
-    const paths = traversalPaths(STANDIN, canary);
-    const leaked = [];
-    try {
-      for (const p of paths) {
-        const r = await get("127.0.0.1", port, p);
-        if (leaksBundle(r, { tokens: [token] })) leaked.push(`${p} -> ${r.status} ${r.type.split(";")[0]} ${r.body.length} bytes`);
-      }
-    } finally {
-      rmSync(canary, { force: true });
-    }
-    add(!leaked.length, "serve.mjs does not serve a file outside the bundle folder", leaked.length ? `served: ${leaked[0]}` : `${paths.length} climbing paths to a planted canary: none served it`);
+    const paths = traversalPaths(bundle, canary);
+    const leaked = await probeLeaks(port, paths, token);
+    add(!leaked.length, "serve.mjs does not serve a file outside the bundle folder", leaked.length ? `served: ${leaked[0]}` : `${paths.length} raw climbing paths to a planted canary: none served it`);
     const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === "IPv4" && !i.internal);
     if (!lan) add(true, "serve.mjs refuses the LAN address", "no LAN interface on this machine (Host check above is the only guard tested)");
     else {
@@ -90,6 +108,7 @@ async function serveCheck(extra, label) {
     }
   } finally {
     child.kill();
+    rmSync(tmp, { recursive: true, force: true });
   }
   return lines;
 }
@@ -110,7 +129,7 @@ async function viteCheck() {
 }
 
 async function neverPublic() {
-  const lines = await serveCheck([], "serve.mjs --standin");
+  const lines = await serveCheck([], "serve.mjs");
   if (/"--dev"/.test(readFileSync(SERVE, "utf8"))) lines.push(...(await serveCheck(["--dev"], "serve.mjs --dev")));
   lines.push(...(await viteCheck()));
   return { lines };

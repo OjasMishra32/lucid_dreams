@@ -214,8 +214,8 @@ test("validateChecklist: every P1-P44 once, with the required fields, no broadca
 
 // ---- round 2: review findings (each test names its finding) ----
 import { ChildRegistry, assignE2eRun, checkoutRoots, discoverScenarios as discover, judgeFallback, judgeRowLines, leaksBundle, overlapsReal, parseBundleArg, parseE2eSkips, realpathLoose, suiteStatus, withDeadline } from "./lib.mjs";
-import { spawn } from "node:child_process";
-import { readdirSync, symlinkSync, realpathSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { readdirSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { flagImplemented, runFallback, traversalPaths } from "./scenarios.mjs";
@@ -257,7 +257,6 @@ test("[3] parseBundleArg: a folder is accepted and resolved, a URL is refused", 
 test("[4] assignE2eRun: a child that died leaves its unfinished scenarios FAILed, whatever PASS lines came first", () => {
   const stdout = ["PASS smoke: opaque (P33): alpha min 255 over 326 of 326 frames read back", "PASS smoke: console clean (P25): 0 errors, 0 warnings", "PASS layers: a (P43): fine"].join("\n");
   const r = assignE2eRun(["smoke", "layers"], { stdout, stderr: "boom", code: null });
-  assert.equal(r.smoke.lines.some((l) => !l.ok), false, "smoke finished");
   assert.equal(r.layers.lines.at(-1).ok, false);
   assert.match(r.layers.lines.at(-1).detail, /did not finish.*killed/);
   const row = { id: "P43", threshold: "t", checks: [{ kind: "e2e", scenario: "layers" }] };
@@ -267,14 +266,14 @@ test("[4] assignE2eRun: a child that died leaves its unfinished scenarios FAILed
 });
 
 test("[4] assignE2eRun: finished scenarios keep their lines, skips are not-yet, exit 1 with no failing check fails", () => {
-  const done = ["PASS smoke: x (P33): ok", "FAIL smoke: console clean (P25): 2 errors"].join("\n");
+  const done = ["PASS smoke: x (P33): ok", "FAIL smoke: console clean (P25): 2 errors", "E2E FAIL (1 checks failed)"].join("\n");
   const r = assignE2eRun(["smoke"], { stdout: done, code: 1 });
   assert.equal(r.smoke.ran, true);
   assert.equal(r.smoke.lines.length, 2);
   const skipped = assignE2eRun(["layers"], { stdout: "SKIP layers: waiting on video (BUILT false; owner D)", code: 3 });
   assert.equal(skipped.layers.ran, false);
   assert.match(skipped.layers.notYet, /waiting on video/);
-  const odd = assignE2eRun(["smoke"], { stdout: "PASS smoke: console clean (P25): ok", code: 1 });
+  const odd = assignE2eRun(["smoke"], { stdout: "PASS smoke: console clean (P25): ok\nE2E FAIL (0 checks failed)", code: 1 });
   assert.equal(odd.smoke.lines.at(-1).ok, false, "exit 1 but nothing failed");
   assert.equal(parseE2eSkips("SKIP a: b").length, 1);
 });
@@ -300,7 +299,7 @@ test("[5] traversalPaths climb out of the bundle folder and land on the canary",
   const bundle = "/r/apps/webxr/scripts/court/out/standin";
   const canary = "/r/apps/webxr/scripts/court/out/qa-canary-1.txt";
   const paths = traversalPaths(bundle, canary);
-  assert.equal(paths.length, 4);
+  assert.equal(paths.length, 9);
   for (const p of paths) {
     const decoded = decodeURIComponent(p).slice("/bundle".length);
     assert.equal(resolvePath(bundle, `.${decoded}`), canary);
@@ -421,4 +420,136 @@ test("[6] a row is judged only on its own scenarios: smoke's watch-phase P33 doe
   assert.match(v.measured, /stub: world/);
   assert.equal(judgeFallback(["P33"], smokeOnly, { P33: ["smoke"] }).status, "PASS");
   assert.equal(judgeFallback(["P11"], smokeOnly, {}).status, "NOT-YET");
+});
+
+// ---- round 3 ----
+import { createServer } from "node:http";
+import { readFileSync as readFile, existsSync as exists, lstatSync, writeFileSync as writeFile } from "node:fs";
+import { latestPath, writeFresh } from "./lib.mjs";
+import { makeSandbox, probeLeaks } from "./scenarios.mjs";
+
+test("[r3-1] a check name with colons keeps its P tags (tags come from the whole line)", () => {
+  const l = parseE2e("PASS room: arrival: opaque again (P33): alpha min 255")[0];
+  assert.deepEqual(l.tags, ["P33"]);
+  assert.equal(l.scenario, "room");
+  assert.deepEqual(parseE2e("PASS room: watching: out in 0.6 s (P34): 43 frames")[0].tags, ["P34"]);
+});
+
+test("[r3-2] only the harness's own 'not written yet' marker is pending; a real exception is not", () => {
+  assert.equal(parseE2e("FAIL smoke: runs: TypeError: method not implemented")[0].pending, false);
+  assert.equal(parseE2e("FAIL smoke: runs: feature is not built yet (stream D)")[0].pending, false);
+  assert.equal(parseE2e("FAIL room: P35: the edge opens the room: not written yet (stream E): walk the head")[0].pending, true);
+  const row = { id: "P25", threshold: "t", checks: [{ kind: "e2e", scenario: "smoke" }] };
+  const lines = parseE2e("FAIL smoke: runs: method not implemented\nFAIL smoke: console clean (P25): 1 errors");
+  assert.equal(resolveRow(row, ctx({ e2e: { scenarios: { smoke: { exists: true, ran: true, lines } } } })).status, "FAIL");
+});
+
+test("[r3-3] any exit but 0, 1 or 3, a missing summary, or exit 1 with only a placeholder FAIL and no summary, fails the run", () => {
+  const body = "PASS smoke: x (P33): ok\nPASS smoke: console clean (P25): 0 errors, 0 warnings";
+  const clean = `${body}\nE2E OK (reports in x)`;
+  assert.equal(assignE2eRun(["smoke"], { stdout: clean, code: 0 }).smoke.lines.every((l) => l.ok), true);
+  for (const code of [null, 2, 137]) assert.equal(assignE2eRun(["smoke"], { stdout: clean, code }).smoke.lines.some((l) => !l.ok), true, `exit ${code}`);
+  assert.equal(assignE2eRun(["smoke"], { stdout: body, code: 0 }).smoke.lines.some((l) => !l.ok), true, "no summary line");
+  const placeholder = "FAIL room: P35: the edge: not written yet (stream E): x\nPASS room: console clean (P25): ok";
+  assert.equal(assignE2eRun(["room"], { stdout: `${placeholder}\nE2E FAIL (1 checks failed; reports in x)`, code: 1 }).room.lines.some((l) => !l.ok && !l.pending), false, "a placeholder alone is a clean exit 1");
+  assert.equal(assignE2eRun(["room"], { stdout: placeholder, stderr: "E2E RUN FAILED: Error: x", code: 1 }).room.lines.some((l) => !l.ok && !l.pending), true, "a crash after a placeholder");
+});
+
+test("[r3-4] a FAIL tagged with a row fails that row whichever scenario printed it", () => {
+  const runs = {
+    smoke: { ran: true, lines: [{ scenario: "smoke", ok: true, what: "console clean (P25)", detail: "0 errors", tags: ["P25"], pending: false }] },
+    room: { ran: true, lines: [{ scenario: "room", ok: false, what: "console clean (P25)", detail: "3 errors", tags: ["P25"], pending: false }] },
+  };
+  const v = judgeFallback(["P25"], runs, { P25: ["smoke"] });
+  assert.equal(v.status, "FAIL");
+  assert.match(v.measured, /room: 3 errors/);
+});
+
+test("[r3-5] killAll reaches a group's descendants after its leader has exited", async () => {
+  const reg = new ChildRegistry();
+  const leader = reg.add(spawn("sh", ["-c", "sleep 60 & echo $!"], { stdio: ["ignore", "pipe", "ignore"], detached: true }), { group: true });
+  let out = "";
+  leader.stdout.on("data", (d) => (out += d));
+  await new Promise((ok) => leader.once("exit", ok));
+  const grandchild = Number(out.trim());
+  assert.ok(grandchild > 0);
+  process.kill(grandchild, 0); // still alive after the leader exited
+  reg.killAll();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.throws(() => process.kill(grandchild, 0), /ESRCH/);
+});
+
+test("[r3-6] writeFresh replaces a symlink instead of writing through it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "qa-wf-"));
+  const victim = join(dir, "victim.txt");
+  writeFile(victim, "keep");
+  symlinkSync(victim, join(dir, "results.json"));
+  writeFresh(join(dir, "results.json"), "new");
+  assert.equal(readFile(victim, "utf8"), "keep");
+  assert.equal(readFile(join(dir, "results.json"), "utf8"), "new");
+  assert.equal(lstatSync(join(dir, "results.json")).isSymbolicLink(), false);
+  assert.deepEqual(readdirSync(dir).filter((n) => n.endsWith(".tmp")), []);
+});
+
+test("[r3-7] latestPath is beside the run folder's real location, not its symlinked spelling", () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "qa-lp-")));
+  mkdirSync(join(base, "real", "runs"), { recursive: true });
+  mkdirSync(join(base, "other"));
+  symlinkSync(join(base, "real", "runs"), join(base, "other", "link"));
+  assert.equal(latestPath(join(base, "other", "link", "t1")), join(base, "real", "runs", "latest.txt"));
+});
+
+/** A bundle handler shaped like serve.mjs's: the URL parser first, then decode, then read under the bundle folder. */
+function handler(bundleDir, { contain }) {
+  return createServer((req, res) => {
+    const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    if (!path.startsWith("/bundle/")) return res.writeHead(404).end();
+    const file = resolvePath(bundleDir, `.${path.slice("/bundle".length)}`);
+    if (contain && !(file === bundleDir || file.startsWith(`${bundleDir}/`))) return res.writeHead(404).end();
+    try {
+      res.writeHead(200, { "content-type": "text/plain" }).end(readFile(file));
+    } catch {
+      res.writeHead(404).end();
+    }
+  });
+}
+const listen = (s) => new Promise((ok) => s.listen(0, "127.0.0.1", () => ok(s.address().port)));
+
+test("[r3-8] the P36 probes reach a handler's own containment: a handler without it is caught, one with it is not, and %2e%2e/ is normalised away", async () => {
+  const sb = makeSandbox();
+  const token = "QA-CANARY-test";
+  writeFile(sb.canary, token);
+  const bundle = realpathSync(sb.bundle);
+  const paths = traversalPaths(bundle, join(realpathSync(sb.tmp), "canary.txt"));
+  const broken = handler(bundle, { contain: false });
+  const good = handler(bundle, { contain: true });
+  const [pb, pg] = [await listen(broken), await listen(good)];
+  try {
+    assert.ok((await probeLeaks(pb, paths, token)).length > 0, "a handler with no containment check serves the canary");
+    assert.deepEqual(await probeLeaks(pg, paths, token), []);
+    const old = ["/bundle/%2e%2e/canary.txt", "/bundle/%2e%2e/%2e%2e/canary.txt"];
+    assert.deepEqual(await probeLeaks(pb, old, token), [], "the URL parser collapses these before the handler: they prove nothing");
+  } finally {
+    broken.close();
+    good.close();
+    rmSync(sb.tmp, { recursive: true, force: true });
+  }
+});
+
+test("[r3-9] the P36 sandbox (bundle and canary) is in the temp folder, not in any checkout", () => {
+  const sb = makeSandbox();
+  try {
+    const roots = checkoutRoots(resolvePath(HERE_DIR, "../../../../.."), (...a) => {
+      try {
+        return execFileSync("git", a, { cwd: HERE_DIR, encoding: "utf8" }).trim();
+      } catch {
+        return "?";
+      }
+    });
+    for (const p of [sb.bundle, sb.canary, sb.dist]) for (const r of roots) assert.equal(overlapsReal(p, r), false, `${p} overlaps ${r}`);
+    assert.ok(exists(join(sb.bundle, "court.json")));
+    assert.equal(dirname(sb.canary), sb.tmp, "the canary sits one level above the bundle folder");
+  } finally {
+    rmSync(sb.tmp, { recursive: true, force: true });
+  }
 });
