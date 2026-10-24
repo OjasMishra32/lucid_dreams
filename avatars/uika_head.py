@@ -67,6 +67,8 @@ from lucid_avatars.smplx_layout import J
 # speaking. These are the chess opponents the project lead approved; add one only with their photos' licence.
 OPPONENTS = {
     "magnus-carlsen": "Photos: Ralf Roletschek, 2015-10-10, CC BY-SA 3.0 (Wikimedia Commons)",
+    "bobby-fischer": "Photos: 1966 portrait (AP, John Lent), public domain; Amsterdam, March 1972, Anefo / Nationaal "
+                     "Archief (Bert Verhoeff, W. Punt), CC0; Wikimedia Commons; black and white, colourised with DDColor",
 }
 
 GAUSSIANS_FILE = "gaussians.npz"  # in the teacher folder: UIKA's own Gaussians at rest, in its FLAME frame

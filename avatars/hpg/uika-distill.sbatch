@@ -12,7 +12,9 @@
 # its head distilled onto the avatar's own body (avatars/uika_head.py: teacher, distill, finish, judge; about 6 min on
 # an L4 for Magnus: UIKA 1.5 min, the fit 2.5 min, the judge 1 min).
 #   sbatch --export=ALL,NAME=magnus-carlsen,USE=c11:c31:c42:c46 avatars/hpg/uika-distill.sbatch
-# AVATAR=<bundle> the body (default $NAME-lhm); ID=<new bundle> (default $NAME-uika); STAGES=teacher:distill:judge;
+# AVATAR=<bundle> the body (default $NAME-lhm) in DREAMS (default dreams/); ID=<new bundle> (default $NAME-uika), written
+# next to it; STAGES=teacher:distill:judge; FACES=<photo folder>; CLEANUP=<lhmpp_cleanup.py flags for the body>;
+# PREP=<LHM++ prep/raw photos for its identity yardstick>;
 # STEPS=<fit steps>; SIZE=<teacher px, default 1024>; CODE=<avatars folder> (default the repo checkout).
 # Who: consenting people, or the chess opponents the project lead approved from freely licensed photos (OPPONENTS in
 # uika_head.py; AGENTS.md rule 5). The gate runs before anything is read.
@@ -32,7 +34,9 @@ NEW=${ID:-$NAME-uika}
 STAGES=${STAGES:-teacher,distill,judge}
 STAGES=${STAGES//:/,}  # sbatch --export splits on commas: STAGES=distill:judge
 CODE=${CODE:-$L/repos/lucid_dreams/avatars}
-DREAMS=$L/data/avatars/dreams FACES=$L/data/avatars/faces/$NAME TEACHER=$L/data/avatars/heads/$NAME/uika
+DREAMS=${DREAMS:-$L/data/avatars/dreams} FACES=${FACES:-$L/data/avatars/faces/$NAME}
+TEACHER=$L/data/avatars/heads/$NAME/uika HELD=$L/data/avatars/dreams/.held
+PREP=${PREP:-$L/data/avatars/lhmpp/$NAME/prep/raw}
 JUDGE=$L/data/avatars/heads/$NAME/judge-$NEW
 U=$L/repos/UIKA E=$L/envs/uika M=$L/models/uika
 UIKA_REF=${UIKA_REF:-c539f41df842ff21faba49cd60e65e73774e8fbd}
@@ -45,7 +49,7 @@ PY=$E/bin/python
 $L/envs/lam/bin/python -c "
 import sys; sys.path.insert(0, '$CODE')
 from uika_head import gate_errors
-e = gate_errors('$NAME', '$DREAMS/.held')
+e = gate_errors('$NAME', '$HELD')
 print('REFUSED', *e, sep='\n     ') if e else print('[gate] $NAME may go through')
 sys.exit(2 if e else 0)"
 
@@ -110,23 +114,26 @@ SMPLX=$L/models/smplx/SMPLX_NEUTRAL.npz IDS=$L/models/smplx/SMPL-X__FLAME_vertex
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 if [[ ",$STAGES," == *",teacher,"* ]]; then
   (cd $U && $PY -u $CODE/uika_head.py teacher --person "$NAME" --photos "$FACES" ${USE:+--use "$USE"} \
-    --out "$TEACHER" --uika $U --held "$DREAMS/.held" ${SIZE:+--size "$SIZE"}) 2>&1 | grep -vE "NVML|warnings.warn"
+    --out "$TEACHER" --uika $U --held "$HELD" ${SIZE:+--size "$SIZE"}) 2>&1 | grep -vE "NVML|warnings.warn"
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 fi
 if [[ ",$STAGES," == *",distill,"* ]]; then
   $PY -u $CODE/uika_head.py distill --person "$NAME" --avatar "$DREAMS/$AVATAR" --teacher "$TEACHER" \
     --smplx "$SMPLX" --flame-ids "$IDS" --flame-masks $M/human_parametric_models/FLAME_masks.pkl --id "$NEW" \
-    --held "$DREAMS/.held" ${STEPS:+--steps "$STEPS"} \
+    --held "$HELD" ${STEPS:+--steps "$STEPS"} \
     ${SEAM_OFFSET:+--seam-offset "$SEAM_OFFSET"} 2>&1 | grep -vE "NVML|warnings.warn"
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
-  $PY -u $CODE/lhmpp_cleanup.py "$DREAMS/$NEW" --smplx "$SMPLX"
+  # CLEANUP: the body's own flags (e.g. "--body-only --mute 0.35 --flatten 0.35 --deflate 0.5"); the head is kept
+  # either way (finish restores its fitted colours)
+  # shellcheck disable=SC2086
+  $PY -u $CODE/lhmpp_cleanup.py "$DREAMS/$NEW" --smplx "$SMPLX" ${CLEANUP:-}
   $PY -u $CODE/uika_head.py finish "$DREAMS/$NEW" 2>&1 | grep -vE "NVML|warnings.warn"
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 fi
 if [[ ",$STAGES," == *",judge,"* ]]; then
   # LHM++'s yardstick (its ArcFace, on the LHM++ prep photos) runs from its checkout, which reads ./pretrained_models
   (cd $L/repos/LHM-plusplus && $PY -u $CODE/uika_head.py judge --old "$DREAMS/$AVATAR" --new "$DREAMS/$NEW" \
-    --photos "$FACES" ${USE:+--use "$USE"} --prep $L/data/avatars/lhmpp/$NAME/prep/raw --teacher "$TEACHER" \
+    --photos "$FACES" ${USE:+--use "$USE"} --prep "$PREP" --teacher "$TEACHER" \
     --insightface-root $L/models/insightface --out "$JUDGE") 2>&1 | grep -vE "NVML|warnings.warn"
   [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
 fi
