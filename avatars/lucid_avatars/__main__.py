@@ -64,7 +64,30 @@ def main() -> int:
     lp.add_argument("--arkit", help="arkit_on_flame_npz.py's ARKit-on-FLAME extract")
     lp.add_argument("--a2e-json", help="LAM_Audio2Expression's save_json_path file for the audio")
     lp.add_argument("--voice", help="the audio as .m4a: becomes the bundle's voice.m4a")
+    uc = sub.add_parser("uika-check", help="the head distill's consent gate for the teacher step (hpg/uika-head.sbatch)")
+    uc.add_argument("--person", required=True, help="whose face; must be in head_swap.CONSENTED")
+    uc.add_argument("--photos", required=True, help="their own photos, data/avatars/faces/<person>")
+    uc.add_argument("--out", required=True, help="their own teacher folder, data/avatars/heads/<person>/uika")
+    uc.add_argument("--held", required=True, help="dreams/.held")
+    dc = sub.add_parser("distill-check", help="the head distill's consent gate (hpg/head-distill.sbatch)")
+    dc.add_argument("bundle", help="the person's own avatar bundle, dreams/<person>")
+    dc.add_argument("--person", required=True, help="whose face; must be in head_swap.CONSENTED")
+    dc.add_argument("--teacher", required=True, help="their own teacher folder, data/avatars/heads/<person>/uika")
+    dc.add_argument("--id", required=True, help="the new bundle's id, <person>-...")
+    dc.add_argument("--held", help="another dreams/.held to honour too (the one next to the bundle always counts)")
     args = parser.parse_args()
+
+    if args.cmd in ("uika-check", "distill-check"):
+        from . import head_distill_core as D
+
+        if args.cmd == "uika-check":
+            refused = D.teacher_consent_errors(args.person, args.photos, args.out, args.held)
+            ok = f"consent OK: {args.person}'s own photos -> {args.out}"
+        else:
+            refused = D.distill_consent_errors(args.person, args.bundle, args.teacher, args.held, args.id)
+            ok = f"consent OK: {args.person}'s teacher -> {args.id}"
+        print("REFUSED" if refused else ok, *refused, sep="\n     ")
+        return 2 if refused else 0
 
     if args.cmd == "lips":
         import json

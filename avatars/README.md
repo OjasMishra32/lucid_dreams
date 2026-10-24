@@ -39,6 +39,7 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | `results_page.py` | `python -m lucid_avatars results <work dir>`: a fine-tune's table and renders into this README's Results section |
 | `bake.py` | Avatar bundle -> replay bundle (posed per frame, `.ply` + `.spz`) for players that can't skin yet |
 | `head_swap.py` | LAM's one-photo head on a consenting person's own avatar: consent gate, FLAME-to-SMPL-X fit, jaw-line seam, skinning, skin tone, the `<id>-head` bundle |
+| `head_distill_core.py` | The head distill's plain parts: consent gates, the teacher's view sphere and cameras.json, cameras into the avatar's frame, seeding on SMPL-X head faces with barycentric skinning, the opacity floor, seam masks, colour from the teacher's views, the bundle |
 
 GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
 4DAnyone views; `digs_perform.py` an avatar doing someone else's move; `gvhmr_motion.py` and `prep_views.py`
@@ -187,6 +188,42 @@ anyone sees the bundle.
 Locally, without a GPU: `uv run python -m lucid_avatars head-swap dreams/<person> <heads dir> --person <person>
 --smplx SMPLX_NEUTRAL.npz --flame-ids SMPL-X__FLAME_vertex_ids.npy [--flame-expr flame2023_expr.npz]` does the swap
 alone.
+
+## A real face, distilled from UIKA (consenting people only; the next version of the head swap)
+
+Pasting a head model's Gaussians onto a body failed: LAM's are a 25%-opacity shell that falls apart outside its own
+renderer (streaks, smears, a doubled 3/4 view). The distill uses a strong head model as a **teacher** instead and fits
+fresh, opaque Gaussians on the avatar's own SMPL-X head to its renders. Same consent gate as the head swap (CONSENTED,
+their own avatar, photos and teacher, a new `<person>-...` id that never replaces another bundle, a head swap
+included, nobody in `dreams/.held`), checked in both sbatch scripts and both Python scripts before anything is read.
+
+1. Photos (close-ups and other angles, one person each; up to 16 used) in `$L/data/avatars/faces/<person>/`, then
+   `sbatch --export=ALL,NAME=<person> avatars/hpg/uika-head.sbatch` (L4; the first run builds `envs/uika` and
+   fetches UIKA's weights, about an hour). `uika_views.py` runs UIKA (ant-research, CVPR 2026, MIT) on the photos and
+   renders its head at rest (FLAME expression, jaw, eyes and pose zero: mouth closed, eyes open) from 91 views in
+   UIKA's own renderer: yaw -90..+90 every 10 degrees at four elevations, plus the top, the back and below, one
+   distance (0.8 m), one focal. Out in `heads/<person>/uika/`: `views/NNN.png` (RGBA, UIKA's soft alpha),
+   `views/cameras.json` (K and OpenCV world-to-camera in UIKA's FLAME frame), `flame.npy` (UIKA's FLAME mesh, 5023 x
+   3: UIKA always animates FLAME's zero shape, the person's shape is in its Gaussians) and `contact.png`: look at it.
+2. `sbatch --export=ALL,NAME=<person> avatars/hpg/head-distill.sbatch` (any GPU; `AVATAR=`, `ID=`, `STEPS=`,
+   `SEAM_OFFSET=`, `KEEP_MOTION=1`). If `<avatar>-head` is already a LAM head swap it is refused: `ID=<avatar>-head-2`
+   (the web app ranks `<id>-head-<n>` as a head candidate too). `head_distill.py`: UIKA's FLAME mesh is fitted to the
+   avatar's rest SMPL-X head through the FLAME vertex ids (refused over 3 cm RMS) and every camera carried into the
+   avatar's frame; the body's head goes above the jaw-line seam as in the head swap's cross-fade; ~100K Gaussians
+   start on the SMPL-X faces whose vertices are head, jaw or eye dominant, coloured from the teacher's views; gsplat
+   fits them for 5000 steps (L1 + 0.2 D-SSIM inside the teacher's alpha, an alpha loss for the silhouette, a pull
+   toward their surface point past 1 cm, capped at 4 cm) with the frozen body rendered too, and only where the teacher
+   sees the head (not its neck under the seam, not the body's shoulders). Opacity is `0.5 + 0.5 sigmoid(raw)`, so every
+   kept Gaussian is at least half opaque (times the seam's 3 cm fade-in); the ones that want to vanish are pruned; no
+   densification. Each is skinned from its own SMPL-X face (barycentric blend of its three vertices' weights, top 4).
+   Then any_face gives it blinks and the living idle (the head is SMPL-X's own surface).
+
+Out: `dreams/<id>` with the head as one range at the end of avatar.ply, reality.ply (the back half of the head marked
+imagined: the photos are mostly frontal), `head_distill.json` (`heldOut.psnr` / `ssim` on every 8th teacher view, which
+the fit never saw, before and after; `alignRmsM`; `opacity` (`minOutsideBand` >= 0.5); `offsetMm`; counts; identity),
+`compare.png` (photo | old face | teacher | distilled, front and 3/4, the last three through the same teacher camera),
+preview.mp4 + thumb.jpg, `metrics.identity`. Look at compare.png before the bundle goes in the library. Not yet run on
+HiPerGator: UIKA's inference API and camera conventions were read from its code (commit c539f41), not run.
 
 ## Blinks and the living idle for any SMPL-X avatar (no head swap needed)
 

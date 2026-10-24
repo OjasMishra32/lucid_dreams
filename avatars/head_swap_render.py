@@ -126,6 +126,43 @@ def gate(person: str, old: Path, new: Path) -> list[str]:
     return errors
 
 
+def write_turntable(g, out: Path, preview_size: str, seconds: float, device: str) -> None:
+    """out/preview.mp4 (the avatar turning, front first, 30 fps) and out/thumb.jpg (its first frame), from the
+    rest-pose Gaussians g (lucid.gaussians). Shared with head_distill.py."""
+    from lucid.export import orbit_camera, render
+    from PIL import Image
+
+    bg = np.zeros(3)
+    w, h = (int(v) for v in preview_size.split("x"))
+    height, middle_y, centre = framing(g.means, g.opacities)
+    radius = TURNTABLE_FILL * height / 2 / TAN_HALF_FOV
+    part = out / "preview.part.mp4"  # renamed once whole, so a failed run never leaves a broken preview
+    ff = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", "30", "-i", "-",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", str(part)],
+        stdin=subprocess.PIPE,
+    )
+    try:
+        n = int(seconds * 30)
+        for k in range(n):
+            frame = render(g, orbit_camera(FRONT + 2 * math.pi * k / n, radius, middle_y, middle_y, centre), w, h,
+                           bg, device)
+            if k == 0:
+                Image.fromarray(frame).save(out / "thumb.jpg", quality=92)
+            ff.stdin.write(frame.tobytes())
+        ff.stdin.close()
+    except BrokenPipeError:
+        pass  # ffmpeg died; its exit code below says so
+    except BaseException:
+        ff.kill()
+        part.unlink(missing_ok=True)
+        raise
+    if ff.wait() != 0:
+        part.unlink(missing_ok=True)
+        raise SystemExit("ffmpeg failed writing preview.mp4")
+    part.replace(out / "preview.mp4")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--old", type=Path, required=True, help="the source avatar bundle (the guessed face)")
@@ -151,36 +188,7 @@ def main() -> int:
     bg = np.zeros(3)
     _, old, _ = load(a.old)
     dream, new, head = load(a.new)
-
-    # turntable of the new avatar, front first (the thumbnail)
-    w, h = (int(v) for v in a.preview_size.split("x"))
-    height, middle_y, centre = framing(new.means, new.opacities)
-    radius = TURNTABLE_FILL * height / 2 / TAN_HALF_FOV
-    part = a.new / "preview.part.mp4"  # renamed once whole, so a failed run never leaves a broken preview
-    ff = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", "30", "-i", "-",
-         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", str(part)],
-        stdin=subprocess.PIPE,
-    )
-    try:
-        n = int(a.seconds * 30)
-        for k in range(n):
-            frame = render(new, orbit_camera(FRONT + 2 * math.pi * k / n, radius, middle_y, middle_y, centre), w, h,
-                           bg, a.device)
-            if k == 0:
-                Image.fromarray(frame).save(a.new / "thumb.jpg", quality=92)
-            ff.stdin.write(frame.tobytes())
-        ff.stdin.close()
-    except BrokenPipeError:
-        pass  # ffmpeg died; its exit code below says so
-    except BaseException:
-        ff.kill()
-        part.unlink(missing_ok=True)
-        raise
-    if ff.wait() != 0:
-        part.unlink(missing_ok=True)
-        raise SystemExit("ffmpeg failed writing preview.mp4")
-    part.replace(a.new / "preview.mp4")
+    write_turntable(new, a.new, a.preview_size, a.seconds, a.device)
 
     # the side-by-side: photo | old face | new face, front and 3/4
     target_y, face_centre, face_r = face_target(head)

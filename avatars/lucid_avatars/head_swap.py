@@ -68,11 +68,12 @@ def held_ids(path: str | Path) -> set[str]:
 
 
 def consent_errors(person: str, bundle: str | Path, held: str | Path | None = None,
-                   new_id: str | None = None) -> list[str]:
+                   new_id: str | None = None, made_by: str = "head_swap.json") -> list[str]:
     """Why this head swap mustn't run (empty if it may): the person has to be in CONSENTED, the bundle has to be
     their own avatar (id `<person>` or `<person>-...`, in a folder of that name), the new bundle has to be a new
     `<person>-...` id that isn't another bundle, and none of them may be in dreams/.held (the one next to the bundle,
-    plus `held` if given: it adds to that list, never replaces it)."""
+    plus `held` if given: it adds to that list, never replaces it). An existing output is replaced only if it holds
+    `made_by` (this step's own report: head_swap.json, or head_distill.json for the head distill)."""
     bundle = Path(bundle)
     dream_id = dream_id_of(bundle)
     errors = []
@@ -87,8 +88,9 @@ def consent_errors(person: str, bundle: str | Path, held: str | Path | None = No
         out = bundle.parent / new_id
         if not BUNDLE_ID.fullmatch(new_id) or not new_id.startswith(f"{person}-") or new_id == dream_id:
             errors.append(f"new id {new_id!r} must be a new {person}-... id (lowercase letters, digits and dashes)")
-        elif out.exists() and not (out / "head_swap.json").is_file():
-            errors.append(f"{out} exists and is not a head swap: it is never replaced")
+        elif out.exists() and not (out / made_by).is_file():
+            what = "a head swap" if made_by == "head_swap.json" else f"this step's own ({made_by})"
+            errors.append(f"{out} exists and is not {what}: it is never replaced")
     on_hold = (held_ids(bundle.parent / ".held") | (held_ids(held) if held else set())) & {person, dream_id, new_id}
     if on_hold:
         errors.append(f"{', '.join(sorted(on_hold))} in dreams/.held")
