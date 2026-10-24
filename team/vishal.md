@@ -7,6 +7,15 @@ HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development 
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
 
+## HEADS-UP (Sat 5:10 AM): hands are locked in the headset
+
+Ojasva tried everything on the Quest with hands only: gestures fired by accident ("a person will do a lot with
+their hands so we need it to be locked"). In WebXR now: **no pinch or gesture changes anything by itself**; every
+control sits on a palm-up menu on the left hand, pressed by the right index fingertip (`apps/webxr/src/xr/menu.ts`,
+`HandMenu`), and placed things are pinned to the room with a WebXR anchor (`xr/anchor.ts`, `WorldLock`). Ghost
+Coach's in-headset controls (start a try, replay the overlay) go on that menu too, never on a gesture or a button
+floating where your arms move while you copy the move.
+
 ## TOP PRIORITY NOW (Sat 4:20 AM): Ghost Coach, approved
 
 Your plan (`docs/plans/vishal-feature.md`) is approved as your main feature: film your try, and your own body doing

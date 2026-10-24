@@ -4,6 +4,34 @@ You own what people actually see: photoreal people standing on the real floor in
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 
+## TOP NOW (Sat 5:10 AM): lock the hands down (Ojasva tried it in the headset)
+
+Ojasva played on a Quest 3S with hands only. His words: things "keep randomly moving", the UI "isn't super
+intuitive", and "a person will do a lot with their hands so we need it to be locked". Copying a dance, a tai chi
+form or a golf swing pinches by accident all the time, so **no gesture may change anything on its own**. The
+WebXR viewer is being changed the same way right now (`apps/webxr/src/xr/menu.ts`, `xr/anchor.ts`; chess is done
+in `chess/game.ts`); match it in the Quest app, in this order:
+
+1. **Remove every gesture shortcut** from playback: quick pinch = pause, held pinch = re-place / bring here, the
+   pinch-drag on the person, two-hand turn, long pinch re-place. In a lesson your hands are busy copying them.
+2. **Palm-up menu replaces the floating rail.** Turn your left palm toward your face (palm normal vs the direction
+   to your eyes > 0.6, held ~0.2 s; closes after ~0.45 s below 0.35) and the buttons appear just above the palm,
+   turned to your eyes; only the right index fingertip presses them (hover highlight when it's within 4 cm in
+   front). Same buttons as the rail (Play/Pause, speed or Back/Again/Next, Reality check, Bring here, Library).
+   Nothing floats in front of your chest where a swing or a dance move goes. The step card stays (eye level,
+   to the right, out of reach).
+3. **Pin the person to the room**: an `OVRSpatialAnchor` (or OpenXR spatial anchor) where they're placed, re-read
+   every frame, so a recenter or tracking drift never slides them. Re-anchor after Bring here.
+4. **Pinches that do hold things**: they last through ~70 ms of finger jitter and ~300 ms of lost tracking, take
+   hold only as the pinch starts (a held pinch never picks up what it passes over), and whatever is held stops
+   following once the fingers start opening (it lands where you let go).
+5. **Golf**: the WebXR viewer gives you a real 7-iron in your hands (two-hand grip from the joints, ball on a
+   tee you can hit) when the dream is golf (`golf-01` is in the library). Copy `apps/webxr/src/club.ts` once it
+   lands (sizes, grip maths, hit physics).
+
+Then check on the real headset with your own hands, and log what you measured.
+
+
 ## NOW (Sat 4:20 AM): what changed, and what's yours
 
 1. **Your grandma: use LHM++.** It builds one person from many photos at once and beat the one-photo route by far
