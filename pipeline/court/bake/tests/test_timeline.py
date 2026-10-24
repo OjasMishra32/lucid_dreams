@@ -48,11 +48,11 @@ def test_pass1_is_real_speed_from_the_start_of_play_to_F(tl):
 def test_pass2_runs_from_its_start_through_the_make_to_the_clip_end(tl):
     c = CapTime.from_config(CFG)
     p = tl.frames_of("pass2")
-    assert c.time_of(CFG.pass2_start) <= p[0].t < c.time_of(CFG.pass2_start) + CFG.pass2_speed / tl.hz
-    assert p[-1].t <= c.time_of(CFG.clip_end) < p[-1].t + CFG.pass2_speed / tl.hz + 1e-9
+    assert c.time_of(CFG.pass2_start) <= p[0].t < c.time_of(CFG.pass2_start) + CFG.pass2_speed_for(tl.hz) / tl.hz
+    assert p[-1].t <= c.time_of(CFG.clip_end) < p[-1].t + CFG.pass2_speed_for(tl.hz) / tl.hz + 1e-9
     assert any(f.src == CFG.freeze and not f.interp for f in p)  # F lies on pass 2's grid
     steps = {round(b.t - a.t, 9) for a, b in zip(p, p[1:])}
-    assert steps == {round(CFG.pass2_speed / tl.hz, 9)}
+    assert steps == {round(CFG.pass2_speed_for(tl.hz) / tl.hz, 9)}
 
 
 def test_every_pass2_frame_at_72hz_is_real_except_the_strobes():
@@ -77,7 +77,7 @@ def test_each_ease_starts_from_a_pass2_frame_and_lands_exactly_on_F(tl):
         assert n == T.ease_frame_count(e["seconds"], tl.hz)
         entry = tl.frames[e["start"]]
         # the entry frame is exactly where the ease's speed curve starts: n/2 pass-2 steps before F
-        assert entry.tau == pytest.approx(-CFG.pass2_speed * n / tl.hz / 2, abs=1e-12)
+        assert entry.tau == pytest.approx(-CFG.pass2_speed_for(tl.hz) * n / tl.hz / 2, abs=1e-12)
         assert not tl.frames[last].interp and tl.frames[last].src == CFG.freeze
         assert tl.frames[last].tau == 0.0
     assert tl.cutoff == starts[-1]
@@ -89,7 +89,7 @@ def test_resume_ramps_from_F_to_pass2_speed_then_steady_to_the_clip_end(tl):
     assert r[0].tau > 0 and r[0].tau < 1e-3  # first resume frame barely leaves F
     steady = r[n:]
     steps = {round(b.tau - a.tau, 9) for a, b in zip(steady, steady[1:])}
-    assert steps == {round(CFG.pass2_speed / tl.hz, 9)}
+    assert steps == {round(CFG.pass2_speed_for(tl.hz) / tl.hz, 9)}
     c = CapTime.from_config(CFG)
     assert r[-1].t <= c.time_of(CFG.clip_end)
 
@@ -158,3 +158,30 @@ def test_ease_curve_matches_clock_ts_when_node_is_available():
     for (n, hz), curve in got.items():
         ours = [T.ease_tau(k, n, hz, 0.6) for k in range(n + 1)] + [T.resume_tau(k, n, hz, 0.6) for k in range(1, n + 3)]
         assert max(abs(x - y) for x, y in zip(ours, curve)) < 1e-12
+
+
+def test_hz90_has_its_own_pass2_speed_and_72hz_keeps_its_own():
+    assert CFG.pass2_speed_for(72) == 0.6 and CFG.pass2_speed_for(90) == 0.75
+    assert T.build(CFG, 72).pass2_speed == 0.6
+    tl = T.build(CFG, 90)
+    assert tl.pass2_speed == 0.75
+    assert tl.format_block()["pass2Speed"] == 0.75
+    assert tl.fallback_block() == {"displayHz": 90, "pass2Speed": 0.75, "segments": tl.segments, "cutoff": tl.cutoff}
+    # unset falls back to the main speed
+    same = dataclasses.replace(CFG, pass2_speed_90=None)
+    assert same.pass2_speed_for(90) == 0.6 and T.build(same, 90).pass2_speed == 0.6
+
+
+def test_every_pass2_frame_at_90hz_with_075_is_real_except_the_strobes():
+    tl = T.build(CFG, 90)
+    p = tl.frames_of("pass2")
+    assert {round(f.src) for f in p if f.interp} == {330, 342}
+    assert all(float(f.src).is_integer() for f in p)
+    # every ease is entered at 0.75x from a real pass-2 frame, and the resume ramps up to 0.75x
+    for e in tl.segments["eases"]:
+        assert not tl.frames[e["start"]].interp
+    r = tl.frames_of("resume")[T.ease_frame_count(CFG.resume_ramp_s, 90):]
+    assert {round(b.tau - a.tau, 9) for a, b in zip(r, r[1:])} == {round(0.75 / 90, 9)}
+    assert {round(f.src) for f in r if f.interp} <= {330, 342}
+    m = T.check(tl, CFG)
+    assert m["errors"] == [] and m["max_speed_change"] <= 0.02 and m["max_motion_ratio"] <= 2.5
