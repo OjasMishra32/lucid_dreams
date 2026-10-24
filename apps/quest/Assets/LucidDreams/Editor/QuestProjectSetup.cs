@@ -37,7 +37,6 @@ namespace LucidDreams.Editor
             "com.unity.openxr.feature.arfoundation-meta-raycast",
             "com.unity.openxr.feature.foveatedrendering",
             "com.unity.openxr.feature.input.oculustouch",
-            "com.unity.openxr.feature.input.handtracking",
             "com.unity.openxr.feature.input.handinteraction",
             "com.unity.openxr.feature.input.metahandtrackingaim",
         };
@@ -55,6 +54,21 @@ namespace LucidDreams.Editor
 
             AssetDatabase.SaveAssets();
             Debug.Log("[Lucid Dreams] Project set up for Quest 3S.");
+        }
+
+        // Unity -batchmode -quit -projectPath apps/quest -buildTarget Android -executeMethod LucidDreams.Editor.QuestProjectSetup.BuildApk
+        [MenuItem("Lucid Dreams/Build APK")]
+        public static void BuildApk()
+        {
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = new[] { ScenePath },
+                locationPathName = "Builds/LucidDreams.apk",
+                target = BuildTarget.Android,
+                options = BuildOptions.None,
+            });
+            Debug.Log($"[Lucid Dreams] APK build {report.summary.result}: {report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalTime:mm\\:ss}.");
+            if (Application.isBatchMode && report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
         }
 
         static void ConfigurePlayer()
@@ -156,6 +170,12 @@ namespace LucidDreams.Editor
                     var feature = FeatureHelpers.GetFeatureWithIdForBuildTarget(group, id);
                     if (feature != null) feature.enabled = true;
                     else Debug.LogWarning($"[Lucid Dreams] OpenXR feature {id} not found for {group}.");
+                }
+                // XR Hands' hand tracking shares its feature ID with Microsoft's hand interaction, so match by type.
+                foreach (var feature in openxr.GetFeatures())
+                {
+                    if (feature is UnityEngine.XR.Hands.OpenXR.HandTracking) feature.enabled = true;
+                    if (feature is UnityEngine.XR.OpenXR.Features.Interactions.MicrosoftHandInteraction) feature.enabled = false;
                 }
                 EditorUtility.SetDirty(openxr);
             }

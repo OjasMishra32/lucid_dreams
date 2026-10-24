@@ -1,4 +1,4 @@
-# Unity-generated, per-machine
+# Unity-generated, per-machine (.utmp holds Android native build intermediates)
 UserSettings/
 MemoryCaptures/
 *.csproj
@@ -10,3 +10,4 @@ MemoryCaptures/
 # imported Gaussian data is large; regenerate it from the bundle with Lucid Dreams > Import Dream Bundle
 Assets/Dreams/
 Assets/Dreams.meta
+.utmp/
