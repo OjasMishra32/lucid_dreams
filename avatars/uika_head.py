@@ -1196,7 +1196,7 @@ def cmd_rebody(a) -> int:
         report["bodyCleanup"] = json.loads((body_b / "cleanup.json").read_text())
     (out / REPORT_FILE).write_text(json.dumps(report, indent=2) + "\n")
     dream = json.loads((out / "dream.json").read_text())
-    dream.update(preview=None, thumb=None)  # finish renders them anew
+    dream.update(id=out.name, preview=None, thumb=None)  # its own id (players load files by it); finish renders anew
     (out / "dream.json").write_text(json.dumps(dream, indent=2) + "\n")
     print(f"[rebody] {out}: {int(keep_b.sum())} body Gaussians (of {len(body)}) + the {len(head)} fitted head ones")
     print("UIKA_REBODY_OK")

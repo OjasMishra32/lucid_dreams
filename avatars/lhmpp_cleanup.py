@@ -217,8 +217,11 @@ def hand_gaussians(verts: np.ndarray, faces: np.ndarray, lbs: np.ndarray, joints
         d, i = cKDTree(skin_xyz).query(p, k=min(12, len(skin_xyz)))
         w = 1 / (d + 0.003)
         rgb = (skin_rgb[i] * w[..., None]).sum(1) / w.sum(1, keepdims=True)
-        if tone is not None:
-            rgb = rgb * (np.asarray(tone, dtype=np.float64) / np.maximum(np.median(rgb, axis=0), 1e-3))
+        # one skin tone (the face's, or the hand's own median), with only the sampled skin's gentle light and shade
+        # (within 8%): the old hands' speckles (cuff, background, blur) never come through
+        base = np.asarray(tone, dtype=np.float64) if tone is not None else np.median(rgb, axis=0)
+        lum_s = rgb @ LUM
+        rgb = base[None] * np.clip(lum_s / max(float(np.median(lum_s)), 1e-3), 0.92, 1.08)[:, None]
         shade, nail, palm = hand_shading(p, n, verts[ok_v], joints, side, seed=seed)
         lum = (rgb @ LUM)[:, None]
         rgb[palm] = lum[palm] + 0.8 * (rgb[palm] - lum[palm])  # palms: less pigment
@@ -269,6 +272,7 @@ def main(argv=None) -> None:
     p.add_argument("--drop-lonely", type=float, default=None, help="drop clothes Gaussians whose 8 nearest are on average further than this (m)")
     p.add_argument("--hand-rgb", type=str, default=None, help="with --rebuild-hands: the hands' skin colour R,G,B or R:G:B (0-1), e.g. the face's, so they match")
     p.add_argument("--keep-colours", action="store_true", help="skip the suit-minded colour passes (specks, sleeve logos, back smears, trouser blobs): a white kit keeps its colours for lhmpp_avatar.py whites")
+    p.add_argument("--back-collar-m", type=float, default=None, help="the back pass reaches up to this far above the neck joint (m; the shirt collar's band above it stays); default 5 cm below it")
     p.add_argument("--back-smear", type=float, default=0.15, help="a Gaussian on the jacket's back this much lighter than its dark half's median is a smear")
     p.add_argument("--shirt-clean", choices=["tie", "open"], default=None,
                    help="the shirt between the lapels one clean white (grey blotches go) and, with tie, the tie one dark cloth")
@@ -351,7 +355,10 @@ def main(argv=None) -> None:
     # 2b'. the back of a jacket is one cloth too: light smears below the collar on the back (the rest pose faces +Z)
     # take the jacket's colour; the shirt collar itself, at the neck, stays
     TORSO_J = [J["spine1"], J["spine2"], J["spine3"], J["left_collar"], J["right_collar"]]
-    back = np.isin(dom, TORSO_J) & (g.xyz[:, 2] < joints[J["spine3"], 2] - 0.02) & (g.xyz[:, 1] < joints[J["neck"], 1] - 0.05) & ~hands
+    top = -0.05 if a.back_collar_m is None else a.back_collar_m  # with --back-collar-m, up to the shirt collar's band
+    if a.back_collar_m is not None:
+        TORSO_J = TORSO_J + [J["neck"]]
+    back = np.isin(dom, TORSO_J) & (g.xyz[:, 2] < joints[J["spine3"], 2] - 0.02) & (g.xyz[:, 1] < joints[J["neck"], 1] + top) & ~hands
     smear = back & False
     if back.sum() > 64:
         lum = out @ np.array([0.299, 0.587, 0.114])
@@ -557,12 +564,15 @@ def main(argv=None) -> None:
                 if a.shirt_clean == "tie" and db.sum() >= 6:
                     t[b - lo] = np.clip(np.percentile(dx[db], 85), 0.012, 0.045)
 
-            def smooth(v):  # a median over 5 cm, gaps filled from the nearest measured height
+            def smooth(v):  # a median over 5 cm; gaps between measured heights filled, never past them (0 there)
                 ok = np.flatnonzero(np.isfinite(v))
                 if len(ok) == 0:
                     return v
-                v = np.interp(np.arange(len(v)), ok, v[ok])
-                return np.array([np.median(v[max(0, k - 2):k + 3]) for k in range(len(v))])
+                f = np.interp(np.arange(len(v)), ok, v[ok])
+                f = np.array([np.median(f[max(0, k - 2):k + 3]) for k in range(len(v))])
+                f[: ok[0]] = 0.0
+                f[ok[-1] + 1:] = 0.0
+                return f
 
             w, t = smooth(w), smooth(t)
             sb = np.clip(bins - lo, 0, hi - lo)
@@ -578,7 +588,10 @@ def main(argv=None) -> None:
                     out[strip] = np.clip(tie_c[None] * sh[:, None], 0, 1)
                     tie_n = int(strip.sum())
                     in_v &= ~strip
-            blot = in_v & ~skin_c & (lum < float(shirt_c @ LUM) - 0.12)
+            _, nn17 = cKDTree(xyz).query(xyz[in_v], k=17)
+            context = np.zeros(len(xyz), dtype=bool)  # a blotch on the shirt is among shirt, a lapel among jacket
+            context[np.flatnonzero(in_v)] = np.median(lum[nn17[:, 1:]], axis=1) > float(shirt_c @ LUM) - 0.3
+            blot = in_v & context & ~skin_c & (lum < float(shirt_c @ LUM) - 0.12)
             sh = np.clip(1 + 0.1 * (lum[blot] / max(float(shirt_c @ LUM), 1e-3) - 1), 0.9, 1.0)
             out[blot] = np.clip(shirt_c[None] * sh[:, None], 0, 1)
             shirt_n = int(blot.sum())
@@ -677,7 +690,7 @@ def main(argv=None) -> None:
               "feetLum": a.feet_lum, "clothHue": a.cloth_hue, "hued": hued, "reskinnedHips": int(reskinned.sum()),
               "droppedFaint": int(faint.sum()), "madeSolid": int(firm.sum()), "widened": widened,
               "lightStreaks": int(streaks.sum()), "needlesCapped": needled, "legsRelit": relit, "skinConsistent": consistent,
-              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
+              "lonelyDropped": lonely_n, "backSmear": a.back_smear, "backCollarM": a.back_collar_m, "shirtClean": a.shirt_clean, "shirtBlotches": shirt_n, "tieEvened": tie_n, "handRgb": a.hand_rgb, "newHandGaussians": int(len(new_hands["xyz"])) if new_hands else 0,
               "of": len(g), "kept": int(keep.sum()) + (len(new_hands["xyz"]) if new_hands else 0)}
     (root / "cleanup.json").write_text(json.dumps(report, indent=2) + "\n")
     print("[cleanup]", report)
