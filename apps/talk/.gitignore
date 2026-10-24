@@ -1,0 +1,3 @@
+# private: never commit
+.env
+persona.md

@@ -350,6 +350,11 @@ namespace LucidDreams.Editor
             libraryPanel.speech = speech;
             bar.library = libraryPanel;
             bar.dreams = library;
+            // Talk with them (companion mode), through the talk server named in talk.txt
+            var talk = dreamGo.AddComponent<DreamTalk>();
+            talk.player = player;
+            talk.speech = speech;
+            bar.talk = talk;
 
             // Lessons: the step card beside the person, read aloud in the device's voice.
             var lessonGo = new GameObject("Lesson");

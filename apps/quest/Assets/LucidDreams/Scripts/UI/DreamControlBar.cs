@@ -10,7 +10,7 @@ namespace LucidDreams
     // your right index fingertip. Nothing floats in front of your chest where a dance move or a swing goes, and no
     // pinch or gesture changes anything by itself. Play / Pause, then Speed (in a lesson: Again, Back, Next), Reality
     // check (when the bundle has reality frames: it tints what the camera never saw blue, and says how much it saw),
-    // Bring here and Library, two to a row.
+    // Talk (with someone you're with, when a talk server is set up: DreamTalk), Bring here and Library, two to a row.
     public class DreamControlBar : MonoBehaviour
     {
         const float ButtonW = 92f, ButtonH = 34f, Gap = 8f, Pad = 10f, Note = 16f; // millimetres
@@ -24,10 +24,11 @@ namespace LucidDreams
         public DreamPlacer placer;
         public DreamLibraryPanel library;
         public DreamLibrary dreams;
+        public DreamTalk talk;
 
         public bool IsOpen { get; private set; }
 
-        FingertipButton play, speed, again, back, next, reality, bring, browse;
+        FingertipButton play, speed, again, back, next, reality, talkButton, bring, browse;
         readonly List<FingertipButton> all = new();
         RectTransform canvasRect, panel, shadow;
         TMP_Text seen;
@@ -50,6 +51,7 @@ namespace LucidDreams
             back = Button("Back", () => player.Lesson?.Go(player.Lesson.Index - 1));
             next = Button("Next", () => player.Lesson?.Go(player.Lesson.Index + 1));
             reality = Button("Reality check", () => player.ToggleReality());
+            talkButton = Button("Talk", () => talk?.Press());
             bring = Button("Bring here", () => placer.PlaceInFrontOfViewer());
             browse = Button("Library", () => library?.Toggle());
             seen = GlassUI.Label(panel, "Seen", Vector2.zero, new Vector2(2 * ButtonW + Gap, Note), "", 8f, GlassUI.SecondaryText,
@@ -136,6 +138,7 @@ namespace LucidDreams
             if (lesson != null) visible.AddRange(new[] { again, back, next });
             else visible.Add(speed);
             if (player.HasReality) visible.Add(reality);
+            if (talk != null && talk.Available) visible.Add(talkButton);
             visible.Add(bring);
             if (library != null) visible.Add(browse);
             float seenFraction = player.SeenFraction;
@@ -154,6 +157,12 @@ namespace LucidDreams
             reality.on = player.ShowingReality;
             reality.SetLabel(player.RealityLoading ? $"Loading {Mathf.RoundToInt(player.RealityProgress * 100f)}%" : "Reality check");
             browse.on = library != null && library.IsOpen;
+            if (talk != null)
+            {
+                talkButton.SetLabel(talk.Current switch { DreamTalk.State.Listening => "Send", DreamTalk.State.Thinking => "Thinking…", _ => "Talk" });
+                talkButton.on = talk.Current == DreamTalk.State.Listening;
+                talkButton.interactable = talk.Current != DreamTalk.State.Thinking;
+            }
             if (note) seen.text = $"{Mathf.RoundToInt(seenFraction * 100f)}% seen by the camera · blue was imagined";
         }
     }

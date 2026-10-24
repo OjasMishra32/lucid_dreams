@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Talk with her</title>
+<style>
+  :root { --bg: #000; --surface: #161617; --text: #f5f5f7; --quiet: #86868b; --accent: #0071e3; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+         font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+         display: grid; place-items: center; padding: 16px; }
+  main { width: min(560px, 100%); display: grid; gap: 20px; }
+  h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  p.lead { color: var(--quiet); margin: -12px 0 0; }
+  button { justify-self: start; border: 0; border-radius: 999px; padding: 14px 28px; font: inherit; font-weight: 600;
+           background: var(--accent); color: #fff; cursor: pointer; min-width: 180px; }
+  button.listening { background: #ff3b30; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .turn { background: var(--surface); border-radius: 18px; padding: 16px 18px; display: grid; gap: 6px; }
+  .you { color: var(--quiet); }
+  .her { font-size: 20px; }
+  .en { color: var(--quiet); font-size: 15px; }
+  .tag { font-size: 12px; color: var(--quiet); letter-spacing: 0.02em; }
+  #log { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Talk with her</h1>
+  <p class="lead">Press, say something, press again. She answers in her own voice. <span class="tag">AI voice, made with her consent</span></p>
+  <button id="talk">Talk</button>
+  <div id="log"></div>
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token") || "__LOCAL_TOKEN__"; // filled in by the server when opened on its own Mac
+  const session = crypto.randomUUID();
+  const button = document.getElementById("talk");
+  const log = document.getElementById("log");
+  let recorder = null;
+  let chunks = [];
+
+  const turn = (heard, reply, english, ms) => {
+    const div = document.createElement("div");
+    div.className = "turn";
+    div.innerHTML = `<div class="you"></div><div class="her"></div><div class="en"></div><div class="tag"></div>`;
+    div.children[0].textContent = heard ? `You: ${heard}` : "(nothing heard)";
+    div.children[1].textContent = reply;
+    div.children[2].textContent = english;
+    div.children[3].textContent = ms ? `AI voice · ${(ms.spoke / 1000).toFixed(1)} s (heard ${(ms.heard / 1000).toFixed(1)}, wrote ${((ms.wrote - ms.heard) / 1000).toFixed(1)}, spoke ${((ms.spoke - ms.wrote) / 1000).toFixed(1)})` : "";
+    log.prepend(div);
+  };
+
+  button.addEventListener("click", async () => {
+    if (!recorder) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorder = new MediaRecorder(stream);
+      chunks = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        recorder = null;
+        button.textContent = "Thinking…";
+        button.disabled = true;
+        try {
+          const r = await fetch(`/api/talk?token=${encodeURIComponent(token)}&session=${session}`, {
+            method: "POST", headers: { "Content-Type": blob.type }, body: blob,
+          });
+          const d = await r.json();
+          if (d.error) throw new Error(d.error);
+          turn(d.heard, d.reply, d.english, d.ms);
+          if (d.audio) new Audio(`${d.audio}?token=${encodeURIComponent(token)}`).play();
+        } catch (e) {
+          turn("", `Something went wrong: ${e.message}`, "", null);
+        }
+        button.textContent = "Talk";
+        button.disabled = false;
+        button.classList.remove("listening");
+      };
+      recorder.start();
+      button.textContent = "Send";
+      button.classList.add("listening");
+    } else recorder.stop();
+  });
+</script>
+</body>
+</html>

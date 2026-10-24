@@ -27,6 +27,9 @@ namespace LucidDreams
         [Range(0f, 1f)] public float captionOpacity = 0.9f;
 
         public AudioSource Voice { get; private set; }
+        // Talk (DreamTalk): their AI reply, from the same mouth position; the clip's own voice waits while it plays.
+        public AudioSource Reply { get; private set; }
+        public bool Replying => Reply != null && Reply.isPlaying;
 
         // Settings in the library: Captions on / off, Standard / Large. Remembered on the headset.
         public bool CaptionsOn
@@ -63,6 +66,13 @@ namespace LucidDreams
             Voice.minDistance = 1.2f; // full voice within conversation distance, like the WebXR panner's ref distance
             Voice.maxDistance = 25f;
             Voice.dopplerLevel = 0f;
+            Reply = voiceGo.AddComponent<AudioSource>();
+            Reply.playOnAwake = false;
+            Reply.spatialBlend = 1f;
+            Reply.rolloffMode = AudioRolloffMode.Logarithmic;
+            Reply.minDistance = 1.2f;
+            Reply.maxDistance = 25f;
+            Reply.dopplerLevel = 0f;
 
             var canvas = GlassUI.WorldCanvas(transform, "Caption", new Vector2(MaxWidth, 200f));
             canvas.transform.localRotation = Quaternion.Euler(0f, 180f, 0f); // readable from in front of them
@@ -96,7 +106,22 @@ namespace LucidDreams
             captionGroup.transform.localPosition = new Vector3(0f, seated ? top - 0.42f : height * 0.6f, 0.42f);
 
             SyncVoice();
-            ShowCaption(CaptionsOn ? Captions.At(cues, player.ClipTime) : null);
+            if (Replying) ShowCaption(replyCaption, 4);
+            else ShowCaption(CaptionsOn ? Captions.At(cues, player.ClipTime) : null);
+        }
+
+        string replyCaption;
+
+        // Says a reply in their voice from where they stand, with its words (Vietnamese, then English) on the caption,
+        // labelled as AI: generated speech is never shown as theirs (AGENTS.md rule 6).
+        public void Say(AudioClip clip, string words, string english)
+        {
+            if (Reply == null || clip == null) return;
+            replyCaption = $"<size=55%><color=#86868b>AI voice</color></size>\n{words}" +
+                           (string.IsNullOrEmpty(english) ? "" : $"\n<size=70%><color=#86868b>{english}</color></size>");
+            Reply.Stop();
+            Reply.clip = clip;
+            Reply.Play();
         }
 
         void Begin(DreamBundle dream)
@@ -128,7 +153,7 @@ namespace LucidDreams
             if (Voice.clip == null) return;
             float t = player.ClipTime;
             bool audible = player.IsPlaying && !(player.Lesson?.YourTurn ?? false) && Mathf.Approximately(player.Speed, 1f)
-                           && t < Voice.clip.length;
+                           && t < Voice.clip.length && !Replying;
             if (!audible)
             {
                 if (Voice.isPlaying) Voice.Pause();
@@ -142,18 +167,19 @@ namespace LucidDreams
             else if (Mathf.Abs(Voice.time - t) > ResyncS) Voice.time = t; // after a loop, a scrub or a lesson jump
         }
 
-        void ShowCaption(string text)
+        void ShowCaption(string text, int lines = 2)
         {
             float fontSize = LargeCaptions ? Large : Standard;
             if (text != null && (text != CaptionText || fontSize != lastSize))
             {
                 lastSize = fontSize;
                 captionLabel.fontSize = fontSize;
+                captionLabel.maxVisibleLines = lines;
                 captionLabel.text = text;
                 // Sized to the words, up to 0.56 m; never shrunk below readable size (cues are already segmented).
                 var size = captionLabel.GetPreferredValues(text, MaxWidth - 2 * SidePad, 0f);
                 float lineHeight = fontSize * 1.18f;
-                pill.sizeDelta = new Vector2(Mathf.Min(MaxWidth, size.x + 2 * SidePad), Mathf.Max(MinHeight, Mathf.Min(size.y, 2 * lineHeight) + 30f));
+                pill.sizeDelta = new Vector2(Mathf.Min(MaxWidth, size.x + 2 * SidePad), Mathf.Max(MinHeight, Mathf.Min(size.y, lines * lineHeight) + 30f));
                 ((RectTransform)captionLabel.transform).sizeDelta = new Vector2(pill.sizeDelta.x - 2 * SidePad, pill.sizeDelta.y);
             }
             CaptionText = text;

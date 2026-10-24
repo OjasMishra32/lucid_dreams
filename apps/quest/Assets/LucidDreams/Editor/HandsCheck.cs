@@ -12,6 +12,8 @@ namespace LucidDreams.Editor
     //     -dreamBundle /path/to/dreams/<id> -out /path/to/pngs
     // or, for the library against a bridge (an empty cache under -out is used):
     //     -bridge http://127.0.0.1:8765 -out /path/to/pngs
+    // A companion bundle can also check Talk against a running talk server with a recorded question:
+    //     -talk "http://127.0.0.1:5175/?token=..." -talkQuestion /path/to/question.wav
     [InitializeOnLoad]
     public static class HandsCheck
     {
@@ -19,6 +21,8 @@ namespace LucidDreams.Editor
         const string OutKey = "LucidDreams.HandsCheck.out";
         const string BridgeKey = "LucidDreams.HandsCheck.bridge";
         const string ExpectKey = "LucidDreams.HandsCheck.expect";
+        const string TalkKey = "LucidDreams.HandsCheck.talk";
+        const string QuestionKey = "LucidDreams.HandsCheck.talkQuestion";
 
         static HandsCheck()
         {
@@ -35,6 +39,9 @@ namespace LucidDreams.Editor
             // An avatar bundle can come with reference poses from lucid_avatars/skinning.py to compare against.
             string expect = OptionalArg("-expect");
             SessionState.SetString(ExpectKey, expect != null ? Path.GetFullPath(expect) : "");
+            string question = OptionalArg("-talkQuestion");
+            SessionState.SetString(TalkKey, OptionalArg("-talk") ?? "");
+            SessionState.SetString(QuestionKey, question != null ? Path.GetFullPath(question) : "");
             EditorSceneManager.OpenScene(EditorBuildSettings.scenes[0].path);
             // In memory only; the scene file isn't saved.
             UnityEngine.Object.FindAnyObjectByType<DreamPlacer>().player.bundle = bundle;
@@ -59,6 +66,8 @@ namespace LucidDreams.Editor
                 driver.outputDir = SessionState.GetString(OutKey, "");
                 driver.libraryMode = SessionState.GetString(BridgeKey, "") != "";
                 driver.expectDir = SessionState.GetString(ExpectKey, "");
+                driver.talkServer = SessionState.GetString(TalkKey, "");
+                driver.talkQuestion = SessionState.GetString(QuestionKey, "");
                 return;
             }
             if (!driver.Done) return;

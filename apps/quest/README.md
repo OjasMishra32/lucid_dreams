@@ -102,6 +102,12 @@ the scene for an avatar bundle with a `companion` or `play` plan.
 - **Captions** (`captions.vtt`): a quiet dark pill in front of them at 60% of their height, toward you, fading in and
   out with each cue, up to two lines.
 
+**Talk** (`DreamTalk`, companion mode): the palm menu's **Talk** button records what you say (16 kHz mono, up to 20 s),
+**Send** posts it to the talk server (`apps/talk`, on a Mac: it holds the API keys), and their reply, in their own
+cloned voice, plays from their mouth while the clip's voice waits; the caption shows their words and the English,
+labelled **AI voice**. The server's address and token come from `talk.txt` in the app's storage (see
+`apps/talk/README.md`); without it there is no Talk button. HandsCheck checks it with `-talk <url> -talkQuestion <wav>`.
+
 ## Passthrough only
 
 The person is always in your real room, in passthrough: there are no 360-degree places (decided Sat 3:30 AM, as in

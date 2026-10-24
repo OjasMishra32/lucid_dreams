@@ -15,6 +15,7 @@ namespace LucidDreams.Tests
         public string outputDir;
         public bool libraryMode;
         public string expectDir;
+        public string talkServer, talkQuestion;
         public bool Done { get; private set; }
         public int Failures { get; private set; }
 
@@ -342,6 +343,8 @@ namespace LucidDreams.Tests
             // An idle only breathes (about 2 cm in 0.4 s); a frozen rig moves nothing.
             Check(most > 0.005f, $"playing moves it ({most * 100f:F1} cm at most after 0.4 s)");
 
+            if (!string.IsNullOrEmpty(talkServer)) yield return TalkChecks();
+
             var mode = player.Experience?.mode;
             if (mode == "companion" || mode == "play")
             {
@@ -662,6 +665,39 @@ namespace LucidDreams.Tests
             }
             Release(hand);
             yield return Frames(3);
+        }
+
+        // Talk: a recorded question to the talk server, and their reply from their mouth, labelled as AI.
+        IEnumerator TalkChecks()
+        {
+            var talk = FindAnyObjectByType<DreamTalk>();
+            var speech = FindAnyObjectByType<DreamSpeech>();
+            talk.Configure(talkServer);
+            Check(talk.Available == (player.Experience?.mode == "companion"), $"Talk is offered with someone you're with ({player.Experience?.mode})");
+            var eyes = head.transform.position;
+            var palm = new Vector3(0.12f, 1.25f, 1.62f);
+            ShowPalm(palm, eyes - palm);
+            yield return new WaitForSeconds(0.35f);
+            Check(bar.Find("Talk") != null, "the palm menu has Talk");
+            Render(Path.Combine(outputDir, "talk-menu-eye-view.png"));
+            ShowPalm(palm, Vector3.down);
+            Release(hands.left);
+            player.Play();
+            yield return Frames(5);
+            float t0 = Time.realtimeSinceStartup;
+            yield return talk.Ask(System.IO.File.ReadAllBytes(talkQuestion));
+            float took = Time.realtimeSinceStartup - t0;
+            Check(talk.Error == null && speech.Replying, $"a question gets a spoken reply in {took:F1} s (heard \"{talk.LastHeard}\", said \"{talk.LastReply}\") {talk.Error}");
+            yield return Frames(3);
+            Check(speech.Reply.transform.position == speech.Voice.transform.position && !speech.Voice.isPlaying,
+                "it comes from their mouth, and the clip's own voice waits");
+            Check(speech.CaptionText != null && speech.CaptionText.Contains("AI voice") && speech.CaptionText.Contains(talk.LastReply),
+                "the caption shows their words, labelled AI voice");
+            Render(Path.Combine(outputDir, "talk-reply-eye-view.png"));
+            float until = Time.realtimeSinceStartup + 30f;
+            while (speech.Replying && Time.realtimeSinceStartup < until) yield return null;
+            yield return new WaitForSeconds(0.5f);
+            Check(!speech.Replying && (speech.CaptionText == null || !speech.CaptionText.Contains("AI voice")), "when they finish, the reply caption goes");
         }
 
         // Your left hand open (no pinch), its palm at the point and facing along normal.
