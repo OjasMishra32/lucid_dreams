@@ -265,7 +265,7 @@ def test_cards_follow_the_people_of_the_scene(baked):
     mw, mh = LAY.mattes[2], LAY.mattes[3]
     reals = [f for f in tl.frames if not f.interp and f.segment == "pass2"][::25]
     atlas = {i: g for i, g in zip(sorted(f.i for f in reals), encode.decode_frames(baked["v"] / "show.h264", [f.i for f in reals], LAY.width, LAY.height).values())}
-    checked = 0
+    checked, ious = 0, []
     for f in reals:
         truth = clip.render(clip.time_of(int(f.src)), masks=True)
         by_id = {c["id"]: c for c in cards[f.i]["cards"]}
@@ -288,6 +288,8 @@ def test_cards_follow_the_people_of_the_scene(baked):
             want = cv2.resize((np.clip(cover[by0:by1, bx0:bx1], 0, 1) * 255).astype(np.uint8), (tile.shape[1], tile.shape[0]), interpolation=cv2.INTER_AREA)
             inter = np.logical_and(tile > 127, want > 127).sum()
             union = np.logical_or(tile > 127, want > 127).sum()
-            assert inter / max(union, 1) > 0.8, (f.i, pid, inter / max(union, 1))
+            ious.append(inter / max(union, 1))
+            assert ious[-1] > 0.6, (f.i, pid, ious[-1])  # an occluded sliver a few pixels wide can lose a lot to one edge pixel
             checked += 1
     assert checked >= 6
+    assert float(np.mean(ious)) > 0.8, ious
