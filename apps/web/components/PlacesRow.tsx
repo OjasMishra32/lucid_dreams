@@ -24,7 +24,7 @@ export default function PlacesRow({ id, planned }: { id: string; planned?: strin
           <li key={p.id}>
             <ViewerLink query={`dream=${encodeURIComponent(id)}&place=${p.id}`} className={p.id === planned ? "place-tile on" : "place-tile"}>
               <span className="place-img">
-                {p.id === "room" ? <RoomArt /> : <img src={`/places/${p.id}.jpg`} alt="" loading="lazy" width={640} height={400} />}
+                {p.id === "room" ? <RoomArt /> : <img src={`/places/${p.id}.jpg`} alt="" loading="lazy" width={400} height={250} />}
               </span>
               <span className="place-name">
                 {p.name}

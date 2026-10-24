@@ -1,6 +1,6 @@
 # Places: credits
 
-Thumbnails for the dream page's Places row: 640 x 400 crops, at the horizon, of the same panoramas the WebXR viewer
+Thumbnails for the dream page's Places row: 400 x 250 crops, at the horizon, of the same panoramas the WebXR viewer
 puts around the person (`apps/webxr/public/places/`, credits there). All from Poly Haven, **CC0** (public domain):
 https://polyhaven.com/license.
 

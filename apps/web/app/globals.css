@@ -348,7 +348,7 @@ img, video { display: block; max-width: 100%; }
 }
 /* the path on its own line, without a line break in what gets copied */
 .quest-host::after { content: "\A"; white-space: pre; }
-.quest-scheme { color: var(--faint); }
+.quest-scheme { color: var(--muted); } /* --faint fails 4.5:1 on the surface */
 .quest-url .btn { flex: none; }
 
 /* ---------- showcase ---------- */
