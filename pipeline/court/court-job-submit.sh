@@ -49,6 +49,12 @@ E=${ENV_SH:-$L/code/pipeline/hpg/env.sh}
 SL=$(sed -n 's/^export L=//p' "$E" 2>/dev/null | sed -n 1p)
 test -r "$E" && test -x "$SL/envs/4danyone/bin/python" && test -r "$SL/repos/4DAnyone/inference.py" \
   || fail "this login can't read the 4DAnyone stack ($E -> ${SL:-?}/envs/4danyone, repos/4DAnyone)"
+# and its lucid package (on PYTHONPATH from there) must take every option the jobs pass
+R=$SL/code/pipeline/lucid/recon.py
+for f in prep_clip.py export.py recon.py; do test -r "$SL/code/pipeline/lucid/$f" || fail "no $SL/code/pipeline/lucid/$f"; done
+OPTS="--source-video --source-masks --source-ignore --source-focal --face-weight --extra-sources"
+[[ " ${VARIANTS:-raw:default raw:agree} " == *":agree "* ]] && OPTS="$OPTS --source-agree"
+for o in $OPTS; do grep -Eq -e "[\"']$o[\"']" "$R" || fail "$R lacks $o (that stack's lucid.recon is older than the jobs)"; done
 FREE=$(group_free_gb)
 (( ${FREE:-0} >= ${MIN_GB:-2} )) || fail "group quota has ${FREE:-?} GB free, need ${MIN_GB:-2} for the results"
 echo "OK: $# run(s) x ${#TAGS[@]} job(s) = $(( $# * ${#TAGS[@]} )) job(s) of ${NGPU:-4} GPU(s), ${FREE} GB free on /blue;" \

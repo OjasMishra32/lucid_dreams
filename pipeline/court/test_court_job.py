@@ -341,6 +341,17 @@ class Submit(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("204 GB free", out)
 
+    def test_the_stacks_recon_must_take_the_jobs_options(self):
+        a = make_data(self.root, "court-main-s2")
+        rc, out = dryrun(a, STACK="old")  # a lucid.recon from before --extra-sources and --source-agree
+        self.assertNotEqual(rc, 0)
+        self.assertIn("lacks --extra-sources", out)
+        self.assertEqual(calls(out), [])
+        rc, out = dryrun(a, STACK="noagree", VARIANTS="raw:default")
+        self.assertEqual(rc, 0, out)
+        rc, out = dryrun(a, STACK="noagree")
+        self.assertIn("lacks --source-agree", out)
+
     def test_same_id_twice(self):
         a = make_data(self.root, "court-main-s2")
         rc, out = dryrun(a, a)

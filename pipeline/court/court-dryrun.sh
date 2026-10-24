@@ -4,7 +4,8 @@
 # Usage: court-dryrun.sh <run folder>... [more args]   (each folder's name is a run id; other args follow the ids)
 # The folders go to $L/data/court/<id> (or INTO=runs: $L/runs/<id>, as after a submit).
 # Env: FREE_T (the stub quota's free space in TB, default 0.2), NO_PYTHON=1 (fail on any python call), SEEDVR2=0
-# (its weights absent), QUOTA_OTHER_FIRST=1 (a full group listed before ours), STACK=0 (no 4DAnyone stack where env.sh points), plus anything the
+# (its weights absent), QUOTA_OTHER_FIRST=1 (a full group listed before ours), STACK=0 (no 4DAnyone stack where env.sh
+# points; old / noagree: its lucid.recon predates --extra-sources / --source-agree), plus anything the
 # script reads (VARIANTS, NGPU, DRY...). The stub sbatch refuses a script that doesn't exist in this checkout.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -12,11 +13,16 @@ SCRIPT=${SCRIPT:-court-job-submit.sh}; INTO=${INTO:-data/court}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/code" "$T/$INTO" "$T/models/seedvr2"
-ln -s "$(dirname "$HERE")" "$T/code/pipeline"
+mkdir -p "$T/code/pipeline/lucid"; ln -s "$HERE" "$T/code/pipeline/court"
 [ "${SEEDVR2:-1}" = 1 ] && echo weights > "$T/models/seedvr2/seedvr2_ema_3b_fp16.safetensors"
 printf 'export L=%s\n' "$T" > "$T/env.sh"  # the jobs' environment, pointing at a stand-in stack
-if [ "${STACK:-1}" = 1 ]; then
+if [ "${STACK:-1}" != 0 ]; then
   mkdir -p "$T/envs/4danyone/bin" "$T/repos/4DAnyone"
+  opts="--source-video --source-masks --source-ignore --source-focal --face-weight"
+  [ "${STACK:-1}" = old ] || opts="$opts --extra-sources"
+  [ "${STACK:-1}" = 1 ] && opts="$opts --source-agree"
+  for o in $opts; do echo "p.add_argument(\"$o\")"; done > "$T/code/pipeline/lucid/recon.py"
+  touch "$T/code/pipeline/lucid/prep_clip.py" "$T/code/pipeline/lucid/export.py"
   printf '#!/bin/sh\nexit 99\n' > "$T/envs/4danyone/bin/python"; chmod +x "$T/envs/4danyone/bin/python"
   echo stub > "$T/repos/4DAnyone/inference.py"
 fi
