@@ -35,7 +35,11 @@ PLAN=1 pipeline/court/court-grid.sh <out>/runs [id...]    # uploads, runs the ch
 NGPU=4 pipeline/court/court-grid.sh <out>/runs [id...]    # one court-job per run; job ids printed
 python3 <L>/code/pipeline/court/court_grid_report.py <L>/runs/court-*   # on a compute node or the Mac, once fetched
 ```
-The winner's other caps: a new run id for the same set, with `VARIANTS=<views:mode> CAPS="250000 200000" METRICS=0`.
+Per job: `VARIANTS` (views `raw`/`up` x mode `default`/`agree`, default `raw:default raw:agree`), `REALS` (how many of the
+run's other real views in `real/extras.json` train beside A's frame, default `0 1 2`; a metrics recon holds the unused ones
+out at weight 0), `CAPS`, `METRICS`, `NGPU`. `SEEDS=N` submits N jobs per run with 4DAnyone seeds 1..N into
+`<L>/runs/<id>/seed<k>/`; `TAG=winner VARIANTS="up:default up:agree" CAPS="300000 250000 200000" SEED=<k>` is the
+winner's SeedVR2 job. Late other-view masks: `player_clip.py --config <cfg> --extras-only` adds them to built sets.
 
 ## Tests
 
