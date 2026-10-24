@@ -33,6 +33,7 @@ Being measured: the one-photo avatar vs the same avatar fine-tuned on 4DAnyone's
 | `digs_io.py` | Photo/NLF/DiGS glue: crop and intrinsics, DiGS reference JSON, rasterizer Gaussians to PLY, sanity checks |
 | `skinning.py` | `skin.bin` / `skeleton.json` read, write, check; reference linear-blend skinning |
 | `retarget.py` | Someone else's motion on an avatar: leg-length scaling, facing the viewer, soles on the floor |
+| `foot_contact.py` | Feet that don't skate: contact detected from the motion, planted feet pinned with two-bone leg IK, slide reported in mm |
 | `gvhmr.py` | GVHMR's SMPL-X motion (4DAnyone's) as a Motion, moved into 4DAnyone's world |
 | `detail.py` | Hands and face pass: face and hand regions from posed joints, 2x close-up cameras, the view resampled into them |
 | `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
@@ -141,6 +142,15 @@ pixels the view doesn't have. If the pass fails, the job keeps the fine-tune's c
 `hpg/digs-perform.sbatch` with `AVATAR=<some avatar's code.pt>`, `RUN_ID=<the run with the move>`, `ID`, `NAME`:
 the move's joint rotations play on the avatar unchanged, the root path scaled by leg length, turned to face the
 viewer, and dropped so the avatar's lowest Gaussian over the clip touches the floor (crouches and jumps stay).
+
+**Feet that don't skate** (on by default; `--no-foot-lock` on `digs_perform.py` skips it). GVHMR predicts static
+labels, but 4DAnyone's MotionResult doesn't save them, so `lucid_avatars/foot_contact.py` finds contact in the motion:
+ankle and toe joint both within 4 cm (7 cm to stay) of their floor and under 0.35 m/s (0.6 to stay) for 3+ frames.
+Each contact segment is pinned: the ankle held at the segment's mean, the foot flat, the leg solved with the two-bone
+IK (knee toward where it was; hip and knee turn minimally from the person's own rotations), the root nudged only when
+a leg can't reach, and the hold faded over 4 frames each side. It runs before the floor drop. The job log prints
+`[foot-lock]` lines per foot (contact frames, max slide mm before -> after) and `FOOT_SLIDE_MM {...}`;
+`dream.json` gets `metrics.footSlideMm` `{before, after}` (worst foot, mm) and `avatar/foot_lock.json` the per-foot report.
 
 ## A real face: LAM head swap (consenting people only)
 

@@ -12,6 +12,7 @@ by leg length; hands rest in the hand mean; the clip is turned to face the viewe
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import digs_avatar as A  # noqa: E402
+from lucid_avatars import foot_contact as FC  # noqa: E402
 from lucid_avatars import skinning as S  # noqa: E402
 from lucid_avatars.motion import Motion  # noqa: E402
 from lucid_avatars.retarget import leg_length, place_on_floor, retarget  # noqa: E402
@@ -34,6 +36,8 @@ def main() -> int:
     p.add_argument("--name", required=True)
     p.add_argument("--ckpt", default="checkpoints/student.ckpt")
     p.add_argument("--config", default="configs/student_inpaint.yaml")
+    p.add_argument("--no-foot-lock", action="store_true",
+                   help="skip pinning planted feet (foot_contact.py); on by default")
     args = p.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("DiGS needs a CUDA GPU")
@@ -58,10 +62,18 @@ def main() -> int:
     as_np = lambda t: t.detach().float().cpu().numpy()  # noqa: E731
     rest_src, _ = S.rest_joints(as_np(bm.v_template), as_np(bm.shapedirs), as_np(bm.J_regressor), move.betas)
 
+    foot = {}
+
     def fit(g, skin, sk, stand):
         rest_dst = np.asarray(sk["rest"])
         m = A.D.with_hand_mean(retarget(move, rest_src, rest_dst, betas), hand_mean)
         print(f"leg length: mover {leg_length(rest_src):.3f} m, avatar {leg_length(rest_dst):.3f} m")
+        if not args.no_foot_lock:  # before place_on_floor, which then sets the floor from the pinned feet
+            try:
+                m, foot["report"] = FC.lock_feet(m, rest_dst)
+                print(FC.format_report(foot["report"]))
+            except Exception as e:  # never cost a GPU job its bundle over the polish
+                print(f"[foot-lock] skipped: {type(e).__name__}: {e}")
         return place_on_floor(m, g.xyz, g.opacity, *skin, rest_dst)
 
     focal = float(OmegaConf.select(config, "model.params.projector_config.focal_length", default=1120.0))
@@ -69,8 +81,12 @@ def main() -> int:
     source = {"avatar": str(args.start), "motion": str(args.motion),
               "model": "DiGS-Avatar + GVHMR motion retargeted by leg length", "note": A.HANDS_NOTE}
     with torch.no_grad():
-        return A.export_bundle(model, demo, start["code"].to(dev), betas, hand_mean, focal, any_camera, out, args.id,
-                               args.name, source, work, fps=int(round(move.fps)), motion=fit)
+        rc = A.export_bundle(model, demo, start["code"].to(dev), betas, hand_mean, focal, any_camera, out, args.id,
+                             args.name, source, work, fps=int(round(move.fps)), motion=fit)
+    if "report" in foot:  # dream.json metrics.footSlideMm {before, after}; the full report in avatar/foot_lock.json
+        FC.add_slide_metrics(out / args.id, foot["report"])
+        print(f"FOOT_SLIDE_MM {json.dumps(foot['report']['footSlideMm'])}")
+    return rc
 
 
 if __name__ == "__main__":
