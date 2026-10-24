@@ -1267,7 +1267,8 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
             errs.append(f"{p['proxy']}: an empty or broken mesh")
             continue
         tri = pos[idx.reshape(-1, 3)]
-        cell = float(np.median(np.min(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)))
+        # a grid cell's two sides are each triangle's two shorter edges (the third is its diagonal): the longer side
+        cell = float(np.median(np.sort(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)[:, 1]))
         info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm")
         if cell > PROXY_CELL_M * 1.1:
             errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")

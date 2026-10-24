@@ -223,6 +223,54 @@ class Proxy(unittest.TestCase):
         self.assertTrue(keep[:100].all())
         np.testing.assert_array_equal(sp.cap(s, cam, 5000), np.ones(n, bool))
 
+    def blob(self, n, centre, sigma, logit, spread=0.002, seed=13) -> sp.Splats:
+        P = np.asarray(centre, float) + np.random.default_rng(seed).normal(scale=spread, size=(n, 3))
+        return sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), np.full((n, 3), math.log(sigma), np.float32),
+                             np.full(n, logit, np.float32), np.zeros((n, 3), np.float32))
+
+    def test_the_proxy_box_holds_wide_splats_whole(self):
+        """Codex 1: the grid's box comes from the splats' own footprints, not a fixed margin: a body of 10 cm-sigma
+        Gaussians covers >= 0.5 well past 6 cm from their centres, and the mesh reaches as far as the coverage does."""
+        cam = look(np.array([-15.0, 1.0, 0.0]), [5.0, 1.0, 0.0], w=3840, h=2160, f=20000.0)
+        s = self.blob(150, [5.0, 1.0, 0.0], 0.1, 2.2)  # alpha 0.9
+        pos, idx, info = sp.proxy_mesh(s, cam, cell_m=0.01)
+        u, v, _ = cam.project(pos)
+        cu, cv, _ = cam.project(np.array([5.0, 1.0, 0.0]))
+        reach = float(np.hypot(u - cu, v - cv).max()) * 20.0 / cam.f  # metres at the blob
+        # the coverage itself, on a box far wider than the blob: how far does >= 0.5 go?
+        px = 0.01 * cam.f / 20.0
+        half = int(0.6 / 0.01)
+        box = (cu - half * px, cv - half * px, cu + half * px, cv + half * px)
+        cov = sp.coverage_image(s, cam, box, 2 * half, 2 * half)
+        jj, ii = np.nonzero(cov >= 0.5)
+        tu, tv = sp.texel_of(cu, cv, box, 2 * half, 2 * half)
+        truth = float(np.hypot(ii - tu, jj - tv).max()) * 0.01
+        self.assertGreater(truth, 0.15)
+        self.assertGreater(reach, truth - 0.02)
+
+    def test_a_footprint_wider_than_the_cap_is_still_whole(self):
+        """Codex 3: a Gaussian whose 3 sigma is past max_r texels is evaluated out to its own reach."""
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=1000.0)
+        s = self.one([0.0, 1.0, 0.0], [0.8, 0.8, 0.8], alpha=0.9)  # sigma 40 px = 40 texels: 3 sigma = 120 > 64
+        cov = sp.coverage_image(s, cam, (0.0, 0.0, 400.0, 400.0), 400, 400, max_r=64)
+        self.assertAlmostEqual(cov[200, 200 + 80], 0.9 * math.exp(-0.5 * (80.5 / 40.0) ** 2), delta=0.01)
+
+    def test_near_floaters_do_not_blow_up_the_grid(self):
+        """Codex 4: a few hundred splats a hair in front of the lens leave the grid the body's size, and a grid past
+        the size limit is refused, not allocated."""
+        rng = np.random.default_rng(14)
+        cam = look(np.array([-15.0, 1.0, 0.0]), [5.0, 1.0, 0.0], w=3840, h=2160, f=20000.0)
+        d = rng.normal(size=(20000, 3))
+        body = self.blob(20000, [5.0, 1.0, 0.0], 0.006, 4.0)
+        body.table["x"], body.table["y"], body.table["z"] = (d / np.linalg.norm(d, axis=1, keepdims=True) * 0.3 + [5.0, 1.0, 0.0]).T.astype(np.float32)
+        _, _, clean = sp.proxy_mesh(body, cam, cell_m=0.004)
+        near = self.blob(300, [-15.0 + 0.005, 1.0, 0.0], 0.0001, 4.0, spread=0.0002)  # 5 mm from the lens
+        both = sp.Splats(np.concatenate([body.table, near.table]))
+        _, _, got = sp.proxy_mesh(both, cam, cell_m=0.004)
+        self.assertLessEqual(got["texels"][0] * got["texels"][1], 1.5 * clean["texels"][0] * clean["texels"][1])
+        with self.assertRaises(ValueError):
+            sp.proxy_mesh(body, cam, cell_m=0.00001)
+
     def test_proxy_is_fine_at_the_silhouette_and_open_where_no_body_is(self):
         # two 0.3 m balls of splats 1 m apart, 20 m from the camera: the mesh covers each ball's front, nothing between
         rng = np.random.default_rng(11)

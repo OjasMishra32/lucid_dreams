@@ -443,6 +443,13 @@ class Bundle(unittest.TestCase):
         (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "coarse"))
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
+        # Codex 2: fine across, coarse along (4 mm x 50 mm cells) fails too
+        gu, gv = np.meshgrid(np.arange(41) * 0.004, np.arange(41) * 0.05)
+        pos = np.stack([5.0 + 0 * gu, gv, gu], -1).reshape(-1, 3)
+        idx = [[j * 41 + i, (j + 1) * 41 + i, j * 41 + i + 1] for j in range(40) for i in range(40)]
+        (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "thin"))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
 
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"

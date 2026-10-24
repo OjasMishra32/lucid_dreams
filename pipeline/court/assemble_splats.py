@@ -420,10 +420,20 @@ def _footprints(e: dict, box, W: int, H: int, max_r: int, budget: int, sel=None)
     tu, tv = texel_of(e["u"], e["v"], box, W, H)
     # out to 3 sigma, or only as far as alpha G stays >= 1/255 for a faint one (nothing past that is ever drawn)
     reach = np.minimum(3.0, np.sqrt(2 * np.log(np.maximum(255 * e["a"], 1.0))))
-    r = np.clip(np.ceil(reach * np.sqrt(0.5 * (A + C) + np.sqrt(0.25 * (A - C) ** 2 + B * B))), 1, max_r).astype(int)
+    r = np.maximum(np.ceil(reach * np.sqrt(0.5 * (A + C) + np.sqrt(0.25 * (A - C) ** 2 + B * B))), 1).astype(np.int64)
     inside = (tu + r >= 0) & (tu - r < W) & (tv + r >= 0) & (tv - r < H)
     if sel is not None:
         inside &= sel
+    # the few wider than max_r: each on its own, over its footprint clipped to the grid
+    for g in np.flatnonzero(inside & (r > max_r)):
+        x0, x1 = max(0, int(np.floor(tu[g] - r[g]))), min(W - 1, int(np.ceil(tu[g] + r[g])))
+        y0, y1 = max(0, int(np.floor(tv[g] - r[g]))), min(H - 1, int(np.ceil(tv[g] + r[g])))
+        iy, ix = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+        ex, ey = ix - tu[g], iy - tv[g]
+        alpha = np.minimum(0.99, e["a"][g] * np.exp(-0.5 * (iA[g] * ex * ex + 2 * iB[g] * ex * ey + iC[g] * ey * ey)))
+        ok = alpha >= 1 / 255
+        yield np.full(int(ok.sum()), g), (iy * W + ix)[ok], alpha[ok]
+    inside &= r <= max_r
     for rad in np.unique(r[inside]):
         grp = np.flatnonzero(inside & (r == rad))
         dy, dx = np.mgrid[-rad:rad + 1, -rad:rad + 1]
@@ -439,12 +449,15 @@ def _footprints(e: dict, box, W: int, H: int, max_r: int, budget: int, sel=None)
             yield np.broadcast_to(g[:, None], ix.shape)[ok], (iy * W + ix)[ok], alpha[ok]
 
 
-def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, budget: int = 4_000_000) -> np.ndarray:
+def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, budget: int = 4_000_000, zband=None) -> np.ndarray:
     """How much of each texel of `box` (W x H over source pixels) the splats cover as a splat renderer composites
     them: 1 - prod(1 - alpha_i G_i) (the order doesn't matter for coverage), each Gaussian's footprint its EWA
-    projection through `cam` (ewa), out to 3 sigma (at most max_r texels)."""
+    projection through `cam` (ewa), out to 3 sigma (wider than max_r texels: each on its own). With zband (lo, hi),
+    only the Gaussians at those depths count (a floater at the lens would cover everything)."""
+    e = ewa(s, cam)
+    sel = None if zband is None else (e["z"] >= zband[0]) & (e["z"] <= zband[1])
     logT = np.zeros(W * H)
-    for _, pix, alpha in _footprints(ewa(s, cam), box, W, H, max_r, budget):
+    for _, pix, alpha in _footprints(e, box, W, H, max_r, budget, sel):
         logT += np.bincount(pix, np.log1p(-alpha), minlength=W * H)
     return 1 - np.exp(logT).reshape(H, W)
 
@@ -492,7 +505,8 @@ def cap(s: Splats, cam: Cam, n: int) -> np.ndarray:
     return keep
 
 
-def proxy_mesh(s: Splats, cam: Cam, cell_m: float = 0.004, cover: float = 0.5, depth_cells: int = 4, pct: float = 10.0):
+def proxy_mesh(s: Splats, cam: Cam, cell_m: float = 0.004, cover: float = 0.5, depth_cells: int = 4, pct: float = 10.0,
+               depth_band: float = 3.0, max_texels: int = 16_000_000):
     """The splat-depth proxy seen from `cam` (camera F): a grid of square texels about cell_m wide at the body's
     depth over the body's box in F's image; a texel is meshed (two triangles) only where the splats cover at least
     `cover` of it (coverage_image), so the mesh's outline is the splats' own silhouette to a texel and there is no
@@ -504,20 +518,26 @@ def proxy_mesh(s: Splats, cam: Cam, cell_m: float = 0.004, cover: float = 0.5, d
 
     keep = s.alpha > 0.3
     keep = keep if keep.sum() > 100 else np.ones(len(s), bool)
-    u, v, z = cam.project(s.pos[keep].astype(float))
-    ok = z > 0
-    u, v, z = u[ok], v[ok], z[ok]
-    zm = float(np.median(z))
+    e = ewa(s.subset(keep), cam)
+    zm = float(np.median(e["z"]))
+    band = np.abs(e["z"] - zm) < depth_band  # the body's depths: a floater at the lens or far behind sizes nothing
+    u, v, z = e["u"][band], e["v"][band], e["z"][band]
+    reach = 3 * np.sqrt(0.5 * (e["A"] + e["C"]) + np.sqrt(0.25 * (e["A"] - e["C"]) ** 2 + e["B"] ** 2))[band]
     cell_px = cam.f * cell_m / zm
-    margin = 0.06 * cam.f / zm  # 6 cm past the solid splats' centres: room for their own width
-    u0, u1 = np.percentile(u, 0.05) - margin, np.percentile(u, 99.95) + margin
-    v0, v1 = np.percentile(v, 0.05) - margin, np.percentile(v, 99.95) + margin
+    # the box: the solid splats' own footprints (3 sigma round each centre), trimmed of the outermost 0.05%
+    u0, u1 = np.percentile(u - reach, 0.05) - cell_px, np.percentile(u + reach, 99.95) + cell_px
+    v0, v1 = np.percentile(v - reach, 0.05) - cell_px, np.percentile(v + reach, 99.95) + cell_px
     W, H = int(np.ceil((u1 - u0) / cell_px)), int(np.ceil((v1 - v0) / cell_px))
+    if W * H > max_texels:
+        raise ValueError(f"proxy grid {W} x {H} texels of {cell_px:.3f} px is past {max_texels}: a {cell_m * 100:.2f} cm cell over "
+                         f"{(u1 - u0) / cam.f * zm:.2f} x {(v1 - v0) / cam.f * zm:.2f} m (floaters in the box?)")
     box = (u0, v0, u0 + W * cell_px, v0 + H * cell_px)
-    on = coverage_image(s, cam, box, W, H) >= cover
+    on = coverage_image(s, cam, box, W, H, zband=(zm - depth_band, zm + depth_band)) >= cover
     # the front depth on coarse blocks
     Wd, Hd = -(-W // depth_cells), -(-H // depth_cells)
     tu, tv = texel_of(u, v, box, W, H)
+    inb = (tu > -0.5) & (tu < W - 0.5) & (tv > -0.5) & (tv < H - 0.5)  # the trimmed few outside the box add nothing
+    tu, tv, z = tu[inb], tv[inb], z[inb]
     ci = np.clip(np.rint(tu).astype(int) // depth_cells, 0, Wd - 1)
     cj = np.clip(np.rint(tv).astype(int) // depth_cells, 0, Hd - 1)
     cell = cj * Wd + ci
