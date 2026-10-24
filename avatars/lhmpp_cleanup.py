@@ -341,27 +341,51 @@ def shirt_paint(xyz: np.ndarray, rgb: np.ndarray, cand: np.ndarray, top_y: float
 
 
 def collar_mirror(xyz: np.ndarray, rgb: np.ndarray, scale: np.ndarray, region: np.ndarray, mid_x: float,
-                  reach: float = 0.008) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                  reach: float = 0.008, spot_region: np.ndarray | None = None, jacket: np.ndarray | None = None
+                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """A shirt collar is the same on both sides. In `region` (the front of the neck and collar): first, a light or
-    brown Gaussian among jacket-dark neighbours (a white needle, a spot on the lapel) takes their colour; then a dark
+    brown Gaussian among jacket-dark neighbours (a white needle, a spot on the lapel), and any cool-tinted light or
+    brown one there, takes the colour of its neighbours that aren't odd (what it sits on); then a dark
     Gaussian whose mirror image across x = mid_x lands within `reach` of the shirt's white takes that white (its 4
-    nearest, mirrored back); and none there is a needle (longest axis at most 3x the middle one).
+    nearest, mirrored back); and none there is a needle (longest axis at most 3x the middle one). Spots are looked
+    for in `spot_region` too (a wider band) when given, where with `jacket` (its colour) every dark Gaussian takes
+    the jacket's colour (a hole in the front collar shows its back) and a white brighter than the shirt takes the
+    shirt's; the mirror stays in `region`.
     Returns (rgb, scale, painted ids)."""
     out, sc = rgb.copy(), scale.copy()
     tree = cKDTree(xyz)
-    r_all = np.flatnonzero(region)
+    r_all = np.flatnonzero(region if spot_region is None else (region | spot_region))  # spots: the wider band
     if len(r_all) == 0:
         return out, sc, np.array([], dtype=np.int64)
     lum = rgb @ LUM
-    nb = tree.query(xyz[r_all], k=33)[1][:, 1:]
-    ctx = np.median(lum[nb], axis=1)
-    spot = (ctx < 0.25) & (lum[r_all] > ctx + 0.12)
+    sat = rgb.max(1) - rgb.min(1)
+    # odd colours for a collar: a cool (lavender, blue-grey) light that neither the shirt nor the skin has, and brown
+    odd = ((rgb[:, 2] >= rgb[:, 0] - 0.01) & (lum > 0.5)) | ((sat > 0.15) & (lum > 0.3) & (lum < 0.6))
+    nb = tree.query(xyz[r_all], k=65)[1][:, 1:]
+    ctx = np.median(lum[nb[:, :32]], axis=1)
+    spot = ((ctx < 0.25) & (lum[r_all] > ctx + 0.12)) | odd[r_all]
     on_jacket = r_all[spot]
-    out[on_jacket] = np.median(rgb[nb[spot]], axis=1)
+    for row, k in zip(nb[spot], on_jacket):  # the colour of what it sits on: its neighbours that aren't odd
+        plain = row[~odd[row]]
+        out[k] = np.median(rgb[plain if len(plain) >= 8 else row], axis=0)
     lum = out @ LUM
     sat = out.max(1) - out.min(1)
     white = region & (lum > 0.55) & (sat < 0.2)
     ids = on_jacket
+    if jacket is not None and spot_region is not None:
+        # in the wider band, the dark is the jacket (a hole in the front collar shows its back, a lighter grey-brown:
+        # it takes the jacket's colour, a little of its shading kept), and a white brighter than the shirt (a
+        # highlight speck) takes the shirt's
+        j_l = max(float(np.asarray(jacket) @ LUM), 1e-3)
+        dk = np.flatnonzero(spot_region & (lum < 0.3))
+        out[dk] = np.clip(np.asarray(jacket)[None] * np.clip(lum[dk] / j_l, 0.85, 1.15)[:, None], 0, 1)
+        if white.sum() >= 20:
+            shirt_c = np.median(out[white], axis=0)
+            hi = np.flatnonzero(spot_region & (lum > float(shirt_c @ LUM) + 0.08) & (sat < 0.15))
+            out[hi] = shirt_c
+            ids = np.union1d(ids, hi)
+        ids = np.union1d(ids, dk)
+        lum = out @ LUM
     if white.sum() >= 20:
         w_ids = np.flatnonzero(white)
         dark = np.flatnonzero(region & (lum < 0.3))
@@ -727,7 +751,10 @@ def main(argv=None) -> None:
         neck_j, mid = joints[J["neck"]], float(joints[J["spine3"], 0])  # the body's midline (the neck joint leans)
         region = keep & ~hands & ~head & (np.abs(xyz[:, 0] - mid) < 0.055) & (xyz[:, 1] > neck_j[1] - 0.005) \
             & (xyz[:, 1] < neck_j[1] + 0.06) & (xyz[:, 2] > neck_j[2] + 0.02)  # the collar band, by the neck
-        out, scale, m_ids = collar_mirror(xyz, out, scale, region, mid)
+        wide = keep & ~hands & ~head & (np.abs(xyz[:, 0] - mid) < 0.09) & (xyz[:, 1] > neck_j[1] - 0.03) \
+            & (xyz[:, 1] < neck_j[1] + 0.06) & (xyz[:, 2] > neck_j[2] - 0.05)  # the lapels and the collar's back too
+        jacket_c = np.median(out[keep & np.isin(dom, JACKET) & ~hands & ((out @ LUM) < 0.2)], axis=0)
+        out, scale, m_ids = collar_mirror(xyz, out, scale, region, mid, spot_region=wide, jacket=jacket_c)
         mirrored_n = len(m_ids)
 
     # 10. trousers with shape: LHM++'s guessed shading was noise, and toning them flattened them, so they are lit
