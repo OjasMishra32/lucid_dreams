@@ -271,12 +271,15 @@ class Source:
                 f_of = lambda s: cf(s) * src_width / cf.width  # noqa: E731
             else:
                 f_of = cf
+        if not _get(cfg, "frames_dir"):
+            raise ValueError("bake config: frames_dir is not set (the decoded source frames)")
+        rife_dir = kw.pop("rife_dir", None) or _get(cfg, "rife_dir") or None
+        rife_dir = Path(rife_dir).expanduser() if rife_dir else None
         src = cls(Path(_get(cfg, "frames_dir")).expanduser(), _get(cfg, "frame_pattern", "{src:06d}.jpg"), f_of,
                    cf.k1, src_width, watermark=_get(cfg, "watermark"), strobes=_get(cfg, "strobes", ()) or (),
                    repeat_mod=_get(cfg, "repeat_mod", 4), repeat_phase=_get(cfg, "repeat_phase", 3),
                    clip_first=_get(cfg, "clip_first", 0), capture_fps=_get(cfg, "capture_fps", 120.0),
-                   f_scale=_get(cfg, "undistort_f_scale", 1.0) or 1.0, rife_dir=kw.pop("rife_dir", _get(cfg, "rife_dir")),
-                   **kw)
+                   f_scale=_get(cfg, "undistort_f_scale", 1.0) or 1.0, rife_dir=rife_dir, **kw)
         wm = _get(cfg, "watermark_model")
         if wm and src.watermark:
             wm = Path(wm).expanduser()
