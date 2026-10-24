@@ -74,6 +74,31 @@ instruments beside, whole-body moves ahead, hands-on work facing; a named place 
 (cooking, crafts, tennis) says `room`, so the players don't pick a place from words like "box" or "shot"; objects are
 lowercase singular nouns. `lib/bridge/*.ts` imports `server-only`, so the scripts run with `node --conditions=react-server` (and `tsx`).
 
+## The coach in the lesson (Gemini Live)
+
+In a lesson in the WebXR viewer, **Ask** (a fingertip button beside Place in your room, "Ask about this step" on the
+laptop's step card, or the A key) opens a Gemini Live session about the step on screen: you ask out loud ("how should
+my wrist be here?"), the teacher pauses, and the answer is read in the device's own voice, the same one that reads the
+tips, never the person's. It listens for a follow-up for 10 s, then closes; it stops at once (mic released) when the
+step changes, you leave the room or press Ask again.
+
+- **The key stays on this Mac.** The viewer asks `/api/live/token` (through its own server, so the https page never
+  calls http) for a **single-use ephemeral token** (`authTokens.create`, v1alpha) that has to open its session within
+  a minute and expires after 5. The token is locked to one Live model and one config (`liveConnectConstraints`, every
+  field locked): text replies, the system instruction with the plan's title and intent and the step's title, tip,
+  clip times and speed, and where the teacher was paused. When the dream's `experience.json` has the step, its words
+  are used, not the viewer's. The viewer then talks to Gemini directly over a WebSocket: your voice as 16 kHz PCM up,
+  text back.
+- **Never the person's voice.** Replies are text, spoken by the device. A Live model that can only speak gets audio
+  plus its transcript; the viewer reads the transcript and never plays the audio. Gemini never names the person or
+  speaks as them.
+- **Models:** `gemini-3.8-live`, then `gemini-3.1-flash-live-preview` (override with `GEMINI_LIVE_MODEL`,
+  comma-separated). Each is tried with text replies first, then audio plus transcript; the viewer remembers what worked.
+- **Off without a key:** with no `GEMINI_API_KEY` the viewer shows no Ask button at all, and the lesson runs as before.
+  A bad key or quota shows one sentence on the step card.
+- **Rate limit:** 8 tokens a minute per device (the headset's address, forwarded by the viewer's server), 120 an
+  hour for the Mac.
+
 ## API (contract in AGENTS.md)
 
 | Call | Reply |
@@ -82,6 +107,8 @@ lowercase singular nouns. `lib/bridge/*.ts` imports `server-only`, so the script
 | `GET /api/jobs/:id` | `{ id, status, stage, progress, etaS, message }` |
 | `GET /api/dreams` | every `dream.json`, newest first |
 | `GET /dreams/<id>/...` | bundle files, with Range support; `/dreams/index.json` mirrors the WebXR viewer's index |
+| `GET /api/live/token` | `{ state: "on" \| "off" }`: whether the lesson coach is available (a Gemini key is set) |
+| `POST /api/live/token` | JSON `{ dream?, index, count, title, tip?, start, end, speed?, at?, plan?: { title?, intent? }, attempt? }` -> `201 { token, model, reply, attempt, attempts, expiresAt }`; `503` off, `429` too many, `400` / `502` `{ error }` in a sentence |
 
 All responses send `Access-Control-Allow-Origin: *`, so the Quest app and the WebXR viewer can call them directly.
 
