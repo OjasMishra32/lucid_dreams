@@ -27,9 +27,16 @@ Dreams come from `dreams/` at the repo root (the autopilot fetches them there). 
 | Push a fingertip through a button | Pause, speed (1x, 0.5x, 0.25x), Reality check, Bring here |
 | Reach toward them | Your real hand stays in front of them |
 | Fingertip "Place" button | Swaps your room for a 360-degree place around them: concert hall, court, gym, ring, studio, mountains (and back) |
+| Fingertip "Ask" button (lessons) | Ask the coach about the step on screen, out loud; push again to stop |
 
 A lesson (`experience.json`, or just the sentence you gave) adds a step card and Back / Again / Next buttons: each
-step plays slowed down, then they freeze for your turn. Basketball dreams come with the real ball and a regulation
+step plays slowed down, then they freeze for your turn. **Ask** (beside Place in your room, "Ask about this step" on
+the laptop's step card, or the A key) opens a Gemini Live session about that step: the teacher pauses, you ask
+("how should my wrist be here?"), and the answer shows on the step card and is read in the device's own voice, never
+the person's. It stops, and releases the mic, when the step changes or you leave the room. The token comes from the
+bridge (apps/web, `/api/live/token`) through this server (`vite.config.ts` passes `/api/live` to
+`http://localhost:5170`, or `LUCID_BRIDGE`), so the https page never calls http and the Gemini key never leaves the
+Mac. No key on the bridge, or no bridge: no Ask button, and the lesson runs as before. Basketball dreams come with the real ball and a regulation
 hoop where the shooter aims (`props.json`). Captions float in front of the person when the bundle has `captions.vtt`. Reality check tints everything the camera
 (or the photo) never saw blue.
 
@@ -54,6 +61,8 @@ handshake you can meet with your hand.
 | `src/viewer.ts` | Playback, room placement, positional voice, reality check, captions |
 | `src/avatar.ts` | Live GPU skinning of avatar bundles (matches `avatars/lucid_avatars/skinning.py`) |
 | `src/look.ts` | Eye contact: in `companion` / `play` an avatar turns its head toward you (head 70%, neck 30%, ±35° yaw, ±20° pitch, 300 ms); `node scripts/check_look.ts` checks it |
+
+| `src/coach.ts` | Ask: the Gemini Live coach (mic as 16 kHz PCM over a WebSocket, text answers in the device's voice) |
 | `src/xr/hands.ts` | Fingertip buttons and depth-only hand occluders, shared by the viewer and chess |
 | `src/chess/` | Board, lathe-turned pieces, Stockfish 19 in a worker (GPL-3.0, separate file in `public/engine`) |
 | `scripts/make_test_avatar.py` | A rigged test avatar from your local SMPL-X model (never committed) |

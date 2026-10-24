@@ -159,6 +159,33 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 .step-progress i { display: block; height: 100%; width: 0; background: var(--link); }
 .step-nav { display: flex; gap: 8px; }
 .step-nav .pill { flex: 1; }
+
+/* ---------- Ask: the coach ---------- */
+.coach { margin: 12px 0 0; padding: 10px 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); }
+.coach[hidden], .coach p[hidden] { display: none; }
+.coach-q { margin: 0; font-size: 13px; line-height: 1.35; color: var(--muted); }
+.coach-a { margin: 0; font-size: 15px; line-height: 1.4; color: var(--text); max-height: 8.4em; overflow-y: auto; }
+.coach-q + .coach-a { margin-top: 6px; }
+.ask {
+  width: 100%; margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 7px;
+  font-size: 13px; font-weight: 500; padding: 9px 13px; border-radius: 980px; color: var(--text);
+  background: rgba(255, 255, 255, 0.1); transition: background-color 0.2s ease, color 0.2s ease;
+}
+.ask:hover { background: rgba(255, 255, 255, 0.16); }
+.ask.on { background: rgba(41, 151, 255, 0.22); color: var(--link); }
+.ask[hidden] { display: none; }
+.ask:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.ask > svg { width: 14px; height: 14px; fill: currentColor; flex: none; }
+.ask-level { display: none; align-items: center; gap: 2px; height: 14px; }
+.ask[data-state="listening"] .ask-level { display: inline-flex; }
+.ask-level i { display: block; width: 3px; border-radius: 2px; background: currentColor; height: calc(4px + var(--level, 0) * 6px); transition: height 90ms linear; }
+.ask-level i:nth-child(2) { height: calc(4px + var(--level, 0) * 10px); }
+.ask[data-state="thinking"] { animation: ask-breathe 1.6s ease-in-out infinite; }
+@keyframes ask-breathe { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .ask, .ask-level i { transition: none; }
+  .ask[data-state="thinking"] { animation: none; }
+}
 @media (max-width: 720px) {
   .step-card { top: auto; right: 16px; left: 16px; width: auto; transform: none; bottom: calc(max(28px, env(safe-area-inset-bottom)) + 84px); }
 }

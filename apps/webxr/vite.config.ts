@@ -49,8 +49,11 @@ function dreams(): Plugin {
 // WebXR needs HTTPS on the headset: the dev server uses a self-signed certificate (accept it once in the Quest
 // browser) and listens on the LAN so the headset can reach this Mac. LUCID_HTTP=1 serves plain HTTP for desktop checks.
 const http = Boolean(process.env.LUCID_HTTP);
+// The lesson's Ask button gets its Gemini Live token from the bridge (apps/web, plain http on :5170). A page served
+// over https can't call http, so the viewer asks its own server, which passes it on (with the headset's address).
+const bridge = { "/api/live": { target: process.env.LUCID_BRIDGE ?? "http://localhost:5170", xfwd: true } };
 export default defineConfig({
   plugins: [http ? null : basicSsl(), dreams()],
-  server: { host: true, port: 5180 },
-  preview: { host: true, port: 5180 },
+  server: { host: true, port: 5180, proxy: bridge },
+  preview: { host: true, port: 5180, proxy: bridge },
 });

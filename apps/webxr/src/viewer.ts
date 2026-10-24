@@ -4,6 +4,7 @@ import { SparkRenderer, SparkXr, SplatMesh } from "@sparkjsdev/spark";
 import { SkinnedAvatar } from "./avatar";
 import { HeadLook } from "./look";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
+import { Coach, coachAvailable, type CoachState } from "./coach";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
 import { nextPlace, type Place, Places, startingPlace } from "./places";
@@ -16,6 +17,15 @@ import { fingertips, handOccluder, XrButton } from "./xr/hands";
 const PLAY = `<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>`;
 const PAUSE = `<svg viewBox="0 0 16 16"><path d="M3.5 2h3v12h-3zM9.5 2h3v12h-3z"/></svg>`;
 const BACK = `<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const MIC = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="1" width="5.5" height="9" rx="2.75"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+// what the Ask button says in each state: on the step card, and on the fingertip bar in your room
+const ASK: Record<CoachState, [string, string]> = {
+  idle: ["Ask about this step", "Ask"],
+  starting: ["Starting…", "Starting…"],
+  listening: ["Listening…", "Listening…"],
+  thinking: ["Thinking…", "Thinking…"],
+  answering: ["Answering…", "Answering…"],
+};
 const PLACE_DISTANCE = 1.8; // meters in front of you when you enter the room
 const LOAD_CONCURRENCY = 4;
 const LONG_PINCH_MS = 800; // hold a pinch this long to bring the person in front of you
@@ -31,8 +41,10 @@ export async function renderViewer(root: HTMLElement, id: string) {
       <h2 id="loading-title">Bringing them in</h2><p id="loading-pct">0%</p></div></div>
     <aside class="step-card" id="step-card" hidden>
       <p class="step-count" id="step-count"></p><h3 id="step-title"></h3><p class="step-tip" id="step-tip"></p>
+      <div class="coach" id="coach" hidden aria-live="polite"><p class="coach-q" id="coach-q"></p><p class="coach-a" id="coach-a"></p></div>
       <div class="step-progress"><i id="step-bar"></i></div>
       <div class="step-nav"><button class="pill" id="step-back">Back</button><button class="pill" id="step-again">Again</button><button class="pill" id="step-next">Next</button></div>
+      <button class="ask" id="ask" hidden aria-pressed="false" title="Ask the coach about this step (A)">${MIC}<span id="ask-label">${ASK.idle[0]}</span><span class="ask-level" aria-hidden="true"><i></i><i></i><i></i></span></button>
     </aside>
     <p class="cue" id="cue" hidden></p>
     <div class="controls" id="controls" hidden>
@@ -269,9 +281,92 @@ export async function renderViewer(root: HTMLElement, id: string) {
   stepCard.mesh.scale.setScalar(0.66);
   stepCardGroup.visible = false;
   scene.add(stepCardGroup);
+
+  // ---------------- Ask: the coach (Gemini Live) answers out loud about the step on screen ----------------
+  // Only in a lesson, and only when the bridge has a Gemini key (no dead button otherwise). The teacher pauses while
+  // you ask; the answer is read in the device's voice, like the tips. Stops (mic released) when the step changes.
+  const askBtn = $("#ask");
+  let xrAsk: XrButton | null = null;
+  let askedAbout = -1; // the step the coach's note is about
+  let resumeAfterAsk = false;
+  const note = { q: "", a: "" };
+  const showNote = () => {
+    $("#coach").hidden = !note.q && !note.a;
+    $("#coach-q").hidden = !note.q;
+    $("#coach-q").textContent = note.q ? `You asked: “${note.q}”` : "";
+    $("#coach-a").hidden = !note.a;
+    $("#coach-a").textContent = note.a;
+    stepCard.note = note.a ? { label: "Coach", text: note.a } : note.q ? { label: "You asked", text: note.q } : null;
+    if (lesson) stepCard.draw(lesson, performance.now());
+  };
+  const coach = lesson
+    ? new Coach({
+        state: (s) => {
+          const on = s !== "idle";
+          askBtn.dataset.state = s;
+          askBtn.classList.toggle("on", on);
+          askBtn.setAttribute("aria-pressed", String(on));
+          $("#ask-label").textContent = ASK[s][0];
+          xrAsk?.setLabel(ASK[s][1]);
+          xrAsk?.setOn(on);
+        },
+        heard: (q) => {
+          note.q = q;
+          showNote();
+        },
+        answer: (a) => {
+          note.a = a;
+          showNote();
+        },
+        error: (message) => {
+          note.q = "";
+          note.a = message;
+          showNote();
+        },
+        end: () => {
+          if (resumeAfterAsk) setPlaying(true);
+          resumeAfterAsk = false;
+        },
+      })
+    : null;
+  const ask = () => {
+    if (!coach || !lesson || askBtn.hidden) return;
+    if (coach.active) return coach.stop();
+    // they stop to listen, the way a teacher does when you put your hand up
+    resumeAfterAsk = playing;
+    setPlaying(false);
+    askedAbout = lesson.i;
+    note.q = note.a = "";
+    showNote();
+    const st = lesson.step;
+    void coach.start({
+      dream: dream.id,
+      index: lesson.i,
+      count: lesson.steps.length,
+      title: st.title,
+      tip: st.tip,
+      start: st.start,
+      end: st.end,
+      speed: lesson.speed,
+      at: Math.round(t * 10) / 10,
+      plan: { title: experience?.title, intent: experience?.intent ?? dream.intent ?? undefined },
+    });
+  };
+  askBtn.addEventListener("click", ask);
+  addEventListener("pagehide", () => coach?.stop());
+
   let lastSaid = "";
   const showStep = () => {
     if (!lesson) return;
+    if (lesson.i !== askedAbout) {
+      // a new step: the coach was answering about the last one (stop it before this step's tip is read)
+      coach?.stop();
+      askedAbout = lesson.i;
+      if (note.q || note.a) {
+        note.q = note.a = "";
+        showNote();
+      }
+    }
     const st = lesson.step;
     $("#step-card").hidden = false;
     $("#step-count").textContent = lesson.phase === "turn" ? "Your turn" : `Step ${lesson.i + 1} of ${lesson.steps.length}`;
@@ -303,6 +398,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       setPlaying(!playing);
     }
     if (e.code === "KeyP" && !e.metaKey && !e.ctrlKey && !e.altKey) cyclePlace();
+    if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) ask();
   });
   syncAudio();
 
@@ -412,6 +508,21 @@ export async function renderViewer(root: HTMLElement, id: string) {
   xrPlace.mesh.position.y = 0.045;
   tilt.add(xrPlace.mesh);
   xrButtons.push(xrPlace);
+  // Ask shares that row, to the right of the place, once the bridge says the coach is on
+  if (coach) {
+    xrAsk = new XrButton("ask", ASK.idle[1], ask);
+    xrAsk.mesh.visible = false; // hidden buttons can't be pressed
+    xrAsk.mesh.position.set(0.05, 0.045, 0);
+    tilt.add(xrAsk.mesh);
+    xrButtons.push(xrAsk);
+    const placeBtn3d = xrPlace;
+    void coachAvailable().then((on) => {
+      if (!on) return console.info("Ask is off: the bridge on :5170 has no Gemini key, or isn't running.");
+      askBtn.hidden = false;
+      xrAsk!.mesh.visible = true;
+      placeBtn3d.mesh.position.x = -0.05;
+    });
+  }
 
   const caption = spatialCaption(dream.name, "Pinch to pause  ·  Hold the pinch to bring them here");
   caption.visible = false;
@@ -444,6 +555,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       captionUntil = performance.now() + 7000;
     },
     onExitXr: () => {
+      coach?.stop(); // leaving the room ends the question: the mic is released
       bar.visible = false;
       stepCardGroup.visible = false;
       pinches.clear();
@@ -552,6 +664,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     } else show(Math.min(count - 1, Math.floor(t * dream.fps)));
     props?.update(t, dt, reveal);
     places.update(dt);
+    if (coach?.state === "listening") askBtn.style.setProperty("--level", coach.level.toFixed(2));
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;
     if (!renderer.xr.isPresenting) controls.update();

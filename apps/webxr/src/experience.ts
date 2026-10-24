@@ -101,9 +101,38 @@ export function say(text: string) {
   speechSynthesis.speak(u);
 }
 
+const saying = new Set<SpeechSynthesisUtterance>(); // held until spoken: Chrome drops events of collected utterances
+
+/**
+ * Like say(), same voice, but after whatever the device is already saying. Resolves once it's said, dropped, or (on a
+ * device whose speech engine never reports back) after about as long as saying it would take.
+ */
+export function sayNext(text: string): Promise<void> {
+  return new Promise((done) => {
+    if (!("speechSynthesis" in window) || !text.trim()) return done();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1;
+    saying.add(u);
+    const long = () => 2000 + text.length * 100;
+    let timer = setTimeout(finish, long());
+    function finish() {
+      clearTimeout(timer);
+      if (saying.delete(u)) done();
+    }
+    u.onstart = () => {
+      clearTimeout(timer);
+      timer = setTimeout(finish, long());
+    };
+    u.onend = u.onerror = finish;
+    speechSynthesis.speak(u);
+  });
+}
+
 /** The step card floating beside the person in the room: step count, title, tip, and a bar through your turn. */
 export class StepCard {
   mesh: THREE.Mesh;
+  /** The coach's line (what you asked, then its answer), shown in place of the tip while there is one. */
+  note: { label: string; text: string } | null = null;
   private canvas = document.createElement("canvas");
   private tex: THREE.CanvasTexture;
 
@@ -133,7 +162,14 @@ export class StepCard {
     c.fillStyle = "#f5f5f7";
     c.font = '600 64px -apple-system, "SF Pro Display", "Inter", sans-serif';
     c.fillText(s.title, 64, 190, W - 128);
-    if (s.tip) {
+    if (this.note) {
+      c.fillStyle = "#2997ff";
+      c.font = '600 32px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      c.fillText(this.note.label, 64, 252, W - 128);
+      c.fillStyle = "#d1d1d6";
+      c.font = '400 38px -apple-system, "SF Pro Text", "Inter", sans-serif';
+      wrap(c, this.note.text, 64, 302, W - 128, 48, 3);
+    } else if (s.tip) {
       c.fillStyle = "#d1d1d6";
       c.font = '400 40px -apple-system, "SF Pro Text", "Inter", sans-serif';
       wrap(c, s.tip, 64, 262, W - 128, 52, 3);
