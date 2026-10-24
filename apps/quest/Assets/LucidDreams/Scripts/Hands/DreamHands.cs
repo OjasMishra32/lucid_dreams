@@ -17,6 +17,8 @@ namespace LucidDreams
 
         public HandTracker hands;
         public DreamPlacer placer;
+        [Tooltip("A second person counts as the person too: pinching either moves both.")]
+        public DreamCompanion companion;
         public DreamSequencePlayer player;
         public DreamControlBar bar;
         public DreamLibraryPanel library;
@@ -117,8 +119,12 @@ namespace LucidDreams
             float height = player != null && player.Dream?.bounds != null && player.Dream.bounds.Height > 0.5f
                 ? player.Dream.bounds.Height : personHeight;
             height += placer.Lift;
+            if (p.y < root.y - 0.1f || p.y > root.y + height + 0.15f) return false;
             var flat = new Vector2(p.x - root.x, p.z - root.z);
-            return flat.magnitude < PersonRadius && p.y > root.y - 0.1f && p.y < root.y + height + 0.15f;
+            if (flat.magnitude < PersonRadius) return true;
+            if (companion == null || !companion.Present) return false;
+            var second = companion.transform.position;
+            return new Vector2(p.x - second.x, p.z - second.z).magnitude < PersonRadius;
         }
 
         // Captures the starting poses for however many hands are grabbing now. A hand that has just become a grab

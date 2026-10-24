@@ -33,8 +33,10 @@ namespace LucidDreams
         public bool loop = true;
         [Tooltip("Frames downloaded and decoded at once while preloading.")]
         [Range(1, 6)] public int parallelLoads = 3;
-        [Tooltip("Refuse frames (the replay plus its reality check) that would take more GPU memory than this.")]
+        [Tooltip("Refuse frames (the replay plus its reality check) that would take more GPU memory than this, counting every person on screen.")]
         public int gpuBudgetMB = 3072;
+        [Tooltip("A second person plays on this player's clock (same moment, pause, speed and lesson) instead of their own.")]
+        public DreamSequencePlayer follow;
         [Tooltip("Poses avatar bundles on the GPU (Shaders/AvatarSkinning.compute).")]
         public ComputeShader avatarSkinning;
 
@@ -70,6 +72,10 @@ namespace LucidDreams
         // Where the body really is (lowest and highest point, the seat if they sit), the middle of every frame's
         // measure; not measured for avatars.
         public BodyShape Body { get; private set; }
+        // Seated at bench height or standing (Seating); the person's transform is raised by its lift.
+        public Seating Seat { get; private set; }
+        // GPU memory held by this person's frames (the replay and its reality check).
+        public long GpuBytes => (sequence?.GpuBytes ?? 0) + (reality?.GpuBytes ?? 0);
 
         public event Action Ready;
 
@@ -91,7 +97,19 @@ namespace LucidDreams
         string baseUrl;
         float time;
 
+        static readonly System.Collections.Generic.List<DreamSequencePlayer> everyone = new();
+
         void Awake() => splat = GetComponent<GaussianSplat3DRenderer>();
+        void OnEnable() => everyone.Add(this);
+        void OnDisable() => everyone.Remove(this);
+
+        // What the other people on screen hold, so together they stay inside one budget.
+        long OthersBytes()
+        {
+            long bytes = 0;
+            foreach (var p in everyone) if (p != this) bytes += p.GpuBytes + (p.loading?.sequence?.GpuBytes ?? 0);
+            return bytes;
+        }
 
         void Start()
         {
@@ -105,6 +123,16 @@ namespace LucidDreams
             bundle = location;
             baseUrl = ResolveBase(location);
             StartCoroutine(LoadRoutine());
+        }
+
+        // Takes the person away and frees their frames.
+        public void Unload()
+        {
+            StopAllCoroutines();
+            Release();
+            Dream = null;
+            Error = null;
+            bundle = "";
         }
 
         public void Play() { if (IsReady) IsPlaying = true; }
@@ -160,6 +188,15 @@ namespace LucidDreams
 
         void Update()
         {
+            if (IsReady && follow != null)
+            {
+                // the same moment as the person they're with, looping if they're shorter
+                if (follow.IsReady && Duration > 0f) time = Mathf.Min(follow.ClipTime % (Duration + 1e-4f), Duration);
+                IsPlaying = follow.IsPlaying;
+                Speed = follow.Speed;
+                ShowTime();
+                return;
+            }
             if (!IsReady || !IsPlaying) return;
             if (Lesson != null)
             {
@@ -260,7 +297,7 @@ namespace LucidDreams
             while (true)
             {
                 loading = new LoadResult { shapes = new BodyShape[Dream.frameCount] };
-                yield return Fill(pattern, decoder, capacity, (long)gpuBudgetMB << 20, loading, p => LoadProgress = p);
+                yield return Fill(pattern, decoder, capacity, ((long)gpuBudgetMB << 20) - OthersBytes(), loading, p => LoadProgress = p);
                 var result = loading;
                 loading = null;
                 if (result.error != null)
@@ -295,7 +332,11 @@ namespace LucidDreams
             time = 0f;
             ShowTime();
             IsReady = true;
-            if (Experience != null && Experience.IsTeach)
+            Seat = Seating.For(Body, Experience, Dream.intent);
+            transform.localPosition = new Vector3(0f, Seat.lift, 0f);
+            if (Seat.seated)
+                Debug.Log($"[Lucid Dreams] Seated: hips at {Seat.benchTop:F2} m, raised {Seat.lift:+0.00;-0.00} m{(Seat.needsBench ? ", a bench under them" : "")}.");
+            if (follow == null && Experience != null && Experience.IsTeach)
             {
                 Lesson = new Lesson(Experience.steps);
                 Lesson.Changed += OnLessonChanged;
@@ -402,7 +443,7 @@ namespace LucidDreams
             RealityError = null;
             RealityProgress = 0f;
             realityLoading = new LoadResult();
-            long budgetLeft = ((long)gpuBudgetMB << 20) - sequence.GpuBytes;
+            long budgetLeft = ((long)gpuBudgetMB << 20) - sequence.GpuBytes - OthersBytes();
             yield return Fill(Dream.frames.reality, SpzFrameReader.Read, sequence.Capacity, budgetLeft, realityLoading, p => RealityProgress = p);
             var result = realityLoading;
             realityLoading = null;
@@ -538,6 +579,8 @@ namespace LucidDreams
             Lesson = null;
             Experience = null;
             Body = default;
+            Seat = default;
+            transform.localPosition = Vector3.zero;
             RealityLoading = false;
             if (splat != null)
             {

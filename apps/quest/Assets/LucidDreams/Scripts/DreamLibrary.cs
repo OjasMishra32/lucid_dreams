@@ -32,12 +32,15 @@ namespace LucidDreams
         [Tooltip("Where bundles are kept. Empty: <app storage>/dreams.")]
         public string cacheRoot = "";
         public DreamSequencePlayer player;
+        [Tooltip("The second person, for Bring in another.")]
+        public DreamCompanion companion;
         [Range(1, 8)] public int parallelDownloads = 4;
 
         public IReadOnlyList<Entry> Entries => entries;
         public bool Online { get; private set; }
         public bool Refreshing { get; private set; }
         public string PlayingId { get; private set; }
+        public string CompanionId => companion != null && companion.Present ? companion.Id : null;
         public string Bridge => bridgeUrl;
         public event Action Changed;
         // Nothing playable at start: the library panel opens itself until you pick a dream.
@@ -86,10 +89,26 @@ namespace LucidDreams
 
         void Play(string id)
         {
+            if (id == CompanionId) companion.Dismiss(); // they become the one you're with
             PlayingId = id;
             WaitingForPick = false;
             PlayerPrefs.SetString(LastPlayedKey, id);
             player.Load(Path.Combine(cacheRoot, id));
+            Changed?.Invoke();
+        }
+
+        // A second person next to the one playing, on the same clock.
+        public void BringIn(Entry e)
+        {
+            if (companion == null || e == null || !e.cached || !Playable(e.dream) || e.id == PlayingId) return;
+            companion.Load(Path.Combine(cacheRoot, e.id), e.id);
+            Changed?.Invoke();
+        }
+
+        public void SendAway()
+        {
+            if (companion == null || !companion.Present) return;
+            companion.Dismiss();
             Changed?.Invoke();
         }
 

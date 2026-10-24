@@ -373,3 +373,20 @@ What makes it simple, and what to do the same way in Unity:
   draw a second bench; we'd drop ours then.
 - Checked headless on two synthetic pianists (legs, no legs) and every earlier check; not yet on a real seated
   reconstruction (piano-han) or on a Quest.
+
+## Decisions: two people at once (Ian, Sat)
+
+- A second, fixed person rig in the scene (its own renderer, player, props, bench, shadow) under the first person's
+  root, 1.5 m to their left. One root means the existing placement, drag, turn and re-place move both, with no new
+  gestures. Pinching either person grabs the pair.
+- The second person follows the first one's clock instead of playing their own, so pause, speed, scrubbing and lesson
+  steps hold them in step (the brief's case: your avatar doing LeBron's shot beside him). A shorter clip loops. Only
+  the first runs a lesson; the Reality check follows the first.
+- No second voice or captions: two people speaking at once is noise, and captions would collide.
+- GPU budget is shared: each player counts the frames everyone else holds, so two full replays can't exceed 3 GB
+  together. Two 121 x 285k replays won't both fit; a replay plus an avatar does.
+- Seating moved into the player so the second person can sit at a bench too.
+- Separate splat renderers, not a GaussiansGroup: 1.5 m apart they never interleave, and Unity's transparent queue
+  draws the farther one first. If people ever overlap, a group sorts them together.
+- Checked headless (library flow, both seated people, every earlier check); not yet on a Quest, so the frame-rate
+  cost of two people is unmeasured.

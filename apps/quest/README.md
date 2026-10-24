@@ -49,8 +49,15 @@ The library lists the bridge's dreams (`GET /api/dreams`) and the ones already o
 bundle's SPZ frames, reality frames, `experience.json`, thumb and any guide or audio into the app's storage (never
 the multi-GB PLYs), with progress; it lands in `<id>.part` and is renamed only when complete. **Play** plays it from
 the headset, so downloaded dreams work with no bridge (the panel says when it's offline). At launch the app replays
-the last dream you played if it's there, otherwise the library opens by itself. Avatars show as "Soon" until the
-avatar player lands.
+the last dream you played if it's there, otherwise the library opens by itself. An avatar without skinning says it
+can't move yet.
+
+**Bring in another** (with someone playing) turns the cards into a pick of who stands beside them: LeBron, and your
+own avatar doing his shot. The second person stands 1.5 m to the first person's left, facing the same way, under the
+same root, so placing, dragging and turning moves both. They play on the first person's clock (same moment, pause,
+speed, lesson steps and your turn; a shorter clip loops), turn on the Reality check with them, and get their own
+props, bench and contact shadow, but no voice (two people talking at once is noise). Both share one GPU budget
+(`gpuBudgetMB`, 3 GB). The button then reads **Remove second person**, which frees them.
 
 ## Playing a replay
 
@@ -173,7 +180,8 @@ instead: placement, step timing, your turn, Back / Again / Next and the voice; w
 those (decode, mouth position, sync, quiet when paused or slowed, cue text); with `props` it checks the ball on its
 track, fades, the bounce and the hoop's regulation sizes; with a seat in the plan it checks seating (hips at bench
 height with and without legs, the bench's size, cushion and legs, the voice at their mouth) and renders three views. With `-bridge <url>` (no bundle) it
-checks the library from an empty cache: list, download, play from the headset, then offline. For an avatar bundle,
+checks the library from an empty cache: list, download, play from the headset, Bring in another (pick, download,
+position, shared clock, moving both, remove), then offline. For an avatar bundle,
 `-expect <dir>` compares the GPU-skinned positions with reference poses (`frameN.bin` from `skinning.py`'s
 `pose_points`, `frameN.dq.bin` from a dual-quaternion blend of its `skin_matrices`):
 

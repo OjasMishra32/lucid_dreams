@@ -32,7 +32,7 @@ namespace LucidDreams.Editor
             SessionState.SetString(BundleKey, Path.GetFullPath(bundle));
             SessionState.SetString(OutKey, Path.GetFullPath(output));
             EditorSceneManager.OpenScene(EditorBuildSettings.scenes[0].path);
-            var player = UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>();
+            var player = UnityEngine.Object.FindAnyObjectByType<DreamPlacer>().player;
             player.bundle = Path.GetFullPath(bundle); // in-memory only; the scene file is not saved
             string format = OptionalArg("-format");
             if (format != null) player.format = (DreamSequencePlayer.FrameFormat)Enum.Parse(typeof(DreamSequencePlayer.FrameFormat), format, true);
@@ -43,7 +43,7 @@ namespace LucidDreams.Editor
         static void Tick()
         {
             if (!EditorApplication.isPlaying) return;
-            var player = UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>();
+            var player = UnityEngine.Object.FindAnyObjectByType<DreamPlacer>().player;
             if (player == null) return;
 
             if (player.Error != null) Finish(1, $"player error: {player.Error}");

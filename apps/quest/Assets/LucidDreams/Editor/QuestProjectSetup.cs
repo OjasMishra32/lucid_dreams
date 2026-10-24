@@ -304,7 +304,6 @@ namespace LucidDreams.Editor
             props.glassEdge = PropMaterial("Board glass edge", WithAlpha(Hex(0x9cc7bd), 0.55f), 0f, 0.85f, transparent: true);
             props.cord = PropMaterial("Net cord", WithAlpha(Hex(0xf7f7f5), 0.9f), 0f, 0.1f, transparent: true);
             var bench = dreamGo.AddComponent<DreamBench>();
-            bench.placer = placer;
             bench.player = player;
             bench.person = personGo.transform;
             bench.shadowShader = props.shadowShader;
@@ -326,6 +325,34 @@ namespace LucidDreams.Editor
             shadow.shader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/ContactShadow.shader");
             shadow.player = player;
 
+            // A second person (Bring in another): 1.5 m to the first one's left, on their clock, moved with them, with
+            // their own props, bench and shadow, and no voice.
+            var secondGo = new GameObject("Second person");
+            secondGo.transform.SetParent(dreamGo.transform, false);
+            var secondPersonGo = new GameObject("Person");
+            secondPersonGo.transform.SetParent(secondGo.transform, false);
+            ConfigureSplatRenderer(ObjectFactory.AddComponent<GaussianSplat3DRenderer>(secondPersonGo));
+            var secondPlayer = secondPersonGo.AddComponent<DreamSequencePlayer>();
+            secondPlayer.bundle = "";
+            secondPlayer.avatarSkinning = player.avatarSkinning;
+            var companion = secondGo.AddComponent<DreamCompanion>();
+            companion.lead = player;
+            companion.player = secondPlayer;
+            var secondProps = secondGo.AddComponent<DreamProps>();
+            secondProps.player = secondPlayer;
+            secondProps.person = secondPersonGo.transform;
+            secondProps.shadowShader = props.shadowShader;
+            (secondProps.ball, secondProps.ballFading, secondProps.rimOrange, secondProps.steel, secondProps.standBase) =
+                (props.ball, props.ballFading, props.rimOrange, props.steel, props.standBase);
+            (secondProps.paint, secondProps.glass, secondProps.glassEdge, secondProps.cord) = (props.paint, props.glass, props.glassEdge, props.cord);
+            var secondBench = secondGo.AddComponent<DreamBench>();
+            secondBench.player = secondPlayer;
+            secondBench.person = secondPersonGo.transform;
+            (secondBench.shadowShader, secondBench.lacquer, secondBench.leather) = (bench.shadowShader, bench.lacquer, bench.leather);
+            var secondShadow = secondGo.AddComponent<ContactShadow>();
+            secondShadow.shader = shadow.shader;
+            secondShadow.player = secondPlayer;
+
             // Hands: tracked in the camera offset's space, occluding the person, driving the bar and the person.
             var handsGo = new GameObject("Hands");
             handsGo.transform.SetParent(originGo.transform, false);
@@ -346,6 +373,7 @@ namespace LucidDreams.Editor
             var libraryGo = new GameObject("Library");
             var library = libraryGo.AddComponent<DreamLibrary>();
             library.player = player;
+            library.companion = companion;
             var libraryPanel = libraryGo.AddComponent<DreamLibraryPanel>();
             libraryPanel.library = library;
             libraryPanel.player = player;
@@ -379,6 +407,7 @@ namespace LucidDreams.Editor
             var interaction = dreamGo.AddComponent<DreamHands>();
             interaction.hands = tracker;
             interaction.placer = placer;
+            interaction.companion = companion;
             interaction.player = player;
             interaction.bar = bar;
             interaction.library = libraryPanel;

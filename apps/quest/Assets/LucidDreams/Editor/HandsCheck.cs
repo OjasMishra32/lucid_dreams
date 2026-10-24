@@ -37,7 +37,7 @@ namespace LucidDreams.Editor
             SessionState.SetString(ExpectKey, expect != null ? Path.GetFullPath(expect) : "");
             EditorSceneManager.OpenScene(EditorBuildSettings.scenes[0].path);
             // In memory only; the scene file isn't saved.
-            UnityEngine.Object.FindAnyObjectByType<DreamSequencePlayer>().bundle = bundle;
+            UnityEngine.Object.FindAnyObjectByType<DreamPlacer>().player.bundle = bundle;
             if (bridge != null)
             {
                 var library = UnityEngine.Object.FindAnyObjectByType<DreamLibrary>();

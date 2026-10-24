@@ -9,7 +9,6 @@ namespace LucidDreams
     {
         const float Cushion = 0.04f, Case = 0.08f, Inset = 0.022f, Leg = 0.048f, LegInset = 0.03f;
 
-        public DreamPlacer placer;
         public DreamSequencePlayer player;
         [Tooltip("The person's transform: the bench is built under it, in bundle space.")]
         public Transform person;
@@ -25,7 +24,7 @@ namespace LucidDreams
 
         void Update()
         {
-            if (player == null || placer == null) return;
+            if (player == null) return;
             if (!player.IsReady)
             {
                 Clear();
@@ -35,7 +34,7 @@ namespace LucidDreams
             if (player.Dream == builtFor) return;
             builtFor = player.Dream;
             Clear();
-            var seat = placer.Seat;
+            var seat = player.Seat;
             if (seat.seated && seat.needsBench) Build(seat);
         }
 

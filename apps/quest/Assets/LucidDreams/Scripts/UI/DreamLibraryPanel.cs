@@ -9,7 +9,9 @@ namespace LucidDreams
     // bottom edge about 0.85 m above the floor, three 0.31 x 0.42 m cards across, newest first. A card opens with a
     // fingertip push or a pinch: a dream on the headset plays, one on the bridge downloads (you keep browsing).
     // Focus and selected states show a 2 mm blue ring; selected adds a check; states always have words, not just colour.
-    // The footer holds the caption settings (Captions on / off, Standard / Large).
+    // The footer holds the caption settings (Captions on / off, Standard / Large). With someone playing, "Bring in
+    // another" turns the cards into a pick of who stands beside them (DreamCompanion); then it reads "Remove second
+    // person".
     public class DreamLibraryPanel : MonoBehaviour
     {
         const float W = 1200f, H = 700f;
@@ -28,6 +30,8 @@ namespace LucidDreams
         public float forward = 0.95f, bottom = 0.85f;
 
         public bool IsOpen => root != null && root.activeSelf;
+        public bool Picking => picking;
+        public FingertipButton AnotherButton => another;
 
         class Card
         {
@@ -42,8 +46,9 @@ namespace LucidDreams
         GameObject root;
         CanvasGroup fade;
         RectTransform canvasRect;
-        TMP_Text connection, emptyTitle, emptyBody, pageLabel;
-        FingertipButton make, prev, next, captions, textSize;
+        TMP_Text title, metadata, connection, emptyTitle, emptyBody, pageLabel;
+        FingertipButton make, prev, next, captions, textSize, another;
+        bool picking;
         readonly Card[] cards = new Card[PerPage];
         int page;
         bool openedForPick;
@@ -60,14 +65,21 @@ namespace LucidDreams
             GlassUI.Box(t, "Surface", Vector2.zero, new Vector2(W, H), GlassUI.Surface, GlassUI.LibraryCorner);
 
             float left = -W / 2f + 48f, top = H / 2f;
-            GlassUI.Label(t, "Title", new Vector2(left + 300f, top - 62f), new Vector2(600f, 50f), "Dream Library", 42f, GlassUI.Text, TextAlignmentOptions.Left);
-            GlassUI.Label(t, "Metadata", new Vector2(left + 300f, top - 104f), new Vector2(600f, 32f), "Your people, moments, and lessons.", 26f,
+            title = GlassUI.Label(t, "Title", new Vector2(left + 300f, top - 62f), new Vector2(600f, 50f), "Dream Library", 42f, GlassUI.Text, TextAlignmentOptions.Left);
+            metadata = GlassUI.Label(t, "Metadata", new Vector2(left + 300f, top - 104f), new Vector2(600f, 32f), "Your people, moments, and lessons.", 26f,
                 GlassUI.SecondaryText, TextAlignmentOptions.Left, FontWeight.Regular);
-            connection = GlassUI.Label(t, "Connection", new Vector2(W / 2f - 48f - 110f - 200f, top - 62f), new Vector2(400f, 20f), "", 14f,
+            connection = GlassUI.Label(t, "Connection", new Vector2(W / 2f - 48f - 200f, top - 104f), new Vector2(400f, 20f), "", 14f,
                 GlassUI.SecondaryText, TextAlignmentOptions.Right, FontWeight.Medium);
             var close = FingertipButton.Create(t, hands, "Close", new Vector2(W / 2f - 48f - 44f, top - 62f), new Vector2(88f, 64f), GlassUI.Corner);
             close.label.fontSize = 15f;
             close.Pressed += Close;
+            another = FingertipButton.Create(t, hands, "Bring in another", new Vector2(W / 2f - 48f - 88f - 18f - 110f, top - 62f), new Vector2(220f, 64f), GlassUI.Corner);
+            another.label.fontSize = 15f;
+            another.Pressed += () =>
+            {
+                if (library.CompanionId != null) library.SendAway();
+                else picking = !picking;
+            };
 
             float cardsY = top - 140f - CardH / 2f;
             for (int i = 0; i < PerPage; i++)
@@ -182,12 +194,24 @@ namespace LucidDreams
 
         public void Close()
         {
+            picking = false;
             if (root != null) root.SetActive(false);
         }
 
         void Act(DreamLibrary.Entry e)
         {
             if (e == null || e.downloading) return;
+            if (picking)
+            {
+                // who stands beside the person playing: on the headset, they come in; not yet, it downloads first
+                if (e.cached && DreamLibrary.Playable(e.dream) && e.id != library.PlayingId)
+                {
+                    library.BringIn(e);
+                    Close();
+                }
+                else if (!e.cached) library.Download(e);
+                return;
+            }
             if (e.cached && DreamLibrary.Playable(e.dream))
             {
                 library.Play(e);
@@ -211,6 +235,15 @@ namespace LucidDreams
             float k = GlassUI.Ease((Time.unscaledTime - openedAt) / 0.32f);
             fade.alpha = k;
             canvasRect.localScale = Vector3.one * 0.001f * Mathf.Lerp(0.97f, 1f, k);
+
+            bool someone = player != null && player.IsReady;
+            if (!someone) picking = false;
+            string with = someone ? (string.IsNullOrEmpty(player.Dream.name) ? player.Dream.id : player.Dream.name) : null;
+            title.text = picking ? "Bring in another" : "Dream Library";
+            metadata.text = picking ? $"Pick who stands beside {with}." : "Your people, moments, and lessons.";
+            bool hasSecond = library.CompanionId != null;
+            another.gameObject.SetActive(hasSecond || (someone && library.Entries.Any(x => x.id != library.PlayingId && DreamLibrary.Playable(x.dream))));
+            another.SetLabel(hasSecond ? "Remove second person" : picking ? "Cancel" : "Bring in another");
 
             var entries = library.Entries;
             int pages = Mathf.Max(1, Mathf.CeilToInt(entries.Count / (float)PerPage));
@@ -278,16 +311,18 @@ namespace LucidDreams
 
             bool playable = DreamLibrary.Playable(d);
             bool selected = e.cached && library.PlayingId == e.id;
-            c.check.gameObject.SetActive(selected);
-            LateFocusRing(c, selected);
-            c.button.interactable = !e.downloading && (playable || !e.cached) && (e.cached || e.online);
+            bool second = e.cached && library.CompanionId == e.id;
+            c.check.gameObject.SetActive(selected || second);
+            LateFocusRing(c, selected || second);
+            c.button.interactable = !e.downloading && (playable || !e.cached) && (e.cached || e.online) && !(picking && selected);
 
             if (!playable) Status(c, GlassUI.Warning, "Unavailable · this avatar can't move yet");
             else if (e.downloading) Status(c, GlassUI.Link, $"Downloading {Mathf.RoundToInt(e.progress * 100f)}% · Keep browsing");
             else if (e.error != null) Status(c, GlassUI.Warning, "Couldn't download · Try again");
             else if (selected) Status(c, GlassUI.Accent, player.IsReady ? "Playing now" : "Opening…");
-            else if (e.cached) Status(c, GlassUI.Success, "On this headset · Play");
-            else if (e.online) Status(c, GlassUI.SecondaryText, "Download to play");
+            else if (second) Status(c, GlassUI.Accent, "Beside them now");
+            else if (e.cached) Status(c, GlassUI.Success, picking ? "On this headset · Bring in" : "On this headset · Play");
+            else if (e.online) Status(c, GlassUI.SecondaryText, picking ? "Download to bring in" : "Download to play");
             else Status(c, GlassUI.Warning, "Unavailable offline");
         }
 

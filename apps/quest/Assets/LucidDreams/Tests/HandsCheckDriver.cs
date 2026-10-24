@@ -27,8 +27,8 @@ namespace LucidDreams.Tests
         IEnumerator Start()
         {
             hands = FindAnyObjectByType<HandTracker>();
-            player = FindAnyObjectByType<DreamSequencePlayer>();
             placer = FindAnyObjectByType<DreamPlacer>();
+            player = placer.player; // the first person (a second one has its own player)
             bar = FindAnyObjectByType<DreamControlBar>();
             head = Camera.main;
             var driver = head.GetComponent<TrackedPoseDriver>();
@@ -65,7 +65,7 @@ namespace LucidDreams.Tests
                 Done = true;
                 yield break;
             }
-            Check(!placer.Seat.seated && placer.person.localPosition == Vector3.zero && FindAnyObjectByType<DreamBench>().Root == null,
+            Check(!placer.Seat.seated && placer.person.localPosition == Vector3.zero && placer.GetComponent<DreamBench>().Root == null,
                 "standing: feet on the floor, no bench");
             if (DreamPlaces.Starting(player.Experience?.environment, player.Experience?.intent ?? player.Dream.intent) != null)
             {
@@ -240,7 +240,7 @@ namespace LucidDreams.Tests
         // The ball on its track and a regulation hoop, in the person's space.
         IEnumerator PropsChecks(Transform root)
         {
-            var props = FindAnyObjectByType<DreamProps>();
+            var props = placer.GetComponent<DreamProps>();
             float until = Time.realtimeSinceStartup + 20f;
             while (props.HoopCount == 0 && Time.realtimeSinceStartup < until) yield return null;
             Check(props.HoopCount == 1 && props.Root != null, $"props.json builds: {props.HoopCount} hoop, unknown kinds ignored");
@@ -471,6 +471,63 @@ namespace LucidDreams.Tests
             panel.Open();
             yield return Frames(5);
             Render(Path.Combine(outputDir, "library-playing-eye-view.png"));
+
+            // Bring in another: the second dream downloads, then stands 1.5 m to the first person's left on their clock.
+            var another = panel.AnotherButton;
+            Check(another.gameObject.activeSelf && another.label.text == "Bring in another", $"with someone playing, the library offers Bring in another ({another.label.text})");
+            yield return Push(another);
+            yield return Frames(2);
+            Check(panel.Picking && panel.CardStatus("synthetic-test") == "Download to bring in" && another.label.text == "Cancel",
+                $"it turns the cards into a pick ({panel.CardStatus("synthetic-test")})");
+            Check(panel.CardFor("marker-teach") != null && !panel.CardFor("marker-teach").interactable, "the person already playing can't be picked twice");
+            yield return Push(panel.CardFor("synthetic-test"));
+            var synth = library.Entries.First(x => x.id == "synthetic-test");
+            until = Time.realtimeSinceStartup + 60f;
+            while (!synth.cached && synth.error == null && Time.realtimeSinceStartup < until) yield return null;
+            yield return Frames(3);
+            Check(panel.Picking && panel.CardStatus("synthetic-test") == "On this headset · Bring in", $"it downloads and the pick stays open ({panel.CardStatus("synthetic-test")})");
+            yield return new WaitForSecondsRealtime(0.4f);
+            Render(Path.Combine(outputDir, "library-bring-in-eye-view.png"));
+            yield return Push(panel.CardFor("synthetic-test"));
+            var companion = FindAnyObjectByType<DreamCompanion>();
+            until = Time.realtimeSinceStartup + 60f;
+            while (!companion.player.IsReady && companion.player.Error == null && Time.realtimeSinceStartup < until) yield return null;
+            yield return Frames(3);
+            var lead = placer.transform;
+            Check(companion.player.IsReady && library.CompanionId == "synthetic-test" && library.PlayingId == "marker-teach" && !panel.IsOpen,
+                $"picking brings them in next to the first person, who keeps playing ({companion.player.Error})");
+            Check(Vector3.Distance(companion.transform.position, lead.position - lead.right * 1.5f) < 0.005f
+                  && Vector3.Angle(companion.transform.forward, lead.forward) < 0.5f && companion.player.transform.lossyScale.z < 0f,
+                $"1.5 m to the first person's left, facing the same way, mirrored the same ({companion.transform.position} vs {lead.position})");
+            Check(companion.player.Lesson == null && player.Lesson != null, "one lesson: the second person follows it rather than running their own");
+            player.Pause();
+            player.Seek(0.7f);
+            yield return Frames(2);
+            float expect = 0.7f % (companion.player.Duration + 1e-4f);
+            Check(!companion.player.IsPlaying && Mathf.Abs(companion.player.ClipTime - expect) < 1e-3f,
+                $"on the same clock: paused together, at {companion.player.ClipTime:F3} s ({expect:F3} s, their clip is shorter so it loops)");
+            player.Play();
+            yield return Frames(5);
+            Check(companion.player.IsPlaying && Mathf.Approximately(companion.player.Speed, player.Speed), $"and playing together at {player.Speed}x");
+            Check(companion.player.GpuBytes > 0 && player.GpuBytes > 0,
+                $"both on the GPU: {player.GpuBytes >> 10} + {companion.player.GpuBytes >> 10} KB, one budget");
+            placer.MoveTo(lead.position + new Vector3(0.3f, 0f, -0.2f), lead.eulerAngles.y + 30f);
+            yield return Frames(2);
+            Check(Vector3.Distance(companion.transform.position, lead.position - lead.right * 1.5f) < 0.005f, "moving and turning the first person brings the second along");
+            placer.PlaceInFrontOfViewer();
+            yield return Frames(2);
+            Render(Path.Combine(outputDir, "two-people-eye-view.png"), head.transform.position, (lead.position + companion.transform.position) / 2f + Vector3.up * 0.9f);
+            Render(Path.Combine(outputDir, "two-people-front.png"), (lead.position + companion.transform.position) / 2f + lead.forward * 3.2f + Vector3.up * 1.2f,
+                (lead.position + companion.transform.position) / 2f + Vector3.up * 0.9f);
+
+            panel.Open();
+            yield return Frames(3);
+            Check(another.label.text == "Remove second person" && panel.CardStatus("synthetic-test") == "Beside them now",
+                $"the library says who's beside them and offers to remove them ({panel.CardStatus("synthetic-test")})");
+            yield return Push(another);
+            yield return Frames(2);
+            Check(library.CompanionId == null && !companion.Present && !companion.player.IsReady && companion.player.GpuBytes == 0 && player.IsReady,
+                "Remove second person frees them; the first keeps playing");
             panel.Close();
 
             library.bridgeUrl = "http://127.0.0.1:9"; // the bridge is gone
@@ -478,7 +535,7 @@ namespace LucidDreams.Tests
             yield return Frames(2);
             until = Time.realtimeSinceStartup + 15f;
             while (library.Refreshing && Time.realtimeSinceStartup < until) yield return null;
-            Check(!library.Online && library.Entries.Count == 1 && library.Entries[0].cached,
+            Check(!library.Online && library.Entries.Count == 2 && library.Entries.All(x => x.cached),
                 $"offline, it lists what's on the headset ({library.Entries.Count} dreams)");
             library.Play(library.Entries[0]);
             until = Time.realtimeSinceStartup + 60f;
@@ -513,7 +570,7 @@ namespace LucidDreams.Tests
                 Check(Mathf.Abs(Above(0f)) < 0.001f && Above(body.low) < 0.05f && seat.benchTop > 0.38f && seat.benchTop < 0.6f,
                     $"legs in the reconstruction: their floor on yours, feet on it ({Above(body.low):F3} m), the bench at their own seat ({seat.benchTop:F2} m)");
 
-            var bench = FindAnyObjectByType<DreamBench>();
+            var bench = placer.GetComponent<DreamBench>();
             var benchRoot = bench.Root;
             Check(benchRoot != null, "a bench is built under them (the reconstruction has none)");
             if (benchRoot == null) yield break;
