@@ -92,6 +92,8 @@ export interface CourtTestApi {
   save(name: string): Promise<ProbeFrame | null>;
   /** The timing pass's per-phase summary (timing mode). */
   timing(): ReturnType<FrameStats["report"]> | null;
+  /** Step every XR frame by 1 / hz s instead of one display frame of the show (a 90 Hz headset playing the 72 Hz bake), or back with null. */
+  setRate(hz: number | null): void;
 }
 
 declare global {
@@ -105,6 +107,7 @@ export class Probe {
   readonly mode: "capture" | "timing";
   readonly api: CourtTestApi;
   private n = 0;
+  private rate: number | null = null;
   private waiters: ((f: ProbeFrame) => void)[] = [];
   private saves: { name: string; done: (f: ProbeFrame) => void }[] = [];
   private buf: Uint8Array | null = null;
@@ -140,14 +143,17 @@ export class Probe {
       // timing mode never reads back, so a save there is a no-op (it would never resolve)
       save: (name) => (this.mode === "timing" ? Promise.resolve(null) : new Promise((done) => this.saves.push({ name, done }))),
       timing: () => hooks.stats()?.report() ?? null,
+      setRate: (hz) => {
+        this.rate = hz && hz > 0 ? hz : null;
+      },
     };
     this.api = api;
     window.__court = api;
   }
 
-  /** The dt every probed frame advances by: one display frame. */
+  /** The dt every probed frame advances by: one display frame (or 1 / the rate setRate chose). */
   dt(displayHz: number): number {
-    return 1 / displayHz;
+    return 1 / (this.rate ?? displayHz);
   }
 
   /** Right after renderer.render, inside the XR frame: read back (capture), log, wake the waiters. */

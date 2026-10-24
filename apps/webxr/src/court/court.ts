@@ -105,6 +105,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         snapshot: () => ({
           phase, setup, still: Number((seat.arrival.waited ?? -1).toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
           world: { position: [...seat.world.position], yaw: seat.world.yaw }, head: { room: [...head.room], court: [...head.court] },
+          // what the e2e's wiring scenario reads: the seat's anchor and session, the dt it was handed, the hands' light
+          wiring: { lock: seatLock instanceof PersistentLock ? "persistent" : "other", seatXr: seatLock.xr === renderer.xr, seatDt, hands: handsLevel },
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
         }),
@@ -152,7 +154,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const sideOf = handSides(hands);
   const vrHands = new VrHands(hands, scene);
   const ui = new Ui(scene, hands, sideOf, bundle);
-  const seat = new Seat(court, frames, world, new PersistentLock(renderer, world), params.has("seat") ? Number(params.get("seat")) : undefined);
+  const seatLock = new PersistentLock(renderer, world); // persistent anchors, and the session's bounded-floor for Seat
+  const seat = new Seat(court, frames, world, seatLock, params.has("seat") ? Number(params.get("seat")) : undefined);
   world.add(proxies.group);
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
   await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
@@ -166,6 +169,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let seatedEyeY = 1.15;
   let rushed = false; // the head rose mid-fade: the fade finishes within RISE_FADE_S
   let restored = false; // Back to my seat: the chair reached and the world re-seated
+  let handsLevel = 0; // the light the drawn hands were last given
+  let seatDt = 0; // the dt seat.update was last handed
   const flags = () => ({ inRoom, reality, setup, nextView: seat.hasNextView() });
   const go = (next: Phase) => {
     phase = next;
@@ -257,7 +262,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     courtWorld.edge(seat.boundsDistance(head));
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
-    vrHands.light(arrive * light.at(head.court[0], head.court[2], PART.person));
+    handsLevel = arrive * light.at(head.court[0], head.court[2], PART.person);
+    vrHands.light(handsLevel);
     if (setup) return;
     switch (phase) {
       case "arrival": {
@@ -381,7 +387,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       }
     }
     if (renderer.xr.isPresenting) {
-      seat.update(dt, head); // the only writer of the world group (seat.ts), with the fade-jump veil
+      seatDt = dt; // the frame's own dt (the e2e reads what Seat was handed)
+      seat.update(seatDt, head); // the only writer of the world group (seat.ts), with the fade-jump veil
       vrHands.update();
       ui.update(head, time, dt);
     }
