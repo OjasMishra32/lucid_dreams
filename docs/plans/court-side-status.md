@@ -1,91 +1,72 @@
 # Court Side: live status
 
-**Court Side replaces Ghost Coach for Vishal. Ghost Coach is paused.** One clip only: **Steph's three over LeBron,
-2018 Finals G4**, from the best low, fixed courtside angle that exists. You start in a courtside seat where that camera
-stood, about 2 s plays in real 3D, you pause on the palm menu and it eases into a freeze at the release, then you stand
-up and walk a ring about 1.5 m around the pair; it plays on or replays. **Full immersion in VR, not passthrough**
-(Vishal, 6:50 AM): headset on, your room is gone and you're courtside in the arena. Ojasva's bar: if two players
-aren't passing by noon, ship Steph alone. Updated Sat 6:49 AM.
+**Court Side replaces Ghost Coach for Vishal (Ghost Coach paused).** One play only: **Steph's three over LeBron, 2018
+Finals G4**, from the best low, fixed courtside camera that exists. **New shape (Vishal, 6:55 AM):** in full-immersion
+VR you watch the real broadcast as immersive courtside video from where that camera stood (life-size, edges falling
+off into a dark arena); "Step into the court" on the palm menu eases the video to a stop at the release and **that one
+frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk a ring ~1.5 m around
+the frozen pair; "Back to my seat" eases back into the video and the game plays on. Only the freeze has to be 3D (a
+second of 3D motion is a stretch goal). Ojasva's bar: if two players aren't passing by noon, ship Steph alone.
+Updated Sat 6:52 AM.
 
 ## Asks for Ojasva (newest first)
 
-8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only.** Vishal (6:50 AM) wants full
-   immersion, like Apple Vision Pro's courtside NBA view: WebXR `immersive-vr` with `local-floor` (the court floor
-   exactly on the real floor, safe to walk), the arena where the camera saw it and darkness beyond the court lights
-   where it didn't. This is an exception to your passthrough-only rule (Sat 3:30 AM) for court mode alone; every other
-   mode stays passthrough. The players are lit like the footage's arena, not matched to the room.
-7. **Ready now (Ian or Ojasva, ~15 min on the Quest 3S): the first real headset number for Court Side.** Vishal
-   sends you `dropin.zip` (a throwaway test page, never commit it). (1) Unzip it: put `court-quest.html` in
-   `apps/webxr/` and `src/spike6/` in `apps/webxr/src/`. (2) On the Quest, open your usual dev server or tunnel at
-   `/court-quest.html?a=<replay id>&b=<another replay id>` with your two biggest finished replays (for example the
-   jump shot and LeBron); it loads up to 121 frames of each. (3) Press "Enter at 0.5x" and stand still: four 12 s
-   phases run by themselves (play, freeze, walk around while playing, walk around frozen), then a results table
-   appears. Photo it. (4) Exit from the palm menu and repeat with 0.75x and 1x. Add `&hz=90` once at the best scale.
-   (5) Then once more with `?per=100000` (synthetic people at the planned 100k/250k budget). (6) Send the photos and
-   anything odd (tab reload, black flicker), then delete both files. Desktop proof: it runs end to end, 0 errors.
-   **Update 6:55 AM:** a VR version (immersive-vr, full arena drawn) replaces it within ~30 min; use that one.
-6. **Yes (Ojasva, Sat 6:05 AM).** 100k per player per frame for playback and the freeze frame alone at 250k is right for the
-   Quest browser; keep `aniso`, the real-frame view (`sourceView`) and 50-step views for the final run. Original ask: playback frames with `recon.py --cap 100000`, plus the
-   freeze frame trained again on its own at `--cap 250000` (one frame, one GPU, minutes). Both are existing flags
-   (`pipeline/lucid/recon.py:37`, `--end`), so this is a yes/no. Why: 5 s of two players must fit the Quest browser.
-5. **Approved (Ojasva, 5:50 AM).** One B200 for about 10 minutes, about 7:30-8 AM: a **Turbo** views run on one
-   player-only portrait clip (121 frames, 1080x1920) before any full-quality GPU hours. Command and path to follow.
-4. **Done.** SAM 3: no (gated). SAM 2.1 instead.
-3. **Done.** 4DAnyone needs exactly 121 frames, never padded.
-2. **Done.** `apps/webxr/src/court/` + `?mode=court` + the route line in `src/main.ts`: approved.
-1. **Done.** GPUs free from about 5:50 AM; about 16 GB disk lab-wide, one run on disk at a time.
+9. **Smaller GPU ask than before (supersedes the 100k playback part of 6):** per player, 50-step views on the
+   121-frame clip as before, then reconstruction of **only the freeze frame**, cold, at the highest density the Quest
+   holds (250k planned, up to 400k if ask 7 says so) with more iterations; no 121-frame recon needed. That's about
+   30-45 min of one B200 per player instead of ~2 h, and a few MB on the headset instead of ~0.8 GB. Exact commands
+   to follow with the clip. OK?
+8. **Please confirm (yes/no): Court Side runs in immersive VR, for `?mode=court` only** (Vishal, 6:50 AM): WebXR
+   `immersive-vr` with `local-floor` (court floor exactly on the real floor, safe to walk), the arena from the
+   footage where the camera saw it, darkness beyond the court lights elsewhere. An exception to your passthrough-only
+   rule (Sat 3:30 AM) for court mode alone; every other mode stays passthrough. Players lit like the footage's arena.
+7. **Quest 3S budget test (Ian or Ojasva, ~15 min):** a VR version of the test page (immersive video phase, then a
+   3D freeze at 2x250k and 2x400k, walk, hand-off) lands here within ~30 min, with steps; Vishal sends the zip.
+6. **Yes (Ojasva, 6:05 AM):** 100k playback + a 250k freeze frame; keep `aniso`, `sourceView`, 50-step views.
+5. **Approved (Ojasva, 5:50 AM):** one B200 ~10 min for a **Turbo** views run on one player-only portrait clip.
+1-4. **Done:** GPUs free; ~16 GB lab disk, one run at a time; `apps/webxr/src/court/` + `?mode=court` approved;
+   4DAnyone needs exactly 121 frames; SAM 2.1 (SAM 3 gated).
 
 ## Now
 
-Adopting full-immersion VR (6:50 AM): the prototypes, the shadow spike and the Quest test page are being switched to
-immersive-vr, and S5's walk checks re-run in VR. Also running: the angle research (exact video + timestamps for
-Vishal), VR immersion research (arrival, arena light, sound, boundary), spikes for low-camera calibration, smooth
-slow-down into the freeze, and contact shadows + floor reflections. Waiting for the clip file.
+Re-planning around the video-first shape (6:55 AM). Running: the angle research (first answer: no public copy of this
+play is above 720p30, and the low angles exist only inside broadcast replays; checking a NextVR courtside VR camera
+at 4K60 and the best alternative play), VR immersion research, a prototype rig for 3 hand-off directions, a VR
+Quest test page, and spikes for calibration, smooth slow-down + video-to-3D hand-off, shadows + floor reflections.
 
 ## Verdict so far
 
-**Feasible with cuts** (5:50 AM), now planned around **121 even native 60 fps frames** around the release (about 2 s
-from the seat; Vishal, 6:20 AM). Prep has no 60 fps flag and 4DAnyone accepts only 24/25/30 fps, so the 121 frames
-are re-timed to a 25 fps clip (2.4x slow) for 4DAnyone and played back at 60 fps in the headset. Biggest risks:
-player size in a 720p broadcast, LeBron's hand overlapping Steph at the freeze, and two full-quality runs in a day.
+**More feasible than before:** GPU drops to ~1-1.5 h for both players, headset memory is no longer a constraint, and
+the splat budget goes into one sharp frozen moment. Biggest risks now: the angle (no 60 fps public copy found yet;
+fixed vs handheld unverified), the video-to-3D hand-off matching to the pixel (calibration), and how sharp a 720p
+player can be in 3D up close.
 
 ## Done
 
-- 5:47 AM, **S4 PASS (desktop):** two overlapping 150k-splat people x 60 frames + 225k freeze each + ball + 4K court
-  + 4K backdrop + 3 cut-outs in one Spark scene: 300k visible in playback, 450k frozen, 590 MB resident, 91 MB
-  textures, 10 ms median frame on a laptop. Quest fps not measured yet.
-- 5:57 AM, **S5 PASS except one field-of-view rule (desktop emulation):** passthrough session on local-floor, the court
-  pinned by a WebXR anchor (0 mm drift over a full 17-pose walk), palm menu pause / play / slow-mo / courtside spot
-  (moves 1.9 m), bare pinches and grabs change nothing. Walkable ring: about 1.5 m from the pair's midpoint (about
-  1 m clear of each body); a tighter ring walks into them. From 3 of 17 spots LeBron is too close to fit whole in
-  the Quest's view, so you look up at him, as in real life.
-- Spark sorts both players together; the Quest app sorts each person separately (wrong when they overlap).
-- Clip measurement tool ready (frames, cuts, camera motion, player height, sharpness, overlap, ball, feet).
+- 5:47 AM, S4 PASS (desktop): two players + freeze + court + backdrop in one Spark scene, 10 ms on a laptop.
+- 5:57 AM, S5 PASS except one field-of-view rule (desktop, AR): anchor 0 mm drift, palm menu works, pinches do
+  nothing, ring ~1.5 m. Being re-run in VR.
+- 6:43 AM, S6 Quest stereo test page built and proven on desktop (0 errors); VR version in progress.
 
 ## Next
 
-1. Find the angle: which low, fixed courtside cameras exist for this play (exact video and timestamps for Vishal).
-2. Prototypes of the seat view and the freeze-and-walk transition for Vishal to pick; the Quest budget test (ask 7).
-3. When the clip lands: gate 1, calibration, masks, two fixed-crop player clips, then the Turbo run (ask 5).
-4. `docs/plans/court-side.md`, reviewed and broken before any build.
+1. The angle: exact video + timestamps for Vishal. 2. Prototypes (seat view, the hand-off and walk) for Vishal to
+pick. 3. The Quest number (ask 7). 4. When the clip lands: gate 1, calibration, masks, player clips, Turbo (ask 5).
+5. `docs/plans/court-side.md`, broken by reviewers before any build.
 
 ## Blocked on
 
-- The clip file (Vishal).
+- The clip file (Vishal), after the angle pick.
 
 ## Decisions
 
-- Full immersion: `immersive-vr` + `local-floor` for `?mode=court` only; the arena from the footage where the camera
-  saw it, darkness beyond the court lights elsewhere; players lit like the footage's arena (Vishal, 6:50 AM; Ojasva to
-  confirm, ask 8).
-- One clip: Steph's three over LeBron, 2018 Finals G4, from a low, fixed courtside camera; the seat sits where it
-  stood; 121 native 60 fps frames (Vishal, 6:20 AM). Plan and prototype only until Vishal approves the plan.
-- Target the WebXR viewer; the Quest app is only an ask to Ian (Vishal, 5:45 AM).
-- Each player's crop is a fixed window in the stabilised frame covering their whole 5 s path, never a moving crop
-  (Vishal, 5:45 AM).
-- SAM 2.1 masks run on Vishal's PC first (Vishal, 5:45 AM).
-- Court Side replaces Ghost Coach (Vishal 5:15 AM, OK'd by Ojasva 5:25 AM). SAM 2.1 not SAM 3; 121 real frames;
-  `apps/webxr/src/court/` approved; one run on disk at a time (Ojasva, 5:25 AM).
-- Controls on the palm-up left-hand menu, the court pinned by a WebXR anchor, no gesture acts by itself (Ojasva).
+- Video-first: watch the real footage immersively; only the freeze frame becomes 3D (Vishal, 6:55 AM).
+- Full immersion: `immersive-vr` + `local-floor`, `?mode=court` only (Vishal, 6:50 AM; Ojasva to confirm, ask 8).
+- Code: a clean, self-contained `apps/webxr/src/court/` module with a simple documented data format (cameras,
+  players, freeze frame, video, audio); nothing generalised beyond this demo (Vishal, 6:55 AM).
+- One play from a low, fixed courtside camera; the seat sits where it stood (Vishal, 6:20 AM). Plan and prototype
+  only until Vishal approves the plan. Target the WebXR viewer (Quest app only an ask to Ian).
+- Fixed crop per player in the stabilised frame; SAM 2.1 masks on Vishal's PC (Vishal, 5:45 AM).
+- Controls on the left-palm menu, the court locked to the room, no gesture acts by itself (Ojasva).
 - Public figures: only what really happened, no voices, labelled "Real footage, rebuilt in 3D. Not affiliated with
   the NBA or the players.", source credited; the clip and its 3D stay out of the public repo and site (Vishal).
