@@ -262,9 +262,10 @@ class EndToEnd(unittest.TestCase):
                "out": str(root / "out"), "ref": 200, "repeat": [4, 3], "repeat_range": [0, n_frames - 1],
                "crop": [50, 90], "margin": 2, "bg": [128, 128, 128],
                "extras": [{"name": "X150", "video": str(video), "calib": str(root / "calib.json"), "frame": 150,
-                           "masks": str(root / "masks"), "weight": 0.7}], **cls.extra,
-               "sets": {"back-s1": {"player": "back", "front": ["front"], "stride": 1, "k": 117}},
-               "runs": {"court-test-back-s1": {"set": "back-s1", "turbo": True}}}
+                           "masks": str(root / "masks"), "weight": 0.7}]}
+        cfg["sets"] = {"back-s1": {"player": "back", "front": ["front"], "stride": 1, "k": 117}}
+        cfg["runs"] = {"court-test-back-s1": {"set": "back-s1", "turbo": True}}
+        cfg.update(cls.extra)
         (root / "cfg.json").write_text(json.dumps(cfg))
         cls.root, cls.frames, cls.cfg = root, frames, cfg
         pc.main(["--config", str(root / "cfg.json")])
@@ -355,6 +356,24 @@ class ExtraView(EndToEnd):
         self.assertTrue((rd / "X150" / "masks" / "000000.png").exists())
         run = json.loads((self.run_dir / "court-run.json").read_text())
         self.assertEqual(run["extras"][0]["weight"], 0.7)
+
+
+class ExtrasLater(EndToEnd):
+    """The other real views arrive after the clips: --extras-only adds them to the sets and run folders in place."""
+
+    extra = {"extras": []}
+
+    def test_extras_only_adds_them_without_touching_the_clip(self):
+        before = (self.set_dir / "input.mp4").stat().st_mtime_ns
+        self.assertFalse((self.run_dir / "real").exists())
+        cfg = dict(self.cfg, extras=[{"name": "X150", "video": self.cfg["video"], "calib": self.cfg["calib"],
+                                      "frame": 150, "masks": self.cfg["masks"], "weight": 0.7}])
+        (self.root / "cfg2.json").write_text(json.dumps(cfg))
+        pc.main(["--config", str(self.root / "cfg2.json"), "--extras-only"])
+        self.assertEqual((self.set_dir / "input.mp4").stat().st_mtime_ns, before)
+        self.assertEqual(len(decode(self.run_dir / "real" / "X150" / "X150.mkv")), 1)
+        run = json.loads((self.run_dir / "court-run.json").read_text())
+        self.assertEqual((run["id"], run["extras"][0]["name"]), ("court-test-back-s1", "X150"))
 
 
 class EndToEndScaled(EndToEnd):

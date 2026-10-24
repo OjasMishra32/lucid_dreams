@@ -483,6 +483,7 @@ def build_extras(cfg: dict, name: str, d: Path) -> list[dict]:
     import extra_view
 
     s, made = cfg["sets"][name], []
+    shutil.rmtree(d / "real", ignore_errors=True)
     for e in cfg.get("extras", []):
         try:
             cam = extra_view.make_view(Path(os.path.expanduser(e["video"])), Path(os.path.expanduser(e["calib"])),
@@ -497,6 +498,38 @@ def build_extras(cfg: dict, name: str, d: Path) -> list[dict]:
     if made:
         (d / "real" / "extras.json").write_text(json.dumps(made, indent=1))
     return made
+
+
+def add_extras(cfg: dict, name: str):
+    """--extras-only: the other real views into an already built set and every run folder of it."""
+    d = cfg["out"] / name
+    rec_path = d / "court-run.json"
+    if not rec_path.exists():
+        raise SystemExit(f"[{name}] not built yet: {d}")
+    run_rec = json.loads(rec_path.read_text())
+    run_rec["extras"] = build_extras(cfg, name, d)
+    rec_path.write_text(json.dumps(run_rec, indent=1))
+    for rid, r in cfg.get("runs", {}).items():
+        rd = cfg["out"] / "runs" / rid
+        if r["set"] != name or not rd.exists():
+            continue
+        shutil.rmtree(rd / "real", ignore_errors=True)
+        _link_real(d, rd)
+        rec = json.loads((rd / "court-run.json").read_text())
+        rec["extras"] = run_rec["extras"]
+        (rd / "court-run.json").write_text(json.dumps(rec, indent=1))
+    print(f"[{name}] other real views: {[e['name'] for e in run_rec['extras']] or 'none'}")
+
+
+def _link_real(d: Path, rd: Path):
+    if (d / "real").exists():
+        for f in sorted((d / "real").rglob("*")):
+            t = rd / f.relative_to(d)
+            if f.is_dir():
+                t.mkdir(parents=True, exist_ok=True)
+            elif f.suffix != ".jpg":
+                t.parent.mkdir(parents=True, exist_ok=True)
+                os.link(f, t)
 
 
 def job_json(rid: str, turbo: bool, focal: float) -> dict:
@@ -517,14 +550,7 @@ def write_run(cfg: dict, d: Path, rid: str, r: dict, run_rec: dict):
             os.link(f, rd / sub / f.name)
     for f in ("input.mp4", "source-4k.mkv"):
         os.link(d / f, rd / f)
-    if (d / "real").exists():
-        for f in sorted((d / "real").rglob("*")):
-            t = rd / f.relative_to(d)
-            if f.is_dir():
-                t.mkdir(parents=True, exist_ok=True)
-            elif f.suffix != ".jpg":
-                t.parent.mkdir(parents=True, exist_ok=True)
-                os.link(f, t)
+    _link_real(d, rd)
     (rd / "court-run.json").write_text(json.dumps({"id": rid, **run_rec}, indent=1))
     (rd / "job.json").write_text(json.dumps(job_json(rid, r.get("turbo", False), run_rec["FOCAL"]), indent=1))
 
@@ -574,11 +600,17 @@ def main(argv=None):
     ap.add_argument("--config", type=Path, required=True)
     ap.add_argument("--sets", default="", help="comma-separated clip sets (default: all)")
     ap.add_argument("--measure-only", action="store_true", help="union boxes and crops only; no video decoded")
+    ap.add_argument("--extras-only", action="store_true",
+                    help="add the config's other real views to sets already built (and their run folders); no clip work")
     ap.add_argument("--allow-partial", action="store_true",
                     help="measure only the frames that already have a calibration and masks (implies --measure-only)")
     a = ap.parse_args(argv)
     cfg = expand(json.loads(a.config.read_text()))
     names = [x for x in a.sets.split(",") if x] or list(cfg["sets"])
+    if a.extras_only:
+        for name in names:
+            add_extras(cfg, name)
+        return
     calib = json.loads(cfg["calib"].read_text())
     frames_by_n = {st.source_frame(fr, t): fr for t, fr in enumerate(calib["frames"])}
     still = st.ref_still_camera(calib, cfg["ref"])
