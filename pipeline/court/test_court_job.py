@@ -41,6 +41,8 @@ elif a and a[0].endswith("inference_cli.py"):
     for f in Path(a[1]).glob("*.mp4"):
         shutil.copy(os.environ["STUB_TINY2"], out / f.name)
 elif a[:2] == ["-m", "lucid.recon"]:
+    if "--extra-sources" in a:
+        a.append(json.loads(Path(opt("--extra-sources")).read_text()))
     rec(); out = Path(opt("--out")); k = int(opt("--start")); (out / "frames").mkdir(parents=True, exist_ok=True)
     if os.environ.get("STUB_FAIL") and os.environ["STUB_FAIL"] == out.name:
         sys.exit(3)
@@ -70,7 +72,8 @@ def tiny(path: Path, w: int, h: int):
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
 
 
-def make_data(root: Path, rid: str, k: int = 118, focal: float = 1234.5, turbo: bool = True, skip=(), **job_over) -> Path:
+def make_data(root: Path, rid: str, k: int = 118, focal: float = 1234.5, turbo: bool = True, skip=(), extras=(),
+              **job_over) -> Path:
     d = root / rid
     (d / "masks").mkdir(parents=True)
     (d / "ignore").mkdir()
@@ -81,7 +84,17 @@ def make_data(root: Path, rid: str, k: int = 118, focal: float = 1234.5, turbo: 
            "layerPitches": [-10, 15, 35], "fps": 25, "frames": 121, "intent": "", **job_over}
     (d / "job.json").write_text(json.dumps(job, indent=1))
     (d / "court-run.json").write_text(json.dumps({"id": rid, "K": k, "FOCAL": focal}, indent=1))
+    if extras:
+        for name, w in extras:
+            for f in (f"real/{name}/{name}.mkv", f"real/{name}/masks/000000.png", f"real/{name}/ignore/000000.png"):
+                (d / f).parent.mkdir(parents=True, exist_ok=True)
+                (d / f).write_bytes(b"x")
+        (d / "real" / "extras.json").write_text(json.dumps([{"name": n, "weight": w, "focal": 99.5} for n, w in extras],
+                                                           indent=1))
     return d
+
+
+ALL4 = "raw:default raw:agree up:default up:agree"
 
 
 class Job(unittest.TestCase):
@@ -121,16 +134,16 @@ class Job(unittest.TestCase):
 
     def test_full_grid_in_scratch(self):
         hook = f"""python3 -c "import json; p='{self.data}/court-run.json'; r=json.load(open(p)); r['FOCAL']=2000.5; json.dump(r, open(p,'w'))" """
-        p = self.run_job(STUB_AFTER_PREP=hook)
+        p = self.run_job(STUB_AFTER_PREP=hook, VARIANTS=ALL4)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         out = self.L / "runs" / self.id
         for v in ("raw-default", "raw-agree", "up-default", "up-agree"):
-            self.assertTrue((out / f"bundle-{v}-300k" / "dream.json").exists(), v)
-            self.assertTrue((out / f"recon-{v}-300k" / "frames" / "000118.ply").exists(), v)
-            self.assertTrue((out / f"recon-metrics-{v}" / "recon-000118-000119.json").exists(), v)
-            used = json.loads((out / f"recon-{v}-300k" / "used.json").read_text())
+            self.assertTrue((out / f"bundle-{v}-r0-300k" / "dream.json").exists(), v)
+            self.assertTrue((out / f"recon-{v}-r0-300k" / "frames" / "000118.ply").exists(), v)
+            self.assertTrue((out / f"recon-metrics-{v}-r0" / "recon-000118-000119.json").exists(), v)
+            used = json.loads((out / f"recon-{v}-r0-300k" / "used.json").read_text())
             self.assertEqual((used["K"], used["FOCAL"], used["gpu"]), (118, 2000.5, "NVIDIA B200"))
-        self.assertFalse((out / "recon-metrics-raw-default" / "frames").exists())
+        self.assertFalse((out / "recon-metrics-raw-default-r0" / "frames").exists())
         self.assertEqual(sorted(x.name for x in (out / "views" / "videos").iterdir()),
                          ["00.mp4", "04.mp4", "08.mp4", "12.mp4"])
         self.assertEqual(len(list((out / "views-up" / "videos").iterdir())), 4)
@@ -152,14 +165,14 @@ class Job(unittest.TestCase):
         self.assertEqual(views["cuda"], "0")
         self.assertEqual(list(self.scratch.iterdir()), [])  # its scratch is gone
         self.assertEqual(sorted(x.name for x in self.L.iterdir()), ["code", "data", "envs", "repos", "runs"])
-        self.assertIn("raw-default  300k  30.00", subprocess.run(["python3", str(HERE / "court_grid_report.py"), str(out)],
+        self.assertIn("raw-default-r0  300k", subprocess.run(["python3", str(HERE / "court_grid_report.py"), str(out)],
                                               capture_output=True, text=True).stdout)
 
     def test_winner_caps_without_upscale(self):
         p = self.run_job(VARIANTS="raw:default", CAPS="250000 200000", METRICS="0")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         outs = sorted(c["args"][c["args"].index("--out") + 1] for c in self.recons())
-        self.assertEqual(outs, ["recon-raw-default-200k", "recon-raw-default-250k"])
+        self.assertEqual(outs, ["recon-raw-default-r0-200k", "recon-raw-default-r0-250k"])
         self.assertFalse(any(c["args"][0].endswith(("inference_cli.py", "court_fetch_seedvr2.py")) for c in self.calls))
 
     def test_full_quality_views(self):
@@ -171,22 +184,56 @@ class Job(unittest.TestCase):
         self.assertIn("--enable_turbo=False", views["args"])
 
     def test_one_failed_recon_keeps_the_rest(self):
-        p = self.run_job(STUB_FAIL="recon-up-agree-300k")
+        p = self.run_job(STUB_FAIL="recon-up-agree-r0-300k", VARIANTS=ALL4)
         self.assertNotEqual(p.returncode, 0)
-        self.assertIn("recon-up-agree-300k FAILED", p.stdout)
+        self.assertIn("recon-up-agree-r0-300k FAILED", p.stdout)
         out = self.L / "runs" / self.id
-        self.assertTrue((out / "bundle-raw-default-300k" / "dream.json").exists())
-        self.assertFalse((out / "bundle-up-agree-300k").exists())
+        self.assertTrue((out / "bundle-raw-default-r0-300k" / "dream.json").exists())
+        self.assertFalse((out / "bundle-up-agree-r0-300k").exists())
 
     def test_seedvr2_failure_keeps_the_raw_variants(self):
-        p = self.run_job(STUB_FAIL="fetch")
+        p = self.run_job(STUB_FAIL="fetch", VARIANTS=ALL4)
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("SeedVR2 FAILED: going on with raw:default raw:agree", p.stdout)
         out = self.L / "runs" / self.id
-        self.assertTrue((out / "bundle-raw-default-300k" / "dream.json").exists())
-        self.assertTrue((out / "bundle-raw-agree-300k" / "dream.json").exists())
+        self.assertTrue((out / "bundle-raw-default-r0-300k" / "dream.json").exists())
+        self.assertTrue((out / "bundle-raw-agree-r0-300k" / "dream.json").exists())
         self.assertEqual(len(self.recons()), 4)
         self.assertTrue(all(f"--source-masks {self.data}/masks " in " ".join(c["args"]) for c in self.recons()))
+
+    def test_other_real_views_train_and_hold_out(self):
+        self.data = make_data(self.L / "data" / "court", "court-def-s2", extras=(("X1", 1.0), ("X2", 0.7)))
+        self.id = "court-def-s2"
+        p = self.run_job(VARIANTS="raw:default", REALS="0 1 2 3")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("REALS 3: only 2", p.stderr)
+        got = {}
+        for c in self.recons():
+            out = c["args"][c["args"].index("--out") + 1]
+            xs = c["args"][-1] if isinstance(c["args"][-1], list) else []
+            got[out] = [(Path(e["video"]).stem, e["weight"], e["offset"]) for e in xs]
+        self.assertEqual(got, {
+            "recon-raw-default-r0-300k": [],
+            "recon-metrics-raw-default-r0": [("X1", 0.0, -118), ("X2", 0.0, -118)],
+            "recon-raw-default-r1-300k": [("X1", 1.0, -118)],
+            "recon-metrics-raw-default-r1": [("X1", 1.0, -118), ("X2", 0.0, -118)],
+            "recon-raw-default-r2-300k": [("X1", 1.0, -118), ("X2", 0.7, -118)],
+            "recon-metrics-raw-default-r2": [("X1", 1.0, -118), ("X2", 0.7, -118)]})
+        out = self.L / "runs" / self.id
+        self.assertTrue((out / "recon-metrics-raw-default-r1.extra.json").exists())
+        rep = subprocess.run(["python3", str(HERE / "court_grid_report.py"), "--rank", str(out)], capture_output=True,
+                             text=True).stdout
+        self.assertEqual(len(rep.strip().splitlines()), 4)
+
+    def test_seed_and_tag(self):
+        p = self.run_job(TAG="seed2", SEED="2", SEED_FLAG="--seed", VARIANTS="raw:default", METRICS="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        views = next(c for c in self.calls if c["args"][0].endswith("inference.py"))
+        self.assertEqual(views["args"][-2:], ["--seed", "2"])
+        self.assertTrue((self.L / "runs" / self.id / "seed2" / "bundle-raw-default-r0-300k" / "dream.json").exists())
+        p = self.run_job(TAG="seed3", SEED="3")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("SEED_FLAG", p.stderr)
 
     def test_caps_are_checked(self):
         for caps in ("300k", "300000 300400"):
@@ -234,8 +281,8 @@ class Submit(unittest.TestCase):
         c = calls(out)
         self.assertEqual(len(c), 2, out)
         self.assertTrue(all("--gres=gpu:4 " in x and x.endswith("court/court-job.sbatch") for x in c))
-        self.assertIn("ID=court-turbo-main-s2 ", c[0])
-        self.assertIn("ID=court-turbo-def-s2 ", c[1])
+        self.assertIn("ID=court-turbo-main-s2,", c[0])
+        self.assertIn("ID=court-turbo-def-s2,", c[1])
         self.assertIn("SUBMITTED court-turbo-def-s2 job=1002", out)
 
     def test_missing_file_submits_nothing(self):
@@ -281,6 +328,17 @@ class Submit(unittest.TestCase):
         rc, out = dryrun(make_data(self.root, "court-main-s2"), QUOTA_SLOW="1")
         self.assertEqual(rc, 0, out)
         self.assertEqual(len(calls(out)), 1)
+
+    def test_seeds_one_job_each(self):
+        a = make_data(self.root, "court-main-s2")
+        rc, out = dryrun(a, SEEDS="3", SEED_FLAG="--seed")
+        self.assertEqual(rc, 0, out)
+        c = calls(out)
+        self.assertEqual([re.search(r"TAG=(\S*?),SEED=(\d+)", x).groups() for x in c],
+                         [("seed1", "1"), ("seed2", "2"), ("seed3", "3")])
+        rc, out = dryrun(a, SEEDS="3")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("SEED_FLAG", out)
 
     def test_bad_id(self):
         rc, out = dryrun(make_data(self.root, "Court-Main"))

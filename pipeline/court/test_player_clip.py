@@ -172,6 +172,17 @@ class Layers(unittest.TestCase):
         self.assertEqual(float(ig[19, 15]), 0.0)  # far from the back player
         self.assertEqual(float(pc.ignore_mask(self.front, [], grow=1, near=3).max()), 0.0)
 
+    def test_soft_matte_is_preferred_when_present(self):
+        import cv2
+        with tempfile.TemporaryDirectory() as tmp:
+            m = Path(tmp)
+            (m / "p").mkdir()
+            cv2.imwrite(str(m / "p" / "000007.png"), np.full((4, 4), 255, np.uint8))
+            self.assertEqual(float(pc.load_matte(m, "p", 7, 4, 4).min()), 1.0)
+            (m / "p-alpha").mkdir()
+            cv2.imwrite(str(m / "p-alpha" / "000007.png"), np.full((4, 4), 51, np.uint8))
+            self.assertAlmostEqual(float(pc.load_matte(m, "p", 7, 4, 4).max()), 0.2)
+
     def test_composite_is_exact_at_full_and_zero_alpha(self):
         rgb = np.full((20, 20, 3), 200, np.uint8)
         out = pc.composite(rgb, self.back, (128, 128, 128))
@@ -239,7 +250,9 @@ class EndToEnd(unittest.TestCase):
             cv2.imwrite(str(root / "masks" / "front" / f"{n:06d}.png"), front)
         cfg = {"video": str(video), "calib": str(root / "calib.json"), "masks": str(root / "masks"),
                "out": str(root / "out"), "ref": 200, "repeat": [4, 3], "repeat_range": [0, n_frames - 1],
-               "crop": [50, 90], "margin": 2, "bg": [128, 128, 128], **cls.extra,
+               "crop": [50, 90], "margin": 2, "bg": [128, 128, 128],
+               "extras": [{"name": "X150", "video": str(video), "calib": str(root / "calib.json"), "frame": 150,
+                           "masks": str(root / "masks"), "weight": 0.7}], **cls.extra,
                "sets": {"back-s1": {"player": "back", "front": ["front"], "stride": 1, "k": 117}},
                "runs": {"court-test-back-s1": {"set": "back-s1", "turbo": True}}}
         (root / "cfg.json").write_text(json.dumps(cfg))
@@ -308,22 +321,30 @@ class ExtraView(EndToEnd):
     def test_extra_view_is_native_pixels_with_its_masks(self):
         import extra_view
         import cv2
-        out = self.root / "real" / "X200" / "back"
+        out = self.root / "real" / "X200"
         extra_view.main(["--video", self.cfg["video"], "--calib", self.cfg["calib"], "--frame", "200", "--masks",
                          self.cfg["masks"], "--player", "back", "--front", "front", "--out", str(out), "--margin", "2"])
         cam = json.loads((out / "camera.json").read_text())
         x0, y0, cw, ch = cam["crop"]
         self.assertLessEqual(cw / ch, 9 / 16 + 1e-9)
-        frame = cv2.cvtColor(cv2.imread(str(out / "frame.png")), cv2.COLOR_BGR2RGB)
+        (frame,) = decode(out / "X200.mkv")
         ref = np.zeros((ch, cw, 3), np.uint8)
         a, b, c, d = max(0, x0), max(0, y0), min(W, x0 + cw), min(H, y0 + ch)
         ref[b - y0:d - y0, a - x0:c - x0] = self.frames[200][b:d, a:c]
         np.testing.assert_array_equal(frame, ref)
-        m = cv2.imread(str(out / "mask.png"), cv2.IMREAD_GRAYSCALE)
-        ig = cv2.imread(str(out / "ignore.png"), cv2.IMREAD_GRAYSCALE)
+        m = cv2.imread(str(out / "masks" / "000000.png"), cv2.IMREAD_GRAYSCALE)
+        ig = cv2.imread(str(out / "ignore" / "000000.png"), cv2.IMREAD_GRAYSCALE)
         self.assertEqual(int((m.astype(int) * (ig > 0)).max()), 0)
         self.assertGreater(int((ig > 0).sum()), 0)
         self.assertEqual(float((out / "focal.txt").read_text()), 400.0)
+
+    def test_runs_carry_the_extra_views(self):
+        rd = self.run_dir / "real"
+        self.assertEqual([e["name"] for e in json.loads((rd / "extras.json").read_text())], ["X150"])
+        self.assertEqual(len(decode(rd / "X150" / "X150.mkv")), 1)
+        self.assertTrue((rd / "X150" / "masks" / "000000.png").exists())
+        run = json.loads((self.run_dir / "court-run.json").read_text())
+        self.assertEqual(run["extras"][0]["weight"], 0.7)
 
 
 class EndToEndScaled(EndToEnd):

@@ -17,16 +17,21 @@
 # K and FOCAL are read from $L/data/court/$ID/court-run.json just before each recon (with that upload's real frame,
 # masks and ignore, read in place), so a corrected FOCAL uploaded while the views run is used; each recon logs and
 # records the K and FOCAL it trained with. If SeedVR2 fails, the up variants are dropped and the exit code says so.
-# Env: ID; VARIANTS ("raw:default raw:agree up:default up:agree": views raw|up x mode default|agree, where agree
-# = recon --source-agree, solid from every side but a few cm off the real camera); CAPS (300000); METRICS (1);
-# ITERS (15000); FACE (2.0); MIN_SCRATCH_GB (200); KEEP_MB (900: past that the recon PLYs stay behind).
+# Env: ID; VARIANTS ("raw:default raw:agree"; views raw|up x mode default|agree, where up = SeedVR2 2x views and
+# agree = recon --source-agree, solid from every side but a few cm off the real camera); REALS ("0 1 2": how many of
+# the run's other real views (real/extras.json, in order, with their weights) train beside A's frame); CAPS (300000);
+# METRICS (1: per variant a recon holding out every 8th view and every unused real view, weight 0); ITERS (15000);
+# FACE (2.0); TAG (results in $L/runs/$ID/$TAG); SEED + SEED_FLAG (4DAnyone's seed and its flag); MIN_SCRATCH_GB
+# (200); KEEP_MB (900: past that the recon PLYs stay behind).
 set -euo pipefail
 L=${L:-/blue/iruchkin/vishalnaveen/lucid}; C=$L/code/pipeline/court
 : "${ID:?ID}"
 [[ $ID =~ ^court-[a-z0-9][a-z0-9-]*$ ]] || { echo "court-job: bad id '$ID'" >&2; exit 1; }
-DATA=$L/data/court/$ID; OUTD=$L/runs/$ID
-VARIANTS=${VARIANTS:-"raw:default raw:agree up:default up:agree"}; CAPS=${CAPS:-300000}; METRICS=${METRICS:-1}
-S=${TMPDIR:-/tmp}/court-$ID-${SLURM_JOB_ID:-$$}
+DATA=$L/data/court/$ID; OUTD=$L/runs/$ID${TAG:+/$TAG}
+VARIANTS=${VARIANTS:-"raw:default raw:agree"}; REALS=${REALS:-"0 1 2"}; CAPS=${CAPS:-300000}; METRICS=${METRICS:-1}
+[[ -z ${TAG:-} || $TAG =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "court-job: bad tag '$TAG'" >&2; exit 1; }
+[[ -z ${SEED:-} || ( $SEED =~ ^[0-9]+$ && -n ${SEED_FLAG:-} ) ]] || { echo "court-job: SEED needs a number and SEED_FLAG" >&2; exit 1; }
+S=${TMPDIR:-/tmp}/court-$ID${TAG:+-$TAG}-${SLURM_JOB_ID:-$$}
 log() { echo "[court-job $(date +%T)] $*"; }
 for v in $VARIANTS; do
   [[ $v =~ ^(raw|up):(default|agree)$ ]] || { echo "court-job: variant '$v' (raw|up):(default|agree)" >&2; exit 1; }
@@ -72,7 +77,10 @@ PY
 read -r K FOCAL TURBO VPL PITCHES < <(runinfo) || { log "bad run record"; exit 1; }
 P=$(printf '%06d' "$K")
 for f in input.mp4 source-4k.mkv "masks/$P.png" "ignore/$P.png"; do test -s "$f" || { log "missing $f"; exit 1; }; done
-log "K=$K FOCAL=$FOCAL $( ((TURBO)) && echo Turbo || echo 24-step) views; variants: $VARIANTS; caps: $CAPS"
+NX=0; [ -s "$DATA/real/extras.json" ] && NX=$(grep -c '"name"' "$DATA/real/extras.json" || true)
+REALS=$(for r in $REALS; do if [[ $r =~ ^[0-9]$ ]] && (( r <= NX )); then echo "$r"; else echo "REALS $r: only $NX other real view(s)" >&2; fi; done | xargs)
+log "K=$K FOCAL=$FOCAL $( ((TURBO)) && echo Turbo || echo 24-step) views${SEED:+, seed $SEED}; variants: $VARIANTS;" \
+  "real views: A + {${REALS// /,}} of $NX; caps: $CAPS; results -> $OUTD"
 UP=0; [[ " $VARIANTS " == *" up:"* ]] && UP=1
 if (( UP )); then  # SeedVR2's weights into scratch while the views are made
   ( export HF_HOME=$S/hf HF_HUB_DISABLE_XET=1 && source "$L/envs/seedvr2/bin/activate" \
@@ -93,7 +101,7 @@ log "prep + 4DAnyone views"
 $PY -m lucid.prep_clip input.mp4 --out prepped.mp4 --start-s 0 > prep.json
 ( cd "$L/repos/4DAnyone" && CUDA_VISIBLE_DEVICES=0 $PY inference.py --video_path "$S/run/prepped.mp4" \
     --output_dir "$S/run/views" --views_per_layer "$VPL" --layer_pitches "$PITCHES" \
-    $( ((TURBO)) || echo --enable_turbo=False ) )
+    $( ((TURBO)) || echo --enable_turbo=False ) ${SEED:+$SEED_FLAG $SEED} )
 SAMPLES=(views/videos/00.mp4 views/videos/04.mp4 views/videos/08.mp4 views/videos/12.mp4)
 copy_back prep.json prepped.mp4 views/cameras.json views/metadata.json views/gvhmr "${SAMPLES[@]}"
 log "views done; gate-2 samples in $OUTD/views"
@@ -156,27 +164,44 @@ fi
 # --- freezes, metrics and exports, one queue per GPU -----------------------------------------------------------------
 TASKS=()
 for v in $VARIANTS; do
-  for cap in $CAPS; do TASKS+=("freeze $v $cap"); done
-  (( METRICS )) && TASKS+=("metrics $v ${CAPS%% *}")
+  for r in $REALS; do
+    for cap in $CAPS; do TASKS+=("freeze $v:$r $cap"); done
+    (( METRICS )) && TASKS+=("metrics $v:$r ${CAPS%% *}")
+  done
 done
-recon() {  # recon freeze|metrics views:mode cap gpu
-  local kind=$1 views=${2%%:*} mode=${2##*:} cap=$3 g=$4 out res k f t
+extras_json() {  # extras_json K n freeze|metrics: the first n other real views at their weights (+ the rest at 0)
+  $PY - "$DATA" "$1" "$2" "$3" <<'PY'
+import json, sys
+d, k, n, kind = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+views = json.load(open(f"{d}/real/extras.json"))
+use = [dict(v, weight=v.get("weight", 1.0) if i < n else 0.0) for i, v in enumerate(views) if i < n or kind == "metrics"]
+print(json.dumps([{"video": f"{d}/real/{v['name']}/{v['name']}.mkv", "offset": -k, "masks": f"{d}/real/{v['name']}/masks",
+                   "ignore": f"{d}/real/{v['name']}/ignore", "focal": v["focal"], "weight": v["weight"]} for v in use]))
+PY
+}
+recon() {  # recon freeze|metrics views:mode:reals cap gpu
+  local kind=$1 spec=$2 cap=$3 g=$4 views mode r out res k f t xs=""
+  IFS=: read -r views mode r <<< "$spec"
   read -r k f t _ < <(runinfo) || { log "bad run record"; return 1; }
   local p6; p6=$(printf '%06d' "$k")
   for x in source-4k.mkv "masks/$p6.png" "ignore/$p6.png"; do
     test -s "$DATA/$x" || { log "$x missing in $DATA for K=$k"; return 1; }
   done
   [ "$views" = up ] && res=views-up || res=views
-  if [ "$kind" = metrics ]; then out=recon-metrics-$views-$mode; else out=recon-$views-$mode-$((cap / 1000))k; fi
+  if [ "$kind" = metrics ]; then out=recon-metrics-$views-$mode-r$r; else out=recon-$views-$mode-r$r-$((cap / 1000))k; fi
+  if (( r > 0 )) || [[ $kind == metrics && $NX -gt 0 ]]; then
+    extras_json "$k" "$r" "$kind" > "$out.extra.json" || { log "$out: extra views unreadable"; return 1; }
+    xs="--extra-sources $S/run/$out.extra.json"
+  fi
   log "$out: K=$k FOCAL=$f on GPU $g ($GPUNAME)"
   mkdir -p "$out"
-  printf '{"K": %s, "FOCAL": %s, "views": "%s", "mode": "%s", "cap": %s, "gpu": "%s"}\n' \
-    "$k" "$f" "$res" "$mode" "$cap" "$GPUNAME" > "$out/used.json"
+  printf '{"K": %s, "FOCAL": %s, "views": "%s", "mode": "%s", "reals": %s, "cap": %s, "seed": "%s", "gpu": "%s"}\n' \
+    "$k" "$f" "$res" "$mode" "$r" "$cap" "${SEED:-}" "$GPUNAME" > "$out/used.json"
   CUDA_VISIBLE_DEVICES=$g $PY -m lucid.recon --result "$res" --start "$k" --end "$((k + 1))" --out "$out" \
     --cap "$cap" --iters-first "${ITERS:-15000}" --sh-degree 1 --aniso 0.05 --peek 0,4,8,12,20 \
     --source-video "$DATA/source-4k.mkv" --source-masks "$DATA/masks" --source-ignore "$DATA/ignore" --source-focal "$f" \
     --source-weight 3.0 --source-every 1 --source-iters 4000 --face-weight "${FACE:-2.0}" \
-    $( [ "$kind" = metrics ] && echo --holdout-every 8 ) $( [ "$mode" = agree ] && echo --source-agree ) > "$out.log" 2>&1 \
+    $( [ "$kind" = metrics ] && echo --holdout-every 8 ) $( [ "$mode" = agree ] && echo --source-agree ) $xs > "$out.log" 2>&1 \
     || { log "$out FAILED (see $out.log)"; return 1; }
   [ "$kind" = metrics ] && return 0
   CUDA_VISIBLE_DEVICES=$g $PY -m lucid.export --recon "$out" --out "bundle-${out#recon-}" --id "$ID" --name "Court Side" \
@@ -195,7 +220,8 @@ done
 for p in "${pids[@]}"; do wait "$p" || RC=1; done
 
 # --- results back to /blue -------------------------------------------------------------------------------------------
-KEEP=(recon-*/recon-*.json recon-*/source-camera-*.json recon-*/peek-*.jpg recon-*/used.json recon-*.log bundle-*)
+KEEP=(recon-*/recon-*.json recon-*/source-camera-*.json recon-*/peek-*.jpg recon-*/used.json recon-*.log recon-*.extra.json
+      bundle-*)
 PLYS=($(ls recon-*-*k/frames/*.ply 2>/dev/null || true))
 MB=$( { du -ck "${KEEP[@]}" ${PLYS[@]+"${PLYS[@]}"} 2>/dev/null || true; } | awk 'END { printf "%d", $1 / 1024 }')
 (( MB <= ${KEEP_MB:-900} )) || { log "results are $MB MB: the recon PLYs stay behind (the bundles keep a PLY each)"; PLYS=(); }
