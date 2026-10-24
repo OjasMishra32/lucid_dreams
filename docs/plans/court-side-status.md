@@ -7,7 +7,8 @@ Ojasva's bar: if two players can't pass by noon, ship one player on the court. U
 
 ## Asks for Ojasva (newest first)
 
-6. **Open.** Confirm the reconstruction plan for this clip: playback frames with `recon.py --cap 100000`, plus the
+6. **Yes (Ojasva, Sat 6:05 AM).** 100k per player per frame for playback and the freeze frame alone at 250k is right for the
+   Quest browser; keep `aniso`, the real-frame view (`sourceView`) and 50-step views for the final run. Original ask: playback frames with `recon.py --cap 100000`, plus the
    freeze frame trained again on its own at `--cap 250000` (one frame, one GPU, minutes). Both are existing flags
    (`pipeline/lucid/recon.py:37`, `--end`), so this is a yes/no. Why: 5 s of two players must fit the Quest browser.
 5. **Approved (Ojasva, 5:50 AM).** One B200 for about 10 minutes, about 7:30-8 AM: a **Turbo** views run on one
