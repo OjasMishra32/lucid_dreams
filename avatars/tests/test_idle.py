@@ -30,8 +30,9 @@ def test_idle_loop_is_valid_motion():
 def test_idle_loop_wraps_seamlessly():
     m = idle_loop(betas=np.zeros(10), seconds=8.0, fps=30)
     # The step from the last frame back to the first must be no bigger than an ordinary step.
-    steps = np.abs(np.diff(m.pose, axis=0)).max(axis=(1, 2))
-    wrap = np.abs(m.pose[0] - m.pose[-1]).max()
+    body = np.delete(m.pose, [J["left_eye"], J["right_eye"]], axis=1)  # saccades are jumps; their own test checks them
+    steps = np.abs(np.diff(body, axis=0)).max(axis=(1, 2))
+    wrap = np.abs(body[0] - body[-1]).max()
     assert wrap <= steps.max() * 1.05
     t_steps = np.abs(np.diff(m.root_t, axis=0)).max()
     assert np.abs(m.root_t[0] - m.root_t[-1]).max() <= t_steps * 1.05
@@ -161,3 +162,54 @@ def test_seated_keeps_the_chair_height_when_the_arms_reach():
 def test_seated_takes_a_seat_lower_than_the_minimum():
     s = seated_rest_pose(smplx_like_rest(), seat_y=0.30, table_y=TABLE_Y)
     assert s.seat_y == pytest.approx(0.30) and np.isfinite(s.pose).all()
+
+
+# ---------------- life when idle ----------------
+
+def _blinks(amount, fps):
+    """Start times (s) and lengths (s) of each blink in a 0..1 curve."""
+    on = amount > 0
+    starts = np.flatnonzero(on & ~np.roll(on, 1))
+    ends = np.flatnonzero(on & ~np.roll(on, -1))
+    return starts / fps, (ends - starts + 1) / fps
+
+
+def test_idle_loop_is_twenty_seconds_by_default():
+    m = idle_loop(np.zeros(10))
+    assert m.num_frames / m.fps == pytest.approx(20.0)
+
+
+def test_idle_breathes_two_to_three_mm_at_the_chest():
+    rest = smplx_like_rest()
+    m = idle_loop(np.zeros(10), seconds=8.0, fps=30)
+    rel = []
+    for f in range(m.num_frames):
+        p, R = world_joints(rest, m.root_q[f], m.root_t[f], m.pose[f])
+        rel.append(R[0].T @ ((p[J["left_shoulder"]] + p[J["right_shoulder"]]) / 2 - p[0]))  # the pelvis's own frame
+    forward = np.ptp(np.array(rel)[:, 2]) / 2
+    assert 0.002 <= forward <= 0.003
+
+
+def test_idle_blinks_every_three_to_five_seconds_for_150_ms():
+    m = idle_loop(np.zeros(10), seconds=20.0, fps=30, blink_expr=np.eye(10)[9])
+    amount = m.expr[:, 9]
+    starts, lengths = _blinks(amount, 30)
+    assert len(starts) >= 4
+    gaps = np.diff(np.append(starts, starts[0] + 20.0))  # the wrap counts too
+    assert gaps.min() >= 3.0 - 1 / 30 and gaps.max() <= 5.0 + 1 / 30
+    assert (lengths <= 0.15 + 1 / 30).all()
+    assert (amount == 1.0).sum() == len(starts)  # each blink has one frame fully shut
+    assert amount[0] == 0 and amount[-1] == 0
+
+
+def test_idle_eyes_make_small_saccades_together_and_wrap():
+    m = idle_loop(np.zeros(10), seconds=20.0, fps=30)
+    left, right = m.pose[:, J["left_eye"]], m.pose[:, J["right_eye"]]
+    np.testing.assert_allclose(left, right)  # both eyes look at the same thing
+    assert np.abs(left).max() <= 0.12  # a few degrees, not a stare to the side
+    steps = np.linalg.norm(np.diff(left, axis=0), axis=1)
+    jumps = steps > 1e-6
+    assert 8 <= jumps.sum() <= 40  # a new fixation every 0.5-2.5 s
+    assert steps[jumps].min() > 0.005  # each is a jump within a frame, not a drift
+    np.testing.assert_allclose(left[0], left[-1])  # the last fixation is the first, so the loop wraps
+    assert m.expr is None  # blinks only when the bundle can show them

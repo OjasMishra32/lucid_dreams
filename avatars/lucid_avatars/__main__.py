@@ -7,7 +7,7 @@ import sys
 import numpy as np
 
 from .bundle import validate_bundle
-from .idle import idle_loop
+from .idle import IDLE_S, idle_loop
 
 
 def main() -> int:
@@ -17,7 +17,7 @@ def main() -> int:
     v.add_argument("bundles", nargs="+")
     i = sub.add_parser("idle", help="write an idle-loop motion.json")
     i.add_argument("out")
-    i.add_argument("--seconds", type=float, default=8.0)
+    i.add_argument("--seconds", type=float, default=IDLE_S)
     i.add_argument("--fps", type=int, default=30)
     i.add_argument("--stand-y", type=float, default=0.0, help="SMPL-X transl y that puts the soles on y = 0")
     b = sub.add_parser("bake", help="avatar bundle -> replay bundle (posed per frame) for players that can't skin")

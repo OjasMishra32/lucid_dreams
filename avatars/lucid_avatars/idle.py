@@ -1,8 +1,10 @@
-"""Seamless idle loops so a person never stands frozen: standing (breathing, weight shift, head sway) and seated at a
-chess board (breathing, forearms on the table, looking down at the board).
+"""Seamless idle loops so a person never stands frozen: standing (breathing, weight shift, head sway, eye saccades)
+and seated at a chess board (breathing, forearms on the table, looking down at the board).
 
-Every movement is a sine whose period divides the loop length, so the last frame flows into the first.
-Blinking uses motion.json's optional expr: pass the SMPL-X expression vector that closes this avatar's eyes.
+Every movement is a sine whose period divides the loop length, or (blinks, saccades) a pattern laid out so the gap
+across the wrap is one of its own gaps, so the last frame flows into the first.
+Blinking uses motion.json's optional expr: pass the expression vector that shuts this avatar's eyes (for a head-swapped
+bundle, face_expr's blink channel: np.eye(10)[face_expr.BLINK]).
 """
 
 from __future__ import annotations
@@ -14,13 +16,23 @@ import numpy as np
 
 from .ik import arm_lengths, lean, look_at, lowest_elbow_y, solve_arm, to_aa, world_joints
 from .motion import Motion
-from .rotations import aa_to_quat, quat_mul, quat_to_matrix, yaw_quat
+from .rotations import aa_to_quat, quat_mul, quat_to_aa, quat_to_matrix, yaw_quat
 from .smplx_layout import NUM_JOINTS, J
 
-BREATH_PERIOD_S = 4.0  # ~15 breaths a minute, relaxed
+IDLE_S = 20.0          # long enough that the pattern of blinks and glances doesn't read as a loop
+BREATH_PERIOD_S = 4.0  # ~15 breaths a minute, relaxed (0.25 Hz)
+BREATH_SPINE = 0.0043  # radians per spine joint: the chest moves 2-3 mm (test_idle measures it)
+BREATH_COLLAR = 0.012  # radians: the shoulders lift a little with each breath
+BREATH_HEAD = 0.003    # the head counters the spine so the gaze stays level
 SHIFT_PERIOD_S = 8.0   # slow side-to-side weight shift
-BLINK_EVERY_S = 4.0    # people blink every 2-10 s at rest
-BLINK_S = 0.25         # close and reopen
+BLINK_EVERY_S = 4.0    # people blink every 2-10 s at rest; these loops space them 3-5 s apart
+BLINK_JITTER = 0.2     # each gap is BLINK_EVERY_S +- 20%
+BLINK_CLOSE_S = 0.05   # a blink shuts fast
+BLINK_OPEN_S = 0.10    # and opens slower: 150 ms in all
+SACCADE_HOLD_S = (0.6, 2.5)    # how long the eyes rest on one thing
+SACCADE_YAW = 0.07             # radians either side (about 4 degrees): glancing around, not staring sideways
+SACCADE_PITCH = (-0.05, 0.02)  # a little more down than up, as people at rest look
+SACCADE_MIN = 0.02             # a new fixation is at least this far from the last (else it's not a saccade)
 
 # Seated at the chess board. Heights are from the floor, in the person's own frame from AGENTS.md (hips over
 # x = z = 0, facing -Z), so the board centre is BOARD_Z in front of the hips: a player puts this origin BOARD_Z
@@ -59,29 +71,58 @@ def _cycles(seconds: float, period_s: float) -> int:
     return max(1, round(seconds / period_s))
 
 
-def _blink_curve(n: int, fps: int, seconds: float) -> np.ndarray:
-    """0 (open) .. 1 (closed) per frame: a quick raised-cosine blink, unevenly spaced so it doesn't look mechanical,
-    never on the first or last frame so the loop wraps with eyes open."""
+def _blink_curve(n: int, fps: int, seconds: float, seed: int = 0) -> np.ndarray:
+    """0 (open) .. 1 (shut) per frame: blinks BLINK_EVERY_S +- 20% apart (the gap across the wrap is one of them),
+    each shutting in BLINK_CLOSE_S and opening in BLINK_OPEN_S with one frame fully shut, never on the first or last
+    frame, so the loop wraps with eyes open."""
     amount = np.zeros(n)
-    blinks = max(1, round(seconds / BLINK_EVERY_S))
-    length = max(3, round(BLINK_S * fps)) | 1  # odd, so one frame sits at fully closed
-    for k in range(blinks):
-        centre = round((k + 0.5 + 0.15 * (-1) ** k) / blinks * n)
-        start = min(max(1, centre - length // 2), n - 1 - length)
-        if start < 1:
-            break
-        amount[start:start + length] = 0.5 - 0.5 * np.cos(2 * math.pi * np.arange(length) / (length - 1))
+    k = max(1, round(seconds / BLINK_EVERY_S))
+    gaps = 1 + np.random.default_rng(seed).uniform(-BLINK_JITTER, BLINK_JITTER, k)
+    gaps *= seconds / gaps.sum()
+    t = np.arange(n) / fps
+    for start in min(1.0, 0.25 * seconds) + np.concatenate([[0.0], np.cumsum(gaps[:-1])]):
+        peak = round((start + BLINK_CLOSE_S) * fps) / fps  # a frame lands on fully shut
+        if peak - BLINK_CLOSE_S < 1 / fps or peak + BLINK_OPEN_S > (n - 1) / fps:
+            continue
+        closing = (t > peak - BLINK_CLOSE_S) & (t <= peak)
+        opening = (t > peak) & (t < peak + BLINK_OPEN_S)
+        amount[closing] = 0.5 - 0.5 * np.cos(math.pi * (t[closing] - peak + BLINK_CLOSE_S) / BLINK_CLOSE_S)
+        amount[opening] = 0.5 + 0.5 * np.cos(math.pi * (t[opening] - peak) / BLINK_OPEN_S)
+        amount[np.isclose(t, peak)] = 1.0
     return amount
 
 
-def idle_loop(betas: np.ndarray, seconds: float = 8.0, fps: int = 30, stand_y: float = 0.0,
-              blink_expr: np.ndarray | None = None) -> Motion:
-    """An idle motion of `seconds` length, facing -Z.
+def _saccades(n: int, fps: int, seed: int = 1) -> np.ndarray:
+    """(n, 3) eye rotation (axis-angle, the same for both eyes) per frame: the eyes rest on one point for
+    SACCADE_HOLD_S, then jump within a frame to another a few degrees away. The loop starts and ends looking straight
+    ahead, so it wraps on a fixation, not mid-jump."""
+    rng = np.random.default_rng(seed)
+    aa = np.zeros((n, 3))
+    f, gaze = 0, np.zeros(2)
+    while True:
+        f += max(1, round(rng.uniform(*SACCADE_HOLD_S) * fps))
+        if f >= n - round(SACCADE_HOLD_S[0] * fps):  # the last fixation (into the wrap) is straight ahead
+            break
+        new = gaze
+        while np.linalg.norm(new - gaze) < SACCADE_MIN:
+            new = np.array([rng.uniform(-SACCADE_YAW, SACCADE_YAW), rng.uniform(*SACCADE_PITCH)])
+        gaze = new
+        q = quat_mul(aa_to_quat([0.0, gaze[0], 0.0]), aa_to_quat([gaze[1], 0.0, 0.0]))  # yaw, then pitch
+        aa[f:] = quat_to_aa(q)
+    if f < n:
+        aa[f:] = 0.0
+    return aa
+
+
+def idle_loop(betas: np.ndarray, seconds: float = IDLE_S, fps: int = 30, stand_y: float = 0.0,
+              blink_expr: np.ndarray | None = None, saccades: bool = True) -> Motion:
+    """An idle motion of `seconds` length, facing -Z: breathing, a slow weight shift and head sway, small eye
+    saccades (the left_eye / right_eye joints, which any skinning player shows), and blinks if blink_expr is given.
 
     stand_y is the SMPL-X transl y that puts this body's soles on y = 0 (depends on betas; compute it
     with the SMPL-X model). transl sways about a centimetre in x; the pelvis itself sits at J0 + transl.
-    The loop is rounded to a whole number of frames so it wraps cleanly. blink_expr (10 floats) is the SMPL-X
-    expression that closes the eyes; with it the loop blinks every few seconds through motion.json's expr.
+    The loop is rounded to a whole number of frames so it wraps cleanly. blink_expr (10 floats) is the expression
+    that shuts the eyes; with it the loop blinks every 3-5 s through motion.json's expr.
     """
     n = max(1, round(seconds * fps))
     seconds = n / fps
@@ -94,16 +135,18 @@ def idle_loop(betas: np.ndarray, seconds: float = 8.0, fps: int = 30, stand_y: f
     pose = np.broadcast_to(_relaxed_stance(), (n, NUM_JOINTS, 3)).copy()
     # Breathing: the chest rises and the shoulders lift slightly.
     for name in ("spine1", "spine2", "spine3"):
-        pose[:, J[name], 0] -= 0.012 * breath
-    pose[:, J["left_collar"], 2] -= 0.015 * breath
-    pose[:, J["right_collar"], 2] += 0.015 * breath
-    pose[:, J["head"], 0] += 0.008 * breath
+        pose[:, J[name], 0] -= BREATH_SPINE * breath
+    pose[:, J["left_collar"], 2] -= BREATH_COLLAR * breath
+    pose[:, J["right_collar"], 2] += BREATH_COLLAR * breath
+    pose[:, J["head"], 0] += BREATH_HEAD * breath
     # Weight shift: the pelvis rolls, the spine counters it, the unloaded knee softens.
     pose[:, J["spine1"], 2] -= 0.015 * shift
     pose[:, J["left_knee"], 0] += 0.02 * (1 + shift)
     pose[:, J["right_knee"], 0] += 0.02 * (1 - shift)
     pose[:, J["neck"], 1] += 0.02 * sway
     pose[:, J["head"], 1] += 0.02 * sway
+    if saccades:
+        pose[:, J["left_eye"]] = pose[:, J["right_eye"]] = _saccades(n, fps)
 
     roll = aa_to_quat(np.stack([np.zeros(n), np.zeros(n), 0.02 * shift], axis=-1))
     root_q = quat_mul(np.broadcast_to(yaw_quat(math.pi), (n, 4)), roll)
@@ -250,10 +293,10 @@ def seated_idle(rest, betas: np.ndarray, seconds: float = 8.0, fps: int = 30, se
     for f in range(n):
         p = base.copy()
         for name in ("spine1", "spine2", "spine3"):
-            p[J[name], 0] -= 0.012 * breath[f]
-        p[J["left_collar"], 2] -= 0.015 * breath[f]
-        p[J["right_collar"], 2] += 0.015 * breath[f]
-        p[J["head"], 0] += 0.008 * breath[f]
+            p[J[name], 0] -= BREATH_SPINE * breath[f]
+        p[J["left_collar"], 2] -= BREATH_COLLAR * breath[f]
+        p[J["right_collar"], 2] += BREATH_COLLAR * breath[f]
+        p[J["head"], 0] += BREATH_HEAD * breath[f]
         p[J["neck"], 1] += 0.015 * sway[f]
         p[J["head"], 1] += 0.015 * sway[f]
         for side, w in wrists.items():

@@ -33,7 +33,7 @@ from lucid_avatars import skinning as S  # noqa: E402
 from lucid_avatars.smplx_layout import SMPLX_PARENTS  # noqa: E402
 from lucid_avatars.bundle import validate_bundle, write_avatar_bundle  # noqa: E402
 from lucid_avatars.gaussian_ply import write_ply  # noqa: E402
-from lucid_avatars.idle import idle_loop  # noqa: E402
+from lucid_avatars.idle import IDLE_S, idle_loop  # noqa: E402
 
 HANDS_NOTE = "avatar.ply is the SMPL-X zero pose (flat hands); motion.json holds the hands in DiGS's relaxed hand mean"
 TURNTABLE_FILL = 1.15  # frame height / body height
@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rembg-model", default="u2net_human_seg")
     p.add_argument("--frames", type=int, default=60, help="turntable frames (one full turn)")
     p.add_argument("--fps", type=int, default=30)
-    p.add_argument("--idle-seconds", type=float, default=8.0)
+    p.add_argument("--idle-seconds", type=float, default=IDLE_S)
     p.add_argument("--steps", type=int, default=None, help="diffusion steps (default: the config's)")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
@@ -285,7 +285,7 @@ def save_mp4(frames_thwc: torch.Tensor, path: Path, fps: int) -> None:
 # ---------------------------------------------------------------- bundle
 
 def export_bundle(model, demo, code, betas_np, hand_mean, focal, any_camera, out: Path, dream_id: str, name: str,
-                  source: dict, work: Path, frames: int = 60, fps: int = 30, idle_seconds: float = 8.0,
+                  source: dict, work: Path, frames: int = 60, fps: int = 30, idle_seconds: float = IDLE_S,
                   motion=None, metrics: dict | None = None, seen: np.ndarray | None = None) -> int:
     """From a DiGS decoder code to a validated bundle: rest-pose avatar.ply, skin.bin + skeleton.json, turntable
     preview.mp4 + thumb.jpg, and motion.json: an idle loop unless motion is given, as a Motion or as a function
