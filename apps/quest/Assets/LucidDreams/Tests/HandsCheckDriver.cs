@@ -144,17 +144,24 @@ namespace LucidDreams.Tests
             if (realityButton != null)
             {
                 yield return Push(realityButton);
+                yield return Frames(3);
+                var seen = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Seen");
+                Check(seen != null && seen.text == "50% seen by the camera · blue was imagined" && !player.ShowingReality,
+                    $"Reality check opens and says how much was seen, before anything is tinted ({seen?.text})");
+                var imagined = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text == "Show imagined detail");
+                Check(imagined != null, "with one toggle, Show imagined detail");
+                yield return Push(imagined);
                 until = Time.realtimeSinceStartup + 60f;
                 while (!player.ShowingReality && player.RealityError == null && Time.realtimeSinceStartup < until) yield return null;
                 yield return Frames(5);
-                Check(player.ShowingReality, $"reality frames load and show ({player.RealityError})");
+                Check(player.ShowingReality, $"the toggle loads and shows the imagined detail in blue ({player.RealityError})");
                 Check(player.Frame == frameBefore, "same moment, just the reality version");
-                var title = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Title");
-                Check(title != null && title.text.StartsWith("50% seen by the camera"), $"bar says how much was seen ({title?.text})");
+                Render(Path.Combine(outputDir, "reality-popover-eye-view.png"));
                 Render(Path.Combine(outputDir, "reality-side-view.png"), root.position + new Vector3(2.4f, 1.1f, 0f), root.position + Vector3.up * 0.9f);
-                yield return Push(realityButton);
+                yield return Push(imagined);
                 yield return Frames(3);
-                Check(!player.ShowingReality, "pushing again goes back to the real colours");
+                Check(!player.ShowingReality, "toggling it off goes back to the real colours");
+                yield return Push(realityButton);
             }
 
             // A finger between your eyes and the person: the person must not draw over it.
@@ -260,6 +267,17 @@ namespace LucidDreams.Tests
             yield return new WaitForSeconds(0.3f);
             Check(speech.CaptionText == "Watch my right hand & follow along.", $"and changes with the clip, entities decoded ({speech.CaptionText})");
             Render(Path.Combine(outputDir, "caption-eye-view.png"));
+            var words = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).First(t => t.name == "Words");
+            Check(Mathf.Approximately(words.fontSize, 29f) && words.textInfo.lineCount <= 2, $"29 mm, two lines at most ({words.fontSize} mm, {words.textInfo.lineCount} lines)");
+            speech.LargeCaptions = true;
+            yield return Frames(3);
+            Check(Mathf.Approximately(words.fontSize, 36f), $"Large is 36 mm ({words.fontSize} mm)");
+            Render(Path.Combine(outputDir, "caption-large-eye-view.png"));
+            speech.LargeCaptions = false;
+            speech.CaptionsOn = false;
+            yield return Frames(3);
+            Check(speech.CaptionText == null, "Captions off shows nothing");
+            speech.CaptionsOn = true;
         }
 
         // An avatar posed on the GPU, against lucid_avatars/skinning.py's reference positions (when given).
@@ -362,14 +380,16 @@ namespace LucidDreams.Tests
             Check(library.Online && library.Entries.Count == 2 && library.Entries[0].id == "marker-teach",
                 $"lists the bridge's dreams, newest first ({string.Join(", ", library.Entries.Select(x => x.id))})");
 
-            FingertipButton RowAction(string name) => panel.GetComponentsInChildren<FingertipButton>()
-                .FirstOrDefault(b => b.transform.parent.Find("Name")?.GetComponent<TMPro.TMP_Text>().text == name);
             var teach = library.Entries.First(x => x.id == "marker-teach");
-            Check(RowAction(teach.dream.name)?.label.text == "Get", $"a dream not on the headset offers Get ({RowAction(teach.dream.name)?.label.text})");
+            Check(panel.CardFor("marker-teach") != null && panel.CardStatus("marker-teach") == "Download to play",
+                $"a dream not on the headset says so on its card ({panel.CardStatus("marker-teach")})");
             yield return new WaitForSecondsRealtime(0.4f);
             Render(Path.Combine(outputDir, "library-eye-view.png"));
 
-            yield return Push(RowAction(teach.dream.name));
+            yield return Push(panel.CardFor("marker-teach"));
+            yield return Frames(2);
+            Check(panel.CardStatus("marker-teach")?.StartsWith("Downloading") == true || teach.cached,
+                $"pushing the card downloads it, and you keep browsing ({panel.CardStatus("marker-teach")})");
             until = Time.realtimeSinceStartup + 60f;
             while (!teach.cached && teach.error == null && Time.realtimeSinceStartup < until) yield return null;
             string dir = Path.Combine(library.cacheRoot, "marker-teach");
@@ -378,9 +398,9 @@ namespace LucidDreams.Tests
                   && File.Exists(Path.Combine(dir, "thumb.jpg")) && !Directory.Exists(dir + ".part"),
                 $"download lands whole: {spz} SPZ frames + reality, plan and thumb ({teach.error})");
             yield return Frames(3);
-            Check(RowAction(teach.dream.name)?.label.text == "Play", "then offers Play");
+            Check(panel.CardStatus("marker-teach") == "On this headset · Play", $"then it's on the headset ({panel.CardStatus("marker-teach")})");
 
-            yield return Push(RowAction(teach.dream.name));
+            yield return Push(panel.CardFor("marker-teach"));
             until = Time.realtimeSinceStartup + 60f;
             while (!player.IsReady && player.Error == null && Time.realtimeSinceStartup < until) yield return null;
             Check(player.IsReady && player.LoadedFormat == DreamSequencePlayer.FrameFormat.Spz && player.Lesson != null && player.HasReality,
@@ -441,13 +461,13 @@ namespace LucidDreams.Tests
 
             var buttons = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude);
             FingertipButton B(string label) => buttons.FirstOrDefault(b => b.label.text == label);
-            Check(B("Back") != null && B("Again") != null && B("Next") != null && B("1×") == null, "Back / Again / Next replace the speed button");
-            yield return Push(B("Next"));
-            Check(lesson.Index == 2, $"Next goes forward (step {lesson.Index + 1})");
-            yield return Push(B("Next"));
+            Check(B("Previous step") != null && B("Again") != null && B("Next step") != null, "the rail has Previous step / Again / Next step in a lesson");
+            yield return Push(B("Next step"));
+            Check(lesson.Index == 2, $"Next step goes forward (step {lesson.Index + 1})");
+            yield return Push(B("Next step"));
             Check(lesson.Index == 0, "and wraps after the last step");
-            yield return Push(B("Back"));
-            Check(lesson.Index == 2, "Back goes back, wrapping too");
+            yield return Push(B("Previous step"));
+            Check(lesson.Index == 2, "Previous step goes back, wrapping too");
             yield return Frames(10);
             yield return Push(B("Again"));
             Check(lesson.Index == 2 && lesson.Rep == 0 && !lesson.YourTurn && Mathf.Abs(player.Frame - lesson.steps[2].start * player.Dream.fps) <= 2f,

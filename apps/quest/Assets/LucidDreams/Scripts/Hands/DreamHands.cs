@@ -19,6 +19,7 @@ namespace LucidDreams
         public DreamPlacer placer;
         public DreamSequencePlayer player;
         public DreamControlBar bar;
+        public DreamLibraryPanel library;
         public Transform head;
         [Tooltip("Height of the person used for grabbing until the bundle says otherwise.")]
         public float personHeight = 1.9f;
@@ -58,7 +59,7 @@ namespace LucidDreams
                 s.rootAtStart = placer.transform.position;
                 s.yawAtStart = placer.transform.eulerAngles.y;
                 if (bar != null && bar.TryTimeline(p, out _)) s.mode = Mode.Scrub;
-                else if (bar != null && bar.Contains(p)) s.mode = Mode.Bar;
+                else if ((bar != null && bar.Contains(p)) || (library != null && library.Contains(p))) s.mode = Mode.Bar;
                 else s.mode = OnPerson(p) ? Mode.PendingPerson : Mode.PendingRoom;
             }
 
@@ -98,6 +99,7 @@ namespace LucidDreams
             {
                 bool tap = (s.mode == Mode.PendingPerson || s.mode == Mode.PendingRoom) && Time.time - s.since <= TapMaxS;
                 if (tap && player != null) player.TogglePlay();
+                if (s.mode == Mode.Scrub && bar != null) bar.SeekLanded(); // a tick confirms where the seek landed
                 bool wasGrabbing = s.mode == Mode.Grab;
                 s.mode = Mode.None;
                 if (wasGrabbing) BeginGrab(); // the other hand, if still holding, carries on from here

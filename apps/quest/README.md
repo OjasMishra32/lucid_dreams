@@ -22,6 +22,27 @@ Photoreal Gaussian people standing on your real floor in Meta Quest 3S passthrou
 
    (or set **Library > Dream Library > Bridge Url** in the scene before building).
 
+## In-headset UI (Atina's handoff, demo/quest-ui)
+
+Built to `demo/quest-ui/README.md`: Raami's tokens (surface `#161617` 72%, raised `#1d1d1f` 82%, text `#f5f5f7` /
+`#86868b`, one blue `#0071e3`), 18 mm corners (28 mm library), soft shadows, one `cubic-bezier(.2,.8,.2,1)` ease.
+Every control fires once per fingertip push or per pinch release, shows a 2 mm blue focus ring, and keeps words for
+every state (never colour alone). Targets are at least 64 mm.
+
+- **Dream Library:** 1.20 x 0.70 m, 0.95 m in front of you, bottom edge 0.85 m above the floor. Three 0.31 x 0.42 m
+  cards across (16:9 thumb with its length, name, Replay / Avatar and Lesson chips, the intent, an availability line
+  with a coloured dot and words), newest first, paged. Selected = blue ring + check. Downloading says "Keep
+  browsing". Empty: "No dreams yet" + **Make a dream** (opens the web app). Footer: **Captions** on / off and
+  **Text size** Standard / Large (remembered).
+- **Playback rail:** 0.82 x 0.11 m, 0.65 m ahead and 0.65 m below your eyes, follows lazily, holds still while a hand
+  is near. Speed (1 / 0.5 / 0.25x), Previous / Next (steps in a lesson, else the previous / next person on the
+  headset), a 72 mm blue Play / Pause (labelled on first use), Again in a lesson, Reality check, Bring here, Library;
+  a labelled timeline below with a 32 mm touch corridor and a tick when a seek lands. Wraps to two rows if needed.
+- **Reality check:** a 0.36 m card above the rail: "Reality check", "N% seen by the camera · blue was imagined", and
+  one toggle, **Show imagined detail**. Without reality data: "Reality data is unavailable for this dream."
+- **Captions:** at most 0.56 m wide, at least 0.10 m tall, 22 mm side padding, `#161617` 88%, 29 mm text (36 mm
+  Large), two lines at most, nothing when a dream has none or captions are off.
+
 ## Library
 
 The library lists the bridge's dreams (`GET /api/dreams`) and the ones already on the headset. **Get** downloads a

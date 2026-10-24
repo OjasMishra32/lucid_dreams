@@ -262,3 +262,11 @@ What makes it simple, and what to do the same way in Unity:
 - Built under the person's transform, so props share its handedness mirror and every placement. Checked on a test
   track: exact on frames, on the curve between, fades across nulls, never under the floor, rim at 3.05 m.
 
+## Decisions: Atina's in-headset UI (Ian, Sat early)
+
+- Built to demo/quest-ui/README.md's tokens, sizes and copy. Left out: the optional search and the category chips
+  from the concept board (no categories in the data yet). No hand haptics exist, so seeks confirm with an audio tick.
+- Previous / Next step through a lesson, otherwise move to the previous / next person on the headset (the brief's
+  "next person"). Again stays in lessons. All eight controls fit one 0.82 m row; it wraps only if they don't.
+- Checked headless (every HandsCheck run passes with the new controls); not yet seen at headset distance on a Quest.
+

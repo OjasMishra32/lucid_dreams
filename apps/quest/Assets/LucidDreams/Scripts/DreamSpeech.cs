@@ -17,12 +17,29 @@ namespace LucidDreams
         const float MouthBelowTop = 0.13f;
         const float FaceForward = 0.08f;
         const float ResyncS = 0.12f;
-        static readonly Vector2 CaptionArea = new(760f, 120f);
+        // Atina's caption spec: at most 0.56 m wide, at least 0.10 m tall, 22 mm side padding, 29 mm text (36 mm Large).
+        const float MaxWidth = 560f, MinHeight = 100f, SidePad = 22f, Standard = 29f, Large = 36f;
+        const string CaptionsKey = "LucidDreams.captions", LargeKey = "LucidDreams.largeCaptions";
 
         public DreamSequencePlayer player;
         [Range(0f, 1f)] public float captionOpacity = 0.9f;
 
         public AudioSource Voice { get; private set; }
+
+        // Settings in the library: Captions on / off, Standard / Large. Remembered on the headset.
+        public bool CaptionsOn
+        {
+            get => PlayerPrefs.GetInt(CaptionsKey, 1) == 1;
+            set { PlayerPrefs.SetInt(CaptionsKey, value ? 1 : 0); lastSize = -1f; }
+        }
+
+        public bool LargeCaptions
+        {
+            get => PlayerPrefs.GetInt(LargeKey, 0) == 1;
+            set { PlayerPrefs.SetInt(LargeKey, value ? 1 : 0); lastSize = -1f; }
+        }
+
+        float lastSize = -1f;
         public string CaptionText { get; private set; }
         public bool HasVoice => Voice != null && Voice.clip != null;
 
@@ -45,16 +62,17 @@ namespace LucidDreams
             Voice.maxDistance = 25f;
             Voice.dopplerLevel = 0f;
 
-            var canvas = GlassUI.WorldCanvas(transform, "Caption", CaptionArea);
+            var canvas = GlassUI.WorldCanvas(transform, "Caption", new Vector2(MaxWidth, 200f));
             canvas.transform.localRotation = Quaternion.Euler(0f, 180f, 0f); // readable from in front of them
             captionGroup = canvas.gameObject.AddComponent<CanvasGroup>();
             captionGroup.alpha = 0f;
-            pill = (RectTransform)GlassUI.Box(canvas.transform, "Pill", Vector2.zero, new Vector2(200f, 50f),
-                new Color(0.114f, 0.114f, 0.122f, 0.78f), 25f).transform;
-            captionLabel = GlassUI.Label(pill, "Words", Vector2.zero, CaptionArea, "", 30f, GlassUI.Text,
+            pill = (RectTransform)GlassUI.Box(canvas.transform, "Pill", Vector2.zero, new Vector2(200f, MinHeight),
+                GlassUI.Hex(0x161617, 0.88f), GlassUI.Corner).transform;
+            captionLabel = GlassUI.Label(pill, "Words", Vector2.zero, new Vector2(MaxWidth - 2 * SidePad, 200f), "", Standard, GlassUI.Text,
                 TextAlignmentOptions.Center, FontWeight.Medium);
             captionLabel.textWrappingMode = TextWrappingModes.Normal;
             captionLabel.maxVisibleLines = 2;
+            captionLabel.lineSpacing = 0f; // TMP's default line height is about 1.18 em
         }
 
         void Update()
@@ -74,7 +92,7 @@ namespace LucidDreams
             captionGroup.transform.localPosition = new Vector3(0f, height * 0.6f, 0.42f);
 
             SyncVoice();
-            ShowCaption(Captions.At(cues, player.ClipTime));
+            ShowCaption(CaptionsOn ? Captions.At(cues, player.ClipTime) : null);
         }
 
         void Begin(DreamBundle dream)
@@ -122,12 +140,17 @@ namespace LucidDreams
 
         void ShowCaption(string text)
         {
-            if (text != null && text != CaptionText)
+            float fontSize = LargeCaptions ? Large : Standard;
+            if (text != null && (text != CaptionText || fontSize != lastSize))
             {
+                lastSize = fontSize;
+                captionLabel.fontSize = fontSize;
                 captionLabel.text = text;
-                var size = captionLabel.GetPreferredValues(text, CaptionArea.x - 48f, 0f);
-                pill.sizeDelta = new Vector2(Mathf.Min(CaptionArea.x, size.x + 48f), Mathf.Min(CaptionArea.y, size.y + 20f));
-                ((RectTransform)captionLabel.transform).sizeDelta = pill.sizeDelta - new Vector2(32f, 0f);
+                // Sized to the words, up to 0.56 m; never shrunk below readable size (cues are already segmented).
+                var size = captionLabel.GetPreferredValues(text, MaxWidth - 2 * SidePad, 0f);
+                float lineHeight = fontSize * 1.18f;
+                pill.sizeDelta = new Vector2(Mathf.Min(MaxWidth, size.x + 2 * SidePad), Mathf.Max(MinHeight, Mathf.Min(size.y, 2 * lineHeight) + 30f));
+                ((RectTransform)captionLabel.transform).sizeDelta = new Vector2(pill.sizeDelta.x - 2 * SidePad, pill.sizeDelta.y);
             }
             CaptionText = text;
             float target = text != null ? captionOpacity : 0f;

@@ -93,6 +93,24 @@ namespace LucidDreams
             Changed?.Invoke();
         }
 
+        // Replays, and avatars that carry skinning (skin.bin, skeleton.json, motion.json).
+        public static bool Playable(DreamBundle d) =>
+            d != null && (d.IsReplay || (d.IsAvatar && d.avatar != null && !string.IsNullOrEmpty(d.avatar.skin)
+                                         && !string.IsNullOrEmpty(d.avatar.skeleton) && !string.IsNullOrEmpty(d.avatar.motion)));
+
+        IEnumerable<Entry> Ready => entries.Where(e => e.cached && Playable(e.dream));
+        public int PlayableCount => Ready.Count();
+
+        // The previous or next person on this headset, in library order (wrapping).
+        public void PlayAdjacent(int direction)
+        {
+            var ready = Ready.ToList();
+            if (ready.Count == 0) return;
+            int at = ready.FindIndex(e => e.id == PlayingId);
+            var target = ready[((at < 0 ? 0 : at + direction) % ready.Count + ready.Count) % ready.Count];
+            if (target.id != PlayingId) Play(target);
+        }
+
         public bool IsCached(string id) => !string.IsNullOrEmpty(id) && SafeId.IsMatch(id) && File.Exists(Path.Combine(cacheRoot, id, "dream.json"));
 
         IEnumerator RefreshRoutine()

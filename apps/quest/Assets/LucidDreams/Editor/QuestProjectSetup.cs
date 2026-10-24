@@ -246,7 +246,8 @@ namespace LucidDreams.Editor
             var controls = dreamGo.AddComponent<DreamTestControls>();
             controls.player = player;
             controls.placer = placer;
-            dreamGo.AddComponent<DreamSpeech>().player = player;
+            var speech = dreamGo.AddComponent<DreamSpeech>();
+            speech.player = player;
             var props = dreamGo.AddComponent<DreamProps>();
             props.player = player;
             props.person = personGo.transform;
@@ -301,7 +302,10 @@ namespace LucidDreams.Editor
             libraryPanel.player = player;
             libraryPanel.hands = tracker;
             libraryPanel.head = camGo.transform;
+            libraryPanel.placer = placer;
+            libraryPanel.speech = speech;
             bar.library = libraryPanel;
+            bar.dreams = library;
 
             // Lessons: the step card beside the person, read aloud in the device's voice.
             var lessonGo = new GameObject("Lesson");
@@ -317,6 +321,7 @@ namespace LucidDreams.Editor
             interaction.placer = placer;
             interaction.player = player;
             interaction.bar = bar;
+            interaction.library = libraryPanel;
             interaction.head = camGo.transform;
 
             EditorSceneManager.SaveScene(scene, ScenePath);
