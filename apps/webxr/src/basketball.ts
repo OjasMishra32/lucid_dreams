@@ -4,11 +4,13 @@ import type { Dream } from "./dream";
 import type { Experience } from "./experience";
 import { basketballTextures, type BallTrack, HOOP, type Props, shadowTexture, standaloneHoop } from "./props";
 
-// A real size-7 ball in your own hands, to shoot at the hoop in a basketball dream. No gesture does anything: you hold
-// it by putting your palms on it (one hand under it, or both on its sides), it follows your hands, and it leaves them
-// the way a real ball does, when your hands stop pushing (they slow down after a push) or come off it. It flies with
-// gravity and a little drag and spin, bounces off your floor, the glass and the ring, drops through the net, and a
-// make counts when its centre goes down through the ring. Then it comes back to you, floating at your waist like a pass.
+// A real size-7 ball in your own hands, to dribble and shoot at the hoop in a basketball dream. Hand tracking has no
+// ball to push back, so holding is forgiving and sticky: a hand that comes up to the ball with its palm toward it holds
+// it (both hands: between them), keeps it through brief tracking dropouts, and lets go only when the fingers open wide
+// or the ball is thrown (a push that peaks; a downward one is a dribble). A dribbled ball bounces back to the height it
+// left your hand and eases into a palm waiting above it, to push again or to hold. Shots that head for the hoop get a
+// gentle aim assist. It flies with gravity, a little drag and spin, bounces off your floor, the glass and the ring,
+// drops through the net, and a make counts when its centre goes down through the ring. Then it comes back to you.
 
 const R = 0.12; // size 7: 74.9 cm round
 const G = 9.81;
@@ -17,8 +19,13 @@ const ALPHA = 2 / 3; // a hollow ball's moment of inertia, as a fraction of m r^
 const MAX_SPEED = 12; // m/s off your hands
 const BACKSPIN = 9; // rad/s, about 1.5 turns a second, the way a shot leaves the fingertips
 const PALM_OUT = 0.015; // from the palm's bones out to its skin
-const GRAB = R + 0.025; // a palm this close to the centre (and facing it) is on the ball
+const REACH = 0.04; // a palm within this of the ball's skin (and facing it) takes it
 const REGRAB_S = 0.4; // after it leaves your hands it can't come straight back to them
+const LOST_S = 0.25; // a hand that drops out of tracking keeps the ball this long
+const OPEN = 0.95, CLOSED_AGAIN = 0.9, GRIP = 0.8; // finger straightness: wide open lets go; under GRIP is a grip
+const PUSH_SPEED = 2, PUSH_MIN_S = 0.08; // a throw: faster than this, for at least this long, released as it peaks
+const DRIBBLE = [2.5, 6]; // m/s a dribble leaves the hand at
+const ASSIST_DEG = 25; // a throw this close to the hoop's direction gets aim assist (more the nearer it was)
 const RESPAWN_S = 6;
 const { RIM_R, RIM_TUBE, BOARD_GAP, BOARD_W, BOARD_H, BOARD_T, BOARD_BELOW_RIM, NET_LEN } = HOOP;
 const FREE_THROW = 4.6; // from the board's face to the free-throw line
@@ -34,45 +41,87 @@ export function wantsBall(dream: Dream, experience: Experience | null, props: Pr
 }
 
 type Joints = Record<string, THREE.Object3D>;
-const TIPS = ["thumb-tip", "index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"];
-const NEEDED = ["wrist", "middle-finger-metacarpal", "middle-finger-phalanx-proximal", ...TIPS];
+const FINGERS = ["index-finger", "middle-finger", "ring-finger", "pinky-finger"];
+const PARTS = ["phalanx-proximal", "phalanx-intermediate", "phalanx-distal", "tip"];
+const NEEDED = ["middle-finger-metacarpal", ...FINGERS.flatMap((f) => PARTS.map((p) => `${f}-${p}`))];
 
-/** One hand as something that holds a ball: where its palm is, which way it faces, its fingertips. */
+/** A straight-line fit of positions over the last `window` seconds: the velocity they describe. */
+function fitVelocity(hist: { t: number; p: THREE.Vector3 }[], now: number, window: number, out: THREE.Vector3): THREE.Vector3 {
+  out.set(0, 0, 0);
+  const s = hist.filter((h) => h.t >= now - window);
+  if (s.length < 2) return out;
+  const tm = s.reduce((a, h) => a + h.t, 0) / s.length;
+  const pm = s.reduce((a, h) => a.add(h.p), new THREE.Vector3()).divideScalar(s.length);
+  let den = 0;
+  const d = new THREE.Vector3();
+  for (const h of s) {
+    const dtm = h.t - tm;
+    den += dtm * dtm;
+    out.addScaledVector(d.copy(h.p).sub(pm), dtm);
+  }
+  return den > 1e-9 ? out.divideScalar(den) : out.set(0, 0, 0);
+}
+
+/** One hand as something that holds a ball: its palm, which way it faces, how it's moving, how open the fingers are. */
 class Palm {
   tracked = false;
+  lostT = 1; // seconds since it was last tracked (the last pose is kept meanwhile)
   readonly pos = new THREE.Vector3(); // the palm's skin, middle of the hand
   readonly normal = new THREE.Vector3(); // out of the palm
   readonly quat = new THREE.Quaternion();
-  readonly tips = TIPS.map(() => new THREE.Vector3());
+  readonly vel = new THREE.Vector3();
+  readonly prev = new THREE.Vector3(); // where the palm was the frame before
+  openness = 1; // fingers straight out 1, a fist about 0.5
+  open = true; // opened wide (with a little hysteresis)
+  private hist: { t: number; p: THREE.Vector3 }[] = [];
   private a = new THREE.Vector3();
+  private b = new THREE.Vector3();
 
-  read(hand: THREE.Object3D | undefined) {
+  read(hand: THREE.Object3D | undefined, t: number, dt: number) {
     const j = (hand as unknown as { joints?: Joints } | undefined)?.joints ?? {};
     this.tracked = NEEDED.every((n) => j[n]?.visible);
-    if (!this.tracked) return;
+    if (!this.tracked) {
+      this.lostT += dt;
+      return;
+    }
+    this.prev.copy(this.lostT === 0 ? this.pos : this.a.set(NaN, NaN, NaN));
+    this.lostT = 0;
     j["middle-finger-metacarpal"].getWorldQuaternion(this.quat);
     this.normal.set(0, -1, 0).applyQuaternion(this.quat); // WebXR: -Y out of the palm
     j["middle-finger-metacarpal"].getWorldPosition(this.pos);
     j["middle-finger-phalanx-proximal"].getWorldPosition(this.a);
     this.pos.lerp(this.a, 0.5).addScaledVector(this.normal, PALM_OUT);
-    TIPS.forEach((n, k) => j[n].getWorldPosition(this.tips[k]));
+    let open = 0;
+    for (const f of FINGERS) {
+      const [p0, p1, p2, p3] = PARTS.map((part) => j[`${f}-${part}`].getWorldPosition(new THREE.Vector3()));
+      open += p0.distanceTo(p3) / Math.max(1e-4, p0.distanceTo(p1) + p1.distanceTo(p2) + p2.distanceTo(p3));
+    }
+    this.openness = open / FINGERS.length;
+    if (this.open && this.openness < CLOSED_AGAIN) this.open = false;
+    else if (!this.open && this.openness > OPEN) this.open = true;
+    this.hist.push({ t, p: this.pos.clone() });
+    while (this.hist.length && this.hist[0].t < t - 0.15) this.hist.shift();
+    fitVelocity(this.hist, t, 0.07, this.vel);
   }
 
-  /** On the ball: close to its centre and facing it. */
-  on(c: THREE.Vector3, reach = GRAB, facing = 0.35): boolean {
+  /** Up to the ball: within reach of its skin, the palm toward it. */
+  touches(c: THREE.Vector3, reach = REACH, facing = 0.3): boolean {
     if (!this.tracked) return false;
-    const d = this.a.subVectors(c, this.pos);
+    const d = this.b.subVectors(c, this.pos);
     const len = d.length();
-    return len < reach && this.normal.dot(d) > facing * len;
+    return len < R + reach && this.normal.dot(d) > facing * len;
   }
 
-  /** Fingertips on the ball's skin: three or more is a hand wrapped round it, which can pull as well as push. */
-  wraps(c: THREE.Vector3): boolean {
-    return this.tips.filter((t) => t.distanceTo(c) < R + 0.03).length >= 3;
+  /** Coming down on top of the ball: the push of a dribble. Swept from the frame before, so a quick slap that passes
+   * the ball's top between two frames still counts. */
+  pushesDown(c: THREE.Vector3): boolean {
+    if (!this.tracked || !(this.vel.y < -0.6)) return false;
+    const wasAbove = this.prev.y > c.y && this.prev.y - c.y < R + 0.3; // NaN (just tracked again) fails this
+    return wasAbove && this.pos.y - c.y < R + 0.06 && Math.hypot(this.pos.x - c.x, this.pos.z - c.z) < R + 0.05;
   }
 }
 
-type State = "floating" | "held" | "flying" | "his" | "pass" | "away";
+type State = "floating" | "held" | "flying" | "cradle" | "his" | "pass" | "away";
 type Hit = "floor" | "board" | "rim" | "swish";
 
 export class Basketball {
@@ -87,8 +136,18 @@ export class Basketball {
   private mat: THREE.MeshPhysicalMaterial;
   private palms = [new Palm(), new Palm()];
   private state: State = "away";
-  private holders: number[] = []; // which hands hold it
-  private rel = new THREE.Quaternion(); // the ball's turn relative to the holding hand
+  private grips = new Map<number, THREE.Vector3>(); // the hands holding it, and where it sits in each hand's own frame
+  private rel = new THREE.Quaternion(); // the ball's turn relative to the first holding hand
+  private target = new THREE.Vector3(); // where the hands have it this frame (the ball follows, lightly smoothed)
+  private push: { start: number; peakSpeed: number; peakVel: THREE.Vector3 } | null = null;
+  private lastSpeed = 0; // the held ball's speed the frame before (a reading far above it is tracking jitter)
+  private dribble = false; // pushed down: bouncing back up toward the hand
+  private dribbleTop = 1; // the height it left the hand at
+  private dribbleBounced = false;
+  private cradleHand = -1; // the palm it eases up to at the top of a bounce
+  private dribbleHand = -1; // the hand that pushed it down
+  private noGrabUntil = 0;
+  private dribbles = 0;
   private pos = new THREE.Vector3();
   private vel = new THREE.Vector3();
   private spin = new THREE.Vector3(); // angular velocity, rad/s
@@ -97,9 +156,7 @@ export class Basketball {
   private t = 0; // seconds, this ball's own clock
   private stateT = 0;
   private restT = 0;
-  private lostT = 0;
   private hist: { t: number; p: THREE.Vector3 }[] = []; // where your hands had it, the last moments
-  private vHist: { t: number; v: THREE.Vector3 }[] = [];
   private madeThisShot = false;
   private touchedThisShot = false;
   private makes = 0;
@@ -234,7 +291,8 @@ export class Basketball {
     this.state = "floating";
     this.stateT = 0;
     this.alpha = 0;
-    this.holders = [];
+    this.grips.clear();
+    this.dribble = false;
   }
 
   /** Where a ball coming back to you floats: at your waist, a little in front, never inside the person. */
@@ -311,7 +369,7 @@ export class Basketball {
     const chest = this.player.space.localToWorld(this.v1.copy(this.player.chest));
     const hands = this.trackWorld(this.player.gatherT, this.tw);
     const near = Math.min(this.pos.distanceTo(chest), this.pos.distanceTo(hands));
-    return near < 0.8 && this.vel.dot(this.v2.subVectors(chest, this.pos)) > 0;
+    return near < 0.8 && this.vel.length() > 1.2 && this.vel.dot(this.v2.subVectors(chest, this.pos)) > 0;
   }
 
   private catchIt() {
@@ -417,20 +475,21 @@ export class Basketball {
 
   /** Once a frame while presenting. menuOpen: the left palm is up, so the ball in your hands goes away for now. */
   update(dt: number, menuOpen: boolean, head: THREE.Vector3, forward: THREE.Vector3) {
+    if (dt < 0.002) return; // the same frame again: hand motion is measured frame to frame
     this.t += dt;
     this.stateT += dt;
     this.hoop?.updateWorldMatrix(true, false);
     if (this.hoop) this.hoopInv.copy(this.hoop.matrixWorld).invert();
     // the person mirrored (palm menu): the hoop that rides with them is too, but its score stays readable
     if (this.hoop && this.counter) this.counter.mesh.scale.x = this.hoop.matrixWorld.determinant() < 0 ? -1 : 1;
-    this.palms.forEach((p, k) => p.read(this.hands[k]));
+    this.palms.forEach((p, k) => p.read(this.hands[k], this.t, dt));
     if (this.state === "away") return;
 
     // the menu: a ball in your hands or waiting for you steps aside, and comes back once the palm turns down
     const hidden = menuOpen && (this.state === "held" || this.state === "floating");
     if (hidden && this.state === "held") {
       this.state = "floating";
-      this.holders = [];
+      this.grips.clear();
       this.respawn(head, forward);
     }
     if (this.wasHidden && !hidden && this.state === "floating") this.respawn(head, forward);
@@ -440,12 +499,14 @@ export class Basketball {
       this.pos.copy(this.home);
       this.pos.y += Math.sin(this.t * 2.4) * 0.008; // a gentle bob, the way a pass hangs for a moment
       this.ball.rotateY(dt * 0.4);
-      this.tryGrab();
+      if (!this.slap()) this.tryGrab();
     } else if (this.state === "held") this.hold(dt);
+    else if (this.state === "cradle") this.cradling(dt);
     else if (this.state === "flying") {
-      if (this.stateT > REGRAB_S) this.tryGrab(); // catch a rebound
+      if (!this.slap() && !this.dribble && this.stateT > REGRAB_S) this.tryGrab(); // catch a rebound
       if (this.state === "flying") this.fly(dt);
-      if (this.state === "flying" && !this.hisShot && this.caught()) this.catchIt();
+      if (this.state === "flying" && this.dribble) this.meetHand();
+      if (this.state === "flying" && !this.hisShot && !this.dribble && this.caught()) this.catchIt();
       const far = Math.hypot(this.pos.x - head.x, this.pos.z - head.z) > 30;
       if (this.state !== "flying") {
         // caught by you or by them
@@ -472,105 +533,176 @@ export class Basketball {
 
   // ---------------- in your hands
 
+  /** A hand (or both) up to the ball, palm toward it, fingers not opened wide: it's theirs. */
   private tryGrab() {
-    const on = [0, 1].filter((k) => this.palms[k].on(this.pos));
-    if (!on.length) return;
-    this.state = "held";
-    this.stateT = 0;
-    this.holders = on;
-    this.hist = [];
-    this.vHist = [];
-    this.spin.set(0, 0, 0);
-    this.vel.set(0, 0, 0);
-    this.rel.copy(this.palms[on[0]].quat).invert().multiply(this.ball.quaternion);
-    this.log.push(`grab ${on.length === 2 ? "two hands" : "one hand"}`);
+    if (this.t < this.noGrabUntil) return;
+    const ks = [0, 1].filter((k) => !this.palms[k].open && this.palms[k].touches(this.pos) && !this.palms[k].pushesDown(this.pos));
+    if (ks.length) this.attach(ks);
   }
 
-  /** Where the ball sits for these hands: on one palm, or between two. */
-  private seat(ks: number[], out: THREE.Vector3): THREE.Vector3 {
-    out.set(0, 0, 0);
-    for (const k of ks) out.addScaledVector(this.v3.copy(this.palms[k].pos).addScaledVector(this.palms[k].normal, R + 0.004), 1 / ks.length);
-    return out;
+  private attach(ks: number[]) {
+    this.grips.clear();
+    for (const k of ks) this.grip(k);
+    this.rel.copy(this.palms[ks[0]].quat).invert().multiply(this.ball.quaternion);
+    this.state = "held";
+    this.stateT = 0;
+    this.hist = [];
+    this.push = null;
+    this.lastSpeed = 0;
+    this.vel.set(0, 0, 0);
+    this.spin.set(0, 0, 0);
+    this.dribble = false;
+    this.log.push(`grab ${ks.length === 2 ? "two hands" : "one hand"}`);
+  }
+
+  /** Where the ball sits in this hand, fixed for as long as the hand holds it (in the hand's own frame). */
+  private grip(k: number) {
+    const p = this.palms[k];
+    this.grips.set(k, this.pos.clone().sub(p.pos).applyQuaternion(this.q1.copy(p.quat).invert()));
   }
 
   private hold(dt: number) {
-    const tracked = this.holders.filter((k) => this.palms[k].tracked);
-    this.lostT = tracked.length === this.holders.length ? 0 : this.lostT + dt;
-    if (this.lostT > 0.12 && !tracked.length) return this.release(this.peak() ?? this.velNow(), "hands lost");
-
-    // who still has it: both palms on its sides (where each would put it agrees), or one under it (or wrapped round it)
-    let ks: number[] = [];
-    if (tracked.length === 2) {
-      const [a, b] = tracked.map((k) => this.palms[k]);
-      const sa = this.seat([tracked[0]], new THREE.Vector3()), sb = this.seat([tracked[1]], new THREE.Vector3());
-      const c = sa.clone().add(sb).multiplyScalar(0.5);
-      const together = sa.distanceTo(sb) < 0.07 && a.on(c, R + 0.06, 0.12) && b.on(c, R + 0.06, 0.12);
-      if (together) ks = tracked;
-      else {
-        // apart: the hand that still has it from underneath keeps it (the nearer one if both could)
-        const keep = tracked.filter((k, i) => this.oneHandHolds(this.palms[k], i ? sb : sa));
-        keep.sort((x, y) => (x === tracked[0] ? sa : sb).distanceTo(this.pos) - (y === tracked[0] ? sa : sb).distanceTo(this.pos));
-        ks = keep.slice(0, 1);
-      }
-    } else if (tracked.length === 1) {
-      const k = tracked[0];
-      ks = this.oneHandHolds(this.palms[k], this.seat([k], new THREE.Vector3())) ? [k] : [];
-      if (ks.length && this.holders.length === 1 && this.palms[1 - k].on(this.pos)) ks = [k, 1 - k]; // the other hand joins
+    // a hand that's been out of tracking too long, or opened wide, lets go; the other hand coming up to it joins in
+    for (const [k] of this.grips) {
+      const p = this.palms[k];
+      if (p.lostT > LOST_S || (p.tracked && p.open)) this.grips.delete(k);
     }
-    if (!ks.length) {
-      if (tracked.length) return this.release(this.peak() ?? this.velNow(), "hands came off"); // opening right after a push
-      return; // both lost a moment: it stays where it was
-    }
-    if (ks.length !== this.holders.length || ks[0] !== this.holders[0]) this.rel.copy(this.palms[ks[0]].quat).invert().multiply(this.ball.quaternion);
-    this.holders = ks;
+    for (const k of [0, 1]) if (!this.grips.has(k) && this.grips.size && !this.palms[k].open && this.palms[k].touches(this.pos)) this.grip(k);
+    if (!this.grips.size) return this.letGo(this.push ? this.push.peakVel.clone() : fitVelocity(this.hist, this.t, 0.08, new THREE.Vector3()), "hands opened");
 
-    this.seat(ks, this.pos);
-    if (this.pos.y < R) this.pos.y = R;
-    this.ball.quaternion.copy(this.palms[ks[0]].quat).multiply(this.rel);
-    this.hist.push({ t: this.t, p: this.pos.clone() });
+    // where the hands have it now: each hand's grip, averaged; the ball follows with a light smoothing that tightens
+    // as the hands move faster (so it never trails a throw)
+    this.target.set(0, 0, 0);
+    for (const [k, off] of this.grips) {
+      const p = this.palms[k];
+      this.target.add(this.v1.copy(off).applyQuaternion(p.quat).add(p.pos));
+    }
+    this.target.divideScalar(this.grips.size);
+    this.target.y = Math.max(this.target.y, R);
+    this.hist.push({ t: this.t, p: this.target.clone() });
     while (this.hist.length && this.hist[0].t < this.t - 0.3) this.hist.shift();
-    const v = this.velNow();
-    this.vHist.push({ t: this.t, v });
-    while (this.vHist.length && this.vHist[0].t < this.t - 0.15) this.vHist.shift();
+    const v = fitVelocity(this.hist, this.t, 0.07, this.v2);
+    const speed = v.length();
+    const tau = THREE.MathUtils.lerp(0.03, 0.006, THREE.MathUtils.clamp(speed / 1.5, 0, 1));
+    this.pos.lerp(this.target, 1 - Math.exp(-dt / tau));
+    const first = this.grips.keys().next().value as number;
+    this.ball.quaternion.copy(this.palms[first].quat).multiply(this.rel);
 
-    // a ball leaves open hands when they stop pushing it: after a quick push, the moment they slow right down
-    const peak = this.peak();
-    if (peak && this.stateT > 0.1) {
-      const wrapped = ks.length === 1 && this.palms[ks[0]].wraps(this.pos);
-      const strong = 2; // a soft pass to someone close is about 2-3 m/s
-      const frac = ks.length === 2 ? 0.5 : 0.55;
-      const pushing = ks.length === 2 || peak.dot(this.palms[ks[0]].normal) > 0.4 * peak.length();
-      if (!wrapped && pushing && peak.length() > strong && v.length() < frac * peak.length()) this.release(peak, "hands slowed");
+    // a throw: a push faster than 2 m/s for at least 80 ms, let go as it peaks (it starts to slow)
+    const jitter = speed > Math.max(4, 2.5 * this.lastSpeed);
+    this.lastSpeed = speed;
+    if (speed > PUSH_SPEED && !jitter) {
+      if (!this.push) this.push = { start: this.t, peakSpeed: 0, peakVel: new THREE.Vector3() };
+      if (speed > this.push.peakSpeed) {
+        this.push.peakSpeed = speed;
+        fitVelocity(this.hist, this.t, 0.1, this.push.peakVel); // the hands' velocity over the last 100 ms
+      }
+    }
+    if (this.push && this.t - this.push.start >= PUSH_MIN_S && speed < 0.85 * this.push.peakSpeed) {
+      this.pos.copy(this.target);
+      return this.letGo(this.push.peakVel.clone(), "push");
+    }
+    if (this.push && speed < 1) this.push = null;
+  }
+
+  /** Out of the hands: down is a dribble, anything else a throw (a shot or a pass). */
+  private letGo(v: THREE.Vector3, why: string) {
+    const hand = this.grips.keys().next().value ?? -1;
+    this.grips.clear();
+    this.push = null;
+    this.noGrabUntil = this.t + REGRAB_S;
+    if (v.y < -0.8 && -v.y > Math.hypot(v.x, v.z)) return this.startDribble(v, hand);
+    this.release(this.assist(v), why);
+  }
+
+  /** A shot heading for the hoop (within 25 degrees, going up) is steered toward the arc through the ring: most of the
+   * way when it was nearly right, so a natural shooting motion usually goes in. */
+  private assist(v: THREE.Vector3): THREE.Vector3 {
+    if (!this.hoop || v.y < 0.3) return v;
+    const ring = this.hoop.localToWorld(this.v1.set(0, this.rimTop - RIM_TUBE, 0)).clone();
+    const flatV = Math.hypot(v.x, v.z);
+    const to = this.v2.set(ring.x - this.pos.x, 0, ring.z - this.pos.z);
+    if (flatV < 0.3 || to.length() < 0.5) return v;
+    const angle = Math.acos(THREE.MathUtils.clamp((v.x * to.x + v.z * to.z) / (flatV * to.length()), -1, 1));
+    if (THREE.MathUtils.radToDeg(angle) > ASSIST_DEG) return v;
+    // keep their arc as far as it can be: the nearest launch angle that still comes down through the ring at 44 degrees
+    // or steeper (a flatter one clips the front of the ring)
+    const theirs = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(Math.atan2(v.y, flatV)), 40, 66);
+    let solved = solveShot(this.pos, ring, theirs);
+    for (let up = theirs; up <= 66 && entryAngle(solved) < 44; up += 2) solved = solveShot(this.pos, ring, up);
+    // the ring forgives about 1% in speed from the free-throw line, and a hand's throw, as tracking measures it, is
+    // rarely within 10%: a shot that was roughly right (speed within 20%) goes onto the arc, with a real shooter's small
+    // spread (so the odd one rattles out); further off, less help; a wild one, little
+    const off = Math.abs(v.length() / solved.length() - 1);
+    const w = THREE.MathUtils.clamp(1 - 2.5 * Math.max(0, off - 0.2), 0.3, 1);
+    this.log.push(`assist ${Math.round(w * 100)}%`);
+    const out = v.clone().lerp(solved, w);
+    return out.multiplyScalar(1 + gauss() * 0.004).applyAxisAngle(this.v1.set(0, 1, 0), THREE.MathUtils.degToRad(gauss() * 0.3));
+  }
+
+  /** Down to the floor and back up to the hand: as fast as the hand pushed (2.5 to 6 m/s), carried along as you walk. */
+  private startDribble(v: THREE.Vector3, hand = -1) {
+    this.vel.set(v.x * 0.9, -THREE.MathUtils.clamp(Math.abs(v.y) * 1.1, DRIBBLE[0], DRIBBLE[1]), v.z * 0.9);
+    this.spin.set(0, 0, 0);
+    this.dribble = true;
+    this.dribbleBounced = false;
+    this.dribbleTop = Math.max(this.pos.y, R + 0.35);
+    this.state = "flying";
+    this.stateT = 0;
+    this.restT = 0;
+    this.grips.clear();
+    this.cradleHand = -1;
+    this.noGrabUntil = this.t + 0.25;
+    this.hisShot = false;
+    this.counted = false;
+    this.dribbleHand = hand;
+    this.dribbles++;
+    this.log.push("dribble");
+  }
+
+  /** An open palm coming down on top of a free ball: a dribble. */
+  private slap(): boolean {
+    for (const k of [0, 1]) {
+      const p = this.palms[k];
+      if (p.pushesDown(this.pos) && this.t >= this.noGrabUntil - 0.15) {
+        this.startDribble(p.vel, k);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** At the top of a dribble's bounce, a palm waiting within 25 cm above it: the ball eases up into it. */
+  private meetHand() {
+    if (!this.dribbleBounced || this.vel.y > 0.9 || this.vel.y < -0.5) return;
+    for (const k of [0, 1]) {
+      const p = this.palms[k];
+      const dy = p.pos.y - this.pos.y;
+      if (p.tracked && dy > R - 0.03 && dy < R + 0.25 && Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < 0.3 && p.normal.y < 0.2) {
+        this.state = "cradle";
+        this.cradleHand = k;
+        this.stateT = 0;
+        return;
+      }
     }
   }
 
-  /** One open hand keeps it only from underneath (the palm facing up); a hand wrapped round it keeps it any way up. */
-  private oneHandHolds(p: Palm, seat: THREE.Vector3): boolean {
-    return p.normal.y > 0.25 || p.wraps(seat);
-  }
-
-  /** The held ball's velocity now: a straight-line fit over the last 90 ms of where your hands had it. */
-  private velNow(): THREE.Vector3 {
-    const out = new THREE.Vector3();
-    const s = this.hist.filter((h) => h.t >= this.t - 0.09);
-    if (s.length < 2) return out;
-    const tm = s.reduce((a, h) => a + h.t, 0) / s.length;
-    const pm = s.reduce((a, h) => a.add(h.p), new THREE.Vector3()).divideScalar(s.length);
-    let den = 0;
-    for (const h of s) {
-      const dtm = h.t - tm;
-      den += dtm * dtm;
-      out.addScaledVector(this.v1.copy(h.p).sub(pm), dtm);
+  /** Under the palm: push it down again (a dribble), close the hand on it (held), or take the hand away (it falls). */
+  private cradling(dt: number) {
+    const k = this.cradleHand;
+    const p = this.palms[k];
+    if (p.lostT > LOST_S || p.pos.distanceTo(this.pos) > 0.4) {
+      this.state = "flying";
+      this.dribble = false;
+      return;
     }
-    return den > 1e-9 ? out.divideScalar(den) : out.set(0, 0, 0);
-  }
-
-  /** What the push gave it: the fastest few of the last 150 ms of (smoothed) hand velocities, averaged, so one
-   * jittery frame doesn't decide the shot. */
-  private peak(): THREE.Vector3 | null {
-    if (!this.vHist.length) return null;
-    const top = [...this.vHist].sort((a, b) => b.v.lengthSq() - a.v.lengthSq()).slice(0, Math.max(1, Math.min(3, Math.floor(this.vHist.length / 2))));
-    return top.reduce((a, h) => a.add(h.v), new THREE.Vector3()).divideScalar(top.length);
+    const seat = this.v1.copy(p.pos).addScaledVector(p.normal, R + 0.008);
+    const prev = this.v2.copy(this.pos);
+    this.pos.lerp(seat, 1 - Math.exp(-dt / 0.06));
+    this.vel.subVectors(this.pos, prev).divideScalar(Math.max(dt, 1e-3));
+    const near = this.pos.distanceTo(seat) < 0.06;
+    if (near && p.vel.y < -0.6) this.startDribble(p.vel, k);
+    else if ((near && p.openness < GRIP) || this.stateT > 1.5) this.attach([k]);
   }
 
   private release(v: THREE.Vector3, why: string) {
@@ -583,12 +715,13 @@ export class Basketball {
     this.state = "flying";
     this.stateT = 0;
     this.restT = 0;
-    this.holders = [];
+    this.grips.clear();
+    this.dribble = false;
     this.madeThisShot = false;
     this.touchedThisShot = false;
     this.hisShot = false;
     this.floorHits = 0;
-    this.counted = v.length() > 2;
+    this.counted = v.length() > 2 && v.y > 0;
     if (this.counted) {
       this.shots++;
       this.counter?.draw();
@@ -600,6 +733,15 @@ export class Basketball {
   // ---------------- in the air
 
   private fly(dt: number) {
+    // a dribble on its way back up drifts toward the hand that pushed it (you walk, it comes along)
+    const hand = this.dribble && this.dribbleBounced && this.vel.y > 0 ? this.palms[this.dribbleHand] : undefined;
+    if (hand && hand.lostT < LOST_S) {
+      const toApex = Math.max(0.08, this.vel.y / G);
+      const want = this.v3.set((hand.pos.x - this.pos.x) / toApex + hand.vel.x, 0, (hand.pos.z - this.pos.z) / toApex + hand.vel.z);
+      const k = 1 - Math.exp(-dt / 0.12);
+      this.vel.x += (want.x - this.vel.x) * k;
+      this.vel.z += (want.z - this.vel.z) * k;
+    }
     const n = THREE.MathUtils.clamp(Math.ceil((this.vel.length() * dt) / 0.02), 4, 40);
     const h = dt / n;
     for (let i = 0; i < n; i++) this.step(h);
@@ -620,7 +762,15 @@ export class Basketball {
     // the floor
     if (p.y < R) {
       p.y = R;
-      if (v.y < -0.35) this.bounce(this.v2.set(0, 1, 0), 0.75, 0.5, "floor");
+      if (v.y < -0.35 && this.dribble && !this.dribbleBounced) {
+        // a dribble: back up to (just over) the height it left the hand at
+        const e = THREE.MathUtils.clamp(Math.sqrt(2 * G * (this.dribbleTop + 0.03 - R)) / -v.y, 0.55, 0.95);
+        this.dribbleBounced = true;
+        this.bounce(this.v2.set(0, 1, 0), e, 0.15, "floor");
+      } else if (v.y < -0.35) {
+        if (this.dribbleBounced) this.dribble = false; // nobody met it at the top: just a ball now
+        this.bounce(this.v2.set(0, 1, 0), 0.75, 0.5, "floor");
+      }
       else {
         // rolling: friction turns sliding into rolling, then it slowly stops
         v.y = 0;
@@ -744,7 +894,7 @@ export class Basketball {
   debug() {
     const r = (x: THREE.Vector3) => x.toArray().map((k) => +k.toFixed(3));
     const rim = this.hoop ? r(this.hoop.localToWorld(new THREE.Vector3(0, this.rimTop - RIM_TUBE, 0))) : null;
-    return { game: this.gameOn ? `${this.phase} @${this.clip.toFixed(2)}s` : "off", state: this.state, holders: this.holders.length, pos: r(this.pos), vel: r(this.vel), speed: +this.vel.length().toFixed(2), makes: this.makes, shots: this.shots, rim, hoopInRoom: this.hoopInRoom, alpha: +this.alpha.toFixed(2), log: this.log.slice(-8) };
+    return { game: this.gameOn ? `${this.phase} @${this.clip.toFixed(2)}s` : "off", state: this.state, holders: this.grips.size, dribbles: this.dribbles, pos: r(this.pos), vel: r(this.vel), speed: +this.vel.length().toFixed(2), makes: this.makes, shots: this.shots, rim, hoopInRoom: this.hoopInRoom, alpha: +this.alpha.toFixed(2), log: this.log.slice(-8) };
   }
 }
 
@@ -811,15 +961,20 @@ function tone(ctx: BaseAudioContext, what: Hit): AudioBuffer {
   return b;
 }
 
+/** The angle (degrees below level) a solveShot arc comes down through the ring at (stored on the vector it returns). */
+function entryAngle(v: THREE.Vector3): number {
+  return (v as THREE.Vector3 & { entry?: number }).entry ?? 90;
+}
+
 /**
  * A ball from p that drops through the ring centre c: 55 degrees up (it comes down steeply enough to clear the ring),
  * as fast as it takes (same gravity and drag).
  */
-function solveShot(p: THREE.Vector3, c: THREE.Vector3): THREE.Vector3 {
+function solveShot(p: THREE.Vector3, c: THREE.Vector3, deg = 55): THREE.Vector3 {
   const dir = new THREE.Vector3(c.x - p.x, 0, c.z - p.z);
   const dist = dir.length();
   dir.divideScalar(Math.max(dist, 1e-6));
-  const th = THREE.MathUtils.degToRad(55);
+  const th = THREE.MathUtils.degToRad(deg);
   const reach = (speed: number) => {
     const q = p.clone(), v = dir.clone().multiplyScalar(speed * Math.cos(th));
     v.y = speed * Math.sin(th);
@@ -830,10 +985,14 @@ function solveShot(p: THREE.Vector3, c: THREE.Vector3): THREE.Vector3 {
       v.addScaledVector(v, -DRAG * sp * h);
       const y0 = q.y;
       q.addScaledVector(v, h);
-      if (v.y < 0 && y0 > c.y && q.y <= c.y) return Math.hypot(q.x - p.x, q.z - p.z);
+      if (v.y < 0 && y0 > c.y && q.y <= c.y) {
+        entry = THREE.MathUtils.radToDeg(Math.atan2(-v.y, Math.hypot(v.x, v.z)));
+        return Math.hypot(q.x - p.x, q.z - p.z);
+      }
     }
     return 0;
   };
+  let entry = 90;
   let lo = 1.5, hi = 16;
   for (let k = 0; k < 40; k++) {
     const mid = (lo + hi) / 2;
@@ -841,7 +1000,10 @@ function solveShot(p: THREE.Vector3, c: THREE.Vector3): THREE.Vector3 {
     else hi = mid;
   }
   const speed = (lo + hi) / 2;
-  return dir.multiplyScalar(speed * Math.cos(th)).setY(speed * Math.sin(th));
+  reach(speed); // its entry angle, for the caller
+  const out = dir.multiplyScalar(speed * Math.cos(th)).setY(speed * Math.sin(th)) as THREE.Vector3 & { entry?: number };
+  out.entry = entry;
+  return out;
 }
 
 function gauss(): number {

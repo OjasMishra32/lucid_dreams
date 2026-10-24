@@ -88,6 +88,14 @@ export class Props {
         const ball = new Ball(o as BallProp, fps, env, anisotropy);
         this.balls.push(ball);
         const track = new BallTrack(o as BallProp, fps);
+        if (!track.clean) {
+          // a track that jumps about would erase pieces of the person and show a ball teleporting: leave both alone
+          console.info("props: the ball's track jumps about; showing the reconstruction's own ball instead");
+          ball.mesh.removeFromParent();
+          ball.shadow.removeFromParent();
+          this.balls.pop();
+          continue;
+        }
         this.tracks.push(track);
         // the ball is in the reconstruction too (it was in the clip): erased there, so the solid ball is the only one
         const edit = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.MULTIPLY, softEdge: 0.02 });
@@ -148,10 +156,18 @@ export class BallTrack {
   readonly points: (THREE.Vector3 | null)[];
   readonly radius: number;
   readonly known: number[]; // frames where it's known
+  /** A track that moves like a ball: under 10% of its steps faster than 8 m/s (a noisy one jumps floor to head). */
+  readonly clean: boolean;
   constructor(p: BallProp, readonly fps: number) {
     this.radius = Number.isFinite(p.radius) && p.radius! > 0 ? p.radius! : 0.12;
     this.points = p.track.map((v) => (finite3(v) ? new THREE.Vector3(v[0], v[1], v[2]) : null));
     this.known = this.points.flatMap((v, i) => (v ? [i] : []));
+    let jumps = 0;
+    for (let n = 1; n < this.known.length; n++) {
+      const a = this.known[n - 1], b = this.known[n];
+      if ((this.points[a]!.distanceTo(this.points[b]!) * fps) / (b - a) > 8) jumps++;
+    }
+    this.clean = this.known.length >= 3 && jumps < 0.1 * (this.known.length - 1);
   }
   /** Where it is at clip time t (person space). False if the clip never shows it. */
   at(t: number, out: THREE.Vector3): boolean {

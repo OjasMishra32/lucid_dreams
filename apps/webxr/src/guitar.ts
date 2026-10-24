@@ -419,7 +419,7 @@ export class Guitar {
 
   /** Once a frame while presenting: your eyes (world) and the headset's turn. */
   update(dt: number, menuOpen: boolean, eye: THREE.Vector3, headQ: THREE.Quaternion) {
-    if (!this.active) return;
+    if (!this.active || dt < 0.002) return; // the same frame again: strokes are measured frame to frame
     const { pivot, fwd, right, up, target, neck, zAxis, yAxis } = this.w;
     // your torso: the head turns about the top of the spine (a little below and behind your eyes); the body faces where
     // the head has been facing, followed slowly, since you turn your head far more than your body
