@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 8:37 AM. Vishal is asleep until ~10:45; a fresh planning session is working through his standing orders.
+Updated Sat 9:07 AM. Vishal is up; the planning session keeps building.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the Mavericks' all-angles upload (`fqSTGIgHabI`, 2160p60) at 6:15. Kept
@@ -80,11 +80,15 @@ private, outside the repo.
 
 ## Now
 
-- Every break-it finding is folded into the plan (experience, runtime, pipeline, Antigravity: 13 repeats, 5 new,
-  none rejected; Grok timed out and re-runs on the new revision). Next: one independent review, then the build.
-- The freeze is the frame of Gobert's closeout as Luka gathers (the last sharp frame with both players head to toe);
-  the release itself is tested in parallel from the second low angle. Camera calibration, SAM 2.1 masks (PC) and
-  the three hand-off prototypes are finishing.
+- **The plan is done and committed on branch `court-side`** (`docs/plans/court-side.md`), after four break-it
+  reviews; one independent review and a Grok pass are running, then their must-fixes go in.
+- **The build has started on `court-side`:** the interfaces, the stand-in bundle and the test harness come first
+  (`apps/webxr/src/court/`, tests in `apps/webxr/scripts/court/` as you approved), then parallel streams.
+- **Hand-off direction:** "House Lights" is prototyped (no measured pops; the dark hides the seam between the
+  footage and the drawn court); the other two finish shortly; the pick is logged here with the reason.
+- **Your Quest test (ask 7):** the new page goes on branch `court-side-q0` (code only; a script makes the test
+  videos), steps in its HOW-TO.
+- Calibration of both low angles, SAM 2.1 masks (Vishal's PC) running.
 
 ## Verdict so far
 
