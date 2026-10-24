@@ -44,7 +44,7 @@ REALITY_FILE = "avatar/reality.ply"
 REALITY_TINT = np.array([0.25, 0.45, 1.0])  # as digs_avatar.py tints what the photo didn't see
 # People who said yes to a photoreal face (AGENTS.md rule 5). Add a name only on that person's own word; never a
 # public figure, whatever photos exist of them.
-CONSENTED = frozenset({"vishal"})
+CONSENTED = frozenset({"vishal", "ian-grandma"})  # ian-grandma: written family consent (Ian, Sat 2 AM)
 BUNDLE_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 PHOTO_STEM = re.compile(r"[\w. -]+")
 

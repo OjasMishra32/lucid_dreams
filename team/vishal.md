@@ -6,25 +6,22 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
-## DECIDED (Sat 2:20 AM): your call stands, and here's what follows from it
+## CHANGED AGAIN (Sat 2:45 AM): Ojasva's call, Bobby and Magnus are back; you don't have to touch them
 
-Ojasva agreed: **no Fischer or Carlsen likeness anywhere.** The chess opponent is a consenting teammate's
-avatar, and the legends stay only as Stockfish levels ("Stockfish at Fischer's peak rating. Not affiliated.").
-Their LAM heads are stopped and their dreams stay in `dreams/.held`. The chess code is being changed to match.
-Your head swap is now the centre of the demo's realism, on two people:
+Ojasva (project lead) overruled the 2:20 AM line: **Bobby Fischer and Magnus Carlsen sit across the chess board**,
+silent, labelled "Stockfish at <legend>'s peak rating. Not affiliated.", from freely licensed photos. Your
+objection is on record, and **you don't have to build or run anything for them.** Ojasva's Claude runs the legends
+himself: LAM heads (Fischer: the 1966 portrait; Carlsen: Ralf Roletschek's 2015 close-up, CC BY-SA 3.0), Fischer's
+body rebuilt from his DDColor-colourised photo, then your `swap_bundle` called directly from a one-off job outside
+the repo. Your CLI, `CONSENTED` and `head-swap.sbatch` stay exactly as you wrote them.
 
-1. **You, across the chess board.** Your close-ups go in `data/avatars/faces/vishal/` (front-facing, sharp, face
-   filling the frame; 2-3 angles) and your head-to-toe photo in `~/Downloads/lucid-photos/vishal.jpg`. Ojasva runs
-   `lam-head.sbatch NAME=vishal` and `digs-sample ID=vishal`, then your `head-swap.sbatch`. Ship `vishal-head` when
-   your `compare.png` passes.
-2. **Ian's grandma** (the family moment; Ian has the consent and the photos or video; his brief has the steps).
-   Same chain with `NAME=ian-grandma`. Her face matters more than anything else we build, so check it at 1.5 m in
-   the headset with Ian before anyone else sees it. If there's a home video with her voice, your Audio2Expression
-   lips (MORE, item 1) are what make her feel present.
-3. **`SMPL-X__FLAME_vertex_ids.npy` is installed** (Sat 1:30 AM), with `MANO_SMPLX_vertex_ids.pkl` for the hands,
-   in `$L/models/smplx/`, from SMPL-X's correspondences download. Your alignment can run on real heads now.
-4. **`head-swap.sbatch`** (your part 2): finish it, with InsightFace identity cosine in `compare.png` and
-   `metrics.identity`.
+Your work, in order:
+1. **Ian's grandma.** Her family's written consent is confirmed; `ian-grandma` is in `CONSENTED` (one line, tests
+   pass) and her three ids are in `dreams/.held` on Ojasva's Mac. Her face and her idle life matter more than
+   anything else we build.
+2. **Your own avatar** (`vishal-head`) for the other chess strengths and "you, perfected".
+3. Then MORE below: voice-driven lips (consenting people only), hands, video-to-avatar, realism metrics.
+4. `SMPL-X__FLAME_vertex_ids.npy` and `MANO_SMPLX_vertex_ids.pkl` are installed in `$L/models/smplx/`.
 
 ## TOP PRIORITY (Sat 1 AM): make them look like actual humans, not mannequins
 

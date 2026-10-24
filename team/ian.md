@@ -5,6 +5,10 @@ moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 ## FIRST NOW (Sat 2:20 AM): your grandma, the family moment
 
+**Cleared (Sat 2:45 AM):** Ojasva confirmed your family's consent. `ian-grandma`, `ian-grandma-avatar` and
+`ian-grandma-avatar-head` are in `dreams/.held` on his Mac, and `ian-grandma` is in `CONSENTED` in `head_swap.py`,
+so the head swap will run for her. Submit when ready.
+
 You're bringing your grandma into the room: demo moment 4, "Someone you've lost" (`demo/showcase.md`), and our
 Best Social Impact entry. It has to be the most real and most careful thing we show. In order:
 

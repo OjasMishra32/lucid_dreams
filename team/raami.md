@@ -4,18 +4,16 @@ You own the product people touch outside the headset, and the API that connects 
 **Apple-level design**: calm, white space, one accent colour, SF Pro / Inter, real content, no gradients-everywhere
 or "AI template" look. This is our **Best Design** entry. Read `AGENTS.md` first.
 
-## CHANGED (Sat 2:20 AM): no legends' likeness; the family moment is private
+## CHANGED AGAIN (Sat 2:45 AM): the legends are back; the family moment stays private
 
-- **Chess:** decided with Vishal, no Fischer or Carlsen avatars anywhere. In `/showcase` and on dream pages, moment
-  3 becomes "Chess at a legend's level": a consenting teammate's avatar across the board (Vishal's, once
-  `vishal-head` lands; until then the board alone), labelled "Stockfish at Fischer's peak rating. Not affiliated."
-  Drop `opponent=bobby-fischer` / `magnus-carlsen` from every link. `strength=fischer|carlsen` stays.
-- **The family moment is Ian's grandma** (`ian-grandma`).
-  - Private by default: never in the kiosk, `/showcase`, the public site or any share link unless her family agreed
-    to showing. Add a `"private": true` field in dream.json that the library honours (show it only on the Mac
-    itself).
-  - Her dream page should be the quietest page we have: no metrics panel unless asked, and no "Realism check" on
-    her.
+- **Chess with the legends, back by Ojasva's call.** Moment 3 is "Chess with the legends" again: Bobby Fischer and
+  Magnus Carlsen across the board, with new real faces. Open
+  `?mode=chess&strength=fischer&opponent=bobby-fischer-head` (falling back to `bobby-fischer`) and the same for
+  `magnus-carlsen-head` / `carlsen`. Keep the label "Stockfish at Fischer's peak rating. Not affiliated." on every
+  surface. They never speak. Credits: Fischer, 1966 AP portrait (public domain); Carlsen, Ralf Roletschek
+  (CC BY-SA 3.0).
+- **The family moment is Ian's grandma** (`ian-grandma`, consent confirmed). It stays private: never in the kiosk,
+  `/showcase`, the public site or share links unless the family agrees to showing; `"private": true` honoured.
 
 ## TOP PRIORITY (Sat 1 AM): more photos in, the most human result out
 
