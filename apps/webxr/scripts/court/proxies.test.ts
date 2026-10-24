@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import type { Vec3 } from "../../src/court/format.ts";
 import type { PinholeCamera } from "../../src/court/camera.ts";
 
+const { Proxies } = await import("../../src/court/proxies.ts");
+const THREE = await import("three");
 const { cardPlane, depthBox, rasterDepth, dilateDepth, parseGlb, depthWeight, lightChunk, plateAlphas, layerVisibility, floorClips, behindStands, maskSurfaceHit } = await import("../../src/court/proxies.ts");
 const { lookRotation, project, rayOf } = await import("../../src/court/camera.ts");
 
@@ -108,6 +110,27 @@ test("a depth step in the proxy stays a step: triangles stretched across it are 
   close(depth[row * w + 40], 26, 0.01, "right half");
 });
 
+test("a continuous slanted surface keeps its depth, however far its corners are apart (only a step seen edge-on is cut)", () => {
+  const cam = camF();
+  // two triangles, 1 m wide and 2 m tall at ~29.5 m, turning 0.4 m away across their width (a stands plane or a
+  // backboard at an angle): each spans more than 0.1 m of depth, all of it real surface
+  const corner = (u: number, v: number, t: number) => {
+    const r = rayOf(cam, u, v);
+    return r.dir.map((d, k) => r.origin[k] + d * t);
+  };
+  const [u0, u1, v0, v1] = [1500, 2347, 700, 2395];
+  const positions = new Float32Array([...corner(u0, v0, 29.5), ...corner(u1, v0, 29.9), ...corner(u1, v1, 29.9), ...corner(u0, v1, 29.5)]);
+  const indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
+  const box: [number, number, number, number] = [u0 + 0.5, v0 + 0.5, u1 + 0.5, v1 + 0.5];
+  const raw = rasterDepth(positions, indices, cam, box, 32, 64);
+  const hits = Array.from(raw).filter((d) => d > 0).length;
+  assert.ok(hits > 32 * 64 * 0.9, `${hits} of ${32 * 64} texels have the surface`);
+  const row = Array.from(raw.slice(32 * 32, 33 * 32));
+  close(row[0], 29.5, 0.03, "the near edge");
+  close(row[31], 29.9, 0.03, "the far edge");
+  assert.ok(row.every((d, i) => i === 0 || d > row[i - 1]), "turning away steadily across its width");
+});
+
 test("GLB: positions and indices of every mesh, node transforms applied", () => {
   const pos = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const idx = new Uint16Array([0, 1, 2]);
@@ -148,12 +171,12 @@ test("the card depth weight: 1 on F, 0 a third of a second of real time away, sm
   assert.ok(a > 0 && a < 1);
 });
 
-test("the light chunk: lightfield.ts's GLSL as given, with any helper the stub lacks filled in as 1 (no dither, the arena)", () => {
+test("the light chunk: lightfield.ts's GLSL as given, with any helper the stub lacks filled in as 1 (no dither, the arena, the pair at full light)", () => {
   const stub = "float courtLight(vec3 worldPos, float part) { return 1.0; }\n";
   const filled = lightChunk(stub);
   assert.ok(filled.startsWith(stub), "the field's own GLSL first");
-  for (const name of ["vec3 lightDither(", "float lightRoomStands(", "float lightRoomFloor("]) assert.ok(filled.includes(name), name);
-  const full = `${stub}float lightRoomStands() { return uLightView.y; }\nfloat lightRoomFloor() { return uLightView.z; }\nvec3 lightDither(vec3 rgb) { return rgb + 0.0; }\n`;
+  for (const name of ["vec3 lightDither(", "float lightRoomStands(", "float lightRoomFloor(", "float lightPair("]) assert.ok(filled.includes(name), name);
+  const full = `${stub}float lightPair() { return uLightLevel.z; }\nfloat lightRoomStands() { return uLightView.y; }\nfloat lightRoomFloor() { return uLightView.z; }\nvec3 lightDither(vec3 rgb) { return rgb + 0.0; }\n`;
   assert.equal(lightChunk(full), full, "nothing added when the field has them all");
 });
 
@@ -209,4 +232,27 @@ test("what each layer draws: the video's plates while the picture or the mask's 
   assert.deepEqual(layerVisibility(0.5, 0.5), { plates: true, cards: true, background: true }, "mid fade");
   assert.deepEqual(layerVisibility(0, 0.5), { plates: true, cards: false, background: true }, "faded, the mask still lifting");
   assert.deepEqual(layerVisibility(0, 1), { plates: false, cards: false, background: true }, "the open world");
+});
+
+test("dispose() frees every geometry, material and texture the proxies made (the surfaces, the card grid, the mask's shell)", () => {
+  const court = {
+    camera: { centre: C, cx: 1919.5, cy: 1079.5, width: 3840, height: 2160 },
+    video: { segments: { pass2: [0, 1], eases: [{ start: 0, frames: [0, 1], seconds: 1 }] } },
+    freeze: { players: [] },
+  };
+  const frames = [0, 1].map(() => ({ src: 0, interp: false, q: [0, 0, 0, 1], f: 25000 }));
+  const video = { listen: () => {}, opacity: 1, maskLevel: 0, wipeLevel: 0, stats: { onScreen: -1 } };
+  const light = { glsl: "float courtLight(vec3 p, float part) { return 1.0; }\n", uniforms: {} };
+  const proxies = new Proxies(null as never, { court, frames, cards: [] } as never, video as never, light as never);
+  const freed: string[] = [];
+  const watch = <T extends { dispose(): void }>(o: T, name: string) => {
+    o.addEventListener?.("dispose", () => freed.push(name));
+    return o;
+  };
+  const geometry = watch(new THREE.PlaneGeometry(1, 1) as never, "geometry");
+  const material = watch(new THREE.MeshBasicMaterial() as never, "material");
+  proxies.group.add(new THREE.Mesh(geometry, material));
+  proxies.group.add(new THREE.Mesh(geometry, material)); // shared: freed once
+  proxies.dispose();
+  assert.deepEqual(freed.sort(), ["geometry", "material"]);
 });

@@ -40,6 +40,8 @@ const DEPTH_TEXELS = 256;
 const DEPTH_BAND = 12;
 /** A depth step: corners or neighbours this far apart along the ray are two surfaces, never one stretched across, metres. */
 const MAX_STEP = 0.1;
+/** ...when the triangle between them is seen this close to edge-on from camera F (cos 85 deg): a real slant is never that steep. */
+const EDGE_ON_COS = Math.cos((85 * Math.PI) / 180);
 
 /** A card's plane: a person's stands upright through their foot, square to the camera's horizontal ray; the ball's faces the camera. */
 export function cardPlane(at: Vec3, centre: Vec3, kind: "person" | "ball"): { point: Vec3; normal: Vec3 } {
@@ -114,7 +116,6 @@ export function rasterDepth(
     const b = indices[f + 1];
     const c = indices[f + 2];
     if (!front[a] || !front[b] || !front[c]) continue;
-    if (Math.max(dist[a], dist[b], dist[c]) - Math.min(dist[a], dist[b], dist[c]) > maxStep) continue;
     const i0 = Math.max(0, Math.floor(Math.min(tx[a], tx[b], tx[c])));
     const i1 = Math.min(w - 1, Math.ceil(Math.max(tx[a], tx[b], tx[c])));
     const j0 = Math.max(0, Math.floor(Math.min(ty[a], ty[b], ty[c])));
@@ -124,6 +125,12 @@ export function rasterDepth(
     const ax = positions[3 * a] - C[0], ay = positions[3 * a + 1] - C[1], az = positions[3 * a + 2] - C[2];
     const e1x = positions[3 * b] - positions[3 * a], e1y = positions[3 * b + 1] - positions[3 * a + 1], e1z = positions[3 * b + 2] - positions[3 * a + 2];
     const e2x = positions[3 * c] - positions[3 * a], e2y = positions[3 * c + 1] - positions[3 * a + 1], e2z = positions[3 * c + 2] - positions[3 * a + 2];
+    // a step: more than maxStep of depth across a triangle seen edge-on (a slanted surface of any size is kept)
+    if (Math.max(dist[a], dist[b], dist[c]) - Math.min(dist[a], dist[b], dist[c]) > maxStep) {
+      const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      const gx = ax + (e1x + e2x) / 3, gy = ay + (e1y + e2y) / 3, gz = az + (e1z + e2z) / 3;
+      if (Math.abs(nx * gx + ny * gy + nz * gz) < EDGE_ON_COS * Math.hypot(nx, ny, nz) * Math.hypot(gx, gy, gz)) continue;
+    }
     for (let j = j0; j <= j1; j++)
       for (let i = i0; i <= i1; i++) {
         const o = (j * w + i) * 3;
@@ -362,7 +369,7 @@ export function layerVisibility(opacity: number, mask: number): { plates: boolea
 
 /**
  * lightfield.ts's GLSL, with any helper this module calls that the field doesn't define filled in as "no change"
- * (the stub has only courtLight): lightDither(rgb), lightRoomStands(), lightRoomFloor().
+ * (the stub has only courtLight): lightDither(rgb), lightRoomStands(), lightRoomFloor(), lightPair().
  */
 export function lightChunk(glsl: string): string {
   const has = (name: string) => new RegExp(`\\b(?:float|vec3)\\s+${name}\\s*\\(`).test(glsl);
@@ -370,6 +377,7 @@ export function lightChunk(glsl: string): string {
   if (!has("lightDither")) out += "vec3 lightDither(vec3 rgb) { return rgb; }\n";
   if (!has("lightRoomStands")) out += "float lightRoomStands() { return 1.0; }\n";
   if (!has("lightRoomFloor")) out += "float lightRoomFloor() { return 1.0; }\n";
+  if (!has("lightPair")) out += "float lightPair() { return 1.0; }\n";
   return out;
 }
 
@@ -565,7 +573,7 @@ const cardFrag = (light: string) => /* glsl */ `
   ${CAMERA_GLSL}
   ${footageGlsl(light)}
   uniform sampler2D uLive; uniform sampler2D uMattes; uniform vec2 uMattesSize;
-  uniform vec4 uBox; uniform vec4 uTile; uniform vec3 uAt;
+  uniform vec4 uBox; uniform vec4 uTile; uniform vec3 uAt; uniform float uPair;
   varying vec3 vCourt;
   void main() {
     float z = toCam(vCourt).z;
@@ -581,8 +589,9 @@ const cardFrag = (light: string) => /* glsl */ `
     if (m <= 0.002) discard;
     vec2 uv = px / uSrc;
     vec3 col = region(uLive, uv).rgb;
-    // the matte's soft edge still holds what was behind, lit as that; the person is lit where they stand
-    float k = mix(lightBehind(vCourt), lightOfPerson(uAt), smoothstep(0.3, 1.0, m));
+    // the matte's soft edge still holds what was behind, lit as that; the person is lit where they stand, and the pair
+    // as their splats are (lightPair: full through the time stop, whatever the pool under them is doing)
+    float k = mix(lightBehind(vCourt), uPair > 0.5 ? lightPair() : lightOfPerson(uAt), smoothstep(0.3, 1.0, m));
     col = lightDither(relight(col, k) * (1.0 - uWipe));
     float a = m * frameFeather(uv) * uOpacity * lightRoomFloor();
     gl_FragColor = vec4(col * a, a);
@@ -658,6 +667,10 @@ export class Proxies {
     this.setCamera(camF);
     video.listen(() => this.sync());
     this.sync();
+    if (import.meta.env?.DEV && typeof window !== "undefined") {
+      const w = window as unknown as { __courtLook?: Record<string, unknown> };
+      (w.__courtLook ??= {}).proxies = this;
+    }
   }
 
   /** Build the court plane, stands planes, backboard plane, depth cards and person cards; load proxy.glb, stands-mask.png, inpaint-mask.png and the depth cards' images. */
@@ -756,6 +769,7 @@ export class Proxies {
         uBox: { value: new THREE.Vector4() },
         uTile: { value: new THREE.Vector4() },
         uAt: { value: new THREE.Vector3() },
+        uPair: { value: 0 },
         uPlaneP: { value: new THREE.Vector3() },
         uPlaneN: { value: new THREE.Vector3(1, 0, 0) },
         uDepth: { value: null },
@@ -799,7 +813,9 @@ export class Proxies {
       (slot.u.uAt.value as THREE.Vector3).set(...c.at);
       (slot.u.uPlaneP.value as THREE.Vector3).set(...plane.point);
       (slot.u.uPlaneN.value as THREE.Vector3).set(...plane.normal);
-      const depth = c.kind === "person" && this.pairIds.has(c.id) ? this.depths.get(c.id) : undefined;
+      const pair = c.kind === "person" && this.pairIds.has(c.id);
+      slot.u.uPair.value = pair ? 1 : 0;
+      const depth = pair ? this.depths.get(c.id) : undefined;
       slot.u.uHasDepth.value = !!depth;
       if (depth) {
         slot.u.uDepth.value = depth.texture;
@@ -829,10 +845,21 @@ export class Proxies {
     this.depthOverride = p;
   }
 
+  /** Free every geometry, material and texture this made (each once: the card grid is shared by the card pool). */
   dispose(): void {
-    for (const m of this.materials) m.dispose();
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>(this.materials);
+    this.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      geometries.add(mesh.geometry);
+      for (const m of ([] as THREE.Material[]).concat(mesh.material)) materials.add(m);
+    });
+    for (const g of geometries) g.dispose();
+    for (const m of materials) m.dispose();
     for (const d of this.depths.values()) d.texture.dispose();
     for (const t of this.textures) t.dispose();
+    this.group.clear();
   }
 
   /**
