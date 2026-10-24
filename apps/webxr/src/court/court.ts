@@ -224,6 +224,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (phase === "open" || phase === "walking" || phase === "returning") seat.restore();
     video.opacity = 1;
     video.mask(1);
+    video.wipe(0);
     freeze.reveal(0);
     courtWorld.open(0);
     light.set("watch", 0);
@@ -275,8 +276,14 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         const p = Math.max(0, Math.min(1, lightsUp / LIGHTS_UP_S));
         light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
         sound.arrive(p);
+        // the lit footage region rises out of black on pass 1's first frame (3.2), so the watch starts on a frame shown
+        const first = court.video.segments.pass1[0];
+        video.show(first);
+        proxies.project(first);
+        video.wipe(1 - p);
         if (lightsUp >= LIGHTS_UP_S) {
           light.set("watch", 0);
+          video.wipe(0);
           go("watching");
         }
         break;
