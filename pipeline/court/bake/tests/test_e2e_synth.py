@@ -277,7 +277,9 @@ def test_cards_follow_the_people_of_the_scene(baked):
             c = by_id[pid]
             assert c["kind"] == "person" and len(c["at"]) == 3 and c["at"][1] == 0
             tb = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
-            assert box_iou(c["box"], tb) > 0.8, (f.i, pid, c["box"], tb)
+            # the box is padded (2 matte pixels) so the cut never tears at the body's edge: it must contain the true body
+            assert c["box"][0] <= tb[0] + 1 and c["box"][1] <= tb[1] + 1 and c["box"][2] >= tb[2] - 1 and c["box"][3] >= tb[3] - 1, (f.i, pid, c["box"], tb)
+            assert box_iou(c["box"], tb) > 0.6, (f.i, pid, c["box"], tb)
             assert 0 <= c["box"][0] < c["box"][2] <= W and 0 <= c["box"][1] < c["box"][3] <= H
             # the atlas tile, mapped back onto the box, is the true matte
             u0, v0, u1, v1 = c["tile"]
