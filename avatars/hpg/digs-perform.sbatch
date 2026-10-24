@@ -20,7 +20,7 @@ OUT=${OUT:-$L/data/avatars/dreams}
 AV=$L/repos/lucid_dreams/avatars
 MOTION=$L/data/avatars/motions/$RUN_ID.json
 mkdir -p "$OUT" "$(dirname "$MOTION")"
-git -C $L/repos/lucid_dreams pull -q --ff-only
+flock $L/repos/.lucid_dreams.lock git -C $L/repos/lucid_dreams pull -q --ff-only || echo "repo update skipped"
 if [ ! -f "$MOTION" ]; then  # 4DAnyone env in a subshell, so nothing of it reaches the DiGS step
   ( set +u; source $L/code/pipeline/hpg/env.sh; set -u
     cd $L/repos/4DAnyone

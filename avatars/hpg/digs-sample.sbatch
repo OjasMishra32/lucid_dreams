@@ -23,7 +23,7 @@ export HF_HOME=$L/cache/hf U2NET_HOME=$L/models/rembg
 module load conda/26.7
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/digs
-git -C $L/repos/lucid_dreams pull -q --ff-only
+flock $L/repos/.lucid_dreams.lock git -C $L/repos/lucid_dreams pull -q --ff-only || echo "repo update skipped"
 git -C $L/repos/lucid_dreams log -1 --format='lucid_dreams at %h %s'
 cd $L/repos/DiGS-Avatar
 [ -f "$IMAGE" ] || { echo "no photo at $IMAGE"; exit 1; }

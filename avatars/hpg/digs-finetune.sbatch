@@ -23,7 +23,7 @@ AV=$L/repos/lucid_dreams/avatars
 FRAMES=${FRAMES:-8}
 STEPS=${STEPS:-800}
 mkdir -p "$OUT/dreams"
-git -C $L/repos/lucid_dreams pull -q --ff-only
+flock $L/repos/.lucid_dreams.lock git -C $L/repos/lucid_dreams pull -q --ff-only || echo "repo update skipped"
 git -C $L/repos/lucid_dreams log -1 --format='lucid_dreams at %h %s'
 [ -f "$RUN/views/cameras.json" ] && [ -d "$RUN/views/gvhmr" ] || { echo "$RUN/views has no 4DAnyone result yet"; exit 1; }
 nvidia-smi --query-gpu=name,memory.total --format=csv
