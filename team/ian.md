@@ -20,18 +20,28 @@ moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 `demo/devpost.md` is from Fri 11:21 PM: its metrics table says "[pending]" and it predates most of what we'll demo.
 By **Sun 10 AM** (feature freeze, filming), update `demo/devpost.md`, `README.md`, `demo/video.md` and
-`demo/judges.md` with what is true now. Measured numbers (median over all 121 frames, from each run's
-`recon/recon-*.json`; "real frame" = our render from the solved source camera against the real 4K frame, held-out =
-generated views the fit never saw):
+`demo/judges.md` with what is true now. Measured numbers, redone Sat 12:15 PM after the ghost-limb fix: the five
+replays with a solved real camera were re-reconstructed with `lucid.recon --source-agree` (the doubled shoes, second
+legs and half-transparent torsos are gone from every side) and swapped into the library. Old -> new, measured like this:
+- **Views PSNR / SSIM**: our render against 4DAnyone's generated views, every 8th of the 48 cameras, median over the
+  bundle's frames (`recon/` and `recon-agree/recon-*.json`). **The fit trained on these views; none is held out**
+  (every run reports `heldOut: false`), so don't call them held-out (this table's earlier label was wrong).
+- **Spill**: share of our render's opacity that lands outside the person in the generated views, i.e. ghosts and
+  floaters (`lucid.clean_check`, every 4th frame x every 3rd camera). Lower is cleaner.
+- **Real frame PSNR**: our render against the real clip frame, median over the frames whose chunk solved a camera.
+  Old: from that solved camera, which the fit trained against. New: from the camera re-aligned to the views' person each
+  frame, **lower by design**: the person now follows the generated views (a few cm off the real one) so they're whole
+  from every side, never doubled. Through the original solved camera (`clean_check`) the jump shot goes 27.6 -> 14.6 dB.
+- LeBron is over his 100 frames (the bundle is trimmed). Guitar never solved a real camera and wasn't redone.
 
-| Dream | PSNR vs the real frame | Held-out PSNR | SSIM | Seen by the camera |
-| --- | --- | --- | --- | --- |
-| Tai chi (`taichi-01`) | 46.6 dB | 27.5 dB | 0.97 | 57% |
-| LeBron (`lebron-shot`, the one in the library, with his release) | 43.3 dB | 25.2 dB | 0.97 | 43% |
-| Dance (`dance-01`) | 40.3 dB | 30.3 dB | 0.98 | 53% |
-| Jump shot (`jump-shot-hq`) | 35.3 dB | 24.7 dB | 0.96 | 54% |
-| Golf (`golf-01`) | 33.0 dB | 25.8 dB | 0.96 | 49% |
-| Guitar (`guitar-01`) | (not solved) | 22.0 dB | 0.96 | 59% |
+| Dream | Views PSNR | Views SSIM | Spill in the views | Real frame PSNR | Seen by the camera |
+| --- | --- | --- | --- | --- | --- |
+| Tai chi (`taichi-01`) | 27.5 -> 29.6 dB | 0.965 -> 0.973 | 0.007 -> 0.003 | 46.6 -> 24.8 dB | 57% -> 54% |
+| LeBron (`lebron-shot`, the one in the library, with his release) | 25.4 -> 26.0 dB | 0.968 -> 0.971 | 0.043 -> 0.033 | 43.3 -> 17.7 dB (66 of 100 frames) | 43% -> 43% |
+| Dance (`dance-01`) | 30.3 -> 31.9 dB | 0.978 -> 0.982 | 0.011 -> 0.002 | 40.3 -> 23.9 dB | 53% -> 49% |
+| Jump shot (`jump-shot-hq`) | 24.7 -> 26.7 dB | 0.960 -> 0.967 | 0.023 -> 0.004 | 35.1 -> 17.9 dB | 54% -> 48% |
+| Golf (`golf-01`) | 25.8 -> 26.3 dB | 0.960 -> 0.963 | 0.016 -> 0.004 | 33.0 -> 20.2 dB (55 of 121 frames) | 49% -> 47% |
+| Guitar (`guitar-01`, not redone) | 22.0 dB | 0.96 | not measured | (not solved) | 59% |
 
 What's new since your draft, all in the library or on main:
 - **Chess against the legends**: Bobby Fischer and Magnus Carlsen sit at the board as photoreal LHM++ avatars
