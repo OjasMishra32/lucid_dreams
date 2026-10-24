@@ -15,7 +15,7 @@ set -euo pipefail
 L=/blue/iruchkin/vishalnaveen/lucid
 SMPLX_DIR=${SMPLX_DIR:-$L/models/smplx}
 REPO=$L/repos/lucid_dreams
-export HF_HOME=$L/cache/hf PIP_CACHE_DIR=$L/cache/pip U2NET_HOME=$L/models/rembg
+export HF_HOME=$L/cache/hf PIP_CACHE_DIR=$L/cache/pip U2NET_HOME=$L/models/rembg TORCH_HOME=$L/cache/torch
 module load conda/26.7
 eval "$(conda shell.bash hook)"
 conda activate $L/envs/digs
@@ -91,5 +91,6 @@ print("DINOv3 weights:", f"{dino} tensors in student.ckpt" if dino else "pretrai
 PY
 
 python -c "import torch, torchvision; m = torch.jit.load('$NLF'); print('NLF loads:', type(m).__name__)"
+python -c "import lpips; lpips.LPIPS(net='vgg'); print('LPIPS VGG ready')"  # for digs-finetune's metrics
 du -sh assets/idol_cache pretrained/vae_dc pretrained/dinov3 $L/models/nlf $U2NET_HOME
 echo ASSETS_OK

@@ -12,7 +12,16 @@ from pathlib import Path
 
 import numpy as np
 
-METRICS = (("psnr", "PSNR (dB)", "{:.2f}"), ("ssim", "SSIM", "{:.3f}"), ("lpips", "LPIPS (lower is better)", "{:.3f}"))
+METRICS = (
+    ("psnr", "PSNR (dB)", "{:.2f}"), ("ssim", "SSIM", "{:.3f}"), ("lpips", "LPIPS (lower is better)", "{:.3f}"),
+    ("psnrPerson", "PSNR, person crop (dB)", "{:.2f}"), ("ssimPerson", "SSIM, person crop", "{:.3f}"),
+    ("lpipsPerson", "LPIPS, person crop", "{:.3f}"),
+)
+
+
+def cosine_factor(step: int, steps: int, floor: float = 0.05) -> float:
+    """Learning-rate multiplier: 1 at the start, cosine down to `floor` at the end (applied to every group's own lr)."""
+    return floor + (1 - floor) * 0.5 * (1 + np.cos(np.pi * min(step, steps) / steps))
 
 
 def digs_cameras(K: np.ndarray, camera_to_world: np.ndarray, width: int, height: int,

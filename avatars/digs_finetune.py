@@ -64,10 +64,12 @@ class Views:
         self.width, self.height = pf.rig.width, pf.rig.height
         self.cameras = torch.as_tensor(F.digs_cameras(pf.rig.K, pf.rig.camera_to_world, self.width, self.height),
                                        device=dev)
-        self.rgb = {}
+        self.rgb, self.boxes = {}, {}
         for f in self.frames:
-            rgb, _ = F.on_white(pf.rgba(f))
+            rgba = pf.rgba(f)
+            rgb, _ = F.on_white(rgba)
             self.rgb[f] = torch.as_tensor(rgb, dtype=torch.float16, device=dev)  # fp16 keeps 48 views x 8 frames small
+            self.boxes[f] = [A.D.alpha_bbox(a) if (a > 32).any() else None for a in rgba[..., 3]]
         self.views = self.cameras.shape[0]
 
 
@@ -78,23 +80,37 @@ def render_views(model, code, smpl_row, cameras):
 
 
 def evaluate(model, code, smpl, views: Views, held: list[int], lpips_fn) -> tuple[dict, dict]:
-    """Mean PSNR / SSIM / LPIPS over every prepared frame x held-out view, and the renders of the first frame."""
+    """Mean PSNR / SSIM / LPIPS over every prepared frame x held-out view, on the full frame and on the person's box
+    in the 4DAnyone view (the full frame is mostly white on both sides), and the renders of the first frame."""
     from lucid.losses import psnr, ssim
 
-    scores = {"psnr": [], "ssim": [], "lpips": []}
+    scores = {k: [] for k in ("psnr", "ssim", "lpips", "psnrPerson", "ssimPerson", "lpipsPerson")}
+    to_lpips = lambda x: x.permute(2, 0, 1)[None] * 2 - 1  # noqa: E731  (lpips wants NCHW in -1..1)
     first = {}
     with torch.no_grad():
         for f in views.frames:
             pred = render_views(model, code, smpl[f], views.cameras[held])
             gt = views.rgb[f][held].float()
-            for p, g in zip(pred, gt, strict=True):
-                scores["psnr"].append(float(psnr(p[None], g[None])))
-                scores["ssim"].append(float(ssim(p[None], g[None])))
-                to_lpips = lambda x: x.permute(2, 0, 1)[None] * 2 - 1  # noqa: E731  (lpips wants NCHW in -1..1)
-                scores["lpips"].append(float(lpips_fn(to_lpips(p), to_lpips(g))))
+            for p, g, box in zip(pred, gt, [views.boxes[f][v] for v in held], strict=True):
+                for suffix, (pp, gg) in (("", (p, g)), ("Person", _crop(p, g, box))):
+                    if pp is None:
+                        continue
+                    scores["psnr" + suffix].append(float(psnr(pp[None], gg[None])))
+                    scores["ssim" + suffix].append(float(ssim(pp[None], gg[None])))
+                    scores["lpips" + suffix].append(float(lpips_fn(to_lpips(pp), to_lpips(gg))))
             if not first:
                 first = {"pred": pred.cpu(), "gt": gt.cpu()}
-    return {k: round(float(np.mean(v)), 4) for k, v in scores.items()}, first
+    return {k: round(float(np.mean(v)), 4) for k, v in scores.items() if v}, first
+
+
+def _crop(p, g, box, pad: int = 16):
+    """Both images cut to the person's box (padded); (None, None) when the view has no person in it."""
+    if box is None:
+        return None, None
+    x0, y0, x1, y1 = box
+    h, w = g.shape[:2]
+    x0, y0, x1, y1 = max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
+    return p[y0:y1, x0:x1], g[y0:y1, x0:x1]
 
 
 def main() -> int:
@@ -114,7 +130,7 @@ def main() -> int:
 
     start = torch.load(args.start, map_location="cpu", weights_only=False)
     hand_mean = np.asarray(start["hand_mean"], dtype=np.float64).reshape(90)
-    motion = Motion.load(args.motion)
+    motion = A.D.with_hand_mean(Motion.load(args.motion), hand_mean)  # GVHMR's SMPL-X shows the hand mean
     views = Views(args.views, dev)
     if max(views.frames) >= motion.num_frames:
         raise SystemExit(f"views go to frame {max(views.frames)} but the motion has {motion.num_frames} frames")
@@ -139,11 +155,14 @@ def main() -> int:
             p.requires_grad_(True)
         groups.append({"params": decoder_params, "lr": args.lr / 1000})
     opt = torch.optim.Adam(groups)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.steps, eta_min=args.lr / 20)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: F.cosine_factor(s, args.steps))  # per-group base lr
 
     before, before_imgs = evaluate(model, code0, smpl, views, held, lpips_fn)
     print("before:", before)
     t0 = time.time()
+    # DiGS's decoder renders a visibility pass and a big KNN whenever it isn't training. Flip only its own flag (not
+    # .train(), which would put BatchNorm layers into training mode) for the optimisation loop.
+    model.idol_decoder.training = True
     for step in range(1, args.steps + 1):
         f = random.choice(views.frames)
         vs = random.sample(train, min(args.views_per_step, len(train)))
@@ -158,7 +177,7 @@ def main() -> int:
             print(f"step {step:>5}  loss {loss.item():.4f}  {time.time() - t0:.0f}s", flush=True)
 
     code = torch.tanh(raw).detach()
-    model.eval()
+    model.idol_decoder.training = False
     after, after_imgs = evaluate(model, code, smpl, views, held, lpips_fn)
     print("after:", after)
     setup = {"heldOutViews": held, "trainViews": len(train), "frames": views.frames, "steps": args.steps,
@@ -173,7 +192,10 @@ def main() -> int:
 
     rows = [torch.cat(list(x), dim=1) for x in (before_imgs["gt"], before_imgs["pred"], after_imgs["pred"])]
     Image.fromarray((torch.cat(rows, dim=0).numpy() * 255).astype(np.uint8)).save(work / "compare.png")
-    torch.save({"code": code.cpu(), "betas": motion.betas, "hand_mean": hand_mean}, work / "code.pt")
+    tuned = {"code": code.cpu(), "betas": motion.betas, "hand_mean": hand_mean}
+    if args.tune_decoder:  # digs_perform.py loads it back, so a performance matches what was measured
+        tuned["idol_decoder"] = {k: v.cpu() for k, v in model.idol_decoder.state_dict().items()}
+    torch.save(tuned, work / "code.pt")
 
     # The tuned avatar as a bundle, playing the clip it was tuned on, facing the viewer with its soles on the floor.
     from lucid_avatars.retarget import place_on_floor

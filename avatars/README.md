@@ -16,8 +16,14 @@ in a dream bundle (see `AGENTS.md`, Contracts).
 | `gaussian_ply.py` | Standard 3DGS binary PLY read/write |
 | `bundle.py` | Writes an avatar bundle; validates any bundle against the contract |
 | `digs_io.py` | Photo/NLF/DiGS glue: crop and intrinsics, DiGS reference JSON, rasterizer Gaussians to PLY, sanity checks |
+| `skinning.py` | `skin.bin` / `skeleton.json` read, write, check; reference linear-blend skinning |
+| `retarget.py` | Someone else's motion on an avatar: leg-length scaling, facing the viewer, soles on the floor |
+| `gvhmr.py` | GVHMR's SMPL-X motion (4DAnyone's) as a Motion, moved into 4DAnyone's world |
+| `finetune_io.py` | Fine-tune helpers: DiGS cameras from 4DAnyone's rig, held-out views, results table |
 
-`digs_avatar.py` is the GPU side (needs the DiGS-Avatar env): one photo becomes a dream bundle.
+GPU side (DiGS-Avatar env unless noted): `digs_avatar.py` one photo -> bundle; `digs_finetune.py` fine-tune on
+4DAnyone views; `digs_perform.py` an avatar doing someone else's move; `gvhmr_motion.py` and `prep_views.py`
+(4DAnyone env) feed them.
 
 ## One photo -> avatar on HiPerGator (Ojasva submits)
 
@@ -54,6 +60,34 @@ uv run --group dev pytest -q                                      # tests
 uv run python -m lucid_avatars validate ../samples/<id>           # check a bundle
 uv run python -m lucid_avatars idle motion.json --seconds 8       # write an idle motion
 ```
+
+## Fine-tune on 4DAnyone's views (the research claim)
+
+`hpg/digs-finetune.sbatch` with `RUN_ID=<a finished replay run>` (RTX PRO 6000, 2 h limit, after `digs-assets`):
+
+1. `gvhmr_motion.py` (4DAnyone env): the clip's GVHMR SMPL-X motion, moved into the world 4DAnyone's `cameras.json`
+   uses. 4DAnyone computes that transform but doesn't save it, so this calls 4DAnyone's own `_body_geometry` again.
+2. `prep_views.py` (4DAnyone env): 8 frames spread over the clip, every view, the person cut out with BiRefNet.
+3. `digs_avatar.py`: the one-photo avatar from the clip's first frame (the "before").
+4. `digs_finetune.py`: optimizes DiGS's decoder code, the UV feature map every Gaussian is decoded from, against the
+   training views; the decoder, the body model and the motion stay fixed. 4 views spread round the ring are held out.
+
+Design: tune the code, not the Gaussians, so the result stays a DiGS avatar (rigged, re-posable, same skinning) and
+the prior keeps unseen regions sane; tune in pre-tanh space; Adam, lr 0.02 with cosine decay, 800 steps, 4 random
+training views of a random frame per step; loss L1 + 0.2 (1 - SSIM) on views composited on white, as DiGS renders;
+the clip's own betas and motion (GVHMR), hands in the hand mean as GVHMR's SMPL-X shows them. `--tune-decoder` also
+trains the decoder at lr / 1000, a second ablation row if there's time.
+
+Output, in `$L/data/avatars/finetune/<run>/dreams/<run>-tuned.work/`: `results.md` (the table for the slides),
+`results.json`, `compare.png` (held-out views of the first frame: 4DAnyone view / one photo / fine-tuned) and a
+bundle `<run>-tuned` that plays the clip's motion. Metrics are over every prepared frame x held-out view, on full
+frames composited on white (so absolute PSNR runs high; the before/after change is the claim).
+
+## "You, perfected"
+
+`hpg/digs-perform.sbatch` with `AVATAR=<some avatar's code.pt>`, `RUN_ID=<the run with the move>`, `ID`, `NAME`:
+the move's joint rotations play on the avatar unchanged, the root path scaled by leg length, turned to face the
+viewer, and dropped so the avatar's lowest Gaussian over the clip touches the floor (crouches and jumps stay).
 
 ## motion.json and skinning (for Ian's player and the WebXR viewer)
 

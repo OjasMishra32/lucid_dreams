@@ -64,3 +64,17 @@ def test_results_table_and_json(tmp_path):
     table = F.results_markdown(before, after)
     assert "| PSNR (dB) | 21.00 | 24.50 | +3.50 |" in table
     assert "| LPIPS (lower is better) | 0.210 | 0.140 | -0.070 |" in table
+
+
+def test_results_table_has_person_crop_rows_when_present():
+    before = {"psnr": 30.0, "ssim": 0.95, "lpips": 0.05, "psnrPerson": 19.0, "ssimPerson": 0.7, "lpipsPerson": 0.3}
+    after = {"psnr": 31.0, "ssim": 0.96, "lpips": 0.04, "psnrPerson": 22.0, "ssimPerson": 0.8, "lpipsPerson": 0.2}
+    table = F.results_markdown(before, after)
+    assert "| PSNR, person crop (dB) | 19.00 | 22.00 | +3.00 |" in table
+    assert table.index("person crop") > table.index("| PSNR (dB)")
+
+
+def test_cosine_factor_decays_to_the_floor():
+    assert F.cosine_factor(0, 100) == pytest.approx(1.0)
+    assert F.cosine_factor(100, 100) == pytest.approx(0.05)
+    assert 0.05 < F.cosine_factor(50, 100) < 1.0
