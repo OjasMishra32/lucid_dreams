@@ -40,6 +40,7 @@ export default function Home() {
         <section className="feature">
           <Link href={`/library/${encodeURIComponent(lead.id)}`} className="frame" aria-label={`${lead.name}: see the dream`}>
             <video
+              aria-label={`${lead.name}, walked all the way around`}
               src={dreamFile(lead.id, lead.preview!)}
               poster={lead.thumb ? dreamFile(lead.id, lead.thumb) : undefined}
               autoPlay

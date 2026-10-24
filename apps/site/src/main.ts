@@ -1,6 +1,6 @@
 import "./styles.css";
 import { CREDITS, DEMO_URL, REPO_URL } from "./config";
-import { bundleFile, dreams, heroPerson, onSite, type Bundle } from "./people";
+import { bundleFile, dreams, heroDream, heroPerson, holdsReplay, onSite, type Bundle } from "./people";
 import { Typer } from "./typer";
 import { clamp01, onTick, reducedMotion, webgl2Available } from "./motion";
 
@@ -41,7 +41,8 @@ const arrive = () => {
 setTimeout(arrive, 700);
 
 const caption = $("#hero-caption");
-if (has3d) {
+const live = () => {
+  if (!has3d) return arrive();
   import("./three/hero")
     .then(({ mountHero }) => mountHero($("#hero-canvas"), $("#hero-figure")))
     .then(async (person) => {
@@ -53,7 +54,24 @@ if (has3d) {
       fallback("#top")(e);
       arrive();
     });
-} else arrive();
+};
+if (holdsReplay()) live();
+else {
+  // a phone: the person's 360 orbit as a video, not three megabytes of live splats (the sections below still go live)
+  heroDream().then((d) => {
+    if (!d?.preview) return live(); // no bridge: the sample, live
+    const v = document.createElement("video");
+    Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: !still, preload: "auto" });
+    v.className = "hero-video";
+    v.src = bundleFile(d, d.preview);
+    if (d.thumb) v.poster = bundleFile(d, d.thumb);
+    v.setAttribute("aria-label", `${d.name}, walked all the way around`);
+    v.addEventListener("loadeddata", () => v.classList.add("on"), { once: true });
+    $("#hero-figure").append(v);
+    caption.textContent = `${d.name}. Rebuilt in 3D from one video.`;
+    arrive();
+  });
+}
 
 // ---------------------------------------------------------------- nav
 

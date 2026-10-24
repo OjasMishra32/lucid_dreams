@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { heroPerson } from "../people";
 import { contactShadow, Person } from "./person";
-import { clamp01, damp, lerp, onTick, smooth } from "../motion";
+import { clamp01, damp, lerp, onTick, reducedMotion, smooth } from "../motion";
 import { Stage } from "./stage";
 
 // How it works, as one camera move through one scene, driven by scroll:
@@ -112,9 +112,12 @@ export async function mountHow(host: HTMLElement, hooks: HowHooks): Promise<Pers
   let p = 0; // damped progress: the camera has a little weight to it
   const target = new THREE.Vector3();
   const tmp = new THREE.Vector3();
+  // reduced motion: no flight, just a cut to each step's view (the cameras, the Gaussians, life size)
+  const still = reducedMotion();
+  const snap = (v: number) => (v < 0.36 ? 0.3 : v < 0.7 ? 0.6 : 1);
   onTick((dt) => {
     if (!stage.onScreen) return;
-    p = damp(p, hooks.progress(), 6, dt);
+    p = still ? snap(hooks.progress()) : damp(p, hooks.progress(), 6, dt);
 
     // cameras: sweep in around the circle, then leave
     const shown = smooth(0.02, 0.27, p) * cams.length;

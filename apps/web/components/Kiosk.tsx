@@ -30,12 +30,20 @@ export default function Kiosk({ slides }: { slides: KioskSlide[] }) {
   const n = slides.length;
   const at = n ? i % n : 0;
   const next = n ? (at + 1) % n : 0;
+  // each slide's 8 seconds start once its video is actually playing, so a slow load never cuts a person short
+  const [readyAt, setReadyAt] = useState<number | null>(null);
+  const ready = readyAt === at;
 
   useEffect(() => {
-    if (n < 2) return;
+    if (n < 2 || !ready) return;
     const t = setTimeout(() => setI((at + 1) % n), HOLD_MS);
     return () => clearTimeout(t);
-  }, [at, n]);
+  }, [at, n, ready]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setReadyAt(at), 4000); // a video that never starts doesn't stall the loop
+    return () => clearTimeout(t);
+  }, [at]);
 
   // The slide coming on starts from its first frame; every other one rests.
   useEffect(() => {
@@ -118,6 +126,8 @@ export default function Kiosk({ slides }: { slides: KioskSlide[] }) {
                 loop
                 playsInline
                 preload={live ? "auto" : "none"}
+                aria-label={`${s.name}, walked all the way around`}
+                onPlaying={() => k === at && setReadyAt(k)}
               />
               <figcaption className="kiosk-copy">
                 <p className="kiosk-name">{s.name}</p>
@@ -134,7 +144,7 @@ export default function Kiosk({ slides }: { slides: KioskSlide[] }) {
           <ol className="kiosk-dots" aria-label={`${at + 1} of ${n}`}>
             {slides.map((s, k) => (
               <li key={s.id} className={k === at ? "on" : ""}>
-                <span key={k === at ? `on-${at}` : "off"} />
+                {k === at && ready && <span key={`on-${at}`} />}
               </li>
             ))}
           </ol>

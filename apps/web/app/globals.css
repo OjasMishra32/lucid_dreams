@@ -35,6 +35,12 @@ a:hover { text-decoration: underline; }
 img, video { display: block; max-width: 100%; }
 ::selection { background: rgba(41, 151, 255, 0.35); }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 3px; border-radius: 6px; }
+.skip {
+  position: fixed; z-index: 50; left: 12px; top: 8px; padding: 8px 14px; border-radius: 980px; font-size: 14px;
+  background: var(--accent); color: #fff; transform: translateY(-64px); transition: transform 0.2s var(--ease);
+}
+.skip:focus-visible { transform: none; text-decoration: none; }
+main:focus, .compose:focus { outline: none; }
 
 /* ---------- nav ---------- */
 .nav {
@@ -465,8 +471,9 @@ img, video { display: block; max-width: 100%; }
 .kiosk-dots li.on { width: 36px; }
 .kiosk-dots li.on span { display: block; width: 0; height: 100%; background: var(--text); animation: kiosk-fill 8s linear forwards; }
 @keyframes kiosk-fill { to { width: 100%; } }
-.kiosk-controls { position: absolute; z-index: 2; top: 24px; right: 24px; display: flex; gap: 10px; transition: opacity 0.3s ease; }
-.kiosk.asleep .kiosk-controls { opacity: 0; pointer-events: none; }
+.kiosk-controls { position: absolute; z-index: 2; top: 24px; right: 24px; display: flex; gap: 10px; transition: opacity 0.3s ease, visibility 0s; }
+/* idle: faded, then truly hidden (any key or a move of the mouse brings them back) */
+.kiosk.asleep .kiosk-controls { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.3s ease, visibility 0s 0.3s; }
 .kiosk-empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 28px; }
 @media (max-aspect-ratio: 1/1) {
   .kiosk-slide video { left: 0; width: 100%; transform: none; }

@@ -25,8 +25,9 @@ The hero, How it works and Honesty show the real `jump-shot` replay, and the Use
 dreams, all read at runtime from the bridge (`apps/web` on the Mac, `GET /api/dreams` and `/dreams/<id>/...`, open
 CORS). Nothing heavy is committed. Everything that changes lives in `src/config.ts`:
 
-- `HERO_DREAM`: the replay in the hero (never a public figure). It plays at most `MAX_FRAMES` of its frames (every
-  other frame of 121, about 285k Gaussians each); phones and the sections further down hold its first frame only.
+- `HERO_DREAM`: the replay in the hero (never a public figure). On a laptop it plays live, at most `MAX_FRAMES` of its
+  frames (every other frame of 121, about 285k Gaussians each); a phone gets its 360 orbit video instead (no 3 MB
+  renderer on first load), and the sections further down hold its first frame only.
 - `BRIDGE_URL`: `VITE_BRIDGE_URL`, else this page's host on port 5170 (for a page served over http on the Mac or its
   Wi-Fi, e.g. `npm --prefix apps/site run dev` next to the bridge).
 - `NOT_ON_SITE`: ids that never appear (public figures); private dreams (a family's) never do either.
@@ -50,5 +51,5 @@ frames and `metrics.seenFraction` drive the Honesty section. `DEMO_URL` turns on
 | `src/three/honesty.ts` | Reality check on a turning person |
 | `public/assets/CREDITS.md` | Third-party assets and licenses |
 
-Each 3D section loads when it's a screen away and only renders while on screen. Without WebGL2, or if a file fails,
+Each 3D section loads when it's a screen away and only renders while on screen; with reduced motion the cameras cut between views instead of flying. Without WebGL2, or if a file fails,
 the page drops the canvases and the type stands on its own.

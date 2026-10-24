@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { CHESS_SET_URL } from "../config";
-import { clamp01, damp, lerp, onTick, smooth } from "../motion";
+import { clamp01, damp, lerp, onTick, reducedMotion, smooth } from "../motion";
 import { Stage } from "./stage";
 
 /**
@@ -88,9 +88,10 @@ export async function mountChess(host: HTMLElement, progress: () => number): Pro
 
   let p = 0;
   const look = new THREE.Vector3();
+  const still = reducedMotion(); // the board before your move, then after it: no glide, no flying camera
   onTick((dt) => {
     if (!stage.onScreen) return;
-    p = damp(p, progress(), 5, dt);
+    p = still ? (progress() < 0.5 ? 0 : 1) : damp(p, progress(), 5, dt);
 
     // your move: lift, carry two squares, set down
     if (ePawn) {

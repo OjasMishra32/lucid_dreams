@@ -27,6 +27,7 @@ export default function DreamCard({ dream }: { dream: Dream }) {
           <video
             ref={video}
             src={preview}
+            aria-hidden="true" // the card names the dream; its hover preview adds nothing to read
             muted
             loop
             playsInline

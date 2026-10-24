@@ -48,6 +48,12 @@ export function onSite(d: Bundle): boolean {
   return !d.private && !NOT_ON_SITE.test(d.id) && !/^(synthetic|test)/.test(d.id) && !!d.preview;
 }
 
+/** The hero's real dream, if the bridge has it and it may be shown here. */
+export async function heroDream(): Promise<Bundle | null> {
+  const d = (await dreams()).find((x) => x.id === HERO_DREAM);
+  return d && onSite(d) ? d : null;
+}
+
 let hero: Promise<{ moving: PersonConfig; still: PersonConfig }> | null = null;
 
 /**
@@ -57,8 +63,8 @@ let hero: Promise<{ moving: PersonConfig; still: PersonConfig }> | null = null;
  */
 export function heroPerson(): Promise<{ moving: PersonConfig; still: PersonConfig }> {
   hero ??= (async () => {
-    const d = (await dreams()).find((x) => x.id === HERO_DREAM);
-    if (!d || !onSite(d) || d.kind !== "replay" || !d.frames?.spz || !(d.frameCount > 0)) return { moving: SAMPLE, still: SAMPLE };
+    const d = await heroDream();
+    if (!d || d.kind !== "replay" || !d.frames?.spz || !(d.frameCount > 0)) return { moving: SAMPLE, still: SAMPLE };
     const stride = Math.max(1, Math.ceil(d.frameCount / MAX_FRAMES));
     const picks = Array.from({ length: Math.ceil(d.frameCount / stride) }, (_, i) => i * stride);
     const frame = (pattern: string, i: number) => bundleFile(d, `${d.frames!.dir}/${pattern.replace("%06d", String(i).padStart(6, "0"))}`);

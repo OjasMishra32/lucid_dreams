@@ -4,7 +4,7 @@
   --bg: #000;
   --ink: #f5f5f7;
   --ink-2: #a1a1a6;
-  --ink-3: #6e6e73;
+  --ink-3: #7a7a7f; /* the quietest text that still reads at 4.5:1 on black (the web app's --faint) */
   --ink-4: #424245;
   --hair: rgba(255, 255, 255, 0.14);
   --blue: #2997ff; /* links, and anything "new" */
@@ -151,7 +151,13 @@ h2 {
 }
 .mask { display: block; overflow: hidden; padding-bottom: 0.12em; margin-bottom: -0.12em; }
 .mask > span { display: block; }
-.hero-figure { grid-area: figure; min-height: 200px; pointer-events: none; margin: clamp(8px, 2vh, 24px) 0 clamp(6px, 1.5vh, 16px); }
+.hero-figure { position: relative; grid-area: figure; min-height: 200px; pointer-events: none; margin: clamp(8px, 2vh, 24px) 0 clamp(6px, 1.5vh, 16px); }
+/* phones: the orbit video stands where the live person would; its black melts into the hero's dark floor */
+.hero-video {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; mix-blend-mode: lighten;
+  opacity: 0; transition: opacity 1s var(--ease);
+}
+.hero-video.on { opacity: 1; }
 .hero-lede {
   grid-area: lede;
   align-self: end;
@@ -232,7 +238,7 @@ h2 {
   font-size: clamp(21px, 2.3vw, 32px);
   font-weight: 600;
   letter-spacing: -0.025em;
-  color: var(--ink-4);
+  color: var(--ink-3);
   transition: color 0.6s var(--ease);
 }
 .mode-name.on { color: var(--ink); }
@@ -508,6 +514,7 @@ h2 {
   font-size: 12px;
   color: var(--ink-3);
 }
+.footer a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
 
 /* ---------------------------------------------------------------- scroll reveals */
 

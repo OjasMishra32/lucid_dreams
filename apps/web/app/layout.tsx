@@ -13,8 +13,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <a href="#main" className="skip">Skip to content</a>
         <Nav />
-        <main>{children}</main>
+        <main id="main" tabIndex={-1}>{children}</main>
         <footer className="footer">
           <div className="footer-inner">
             <span>Lucid Dreams. Open source under the MIT license.</span>

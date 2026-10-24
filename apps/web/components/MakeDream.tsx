@@ -61,6 +61,7 @@ export default function MakeDream() {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const more = useRef<HTMLInputElement>(null);
+  const compose = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLVideoElement>(null);
   const urls = useRef(new Set<string>()); // every preview URL made, revoked on reset and on the way out
   const nextKey = useRef(0);
@@ -80,6 +81,12 @@ export default function MakeDream() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
+
+  // keyboard: once a file is in, the drop zone is gone; carry focus to the form that replaced it
+  const chosen = Boolean(video || shots.length);
+  useEffect(() => {
+    if (chosen) compose.current?.focus({ preventScroll: true });
+  }, [chosen]);
 
   const photos = shots.length > 0;
   const body = photos ? bodyOf(shots, pick, forced) : null;
@@ -261,7 +268,11 @@ export default function MakeDream() {
           role="button"
           tabIndex={0}
           onClick={() => input.current?.click()}
-          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault(); // Space would scroll the page
+            input.current?.click();
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             setOver(true);
@@ -283,7 +294,7 @@ export default function MakeDream() {
           </div>
           <input ref={input} type="file" accept="video/*,image/*" multiple hidden onChange={(e) => choose(e.target.files)} />
         </div>
-        {error && <p className="form-error">{error}</p>}
+        {error && <p className="form-error" role="alert">{error}</p>}
         <ul className="rules">
           <li><b>One person</b>Head to toe in the frame, filling most of it.</li>
           <li><b>Camera still</b>On a tripod or propped up. No pans or zooms.</li>
@@ -307,11 +318,15 @@ export default function MakeDream() {
   const sending = sent !== null;
 
   return (
-    <div className="compose">
+    <div className="compose" ref={compose} tabIndex={-1} aria-label="Your dream, ready to make">
       <div>
         {info.readable && (
           <div className="frame" style={{ aspectRatio: `${info.width} / ${info.height}` }}>
-            {photo ? <img src={info.url} alt="" /> : <video ref={preview} src={info.url} autoPlay muted loop={!trimmable} playsInline />}
+            {photo ? (
+              <img src={info.url} alt={photos && shots.length > 1 ? "The photo that builds the body" : "Your photo"} />
+            ) : (
+              <video ref={preview} src={info.url} autoPlay muted loop={!trimmable} playsInline aria-label="Your clip: the five seconds we'll rebuild" />
+            )}
           </div>
         )}
         {photos && (
@@ -325,7 +340,7 @@ export default function MakeDream() {
                 const unconfirmed = s.look && s.look !== "looking" && leftOut(s.look) === "No face";
                 const tap = () => (unconfirmed && (out || !isBody) ? toggle(s.key) : setPick(s.key));
                 return (
-                  <li key={s.key} className={isBody ? "on" : out ? "out" : undefined}>
+                  <li key={s.key} className={out ? "out" : isBody ? "on" : undefined}>
                     <button
                       type="button"
                       className="shot"
@@ -474,15 +489,15 @@ export default function MakeDream() {
           </button>
           {sending && (
             <>
-              <div className="bar">
+              <div className="bar" role="progressbar" aria-label="Uploading" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(sent * 100)}>
                 <span style={{ width: `${Math.max(2, sent * 100)}%` }} />
               </div>
               <span className="muted num" style={{ fontSize: 14 }}>{Math.round(sent * 100)}%</span>
             </>
           )}
         </div>
-        {blocked && <p className="form-error">Fix the red items above, then try again.</p>}
-        {error && <p className="form-error">{error}</p>}
+        {blocked && !looking && <p className="form-error">Fix the red items above, then try again.</p>}
+        {error && <p className="form-error" role="alert">{error}</p>}
       </div>
     </div>
   );
