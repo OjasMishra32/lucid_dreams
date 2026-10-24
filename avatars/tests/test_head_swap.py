@@ -4,11 +4,13 @@ import shutil
 import numpy as np
 import pytest
 
+from lucid_avatars import face_expr as F
 from lucid_avatars import head_swap as H
 from lucid_avatars.bundle import validate_bundle, write_avatar_bundle
 from lucid_avatars.gaussian_ply import SH_C0, Gaussians, read_ply, write_ply
 from lucid_avatars.idle import idle_loop
-from lucid_avatars.skinning import read_skin_bin, skeleton_dict
+from lucid_avatars.motion import Motion
+from lucid_avatars.skinning import quantize_top4, read_skin_bin, skeleton_dict
 from lucid_avatars.smplx_layout import NUM_JOINTS, J
 
 
@@ -55,10 +57,10 @@ def test_lam_head_reads_positions_from_the_textured_mesh_and_rgb_as_sh(tmp_path)
     write_ply(tmp_path / "me-a_gs_offset.ply", lam)
     (tmp_path / "me-a_textured_mesh.obj").write_text(
         "# x\n\n" + "".join(f"v {p[0]:.8f} {p[1]:.8f} {p[2]:.8f} 0.5 0.5 0.5\n" for p in pos) + "\nf 1 2 3\n")
-    head, flame = H.lam_head(tmp_path / "me-a_gs_offset.ply", tmp_path / "me-a_textured_mesh.obj")
+    head, base = H.lam_head(tmp_path / "me-a_gs_offset.ply", tmp_path / "me-a_textured_mesh.obj")
     np.testing.assert_allclose(head.xyz, pos, atol=1e-6)
     np.testing.assert_allclose(0.5 + SH_C0 * head.f_dc, rgb, atol=1e-6)
-    np.testing.assert_allclose(flame, pos[:H.FLAME_VERTS] - offset[:H.FLAME_VERTS], atol=1e-6)
+    np.testing.assert_allclose(base, pos - offset, atol=1e-6)  # every Gaussian's vertex; FLAME's mesh comes first
 
 
 def test_lam_head_refuses_a_mesh_that_doesnt_match(tmp_path):
@@ -292,3 +294,119 @@ def test_cli_head_swap_refuses_held_people_and_someone_elses_head(tmp_path, monk
     assert _cli(monkeypatch, root, tmp_path, "--person", "vishal") == 2
     assert capsys.readouterr().out.count("REFUSED") == 2
     assert sorted(p.name for p in (tmp_path / "dreams").iterdir()) == [".held", "vishal"]
+
+
+# ---------------- life in the face: expr.bin, the living idle, skinning by correspondence ----------------
+
+FACES = np.array([[i, i + 1, i + 2] for i in range(0, H.FLAME_VERTS - 2, 3)])
+MID_EDGES = [(0, 1), (3, 4), (3001, 3002)]
+
+
+def _lam_with_flame(tmp_path, verts, flame_ids, R=None, s=1.12, t=(0.02, -0.3, 0.05)):
+    """LAM's head (FLAME's vertices + three edge midpoints, in LAM's frame) and a FLAME npz whose template is the same
+    mesh in yet another frame, whose expression 0 moves every vertex 1 mm along FLAME's +x."""
+    R = _rot([0, 1, 0], 0.3) if R is None else R
+    t = np.asarray(t)
+    flame_lam = (verts[flame_ids] - t) @ R / s
+    base = np.concatenate([flame_lam, [(flame_lam[a] + flame_lam[b]) / 2 for a, b in MID_EDGES]])
+    lam = _gaussians(np.zeros_like(base))
+    lam.f_dc = np.full((len(base), 3), 0.4)
+    write_ply(tmp_path / "vishal-a_gs_offset.ply", lam)
+    (tmp_path / "vishal-a_textured_mesh.obj").write_text("".join(f"v {p[0]} {p[1]} {p[2]}\n" for p in base))
+    R0, k, t0 = _rot([1, 0, 0], -0.2), 0.9, np.array([0.0, 0.1, -0.05])  # LAM = k R0 FLAME + t0
+    dirs = np.zeros((H.FLAME_VERTS, 3, 100))
+    dirs[:, 0, 0] = 1e-3
+    np.savez(tmp_path / "flame.npz", v_template=(flame_lam - t0) @ R0 / k, faces=FACES, expr_dirs=dirs)
+    return (s, R, t), (k, R0), base
+
+
+def _swap(tmp_path, root, **kw):
+    return H.swap_bundle(root, tmp_path / "vishal-a_gs_offset.ply", tmp_path / "vishal-a_textured_mesh.obj",
+                         tmp_path / "SMPLX_NEUTRAL.npz", tmp_path / "SMPL-X__FLAME_vertex_ids.npy", tmp_path / "dreams",
+                         "vishal-head", **kw)
+
+
+def test_swap_writes_expr_bin_in_the_avatars_frame_and_a_living_idle(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    (s, R, _), (k, R0), base = _lam_with_flame(tmp_path, verts, flame_ids)
+    out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
+    assert validate_bundle(out) == []
+    dream = json.loads((out / "dream.json").read_text())
+    report = json.loads((out / "head_swap.json").read_text())
+    assert dream["avatar"]["expr"] == F.EXPR_FILE and dream["avatar"]["exprChannels"] == list(F.EXPR_CHANNELS)
+    first, d = F.read_expr_bin(out / F.EXPR_FILE)
+    assert first == report["bodyKept"] and len(d) == report["headKept"]
+    want = s * R @ (k * R0 @ [1e-3, 0, 0])  # FLAME's frame -> LAM's -> the avatar's
+    np.testing.assert_allclose(d[:, 0], np.tile(want, (len(d), 1)), atol=2e-6)
+    assert report["expr"]["subdivision"] == {"matched": len(MID_EDGES), "unmatched": 0}
+    assert set(report["expr"]["blink"]) == {"openFraction", "pcaShare", "leakMm"}
+    # the source's idle is now the living one: 20 s, blinking through the blink channel only
+    m = Motion.load(out / dream["avatar"]["motion"])
+    assert report["motion"] == "living idle" and m.num_frames / m.fps == pytest.approx(20.0)
+    assert dream["frameCount"] == m.num_frames and dream["durationS"] == pytest.approx(20.0)
+    assert np.abs(np.delete(m.expr, F.BLINK, axis=1)).max() == 0 and m.expr[:, F.BLINK].max() == 1.0
+    src = Motion.load(root / "avatar" / "motion.json")
+    np.testing.assert_allclose(m.betas, src.betas)
+    np.testing.assert_allclose(np.median(m.root_t[:, 1]), np.median(src.root_t[:, 1]), atol=1e-6)
+
+
+def test_swap_never_replaces_a_performance(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    dream = json.loads((root / "dream.json").read_text())
+    dream["source"] = {"avatar": "vishal.work/code.pt", "motion": "runs/lebron-jumper/views/gvhmr"}  # digs-perform
+    (root / "dream.json").write_text(json.dumps(dream))
+    _lam_with_flame(tmp_path, verts, flame_ids)
+    out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
+    report = json.loads((out / "head_swap.json").read_text())
+    assert report["motion"] == "kept"
+    assert (out / "avatar" / "motion.json").read_text() == (root / "avatar" / "motion.json").read_text()
+    assert validate_bundle(out) == []
+
+
+def test_swap_skins_lams_head_by_the_flame_correspondence(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    (s, R, t), _, base = _lam_with_flame(tmp_path, verts, flame_ids)
+    out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
+    report = json.loads((out / "head_swap.json").read_text())
+    lbs = np.load(tmp_path / "SMPLX_NEUTRAL.npz")["weights"]
+    placed = s * base @ R.T + t
+    kept = np.flatnonzero(placed[:, 1] >= report["seamY"] - report["bandM"])
+    pairs = np.array([(i, i) for i in range(H.FLAME_VERTS)] + MID_EDGES)[kept]
+    idx, q = read_skin_bin(out / "avatar" / "skin.bin")
+    want_idx, want_q = quantize_top4(0.5 * (lbs[flame_ids[pairs[:, 0]]] + lbs[flame_ids[pairs[:, 1]]]))
+    np.testing.assert_array_equal(idx[report["bodyKept"]:], want_idx)
+    np.testing.assert_array_equal(q[report["bodyKept"]:], want_q)
+
+
+def test_swap_without_flame_has_no_expr_and_keeps_the_motion(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_with_flame(tmp_path, verts, flame_ids)
+    out = _swap(tmp_path, root)
+    dream = json.loads((out / "dream.json").read_text())
+    assert "expr" not in dream["avatar"] and not (out / F.EXPR_FILE).exists()
+    assert json.loads((out / "head_swap.json").read_text())["motion"] == "kept"
+    assert validate_bundle(out) == []
+
+
+def test_validate_catches_an_expr_bin_that_doesnt_fit(tmp_path):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_with_flame(tmp_path, verts, flame_ids)
+    out = _swap(tmp_path, root, flame_npz=tmp_path / "flame.npz")
+    first, d = F.read_expr_bin(out / F.EXPR_FILE)
+    F.write_expr_bin(out / F.EXPR_FILE, first, d[:-1])  # stops one Gaussian short of the end
+    assert any("expr.bin" in e for e in validate_bundle(out))
+
+
+def test_cli_head_swap_with_flame_writes_expr_and_can_keep_the_motion(tmp_path, monkeypatch, capsys):
+    root, verts, flame_ids = _synthetic_body(tmp_path)
+    _lam_with_flame(tmp_path, verts, flame_ids)
+    (tmp_path / "heads").mkdir()
+    for f in ("vishal-a_gs_offset.ply", "vishal-a_textured_mesh.obj"):
+        shutil.copy(tmp_path / f, tmp_path / "heads" / f)
+    assert _cli(monkeypatch, root, tmp_path, "--person", "vishal", "--flame-expr", str(tmp_path / "flame.npz")) == 0
+    out = tmp_path / "dreams" / "vishal-head"
+    assert (out / F.EXPR_FILE).is_file() and json.loads((out / "head_swap.json").read_text())["motion"] == "living idle"
+    assert _cli(monkeypatch, root, tmp_path, "--person", "vishal", "--flame-expr", str(tmp_path / "flame.npz"),
+                "--keep-motion") == 0
+    assert json.loads((out / "head_swap.json").read_text())["motion"] == "kept"
+    assert "OK" in capsys.readouterr().out and validate_bundle(out) == []

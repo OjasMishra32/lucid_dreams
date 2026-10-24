@@ -37,6 +37,9 @@ def main() -> int:
     h.add_argument("--id", help="new bundle id (default <id>-head, next to the source)")
     h.add_argument("--held", help="another dreams/.held to honour too (the one next to the bundle always counts)")
     h.add_argument("--seam-offset", type=float, default=0.0, help="move the jaw-line seam up (+) or down, metres")
+    h.add_argument("--flame-expr", help="FLAME extract from flame_expr_npz.py: adds avatar/expr.bin (expressions and "
+                   "this face's blink) and the 20 s living idle")
+    h.add_argument("--keep-motion", action="store_true", help="keep the source's motion.json even if it is an idle")
     args = parser.parse_args()
 
     if args.cmd == "validate":
@@ -85,7 +88,7 @@ def main() -> int:
             print("REFUSED", *refused, sep="\n     ")
             return 2
         root = H.swap_bundle(src, ply, obj, args.smplx, args.flame_ids, src.parent, new_id,
-                             seam_offset=args.seam_offset)
+                             seam_offset=args.seam_offset, flame_npz=args.flame_expr, keep_motion=args.keep_motion)
         errors = validate_bundle(root)
         print((root / "head_swap.json").read_text().strip())
         print(f"{'FAIL' if errors else 'OK  '} {root}", *errors, sep="\n     ")

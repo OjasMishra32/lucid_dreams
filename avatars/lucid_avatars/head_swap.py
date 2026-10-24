@@ -13,8 +13,11 @@ So position - offset over the first 5023 is LAM's shaped FLAME mesh, which pairs
 through SMPL-X's FLAME vertex ids (`SMPL-X__FLAME_vertex_ids.npy`, from the SMPL-X site).
 
 Steps: align (Umeyama similarity, FLAME mesh -> the avatar's rest-pose SMPL-X head), replace (drop the body's
-head, jaw and eye Gaussians above the jaw line, cross-fade the seam), skin (each head Gaussian takes its nearest
-SMPL-X vertex's weights), tone (the head's skin matched to the body's on the neck ring, in Lab).
+head, jaw and eye Gaussians above the jaw line, cross-fade the seam), skin (each head Gaussian takes the weights of
+its own FLAME vertex's SMPL-X twin, or the mean over its edge; nearest SMPL-X vertex only where that isn't known),
+tone (the head's skin matched to the body's on the neck ring, in Lab), and, given FLAME (flame_expr_npz.py), life:
+avatar/expr.bin (face_expr.py: FLAME's expressions and a blink fitted to these eyelids) and the 20 s living idle in
+place of the source's idle, blinking through it.
 """
 
 from __future__ import annotations
@@ -27,12 +30,14 @@ from pathlib import Path
 
 import numpy as np
 
+from . import face_expr as FE
 from .gaussian_ply import SH_C0, Gaussians, read_ply, write_ply
+from .idle import IDLE_S, idle_loop
 from .motion import Motion
 from .skinning import SKELETON_FILE, SKIN_FILE, quantize_top4, read_skin_bin, rest_joints, write_skin_bin
-from .smplx_layout import J
+from .smplx_layout import LEFT_HAND, RIGHT_HAND, J
 
-FLAME_VERTS = 5023
+FLAME_VERTS = FE.FLAME_VERTS
 HEAD_JOINTS = (J["head"], J["jaw"], J["left_eye"], J["right_eye"])  # what the new head replaces
 SEAM_JOINTS = HEAD_JOINTS + (J["neck"],)  # body Gaussians that fade out at the seam
 SEAM_BELOW_JAW_M = 0.03  # the jaw line: this far below the SMPL-X jaw joint (approximate; --seam-offset moves it)
@@ -162,15 +167,15 @@ def read_obj_vertices(path: str | Path) -> np.ndarray:
 
 
 def lam_head(offset_ply: str | Path, textured_obj: str | Path) -> tuple[Gaussians, np.ndarray]:
-    """(LAM's head Gaussians at their positions with SH colour, its shaped FLAME mesh (5023, 3)), in LAM's space."""
+    """(LAM's head Gaussians at their positions with SH colour, every Gaussian's vertex (M, 3)), in LAM's space. The
+    first 5023 vertices are its shaped FLAME mesh; the rest are the subdivision's edge midpoints."""
     g = read_ply(offset_ply)
     pos = read_obj_vertices(textured_obj)
     if len(pos) != len(g) or len(g) < FLAME_VERTS:
         raise ValueError(f"{textured_obj} has {len(pos)} vertices for {len(g)} Gaussians in {offset_ply} (need the same "
                          f"count, at least {FLAME_VERTS}): not the same LAM head?")
-    flame = pos[:FLAME_VERTS] - g.xyz[:FLAME_VERTS]
     rgb = np.clip(g.f_dc, 0, 1)
-    return replace(g, xyz=pos, f_dc=(rgb - 0.5) / SH_C0, f_rest=np.zeros((len(g), 0))), flame
+    return replace(g, xyz=pos, f_dc=(rgb - 0.5) / SH_C0, f_rest=np.zeros((len(g), 0))), pos - g.xyz
 
 
 # ---------------------------------------------------------------- replace, skin, tone
@@ -211,6 +216,45 @@ def nearest_vertex_skin(points: np.ndarray, verts: np.ndarray, lbs_weights: np.n
     nearest = np.concatenate([np.argmin(vv[None] - 2 * c @ verts.T, axis=1)
                               for c in np.array_split(points, max(1, -(-len(points) // chunk)))])
     return quantize_top4(np.asarray(lbs_weights, dtype=np.float64)[nearest])
+
+
+def head_skin(points: np.ndarray, rows: np.ndarray, pairs: np.ndarray | None, flame_ids: np.ndarray,
+              verts: np.ndarray, lbs_weights: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """skin.bin records for LAM's head Gaussians `rows` (at `points`, avatar space). A Gaussian on FLAME vertex i
+    takes SMPL-X vertex flame_ids[i]'s weights, one on an edge's midpoint the mean of its two ends' (pairs, from
+    face_expr.subdivision_parents): the exact twin, so an upper-lip Gaussian never takes the jaw's weights from a lower
+    lip touching it. Without pairs, the midpoints fall back to their nearest SMPL-X vertex."""
+    rows = np.asarray(rows)
+    lbs = np.asarray(lbs_weights, dtype=np.float64)
+    if pairs is None:
+        pairs = np.full((rows.max(initial=0) + 1, 2), -1)
+        pairs[:FLAME_VERTS] = np.arange(FLAME_VERTS)[:, None]
+    p = pairs[rows]
+    known = p[:, 0] >= 0
+    idx = np.zeros((len(rows), 4), dtype=np.uint8)
+    q = np.zeros((len(rows), 4), dtype=np.uint8)
+    if known.any():
+        idx[known], q[known] = quantize_top4(0.5 * (lbs[flame_ids[p[known, 0]]] + lbs[flame_ids[p[known, 1]]]))
+    if (~known).any():
+        idx[~known], q[~known] = nearest_vertex_skin(np.asarray(points)[~known], verts, lbs)
+    return idx, q
+
+
+def living_idle(src: Motion, source: dict | None) -> Motion | None:
+    """The 20 s living idle (blinking through face_expr's blink channel) for an avatar whose motion is an idle: it
+    stands in place (root within 5 cm, height within 3 cm) and isn't a digs-perform performance (source names an
+    avatar and a motion). Betas, standing height and finger pose (DiGS's hand mean) come from the source. None when
+    the motion is something to keep."""
+    source = source or {}
+    if "avatar" in source and "motion" in source:
+        return None
+    if np.ptp(src.root_t[:, [0, 2]], axis=0).max() > 0.05 or np.ptp(src.root_t[:, 1]) > 0.03:
+        return None
+    m = idle_loop(src.betas, IDLE_S, int(round(src.fps)), float(np.median(src.root_t[:, 1])),
+                  blink_expr=np.eye(FE.N_CHANNELS)[FE.BLINK])
+    m.pose[:, LEFT_HAND] = src.pose[0, LEFT_HAND]
+    m.pose[:, RIGHT_HAND] = src.pose[0, RIGHT_HAND]
+    return m
 
 
 _M = np.array([[0.4124564, 0.3575761, 0.1804375], [0.2126729, 0.7151522, 0.0721750], [0.0193339, 0.1191920, 0.9503041]])
@@ -262,9 +306,11 @@ def _smplx_rest(smplx_npz: str | Path, betas: np.ndarray) -> tuple[np.ndarray, n
 
 def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | Path, smplx_npz: str | Path,
                 flame_ids_npy: str | Path, dreams_dir: str | Path, new_id: str, name: str | None = None,
-                seam_offset: float = 0.0) -> Path:
+                seam_offset: float = 0.0, flame_npz: str | Path | None = None, keep_motion: bool = False) -> Path:
     """dreams_dir/new_id: the avatar bundle with LAM's head. Writes head_swap.json (the numbers) next to dream.json.
-    The source's preview and thumb show the old face, so they are left out until the GPU step renders new ones."""
+    The source's preview and thumb show the old face, so they are left out until the GPU step renders new ones.
+    With flame_npz (flame_expr_npz.py's FLAME extract) the head gets avatar/expr.bin and, unless keep_motion or the
+    source's motion is a performance, the 20 s living idle that blinks."""
     src = Path(bundle)
     dream = json.loads((src / "dream.json").read_text())
     av = dream["avatar"]
@@ -279,7 +325,8 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
         raise ValueError(f"skeleton.json is {err * 1000:.1f} mm from this SMPL-X model with the bundle's betas: not the "
                          "model DiGS used, or not this avatar's betas")
 
-    head, flame = lam_head(offset_ply, textured_obj)
+    head, base = lam_head(offset_ply, textured_obj)
+    flame = base[:FLAME_VERTS]
     ids = np.load(flame_ids_npy).astype(np.int64).reshape(-1)
     if len(ids) != FLAME_VERTS:
         raise ValueError(f"{flame_ids_npy} has {len(ids)} ids, expected FLAME's {FLAME_VERTS}")
@@ -288,6 +335,10 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
     if rms > MAX_ALIGN_RMS_M:
         raise ValueError(f"LAM's FLAME mesh fits the SMPL-X head only to {rms * 100:.1f} cm RMS: wrong vertex ids?")
     head = transform_gaussians(head, s, R, t)
+    pairs = expr_d = expr_report = None
+    if flame_npz is not None:
+        expr_d, pairs, expr_report = FE.head_channels(base, FE.load_flame(flame_npz))
+        expr_d = s * expr_d @ R.T  # LAM's frame -> the avatar's (directions: rotation and scale, no shift)
 
     seam_y = float(rest[J["jaw"], 1] - SEAM_BELOW_JAW_M + seam_offset)
     dominant = idx[np.arange(len(idx)), np.argmax(q, axis=1)].astype(np.int64)
@@ -296,7 +347,7 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
     head = replace(head, f_dc=(match_tone(_rgb(head), ring_h, _rgb(body)[ring_b]) - 0.5) / SH_C0)
 
     body_k, keep_b, head_k, keep_h = cross_fade(body, dominant, head, seam_y)
-    h_idx, h_q = nearest_vertex_skin(head_k.xyz, verts, lbs)
+    h_idx, h_q = head_skin(head_k.xyz, np.flatnonzero(keep_h), pairs, ids, verts, lbs)
 
     # what the photos really saw: the body as its reality.ply says (tinted = imagined); LAM's head from one frontal
     # photo, so its front half (SMPL-X's rest pose faces +Z)
@@ -330,10 +381,21 @@ def swap_bundle(bundle: str | Path, offset_ply: str | Path, textured_obj: str | 
 
     report = {"scale": round(s, 6), "alignRmsM": round(rms, 6), "seamY": round(seam_y, 4), "bandM": BAND_M,
               "bodyKept": int(keep_b.sum()), "bodyDropped": int((~keep_b).sum()), "headKept": int(keep_h.sum()),
-              "headPhoto": Path(offset_ply).name.removesuffix("_gs_offset.ply"), "from": dream["id"]}
+              "headPhoto": Path(offset_ply).name.removesuffix("_gs_offset.ply"), "from": dream["id"], "motion": "kept"}
+    avatar = {**av, "reality": REALITY_FILE}
+    if expr_d is not None:
+        FE.write_expr_bin(out / FE.EXPR_FILE, int(keep_b.sum()), expr_d[keep_h])
+        avatar.update(expr=FE.EXPR_FILE, exprChannels=list(FE.EXPR_CHANNELS))
+        report["expr"] = expr_report
+        living = None if keep_motion else living_idle(Motion.load(src / av["motion"]), dream.get("source"))
+        if living is not None:
+            living.save(out / av["motion"])
+            dream.update(fps=living.fps, frameCount=living.num_frames,
+                         durationS=round(living.num_frames / living.fps, 3))
+            report["motion"] = "living idle"
     (out / "head_swap.json").write_text(json.dumps(report, indent=2) + "\n")
     dream.update(id=new_id, name=name or f"{dream['name']} (LAM head)", preview=None, thumb=None)
-    dream["avatar"] = {**av, "reality": REALITY_FILE}
+    dream["avatar"] = avatar
     dream["metrics"] = {**(dream.get("metrics") or {}), "seenFraction": round(float(seen.mean()), 4)}
     dream["source"] = {**(dream.get("source") or {}),
                        "head": {"model": "LAM (aigc3d, SIGGRAPH 2025), one photo -> FLAME Gaussian head",

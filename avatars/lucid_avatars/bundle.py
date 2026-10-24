@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .face_expr import expr_errors
 from .gaussian_ply import Gaussians, header_errors, read_header, write_ply
 from .motion import Motion, is_vec, validate_motion_dict
 from .skinning import SKELETON_FILE, SKIN_FILE, skin_errors, write_skin_bin
@@ -140,9 +141,10 @@ def _avatar_errors(dream: dict, avatar: dict, inside) -> list[str]:
     if ply:
         ply_errors = [f"{ply.name}: {e}" for e in header_errors(ply)]
         errors += ply_errors
-        paths_ok = all(inside(f"avatar.{k}", avatar[k]) for k in ("skin", "skeleton") if k in avatar)
+        paths_ok = all(inside(f"avatar.{k}", avatar[k]) for k in ("skin", "skeleton", "expr") if k in avatar)
         if not ply_errors and paths_ok:
             errors += skin_errors(inside("bundle", "."), avatar, read_header(ply)[1])
+            errors += expr_errors(inside("bundle", "."), avatar, read_header(ply)[1])
     motion_path = inside("avatar.motion", avatar.get("motion", MOTION_FILE))
     if not motion_path:
         return errors
