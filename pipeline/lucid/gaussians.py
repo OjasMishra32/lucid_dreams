@@ -155,6 +155,37 @@ def write_spz(path: Path, g: Gaussians, fractional_bits: int = 12, sh_degree: in
     return len(payload)
 
 
+def read_spz(path: Path) -> Gaussians:
+    """Reads SPZ v2 as write_spz stores it (colour and SH come back at SPZ's 8-bit precision)."""
+    raw = gzip.decompress(Path(path).read_bytes())
+    magic, version, n, degree, fractional_bits, _, _ = struct.unpack_from("<IIIBBBB", raw, 0)
+    if magic != SPZ_MAGIC or version != 2:
+        raise ValueError(f"{path}: not an SPZ v2 file")
+    k = (degree + 1) ** 2 - 1
+    off = 16
+    take = lambda size: np.frombuffer(raw, np.uint8, size, off)  # noqa: E731
+    pos = take(n * 9).reshape(n, 3, 3).astype(np.int64); off += n * 9
+    fixed = pos[..., 0] | (pos[..., 1] << 8) | (pos[..., 2] << 16)
+    fixed = np.where(fixed & 0x800000, fixed - (1 << 24), fixed)
+    means = (fixed / (1 << fractional_bits)).astype(np.float32)
+    alpha = take(n).astype(np.float32) / 255.0; off += n
+    color = take(n * 3).reshape(n, 3).astype(np.float32); off += n * 3
+    scale = take(n * 3).reshape(n, 3).astype(np.float32); off += n * 3
+    rot = take(n * 3).reshape(n, 3).astype(np.float32); off += n * 3
+    sh = take(n * k * 3).reshape(n, k, 3).astype(np.float32) if k else np.zeros((n, 0, 3), np.float32)
+    xyz = rot / 127.5 - 1.0
+    w = np.sqrt(np.clip(1.0 - (xyz**2).sum(1, keepdims=True), 0.0, 1.0))
+    a = np.clip(alpha, 1e-4, 1 - 1e-4)
+    return Gaussians(
+        means,
+        scale / 16.0 - 10.0,
+        np.concatenate([w, xyz], 1).astype(np.float32),
+        np.log(a / (1 - a)).astype(np.float32),
+        ((color / 255.0 - 0.5) / SPZ_COLOR_SCALE).reshape(n, 1, 3).astype(np.float32),
+        ((sh - 128.0) / 128.0).astype(np.float32),
+    )
+
+
 # ---------------------------------------------------------------------------------------------------------------
 
 

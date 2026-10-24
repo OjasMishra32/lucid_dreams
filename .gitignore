@@ -32,3 +32,6 @@ apps/webxr/dist/
 
 # the small sample bundle is committed on purpose (everyone develops against it)
 !samples/**
+
+# raw site media before it's re-encoded for the web (big files stay out of git)
+/apps/site/public/media-staging/
