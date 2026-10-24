@@ -237,6 +237,8 @@ export class Basketball {
     this.stateT += dt;
     this.hoop?.updateWorldMatrix(true, false);
     if (this.hoop) this.hoopInv.copy(this.hoop.matrixWorld).invert();
+    // the person mirrored (palm menu): the hoop that rides with them is too, but its score stays readable
+    if (this.hoop && this.counter) this.counter.mesh.scale.x = this.hoop.matrixWorld.determinant() < 0 ? -1 : 1;
     this.palms.forEach((p, k) => p.read(this.hands[k]));
     if (this.state === "away") return;
 

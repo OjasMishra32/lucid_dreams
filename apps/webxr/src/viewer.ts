@@ -11,6 +11,8 @@ import { nextPlace, type Place, Places, startingPlace } from "./places";
 import { loadProps } from "./props";
 import { Basketball, wantsBall } from "./basketball";
 import { Golf, wantsClub } from "./club";
+import { Guitar, lessonChords, wantsGuitar } from "./guitar";
+import { setMirrored } from "./mirror";
 import { WorldLock } from "./xr/anchor";
 import { handOccluder, XrButton } from "./xr/hands";
 import { HandMenu, handSides } from "./xr/menu";
@@ -33,6 +35,9 @@ const ASK: Record<CoachState, [string, string]> = {
 const PLACE_DISTANCE = 1.8; // meters in front of you when you enter the room
 const LOAD_CONCURRENCY = 4;
 const SPEEDS = [1, 0.5, 0.25];
+type Place3 = "facing" | "beside" | "ahead";
+const PLACE_ORDER: Place3[] = ["facing", "beside", "ahead"];
+const PLACE_LABEL: Record<Place3, string> = { facing: "Facing you", beside: "Beside you", ahead: "Ahead of you" };
 
 export async function renderViewer(root: HTMLElement, id: string) {
   root.innerHTML = `
@@ -122,6 +127,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const realityFrames: (SplatMesh | null)[] = new Array(count).fill(null);
   let active = frames;
   let loaded = 0;
+  let mirrored = false; // flipped left to right (the palm menu's Mirror), so you can follow them like a mirror
   const ring = $<HTMLElement>("#ring") as unknown as SVGCircleElement;
   const circumference = 2 * Math.PI * 19;
   ring.style.strokeDasharray = `${circumference}`;
@@ -138,6 +144,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const mesh = new SplatMesh({ url });
       await mesh.initialized;
       mesh.visible = false;
+      if (mirrored) setMirrored(mesh, true);
       person.add(mesh);
       target[i] = mesh;
       progress?.();
@@ -426,6 +433,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       if (on && !avatarReality) {
         realityBtn.textContent = "Loading…";
         avatarReality = await SkinnedAvatar.load(dream, avatar.motion, dream.avatar!.reality!);
+        if (mirrored) setMirrored(avatarReality.mesh, true);
         person.add(avatarReality.mesh);
       }
       avatarRealityOn = on;
@@ -478,6 +486,16 @@ export async function renderViewer(root: HTMLElement, id: string) {
     ccBtn.setAttribute("aria-pressed", String(captionsOn));
   });
 
+  // ---------------- where they stand, and which way round ----------------
+  let placeMode: Place3 = experience?.place ?? "facing";
+  const setMirror = (on: boolean) => {
+    mirrored = on;
+    for (const m of [...frames, ...realityFrames]) if (m) setMirrored(m, on);
+    if (avatar) setMirrored(avatar.mesh, on);
+    if (avatarReality) setMirrored(avatarReality.mesh, on);
+    if (props) props.group.scale.x = on ? -1 : 1; // the ball and the hoop go round with them
+  };
+
   // ---------------- your room (WebXR passthrough) ----------------
   // Hands only, and your hands are free: you copy a dance, hold a club, play along, so no pinch or gesture ever changes
   // anything. The controls live on your left palm (turn it up toward you; press with your right index fingertip), your
@@ -486,7 +504,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
   hands.forEach((h) => scene.add(h));
   const sideOf = handSides(hands);
   const occluders = hands.map((h) => handOccluder(h, scene));
-  const menu = new HandMenu(hands, sideOf, scene, 2);
+  const playsGuitar = wantsGuitar(dream, experience);
+  const menu = new HandMenu(hands, sideOf, scene, playsGuitar ? 3 : 2);
   xrPlay = new XrButton("play", "Pause", () => setPlaying(!playing));
   xrSpeed = new XrButton("speed", "1×", () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]));
   if (lesson)
@@ -505,6 +524,20 @@ export async function renderViewer(root: HTMLElement, id: string) {
     menu.add(xrReality);
   }
   menu.add(new XrButton("here", "Bring here", () => (placeNextFrame = true)));
+  // follow along: flip them like a mirror, and stand them facing you, beside you or ahead of you
+  const said = [dream.intent, dream.name, experience?.intent, experience?.title].join(" ");
+  if (lesson || /danc|tai ?chi|yoga|routine|choreo|kata|workout|exercise|stretch/i.test(said)) {
+    const xrMirror: XrButton = new XrButton("mirror", "Mirror", () => {
+      setMirror(!mirrored);
+      xrMirror.setOn(mirrored);
+    });
+    const xrPlaceMode: XrButton = new XrButton("place-mode", PLACE_LABEL[placeMode], () => {
+      placeMode = PLACE_ORDER[(PLACE_ORDER.indexOf(placeMode) + 1) % PLACE_ORDER.length];
+      xrPlaceMode.setLabel(PLACE_LABEL[placeMode]);
+      placeNextFrame = true; // re-placed where you stand now, and anchored there
+    });
+    menu.add(xrMirror, xrPlaceMode);
+  }
   if (PLACES) {
     xrPlace = new XrButton("place", places.current?.name ?? "Your room", cyclePlace);
     xrPlace.setOn(!!places.current);
@@ -540,6 +573,19 @@ export async function renderViewer(root: HTMLElement, id: string) {
         hoopLock?.lock();
       }),
     );
+  // guitar: a real acoustic worn on you, its neck in your left hand, strummed with your right; chords on the palm menu
+  const guitar = playsGuitar ? new Guitar(scene, renderer, hands, sideOf, listener, lessonChords(experience)) : null;
+  if (guitar) {
+    const chordButtons = guitar.chords.map((c) => new XrButton(`chord-${c}`, c, () => guitar.setChord(c)));
+    const fingersButton = new XrButton("fingers", "Fingers", () => guitar.setFingers(!guitar.fingers));
+    guitar.onChange = () => {
+      chordButtons.forEach((b, k) => b.setOn(!guitar.fingers && guitar.chords[k] === guitar.chord));
+      fingersButton.setOn(guitar.fingers);
+    };
+    guitar.onChange();
+    menu.add(...chordButtons, fingersButton);
+  }
+  const headTurn = new THREE.Quaternion();
   const personRadius = dream.bounds ? Math.max(0.25, ...[0, 2].flatMap((k) => [Math.abs(dream.bounds!.min[k]), Math.abs(dream.bounds!.max[k])])) : 0.35;
   const releaseLocks = () =>
     locks.forEach((l) => {
@@ -552,7 +598,13 @@ export async function renderViewer(root: HTMLElement, id: string) {
 
   const caption = spatialCaption(
     dream.name,
-    golf ? "Close your hands round the club  ·  Left palm up for controls" : hoopBall ? "Palms on the ball to hold it  ·  Left palm up for controls" : "Turn your left palm up for controls",
+    golf
+      ? "Close your hands round the club  ·  Left palm up for controls"
+      : hoopBall
+        ? "Palms on the ball to hold it  ·  Left palm up for controls"
+        : guitar
+          ? "Neck in your left hand, strum with your right  ·  Left palm up for controls"
+          : "Turn your left palm up for controls",
   );
   caption.visible = false;
   person.add(caption);
@@ -577,6 +629,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       captionUntil = performance.now() + 7000;
       golf?.setActive(true);
       hoopBall?.setActive(true);
+      guitar?.setActive(true);
     },
     onExitXr: () => {
       coach?.stop(); // leaving the room ends the question: the mic is released
@@ -590,6 +643,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
         // the session that held the anchor has already ended
       }
       hoopBall?.setActive(false);
+      guitar?.setActive(false);
       person.position.set(0, 0, 0);
       person.rotation.set(0, Math.PI, 0);
       caption.visible = false;
@@ -614,22 +668,24 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     forward.normalize();
     const right = new THREE.Vector3(-forward.z, 0, forward.x);
-    const place = experience?.place ?? "facing";
+    const place = placeMode;
+    // (whole turns are set, not just .y: an anchor writes the quaternion back, and its Euler angles can come out as
+    // x = z = 180 degrees, which a lone .y would leave in and turn them round)
     if (place === "beside") {
       // at your side, facing the way you face: copy them like the person next to you in a class
       person.position.set(head.x + right.x * 0.8 + forward.x * 0.5, 0, head.z + right.z * 0.8 + forward.z * 0.5);
-      person.rotation.y = Math.atan2(forward.x, forward.z) + Math.PI;
+      person.rotation.set(0, Math.atan2(forward.x, forward.z) + Math.PI, 0);
     } else if (place === "ahead") {
       // in front of you, facing away: follow them like the teacher at the front of the room
       person.position.set(head.x + forward.x * 1.5, 0, head.z + forward.z * 1.5);
-      person.rotation.y = Math.atan2(forward.x, forward.z) + Math.PI;
+      person.rotation.set(0, Math.atan2(forward.x, forward.z) + Math.PI, 0);
     } else {
       person.position.set(head.x + forward.x * PLACE_DISTANCE, 0, head.z + forward.z * PLACE_DISTANCE);
-      person.rotation.y = Math.atan2(forward.x, forward.z); // front (-Z) turned to face you
+      person.rotation.set(0, Math.atan2(forward.x, forward.z), 0); // front (-Z) turned to face you
     }
     // the step card: at eye level, off to the right so it never hides them
     stepCardGroup.position.set(head.x + forward.x * 0.95 + right.x * 0.42, head.y - 0.08, head.z + forward.z * 0.95 + right.z * 0.42);
-    stepCardGroup.rotation.y = Math.atan2(-forward.x, -forward.z) - 0.35;
+    stepCardGroup.rotation.set(0, Math.atan2(-forward.x, -forward.z) - 0.35, 0);
     // the tee: on the floor just in front of you, so you can swing along without walking into them
     golf?.place(head, forward);
     hoopBall?.place(head, forward, person, personRadius);
@@ -665,6 +721,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const open = menu.update(eyes, performance.now(), dt);
       golf?.update(dt, open);
       hoopBall?.update(dt, open, eyes, flatForward(ahead));
+      if (guitar) guitar.update(dt, open, eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn));
     }
     if (lesson) {
       if (playing && lesson.phase === "watch") t = Math.min(t + dt * speed, duration);
@@ -692,6 +749,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
         // your eyes (the headset, or the laptop's camera) in the person's own space
         (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(eye);
         shownAvatar.mesh.worldToLocal(eye);
+        if (mirrored) eye.x = -eye.x; // they're drawn flipped: look where you'd be in their unflipped space
         shownAvatar.pose(t, (local, rootT, skeleton) => look.apply(local, rootT, skeleton, eye, dt));
       } else shownAvatar.pose(t);
       shownAvatar.mesh.opacity = reveal;
@@ -704,7 +762,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     if (!renderer.xr.isPresenting) controls.update();
     renderer.render(scene, camera);
   });
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, hands };
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewer = { camera, controls, person, places, setPlace, renderer, menu, golf, hoopBall, guitar, hands, setMirror };
 }
 
 /** A soft contact shadow under the feet, so the person reads as standing on the floor rather than floating. */
