@@ -35,7 +35,8 @@ opens `/?mode=court&emulate&probe=capture&bundle=/bundle/` in headless Chrome, c
 the page through `window.__court` (`probe.ts`). With `?probe` every XR frame advances the show by exactly 1/72 s
 (IWER runs on the host's rAF, so the e2e never measures wall-clock timing) and in capture mode every frame is read
 back in the page right after `renderer.render`: alpha min/mean, mean luma, a 16 x 9 luma grid, the phase machine's
-clocks (`still`, `lightsUp`, `tF`, `roomP`) and the **view** it was drawn from, as a pinhole camera in court space
+clocks (`still`, `lightsUp`, `tF`, `roomP`), the show frame handed to the video and the proxies (`fed`), the light
+field's beat and time (`lightBeat`, `lightT`) and the **view** it was drawn from, as a pinhole camera in court space
 (OpenCV axes, the same convention as the bundle's cameras). `--timing` swaps the read-back for CPU ms per frame and
 GPU ms per `renderer.render` (`EXT_disjoint_timer_query_webgl2`).
 
@@ -55,6 +56,8 @@ Exit 0 when every check that ran passed, 1 on a failure, 3 when every scenario a
 | `room` | E | P33-P35: fades 0.6 s out / 0.8 s back, the room shows, opaque again; the edge | timing and alpha written; P35 is E's |
 | `controls` | C | P21, P32 through IWER's hands | C's to write |
 | `walk` | C (P17: E) | no drift over a 17-pose walk; P17 once the freeze is built | drift written |
+| `wiring` | integrator | court.ts's wiring of C: seat.arrival, PersistentLock, the hands' light and draw order, seat.update's dt | written |
+| `freezehold` | integrator | the clock's frame reaches the video and the proxies every frame after F, See my room's jump lands the picture on F, a rushed fade never rushes the light (P44) | written; waits on video, proxies, handoff |
 
 `ctx` (see the top of `e2e.mjs`): `nextFrame()`, `frames(n)`, `until(phase, max)`, `save(name)` (the next frame as a
 PNG; resolves with its log, view included), `pressFrames(action, n)` (press and the next n frames in one go: frames

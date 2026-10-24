@@ -91,12 +91,15 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let setup = true; // until Seat here
   let lightsUp = -1;
   let tF = 0; // seconds from F (the hand-off's clock)
+  let tLight = 0; // seconds from F in real time: the light's, which a rushed fade never rushes (handoff's lightT, P44)
+  let fed = -1; // the show frame this display frame handed the video and the proxies (-1 none)
   let tBack = 0; // seconds from the sit (the hand-back's clock)
   let inRoom = false;
   let roomP = 0;
   let reality = false;
   let clockState: ClockState | null = null;
   let videoRef: ShowVideo | null = null;
+  let lightRef: LightField | null = null;
   // every button, key and probe action waits for the top of the next XR frame (anchors need the XRFrame; one order)
   const queue: (() => void)[] = [];
   const actions = new Map<UiAction, () => void>();
@@ -110,6 +113,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           wiring: { lock: seatLock instanceof PersistentLock ? "persistent" : "other", seatXr: seatLock.xr === renderer.xr, seatDt, hands: handsLevel },
           clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
           onScreen: videoRef?.stats.onScreen ?? -1,
+          fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)),
         }),
         seatHere: () => actions.get("seatHere")?.(),
         press: (action) => actions.get(action)?.(),
@@ -144,6 +148,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const clock = new Clock(court, frames);
   clockState = clock.state;
   const light = new LightField(court);
+  lightRef = light;
   const video = new ShowVideo(renderer, bundle, { element: params.get("video") === "element" });
   videoRef = video;
   const proxies = new Proxies(renderer, bundle, video, light);
@@ -159,6 +164,13 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const seat = new Seat(court, frames, world, seatLock, params.has("seat") ? Number(params.get("seat")) : undefined);
   world.add(proxies.group);
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
+  // the textures follow the clock's frame every display frame from the watch on, the freeze included (stream D): a held
+  // F still goes up once it decodes, and See my room's jump to F can't leave an earlier frame on the video or proxies
+  const feed = (frame: number) => {
+    video.show(frame);
+    proxies.project(frame);
+    fed = frame;
+  };
   await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
 
   // ---------------- the machine ----------------
@@ -230,6 +242,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     light.set("watch", 0);
     sound.release();
     tF = 0;
+    tLight = 0;
     tBack = 0;
     rushed = false;
     restored = false;
@@ -247,6 +260,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       clock.jumpToFreeze();
       sound.timeStop(1); // landed on F: the full hush (it lifts only on the resume)
       tF = HANDOFF_END;
+      tLight = HANDOFF_END;
       handoff(tF, parts);
       go("open");
     }
@@ -256,6 +270,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   ui.onToggleRoom = () => queue.push(toggleRoom);
 
   const step = (dt: number) => {
+    fed = -1;
     // See my room, in every phase
     roomP = Math.min(1, Math.max(0, roomP + (inRoom ? dt / ROOM_OUT_S : -dt / ROOM_BACK_S)));
     courtWorld.room(roomP);
@@ -278,8 +293,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         sound.arrive(p);
         // the lit footage region rises out of black on pass 1's first frame (3.2), so the watch starts on a frame shown
         const first = court.video.segments.pass1[0];
-        video.show(first);
-        proxies.project(first);
+        feed(first);
         video.wipe(1 - p);
         if (lightsUp >= LIGHTS_UP_S) {
           light.set("watch", 0);
@@ -293,8 +307,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "resume": {
         if (!(inRoom && phase !== "resume")) clockState = clock.update(dt); // the clock holds in the room (3.6)
         const s = clock.state;
-        video.show(s.frame);
-        proxies.project(s.frame);
+        feed(s.frame);
         // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)
         courtWorld.frame(video.stats.onScreen >= 0 ? video.stats.onScreen : s.frame);
         video.prime(s.nextJump);
@@ -309,6 +322,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         }
         if (phase === "easing" && s.segment === "freeze") {
           tF = 0;
+          tLight = 0;
           rushed = false;
           go("handoff");
         }
@@ -320,19 +334,28 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         break;
       }
       case "handoff": {
+        feed(clock.state.frame);
         if (head.room[1] - seatedEyeY > RISE_FINISH && tF < BEATS.videoFades[1]) rushed = true;
         const [, fadeEnd] = BEATS.videoFades;
-        // rushed: whatever is left of the fade plays out in RISE_FADE_S
+        // rushed: whatever is left of the fade plays out in RISE_FADE_S; the light keeps the unrushed time
         tF += rushed && tF < fadeEnd ? Math.max(dt, ((fadeEnd - tF) * dt) / RISE_FADE_S) : dt;
-        handoff(tF, parts);
+        tLight += dt;
+        handoff(tF, parts, tLight);
         if (tF >= HANDOFF_END) go("open");
         break;
       }
       case "open":
       case "walking":
+        feed(clock.state.frame);
         freeze.update(head, dt);
+        // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
+        if (tLight < HANDOFF_END) {
+          tLight = Math.min(HANDOFF_END, tLight + dt);
+          light.set("handoff", tLight);
+        }
         break;
       case "returning": {
+        feed(clock.state.frame);
         freeze.update(head, dt);
         if (!restored && seat.seated(head)) {
           seat.restore(); // the chair back at the dolly seat, behind the room
