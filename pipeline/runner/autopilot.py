@@ -32,7 +32,17 @@ PHOTOS = Path.home() / "Downloads" / "lucid-photos"
 PHOTO = {".jpg", ".jpeg", ".png", ".heic"}
 SAMPLES = runner.REMOTE + "/repos/4DAnyone/data/source/pexels"
 SMPLX = runner.REMOTE + "/repos/4DAnyone/models/body_models/smplx/SMPLX_NEUTRAL.npz"
-ASSETS_READY = f"grep -l ASSETS_OK {runner.REMOTE}/jobs/lucid-digs-assets-*.log >/dev/null 2>&1 && echo yes || echo no"
+ASSETS_STATE = (f"grep -l ASSETS_OK {runner.REMOTE}/jobs/lucid-digs-assets-*.log >/dev/null 2>&1 && echo done || "
+                f"squeue -h -n lucid-digs-assets -o %i | head -1")
+
+
+def assets() -> tuple[bool, str]:
+    """(can queue avatar work now, the Slurm job id it must wait for or ""). Done -> (True, ""); queued or running
+    -> (True, jid); neither yet -> (False, "")."""
+    out = runner.remote(ASSETS_STATE).strip()
+    if out == "done":
+        return True, ""
+    return (True, out) if out else (False, "")
 
 
 def intent_for(f: Path) -> str:
@@ -70,7 +80,7 @@ def main():
                         continue
                     out = runner.submit("hpg:" + item["clip"], item["name"], item.get("id"), False, item.get("chunks", 6),
                                         item.get("startS", 0.0), intent=item.get("intent", ""))
-                    state["submitted"][out["id"]] = {"clip": item["clip"], "at": time.time()}
+                    state["submitted"][out["id"]] = {"clip": item["clip"], "at": time.time(), "slurm": out.get("slurm", {})}
                     log(f"submitted queued clip {out['id']}")
                 if a.seed_samples and not seeded:
                     clips = runner.remote(f"ls -1 {SAMPLES}/*.mp4").split()[: a.seed_samples]
@@ -111,8 +121,9 @@ def main():
                 if sizes.get(str(f)) == size:
                     settled.append(f)
                 sizes[str(f)] = size
-            if ready and settled and runner.remote(ASSETS_READY).strip() != "yes":
-                log(f"{len(settled)} photo(s) wait for the avatar assets")
+            can, assets_jid = assets() if ready and settled else (False, "")
+            if ready and settled and not can:
+                log(f"{len(settled)} photo(s) wait for the avatar assets job to be queued")
             elif ready:
                 for f in settled:
                     src = f
@@ -123,23 +134,36 @@ def main():
                                        capture_output=True)
                     rid = runner.slug(f.stem)
                     out = runner.submit(src, f.stem.replace("_", " ").replace("-", " ").strip().title(), rid, False, 6,
-                                        0.0, kind="avatar", intent=intent_for(f))
+                                        0.0, kind="avatar", intent=intent_for(f), after=assets_jid)
                     state["submitted"][out["id"]] = {"clip": str(f), "at": time.time(), "kind": "avatar"}
                     log(f"submitted photo {f.name} as avatar {out['id']}")
-            # follow-up jobs on finished runs (job paths are relative to the repo clone on HiPerGator)
+            # follow-up jobs (e.g. Vishal's fine-tune): queued in Slurm behind the run's export and the avatar assets, so
+            # they run through the night even if this Mac loses its connection. Job paths are relative to the repo clone.
             followed = state.setdefault("followed", [])
             for item in queue:
                 rid, jobs = item.get("id"), item.get("then", [])
-                if not jobs or rid in followed or rid not in state["fetched"] or runner.status(rid)["status"] != "done":
+                if not jobs or rid in followed or rid not in state["submitted"]:
                     continue
-                if runner.remote(ASSETS_READY).strip() != "yes":
-                    log(f"{rid}: done; its follow-ups wait for the avatar assets")
+                st = runner.status(rid)["status"]
+                if st == "failed":
+                    followed.append(rid)
                     continue
+                can, assets_jid = assets()
+                if not can:
+                    continue
+                export_jid = "" if st == "done" else str(state["submitted"][rid].get("slurm", {}).get("export", ""))
+                if st != "done" and not export_jid:
+                    export_jid = json.loads(runner.remote(f"cat {runner.REMOTE}/runs/{rid}/slurm.json")).get("export", "")
+                deps = ":".join(j for j in (export_jid, assets_jid) if j)
+                dep = f"--dependency=afterok:{deps} " if deps else ""
                 for job in jobs:
                     env = ",".join(f"{k}={v}" for k, v in {"RUN_ID": rid, **job.get("env", {})}.items())
-                    jid = runner.remote(f"cd {runner.REMOTE}/repos/lucid_dreams && git pull -q --ff-only && "
-                                        f"sbatch --parsable --export=ALL,{env} {job['job']}").strip()
-                    log(f"{rid}: submitted {job['job']} as job {jid}")
+                    # the repo clone appears when the assets job runs; until then, the code synced at connect time
+                    repo = f"{runner.REMOTE}/repos/lucid_dreams"
+                    jid = runner.remote(f"if [ -d {repo}/.git ]; then cd {repo} && git pull -q --ff-only; "
+                                        f"else cd {runner.REMOTE}/code; fi && "
+                                        f"sbatch --parsable {dep}--export=ALL,{env} {job['job']}").strip()
+                    log(f"{rid}: queued {job['job']} as job {jid}" + (f" (after {deps})" if deps else ""))
                 followed.append(rid)
             state_path.write_text(json.dumps(state, indent=2))
         except SystemExit as e:  # a dropped connection shouldn't kill the loop

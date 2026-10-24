@@ -55,9 +55,10 @@ def slug(text: str) -> str:
 
 
 def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks: int, start_s: float = 0.0,
-           kind: str = "replay", intent: str = "") -> dict:
+           kind: str = "replay", intent: str = "", after: str = "") -> dict:
     """clip: a local file, or "hpg:/path" for a clip already on HiPerGator. intent: what you want to do with this
-    person ("teach me this strum"), carried into dream.json for the experience step."""
+    person ("teach me this strum"), carried into dream.json for the experience step. after: a Slurm job id an avatar
+    job waits for (the avatar assets), so it can be queued before they're installed."""
     on_hpg = isinstance(clip, str) and clip.startswith("hpg:")
     if not on_hpg and not Path(clip).exists():
         raise SystemExit(f"no such clip: {clip}")
@@ -73,7 +74,8 @@ def submit(clip: Path | str, name: str, run_id: str | None, turbo: bool, chunks:
     if kind == "avatar":  # one photo -> a rigged person (Vishal's DiGS-Avatar job)
         job = {"id": run_id, "name": name, "kind": "avatar", "intent": intent, "submittedAt": time.time()}
         remote(f"cat > {run}/job.json <<'JSON'\n{json.dumps(job)}\nJSON")
-        jid = remote(f"mkdir -p {run}/logs && cd {run}/logs && sbatch --parsable --export=ALL,RUN={run} "
+        dep = f"--dependency=afterok:{after} " if after else ""
+        jid = remote(f"mkdir -p {run}/logs && cd {run}/logs && sbatch --parsable {dep}--export=ALL,RUN={run} "
                      f"{REMOTE}/code/pipeline/hpg/stage-avatar.sbatch").strip()
         remote(f"echo '{{\"avatar\": \"{jid}\"}}' > {run}/slurm.json")
         return {"id": run_id, "slurm": {"avatar": jid}}

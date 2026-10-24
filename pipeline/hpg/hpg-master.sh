@@ -8,7 +8,7 @@ until ssh -O check -o ControlPath=~/.ssh/cm-hpg hpg >/dev/null 2>&1; do
   (( ++tries > 3 )) && { print "\nHiPerGator keeps refusing $U: check the username (HPG_USER=...) and that the account exists."; exit 1; }
   print "\nLog in to HiPerGator as $U (password, then approve Duo on your phone):"
   ssh -fN -o ControlMaster=yes -o ControlPath=~/.ssh/cm-hpg -o ControlPersist=yes \
-    -o ServerAliveInterval=30 -o ServerAliveCountMax=10 "$U@hpg.rc.ufl.edu" || sleep 2
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -o TCPKeepAlive=no "$U@hpg.rc.ufl.edu" || sleep 2
 done
 print "Connected. Thanks! This window closes by itself."
 sleep 3
