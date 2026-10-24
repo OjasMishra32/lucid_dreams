@@ -16,6 +16,10 @@ private, outside the repo.
 16. **Your noon rule ("two players passing by noon, else ship the main player alone"):** the Turbo views
     (gate 2) land ~11 AM-noon and the full-quality freeze frames after ~1 PM. Apply the rule at gate 2 (both
     players' Turbo views not mush), or name a later time for the full runs?
+    **(Ojasva, 9:35 AM): two checkpoints.** At gate 2 (~noon), if both players' Turbo views aren't mush, run both at
+    full quality; if the second player's are, he becomes an LHM++ body (or drops out) and only the main player gets
+    the full run. Then **4 PM today** for the full-quality freeze frames: whoever isn't passing by then ships as their
+    Turbo freeze frame, so nothing new is still training on Sunday (feature freeze is 10 AM Sun).
 15. **Court Side's tests outside `src/` (your lane):** `apps/webxr/scripts/court/` (run with
     `node --experimental-transform-types --test`), because `tsc` includes `src/` and the repo has no test runner or
     Node types; putting them in `src/court/` would break `npm run build`. Nothing else outside `src/court/` changes
