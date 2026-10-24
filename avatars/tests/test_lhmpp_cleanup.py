@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("scipy")
+from scipy.spatial import cKDTree  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lhmpp_cleanup as C  # noqa: E402
 
@@ -140,3 +141,35 @@ def test_collar_mirror_paints_a_spot_on_the_jacket_with_the_jacket():
     rgb[shirt] = [0.85, 0.84, 0.82]  # and a white shirt well away from it (and from its mirror image)
     out, _, ids = C.collar_mirror(xyz, rgb, np.log(np.full((n, 3), 0.002)), np.ones(n, dtype=bool), 0.0)
     assert (out[spot] @ C.LUM).max() < 0.2 and set(np.flatnonzero(spot)) <= set(ids)
+
+
+def test_shirt_surface_fills_the_shirt_without_gaps_and_draws_a_tie():
+    # a flat torso front facing +Z (a grid, 5 mm), skinned to spine2, the shirt 14 cm wide, the tie down its middle
+    xs, ys = np.arange(-0.12, 0.1201, 0.005), np.arange(-0.45, 0.0501, 0.005)
+    gx, gy = np.meshgrid(xs, ys)
+    verts = np.c_[gx.ravel(), gy.ravel(), np.full(gx.size, 0.1)]
+    nx = len(xs)
+    faces = []
+    for j in range(len(ys) - 1):
+        for i in range(nx - 1):
+            a, b, c, d = j * nx + i, j * nx + i + 1, (j + 1) * nx + i, (j + 1) * nx + i + 1
+            faces += [[a, b, d], [a, d, c]]  # counter-clockwise seen from +Z: normals point out (+Z)
+    faces = np.array(faces)
+    lbs = np.zeros((len(verts), 55))
+    lbs[:, C.J["spine2"]] = 1.0
+    nb = 40
+    layout = dict(top=0.0, bottom=-0.40, nb=nb, lo=np.full(nb, -0.07), hi=np.full(nb, 0.07),
+                  gap_lo=np.full(nb, -0.02), gap_hi=np.full(nb, 0.02), white=np.array([0.85, 0.84, 0.82]),
+                  tie_c=np.array([0.12, 0.12, 0.14]))
+    s = C.shirt_surface(verts, faces, lbs, layout, offset=0.02, top_y=-0.02)
+    front = s["xyz"][: len(s["xyz"]) // 2]  # the outer layer
+    assert np.allclose(front[:, 2], 0.1 + 0.02 + 0.0003, atol=1e-4)  # on the surface, pushed out by the offset
+    assert front[:, 0].min() > -0.07 and front[:, 0].max() < 0.07 and front[:, 1].max() <= -0.02
+    lum = s["rgb"][: len(front)] @ C.LUM
+    tie = lum < 0.3
+    assert tie.any() and np.abs(front[tie, 0]).max() < 0.0376  # the tie is a strip down the middle
+    low = front[:, 1] < -0.395
+    assert not (tie & low).any() or np.abs(front[tie & low, 0]).max() < 0.01  # coming to a point at the bottom
+    d = cKDTree(front).query(front, k=2)[0][:, 1]
+    assert np.percentile(d, 99) < 2.5 * 0.0025  # no gaps between the discs
+    assert (s["q"].sum(1) == 255).all() and (s["idx"][:, 0] == C.J["spine2"]).all()
