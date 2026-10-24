@@ -54,6 +54,21 @@ export async function renderChess(root: HTMLElement) {
   controls.maxDistance = 2;
   controls.maxPolarAngle = Math.PI * 0.47;
   controls.update();
+  // the 3D view fills the space between the top bar and the controls, whatever the window's shape: the camera's
+  // centre moves into that gap and it widens until what's framed (baseFov's worth) fits there
+  let baseFov = 40;
+  const frameView = () => {
+    const H = innerHeight;
+    const top = root.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+    const bottom = Math.min(H, root.querySelector(".chess-controls")?.getBoundingClientRect().top ?? H);
+    const free = THREE.MathUtils.clamp((bottom - top) / H, 0.3, 1);
+    camera.fov = Math.min(115, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(baseFov) / 2) / free)));
+    camera.aspect = innerWidth / H;
+    camera.setViewOffset(innerWidth, H, 0, H / 2 - (top + bottom) / 2, innerWidth, H);
+    camera.updateProjectionMatrix();
+  };
+  frameView();
+  new ResizeObserver(frameView).observe(root.querySelector(".chess-controls")!);
   const key = new THREE.DirectionalLight(0xffffff, 1.2);
   key.position.set(0.6, 2, 0.8);
   scene.add(key, new THREE.HemisphereLight(0xffffff, 0x444444, 0.5));
@@ -123,11 +138,12 @@ export async function renderChess(root: HTMLElement) {
         seated = new SeatedOpponent(a, table, boardGroup);
         seated.setOpacity(0);
         opponentGroup.add(seated.chair);
-        // on a laptop, step back so they're in the frame with the board (in the headset you just look up)
-        camera.fov = 50;
-        camera.updateProjectionMatrix();
-        camera.position.set(0, 1.3, 1.75);
-        controls.target.set(0, 0.92, -0.3);
+        // on a laptop: from a seated player's eyes, the board in front and them behind it, facing you (in the
+        // headset you just look up)
+        baseFov = 44;
+        frameView();
+        camera.position.set(0, 1.28, 1.0);
+        controls.target.set(0, 0.95, -0.32);
         controls.update();
         updateStatus();
       })
@@ -486,6 +502,7 @@ export async function renderChess(root: HTMLElement) {
       xrButtons.forEach((b) => (b.mesh.visible = false));
       table.position.set(0, 0.75, 0);
       table.rotation.y = 0;
+      frameView(); // the headset's projection was the camera's while presenting
     });
   });
 
@@ -518,9 +535,8 @@ export async function renderChess(root: HTMLElement) {
   await newGame();
   // ---------------- loop ----------------
   addEventListener("resize", () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    frameView();
   });
   const viewer = new THREE.Vector3();
   const frame = (time: number) => {
