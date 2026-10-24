@@ -7,6 +7,7 @@ import { chessLabel, legendOf } from "./showcase";
 const NAMES: Record<string, string> = {
   "jump-shot-hq": "Jump shot",
   "jump-shot-2-hq": "Jump shot, take two",
+  "lebron-shot": "LeBron’s jump shot",
   "lebron-jumper-hq": "LeBron’s jump shot",
   "lebron-jumper": "LeBron’s jump shot",
   "magnus-carlsen-uika": "Magnus Carlsen",

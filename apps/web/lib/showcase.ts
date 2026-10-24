@@ -28,7 +28,7 @@ export const MOMENTS: Moment[] = [
     line: "His jump shot, life size, with the real ball in his hands and a regulation hoop where he aims.",
     intent: "Teach me this jump shot",
     where: "Your room, or a court",
-    ids: ["lebron-jumper-hq", "lebron-jumper"],
+    ids: ["lebron-shot", "lebron-jumper-hq", "lebron-jumper"],
     action: "Start the lesson",
     credit: "Clip supplied for this non-commercial demo. Not affiliated.",
   },
