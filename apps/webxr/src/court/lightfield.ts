@@ -29,7 +29,7 @@ export const BUILT = true;
 
 /**
  * What the field is doing; `set(beat, t)` takes seconds into the beat:
- * - "dark": the arrival's hold, everything at 0; "arrival": the lights come up over ARRIVAL_S, linearly (P44);
+ * - "dark": the arrival's hold, everything at 0; "arrival": the lights come up over ARRIVAL_S, evenly on the encoded value (arrivalLevel, P44);
  * - "watch": the arena as filmed (the pool is the spot on the pair);
  * - "ease": t since the ease began: the crowd goes to light.crowd over the ease, the floor outside the pool to
  *   light.floor over FLOOR_DIM_S (it lands at F+1, under the hand-off), the pair at 1;
@@ -118,6 +118,17 @@ export const perceived = (k: number): number => Math.pow(Math.max(0, k), 1 / 2.4
 export const linear = (p: number): number => Math.pow(Math.max(0, p), 2.4);
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+/** sRGB (0-1) to linear light: three's decode. */
+const srgbToLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+
+/**
+ * The arrival's level s of the way up (0-1 of ARRIVAL_S): the level at which a SAFE_GREY surface's encoded value is
+ * s of its own, so it rises evenly (P44): 170 levels over 2.5 s is 0.94 a frame at 72 Hz; any darker grey rises slower.
+ */
+export function arrivalLevel(s: number): number {
+  const g = SAFE_GREY / 255;
+  return perceived(srgbToLinear(g * clamp01(s)) / srgbToLinear(g));
+}
 /** GLSL smoothstep. */
 const smoothstep = (a: number, b: number, x: number) => {
   const t = clamp01((x - a) / (b - a));
@@ -485,7 +496,7 @@ export class LightField {
     }
     this.beat = beat;
     this.t = t;
-    this.arrival = b === "dark" ? 0 : b === "arrival" ? clamp01(t / ARRIVAL_S) : 1;
+    this.arrival = b === "dark" ? 0 : b === "arrival" ? arrivalLevel(t / ARRIVAL_S) : 1;
     const toward = (a: number, z: number, u: number) => a + (z - a) * ramp(u);
     switch (b) {
       case "dark":
@@ -766,7 +777,7 @@ float lightReach(vec3 p) {
 export function whitePoint(colors: ArrayLike<number>): [number, number, number] {
   const n = Math.floor(colors.length / 3);
   if (!n) return [1, 1, 1];
-  const dec = (c: number) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const dec = srgbToLinear;
   const lum = new Float64Array(n);
   for (let i = 0; i < n; i++) lum[i] = 0.2126 * dec(colors[3 * i]) + 0.7152 * dec(colors[3 * i + 1]) + 0.0722 * dec(colors[3 * i + 2]);
   const cut = Float64Array.from(lum).sort()[Math.min(n - 1, Math.floor(n * 0.97))];

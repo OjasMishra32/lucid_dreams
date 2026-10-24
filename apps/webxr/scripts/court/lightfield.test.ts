@@ -165,17 +165,20 @@ test("P44 on the encoded byte: no light change moves a grey-170 pixel more than 
   assert.ok(255 * (0.2126 * r + 0.7152 * g + 0.0722 * bl) <= SAFE_GREY, "hardwood under SAFE_GREY");
 });
 
-test("the arrival (court.ts's 2.5 s lights-up) moves a grey-165 pixel under 1 level a frame (grey 170 needs LIGHTS_UP_S >= 2.6 s)", () => {
-  const f = new LightField(bundleOf());
-  let worst = 0;
-  let prev = 0;
-  for (let i = 0; i <= ARRIVAL_S * HZ; i++) {
-    f.set("arrival", i / HZ);
-    const v = 255 * enc(dec(165 / 255) * f.pair());
-    if (i) worst = Math.max(worst, Math.abs(v - prev));
-    prev = v;
-  }
-  assert.ok(worst < 1, `largest encoded change ${worst.toFixed(3)}`);
+test("the arrival (court.ts's 2.5 s lights-up) moves a grey-170 pixel 0.94 encoded levels a frame at 72 Hz, darker greys less than 1", () => {
+  for (const hz of [72, 90])
+    for (const grey of [SAFE_GREY, 125, 60, 20]) {
+      const f = new LightField(bundleOf());
+      let worst = 0;
+      let prev = 0;
+      for (let i = 0; i <= ARRIVAL_S * hz; i++) {
+        f.set("arrival", i / hz);
+        const v = 255 * enc(dec(grey / 255) * f.pair());
+        if (i) worst = Math.max(worst, Math.abs(v - prev));
+        prev = v;
+      }
+      assert.ok(worst < 0.95 * (72 / hz), `${hz} Hz grey ${grey}: largest encoded change ${worst.toFixed(3)}`);
+    }
 });
 
 test("the pool grows nearest the pair first, then covers the footprint, the lane to the seat and every spot", () => {
@@ -300,7 +303,8 @@ test("arrival: everything rises out of black together", () => {
   close(f.crowd(), 0, 1e-12, "crowd");
   close(f.pair(), 0, 1e-12, "pair");
   f.set("arrival", 1.25);
-  close(perceived(f.pair()), 0.5, 1e-12, "half way up, linearly (P44)");
+  close(255 * enc(dec(SAFE_GREY / 255) * f.pair()), SAFE_GREY / 2, 1e-9, "half way up on a SAFE_GREY surface's encoded value (P44)");
+  close(f.crowd(), f.pair(), 1e-12, "the crowd with it");
   f.set("arrival", 2.5);
   close(f.pair(), 1, 1e-12, "pair at the end");
 });
