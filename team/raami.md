@@ -55,3 +55,19 @@ or `import lucid_runner` and call the functions. Every command prints one JSON o
 - The 3D viewer is `apps/webxr` (Ojasva's). Link a dream's detail page to `https://<mac>:5180/?dream=<id>` for
   "View in 3D / in your room" instead of building your own 3D view.
 
+## Next chunk (added after your web app + bridge push: excellent, the runner wiring and seen % are exactly right)
+
+1. **Gemini guide (MLH Best Use of Gemini). Highest priority.** For every dream, send the source clip
+   (`dream.source.clip`, or the run's `prepped.mp4`) to Gemini's video understanding and get back JSON:
+   `{ "move": "Step-back jumper", "summary": "...", "steps": [{ "t": 0.4, "title": "Load", "cue": "Sink the hips" }],
+   "tips": ["..."] }`. Save it as `guide.json` in the bundle (add `"guide": "guide.json"` to `dream.json`: an
+   additive contract change, tell the team). Show it on the dream page as a calm step list synced to the preview video
+   (tap a step to jump). Generate a spoken version (Gemini TTS) as `guide.m4a` so the headset can play it.
+2. **Demo mode on Ojasva's Mac.** Make `BRIDGE_MODE=runner npm --prefix apps/web start` the documented demo command
+   and test it end to end as soon as the first real dream lands (SMPL-X download is the last blocker).
+3. **Landing hero.** Lead with the newest real dream's `preview.mp4` (the 360 orbit), big and quiet, like an Apple
+   product page. The viewer's landing in `apps/webxr` does a small version of this: match it.
+4. **Make a dream, for landscape clips.** The pipeline now crops landscape clips to a fixed 9:16 window around the
+   person automatically, so stop rejecting landscape: accept it and say "We'll frame them for you."
+5. **Screenshots** of every page for Atina's Devpost once real dreams are in.
+
