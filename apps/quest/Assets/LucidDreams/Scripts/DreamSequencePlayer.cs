@@ -56,6 +56,10 @@ namespace LucidDreams
         // Share of the person the camera really saw (0-1), or a negative number when the bundle doesn't say.
         public float SeenFraction => Dream?.metrics != null && Dream.metrics.seenFraction > 0f ? Dream.metrics.seenFraction : -1f;
 
+        // What you came to do with them (experience.json, or a plan guessed from the intent), and the lesson it runs.
+        public Experience Experience { get; private set; }
+        public Lesson Lesson { get; private set; }
+
         public event Action Ready;
 
         class LoadResult
@@ -137,13 +141,48 @@ namespace LucidDreams
         void Update()
         {
             if (!IsReady || !IsPlaying) return;
-            time += Time.deltaTime * Speed;
-            if (time >= Duration)
+            if (Lesson != null)
             {
-                if (loop) time %= Duration;
-                else { time = Duration; Pause(); }
+                // The lesson owns the clock: it loops each step, then holds the last pose for your turn.
+                if (!Lesson.YourTurn) time = Mathf.Min(time + Time.deltaTime * Speed, Duration);
+                time = Lesson.Update(time, Time.time);
+            }
+            else
+            {
+                time += Time.deltaTime * Speed;
+                if (time >= Duration)
+                {
+                    if (loop) time %= Duration;
+                    else { time = Duration; Pause(); }
+                }
             }
             ShowTime();
+        }
+
+        void OnLessonChanged(bool again)
+        {
+            if (Lesson.YourTurn) return;
+            Speed = Mathf.Clamp(Lesson.Step.Speed, 0.1f, 2f);
+            time = Lesson.Step.start;
+            ShowTime();
+        }
+
+        IEnumerator LoadExperience()
+        {
+            float duration = Dream.frameCount / Dream.fps;
+            Experience = null;
+            if (!string.IsNullOrEmpty(Dream.experience))
+            {
+                string json = null;
+                yield return Fetch($"{baseUrl}/{Dream.experience}", b => json = System.Text.Encoding.UTF8.GetString(b),
+                    e => Debug.LogWarning($"[Lucid Dreams] No experience plan: {e}"));
+                if (json != null)
+                {
+                    try { Experience = Experience.FromJson(json, duration); }
+                    catch (Exception e) { Debug.LogWarning($"[Lucid Dreams] experience.json unreadable: {e.Message}"); }
+                }
+            }
+            Experience ??= Experience.Fallback(Dream.intent, duration);
         }
 
         void ShowTime()
@@ -185,6 +224,8 @@ namespace LucidDreams
             Func<byte[], GaussianFrame> decoder = chosen == FrameFormat.Spz ? SpzFrameReader.Read : PlyFrameReader.Read;
             LoadedFormat = chosen;
 
+            yield return LoadExperience();
+
             int capacity = Mathf.Max(1, Dream.frames.gaussiansPerFrame);
             while (true)
             {
@@ -218,6 +259,12 @@ namespace LucidDreams
             time = 0f;
             sequence.Show(0);
             IsReady = true;
+            if (Experience != null && Experience.IsTeach)
+            {
+                Lesson = new Lesson(Experience.steps);
+                Lesson.Changed += OnLessonChanged;
+                Lesson.Go(0);
+            }
             Debug.Log($"[Lucid Dreams] '{Dream.name}' ready: {Dream.frameCount} {LoadedFormat} frames, {sequence.Capacity:N0} Gaussians, {sequence.GpuBytes >> 20} MB on the GPU.");
             Ready?.Invoke();
             if (playWhenReady) Play();
@@ -355,6 +402,9 @@ namespace LucidDreams
             IsReady = false;
             IsPlaying = false;
             ShowingReality = false;
+            if (Lesson != null) Lesson.Changed -= OnLessonChanged;
+            Lesson = null;
+            Experience = null;
             RealityLoading = false;
             if (splat != null)
             {

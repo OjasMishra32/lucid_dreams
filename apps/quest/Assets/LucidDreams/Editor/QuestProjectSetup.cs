@@ -239,6 +239,7 @@ namespace LucidDreams.Editor
             ConfigureSplatRenderer(splat);
             placer.person = personGo.transform;
             var player = personGo.AddComponent<DreamSequencePlayer>();
+            placer.player = player;
             var controls = dreamGo.AddComponent<DreamTestControls>();
             controls.player = player;
             controls.placer = placer;
@@ -261,6 +262,15 @@ namespace LucidDreams.Editor
             bar.hands = tracker;
             bar.player = player;
             bar.placer = placer;
+
+            // Lessons: the step card beside the person, read aloud in the device's voice.
+            var lessonGo = new GameObject("Lesson");
+            var voice = lessonGo.AddComponent<DeviceVoice>();
+            var steps = lessonGo.AddComponent<DreamStepPanel>();
+            steps.player = player;
+            steps.placer = placer;
+            steps.voice = voice;
+            steps.head = camGo.transform;
 
             var interaction = dreamGo.AddComponent<DreamHands>();
             interaction.hands = tracker;

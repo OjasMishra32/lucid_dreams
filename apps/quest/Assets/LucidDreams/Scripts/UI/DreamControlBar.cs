@@ -1,15 +1,20 @@
+using System.Collections.Generic;
+using System.Linq;
 using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace LucidDreams
 {
     // The playback bar: floats low in front of you like a tablet held at chest height (within fingertip reach),
     // tilted toward your eyes, and follows lazily when you turn or walk away. The person stays where they stand.
+    // In a lesson, Back / Again / Next take the speed button's place; Reality check appears for bundles that have it.
     public class DreamControlBar : MonoBehaviour
     {
-        static readonly Vector2 Size = new(364f, 92f);
-        const float TrackWidth = 324f;
+        const float Height = 92f;
+        const float MinWidth = 364f;
+        const float Edge = 20f; // panel padding left and right
+        const float Gap = 8f;
+        const float ButtonHeight = 28f;
         const float TrackY = -30f;
 
         public Transform head;
@@ -23,36 +28,46 @@ namespace LucidDreams
         public float tilt = 35f;
         public float followAngle = 35f, followDistance = 0.3f;
 
-        FingertipButton play, speed, reality, bring;
+        FingertipButton play, speed, back, again, next, reality, bring;
+        readonly List<FingertipButton> all = new();
+        string layout;
+        float width, trackWidth;
         TMP_Text title, clock;
-        RectTransform fill, knob;
+        RectTransform panel, track, fill, knob;
         RectTransform canvasRect;
         bool following = true;
 
         void Start()
         {
-            var canvas = GlassUI.WorldCanvas(transform, "Controls", Size);
+            var canvas = GlassUI.WorldCanvas(transform, "Controls", new Vector2(MinWidth, Height));
             canvasRect = (RectTransform)canvas.transform;
-            var panel = GlassUI.Box(canvas.transform, "Panel", Vector2.zero, Size, GlassUI.Panel, 24f).transform;
+            panel = (RectTransform)GlassUI.Box(canvas.transform, "Panel", Vector2.zero, new Vector2(MinWidth, Height), GlassUI.Panel, 24f).transform;
 
-            title = GlassUI.Label(panel, "Title", new Vector2(-37f, 30f), new Vector2(270f, 14f), "", 9f, GlassUI.Text, TextAlignmentOptions.Left);
-            clock = GlassUI.Label(panel, "Clock", new Vector2(132f, 30f), new Vector2(70f, 14f), "", 8f, GlassUI.SecondaryText,
+            title = GlassUI.Label(panel, "Title", Vector2.zero, new Vector2(200f, 14f), "", 9f, GlassUI.Text, TextAlignmentOptions.Left);
+            clock = GlassUI.Label(panel, "Clock", Vector2.zero, new Vector2(70f, 14f), "", 8f, GlassUI.SecondaryText,
                 TextAlignmentOptions.Right, FontWeight.Medium);
 
-            var button = new Vector2(80f, 28f);
-            play = FingertipButton.Create(panel, hands, "Pause", new Vector2(-132f, 4f), button);
-            speed = FingertipButton.Create(panel, hands, "1×", new Vector2(-44f, 4f), button);
-            reality = FingertipButton.Create(panel, hands, "Reality check", new Vector2(44f, 4f), button);
-            bring = FingertipButton.Create(panel, hands, "Bring here", new Vector2(132f, 4f), button);
-            play.Pressed += () => player.TogglePlay();
-            speed.Pressed += () => player.CycleSpeed();
-            reality.Pressed += () => player.ToggleReality();
-            bring.Pressed += () => placer.PlaceInFrontOfViewer();
+            play = Button("Pause", () => player.TogglePlay());
+            speed = Button("1×", () => player.CycleSpeed());
+            back = Button("Back", () => player.Lesson?.Go(player.Lesson.Index - 1));
+            again = Button("Again", () => player.Lesson?.Again());
+            next = Button("Next", () => player.Lesson?.Go(player.Lesson.Index + 1));
+            reality = Button("Reality check", () => player.ToggleReality());
+            bring = Button("Bring here", () => placer.PlaceInFrontOfViewer());
 
-            GlassUI.Box(panel, "Track", new Vector2(0f, TrackY), new Vector2(TrackWidth, 6f), GlassUI.Track, 3f);
-            fill = (RectTransform)GlassUI.Box(panel, "Played", new Vector2(-TrackWidth / 2f, TrackY), new Vector2(0f, 6f), GlassUI.Text, 3f).transform;
+            track = (RectTransform)GlassUI.Box(panel, "Track", Vector2.zero, new Vector2(100f, 6f), GlassUI.Track, 3f).transform;
+            fill = (RectTransform)GlassUI.Box(panel, "Played", Vector2.zero, new Vector2(0f, 6f), GlassUI.Text, 3f).transform;
             fill.pivot = new Vector2(0f, 0.5f);
-            knob = (RectTransform)GlassUI.Box(panel, "Knob", new Vector2(-TrackWidth / 2f, TrackY), new Vector2(14f, 14f), GlassUI.Text, 7f).transform;
+            knob = (RectTransform)GlassUI.Box(panel, "Knob", Vector2.zero, new Vector2(14f, 14f), GlassUI.Text, 7f).transform;
+            Layout(new[] { play, speed, bring });
+        }
+
+        FingertipButton Button(string label, System.Action pressed)
+        {
+            var b = FingertipButton.Create(panel, hands, label, Vector2.zero, new Vector2(80f, ButtonHeight));
+            b.Pressed += pressed;
+            all.Add(b);
+            return b;
         }
 
         void LateUpdate()
@@ -67,38 +82,82 @@ namespace LucidDreams
             normalized = 0f;
             if (canvasRect == null) return false;
             var local = canvasRect.InverseTransformPoint(world);
-            normalized = Mathf.Clamp01((local.x + TrackWidth / 2f) / TrackWidth);
-            return Mathf.Abs(local.x) < TrackWidth / 2f + 15f && Mathf.Abs(local.y - TrackY) < 16f && Mathf.Abs(local.z) < 40f;
+            normalized = Mathf.Clamp01((local.x + trackWidth / 2f) / trackWidth);
+            return Mathf.Abs(local.x) < trackWidth / 2f + 15f && Mathf.Abs(local.y - TrackY) < 16f && Mathf.Abs(local.z) < 40f;
         }
 
         // World position of a point along the timeline (0-1), on the bar's face.
         public Vector3 TimelinePoint(float normalized) =>
-            canvasRect.TransformPoint(new Vector3(-TrackWidth / 2f + TrackWidth * Mathf.Clamp01(normalized), TrackY, 0f));
+            canvasRect.TransformPoint(new Vector3(-trackWidth / 2f + trackWidth * Mathf.Clamp01(normalized), TrackY, 0f));
 
         // True when the point is on or just in front of the bar: pinches there belong to the bar, not the room.
         public bool Contains(Vector3 world)
         {
             if (canvasRect == null) return false;
             var local = canvasRect.InverseTransformPoint(world);
-            return Mathf.Abs(local.x) < Size.x / 2f + 20f && Mathf.Abs(local.y) < Size.y / 2f + 20f && local.z > -60f && local.z < 40f;
+            return Mathf.Abs(local.x) < width / 2f + 20f && Mathf.Abs(local.y) < Height / 2f + 20f && local.z > -60f && local.z < 40f;
         }
+
+        // Lays the visible buttons out in one row, each sized to its label, and sizes the panel and timeline to fit.
+        void Layout(IReadOnlyList<FingertipButton> visible)
+        {
+            var widths = visible.Select(b => Mathf.Max(58f, b.label.GetPreferredValues(Widest(b)).x + 26f)).ToArray();
+            float row = widths.Sum() + Gap * (visible.Count - 1);
+            width = Mathf.Max(MinWidth, row + 2 * Edge);
+            trackWidth = width - 2 * Edge;
+            canvasRect.sizeDelta = panel.sizeDelta = new Vector2(width, Height);
+
+            foreach (var b in all) b.gameObject.SetActive(visible.Contains(b));
+            float x = -row / 2f;
+            for (int i = 0; i < visible.Count; i++)
+            {
+                var rt = (RectTransform)visible[i].transform;
+                rt.sizeDelta = new Vector2(widths[i], ButtonHeight);
+                ((RectTransform)visible[i].label.transform).sizeDelta = rt.sizeDelta;
+                rt.anchoredPosition = new Vector2(x + widths[i] / 2f, 4f);
+                x += widths[i] + Gap;
+            }
+
+            float textWidth = width - 2 * Edge;
+            ((RectTransform)title.transform).sizeDelta = new Vector2(textWidth - 76f, 14f);
+            ((RectTransform)title.transform).anchoredPosition = new Vector2(-38f, 30f);
+            ((RectTransform)clock.transform).anchoredPosition = new Vector2(textWidth / 2f - 35f, 30f);
+            track.sizeDelta = new Vector2(trackWidth, 6f);
+            track.anchoredPosition = new Vector2(0f, TrackY);
+            fill.anchoredPosition = new Vector2(-trackWidth / 2f, TrackY);
+        }
+
+        // Buttons whose label changes are sized for their longest label, so the row never jumps.
+        string Widest(FingertipButton b) =>
+            b == play ? "Pause" : b == speed ? "0.25×" : b == reality ? "Reality check" : b.label.text;
 
         void Refresh()
         {
             bool ready = player != null && player.IsReady;
-            play.interactable = speed.interactable = ready;
             if (player == null) return;
+            var lesson = player.Lesson;
 
+            var visible = new List<FingertipButton> { play };
+            if (lesson != null) visible.AddRange(new[] { back, again, next });
+            else visible.Add(speed);
+            if (player.HasReality) visible.Add(reality);
+            visible.Add(bring);
+            string signature = string.Join(",", visible.Select(b => b.name));
+            if (signature != layout)
+            {
+                layout = signature;
+                Layout(visible);
+            }
+
+            play.interactable = speed.interactable = back.interactable = again.interactable = next.interactable = ready;
             if (player.Error != null) title.text = "Couldn't load this dream";
             else if (!ready) title.text = $"Loading {Mathf.RoundToInt(player.LoadProgress * 100f)}%";
             else if (player.ShowingReality)
                 title.text = player.SeenFraction >= 0f
                     ? $"{Mathf.RoundToInt(player.SeenFraction * 100f)}% seen by the camera · blue was imagined"
                     : "Blue was imagined";
-            else title.text = player.Dream.name;
+            else title.text = !string.IsNullOrEmpty(player.Experience?.title) ? player.Experience.title : player.Dream.name;
 
-            // Only bundles that ship reality frames get the toggle.
-            reality.gameObject.SetActive(player.HasReality);
             reality.interactable = player.HasReality && !player.RealityLoading && player.RealityError == null;
             reality.on = player.ShowingReality;
             reality.SetLabel(player.RealityLoading ? $"Loading {Mathf.RoundToInt(player.RealityProgress * 100f)}%"
@@ -109,8 +168,8 @@ namespace LucidDreams
             speed.on = player.Speed < 1f;
 
             float t = ready ? player.NormalizedTime : 0f;
-            fill.sizeDelta = new Vector2(TrackWidth * t, 6f);
-            knob.anchoredPosition = new Vector2(-TrackWidth / 2f + TrackWidth * t, TrackY);
+            fill.sizeDelta = new Vector2(trackWidth * t, 6f);
+            knob.anchoredPosition = new Vector2(-trackWidth / 2f + trackWidth * t, TrackY);
             clock.text = ready ? $"{Clock(player.NormalizedTime * player.Duration)} / {Clock(player.Duration)}" : "";
         }
 

@@ -157,3 +157,14 @@ What makes it simple, and what to do the same way in Unity:
   "Blue was imagined" when the bundle doesn't say). The button only appears for bundles that ship reality frames.
 - Avatar bundles' `avatar.reality` is parsed; it gets used with the avatar player.
 
+## Decisions: teach mode (Ian, Fri night)
+
+- `Lesson` is a straight port of the WebXR one (same phases, turn = move length at 1x + 1.5 s, wraps after the last
+  step) and owns the player's clock while it runs; steps outside the clip are trimmed.
+- No `experience.json` yet: the plan is guessed from `intent` with the WebXR rules, so "teach me ..." still teaches.
+- Step card at eye level, 0.95 m ahead and 0.42 m to your right, turned to your eyes; it moves when the person is
+  placed in front of you. Back / Again / Next replace the speed button in a lesson; the bar sizes itself to its buttons.
+- Tips are read by Android TextToSpeech (device voice; Again says the step again). Not yet heard on a real Quest.
+- `place` sets placement once the plan loads; `facing` is now 1.8 m (the contract), was 1.5 m.
+- Companion / watch / play modes: plain playback for now; chess stays in the WebXR app.
+

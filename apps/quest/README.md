@@ -33,6 +33,19 @@ GPU cost is 72 bytes per Gaussian per frame for PLY (SH degree 1) and 56 for SPZ
 about 2.5 GB or 1.9 GB.
 The player refuses bundles over `gpuBudgetMB` and logs the Gaussian count that would fit.
 
+## What you came to do (experience.json)
+
+The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experience"), or guesses a plan from
+`dream.json`'s `intent` until one exists (same rules as the WebXR app).
+
+- **Teach:** each step plays at its `speed`, `repeat` times, then the person freezes in the step's last pose for your
+  turn (the move's length at 1x + 1.5 s, with a thin blue bar), then the next step, wrapping after the last. A step
+  card floats at eye level, off to the right of the person ("Step n of N" or "Your turn", title, tip), each step is
+  said aloud in the headset's own voice (Android TextToSpeech, never the person's), and the bar trades its speed
+  button for **Back / Again / Next**.
+- **Placement by `place`:** `facing` (1.8 m in front, facing you; default), `beside` (0.8 m to your right, 0.5 m
+  ahead, facing your way), `ahead` (1.5 m ahead, facing away). A long-pinch re-place keeps that orientation.
+
 ## Hands (no controllers needed)
 
 - **Quick pinch** anywhere: play / pause.
@@ -64,12 +77,13 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
 ```
 
 `HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
-eye view (a finger in front of the person must hide it):
+eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
+instead: placement, step timing, your turn, Back / Again / Next and the voice:
 
 ```
 Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.HandsCheck.Run \
   -dreamBundle /path/to/dreams/<id> -out /tmp/lucid-check
 ```
 
-The person stands 1.5 m in front of you on the scanned floor, facing you. Bundle files are right-handed
+By default the person stands 1.8 m in front of you on the scanned floor, facing you. Bundle files are right-handed
 (meters, +Y up, front faces -Z); `DreamPlacer` mirrors Z into Unity's left-handed space.

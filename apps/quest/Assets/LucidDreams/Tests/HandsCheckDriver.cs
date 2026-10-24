@@ -42,7 +42,14 @@ namespace LucidDreams.Tests
             yield return Frames(30); // placement and the bar settle
 
             var root = placer.transform;
-            Check(Vector3.Distance(root.position, new Vector3(0f, 0f, 0.5f)) < 0.02f, $"placed 1.5 m in front, on the floor ({root.position})");
+            if (player.Lesson != null)
+            {
+                yield return TeachChecks(root);
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
+            Check(Vector3.Distance(root.position, new Vector3(0f, 0f, 0.2f)) < 0.02f, $"placed 1.8 m in front, on the floor ({root.position})");
             Check(Vector3.Angle(root.forward, Vector3.forward) < 1f, "faces the viewer");
 
             // Quick pinch in the room toggles playback.
@@ -132,6 +139,54 @@ namespace LucidDreams.Tests
             Done = true;
         }
 
+        // A lesson from experience.json: placement by place, steps at their speed and repeats, your turn, Back/Again/Next.
+        IEnumerator TeachChecks(Transform root)
+        {
+            var lesson = player.Lesson;
+            var e = player.Experience;
+            Check(e.place != "ahead" || (Vector3.Distance(root.position, new Vector3(0f, 0f, 0.5f)) < 0.02f && Vector3.Angle(root.forward, Vector3.back) < 1f),
+                $"'{e.place}' placement: 1.5 m ahead, facing your way ({root.position}, facing {root.forward})");
+
+            var card = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude);
+            string Text(string name) => card.FirstOrDefault(t => t.name == name)?.text;
+            lesson.Go(0);
+            yield return Frames(2);
+            Check(Text("Count") == $"Step 1 of {lesson.steps.Count}" && Text("Step") == lesson.steps[0].title, $"step card shows step 1 ({Text("Count")}: {Text("Step")})");
+            Check(Mathf.Approximately(player.Speed, lesson.steps[0].Speed), $"step plays at its speed ({player.Speed}x)");
+            var voice = FindAnyObjectByType<DeviceVoice>();
+            Check(voice != null && voice.LastSaid != null && voice.LastSaid.StartsWith(lesson.steps[0].title), $"the device voice says the step ({voice?.LastSaid})");
+
+            float watch = (lesson.steps[0].end - lesson.steps[0].start) / lesson.steps[0].Speed * lesson.steps[0].Repeat;
+            float t0 = Time.time;
+            while (!lesson.YourTurn && Time.time - t0 < watch + 1f) yield return null;
+            Check(lesson.YourTurn && Mathf.Abs(Time.time - t0 - watch) < 0.25f, $"after {lesson.steps[0].Repeat} plays it's your turn ({Time.time - t0:F2} s, expected {watch:F2})");
+            int frozen = player.Frame;
+            Check(frozen == Mathf.FloorToInt(lesson.steps[0].end * player.Dream.fps) - 1, $"frozen in the step's last pose (frame {frozen})");
+            yield return new WaitForSeconds(0.5f);
+            yield return Frames(2);
+            Check(player.Frame == frozen && Text("Count") == "Your turn", $"holds still for your turn ({Text("Count")})");
+            Render(Path.Combine(outputDir, "teach-eye-view.png"));
+
+            float turn = lesson.steps[0].end - lesson.steps[0].start + Lesson.TurnBreathS;
+            while (lesson.Index == 0 && Time.time - t0 < watch + turn + 1f) yield return null;
+            Check(lesson.Index == 1 && !lesson.YourTurn && Mathf.Abs(Time.time - t0 - watch - turn) < 0.3f,
+                $"then the next step ({Time.time - t0:F2} s, expected {watch + turn:F2})");
+
+            var buttons = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude);
+            FingertipButton B(string label) => buttons.FirstOrDefault(b => b.label.text == label);
+            Check(B("Back") != null && B("Again") != null && B("Next") != null && B("1×") == null, "Back / Again / Next replace the speed button");
+            yield return Push(B("Next"));
+            Check(lesson.Index == 2, $"Next goes forward (step {lesson.Index + 1})");
+            yield return Push(B("Next"));
+            Check(lesson.Index == 0, "and wraps after the last step");
+            yield return Push(B("Back"));
+            Check(lesson.Index == 2, "Back goes back, wrapping too");
+            yield return Frames(10);
+            yield return Push(B("Again"));
+            Check(lesson.Index == 2 && lesson.Rep == 0 && !lesson.YourTurn && Mathf.Abs(player.Frame - lesson.steps[2].start * player.Dream.fps) <= 2f,
+                $"Again restarts the step (frame {player.Frame})");
+        }
+
         void Check(bool ok, string what)
         {
             if (!ok) Failures++;
@@ -186,7 +241,7 @@ namespace LucidDreams.Tests
             Point(hands.right, front);
             yield return Frames(3);
             Release(hands.right);
-            yield return Frames(25); // past the button's cooldown
+            yield return new WaitForSecondsRealtime(0.35f); // past the button's cooldown
         }
 
         // An open hand: index tip at the point, thumb well away (no pinch).

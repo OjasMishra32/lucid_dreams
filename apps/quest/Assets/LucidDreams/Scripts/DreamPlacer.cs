@@ -8,12 +8,27 @@ namespace LucidDreams
     // Bundle space (AGENTS.md): meters, +Y up, feet at y = 0, centred on x = z = 0, front faces -Z.
     public class DreamPlacer : MonoBehaviour
     {
+        public enum Place
+        {
+            Facing, // in front of you, facing you (default)
+            Beside, // at your right side, facing your way: copy them like the person next to you in a class
+            Ahead,  // ahead of you, facing away: follow them like the teacher at the front of the room
+        }
+
         public Transform head;
         public ARPlaneManager planes;
         public Transform person;
+        [Tooltip("Takes Place from the bundle's experience plan once it loads.")]
+        public DreamSequencePlayer player;
+        public Place place = Place.Facing;
 
-        [Tooltip("How far in front of the viewer the person stands, in meters.")]
-        public float distance = 1.5f;
+        [Tooltip("How far in front of the viewer the person stands when facing you, in meters.")]
+        public float distance = 1.8f;
+        public float aheadDistance = 1.5f;
+        public Vector2 besideOffset = new(0.8f, 0.5f); // right, forward
+
+        // Fires after the person is set in front of the viewer, with the viewer's flat forward.
+        public event System.Action<Vector3> PlacedForViewer;
 
         [Tooltip("Pipeline exports are right-handed; mirror Z so the person isn't flipped in Unity's left-handed space.")]
         public bool sourceIsRightHanded = true;
@@ -28,7 +43,29 @@ namespace LucidDreams
         void Start()
         {
             ApplyHandedness();
+            if (player != null) player.Ready += OnReady;
         }
+
+        void OnDestroy()
+        {
+            if (player != null) player.Ready -= OnReady;
+        }
+
+        // A plan that wants them beside you or ahead re-stands them once it's known.
+        void OnReady()
+        {
+            var wanted = Parse(player.Experience?.place);
+            if (wanted == place && placed) return;
+            place = wanted;
+            if (head != null && head.position != Vector3.zero) PlaceInFrontOfViewer();
+        }
+
+        public static Place Parse(string value) => value switch
+        {
+            "beside" => Place.Beside,
+            "ahead" => Place.Ahead,
+            _ => Place.Facing,
+        };
 
         void Update()
         {
@@ -49,19 +86,38 @@ namespace LucidDreams
 
         public void PlaceInFrontOfViewer()
         {
-            Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
-            if (forward.sqrMagnitude < 1e-4f) forward = Vector3.ProjectOnPlane(head.up, Vector3.up);
-            PlaceAt(head.position + forward.normalized * distance);
+            Vector3 forward = ViewerForward();
+            Vector3 right = Vector3.Cross(Vector3.up, forward);
+            Vector3 spot = place switch
+            {
+                Place.Beside => head.position + right * besideOffset.x + forward * besideOffset.y,
+                Place.Ahead => head.position + forward * aheadDistance,
+                _ => head.position + forward * distance,
+            };
+            PlaceAt(spot);
+            PlacedForViewer?.Invoke(forward);
         }
 
-        // Stands the person on the floor below the point, turned to face the viewer.
+        // Stands the person on the floor below the point: facing the viewer, or (beside / ahead) facing the viewer's way.
         public void PlaceAt(Vector3 point)
         {
             var spot = new Vector3(point.x, floorY, point.z);
-            Vector3 toViewer = head != null ? Vector3.ProjectOnPlane(head.position - spot, Vector3.up) : Vector3.back;
-            if (toViewer.sqrMagnitude < 1e-4f) toViewer = transform.forward;
-            transform.SetPositionAndRotation(spot, Quaternion.LookRotation(toViewer.normalized, Vector3.up));
+            Vector3 front;
+            if (place != Place.Facing && head != null) front = ViewerForward();
+            else
+            {
+                front = head != null ? Vector3.ProjectOnPlane(head.position - spot, Vector3.up) : Vector3.back;
+                if (front.sqrMagnitude < 1e-4f) front = transform.forward;
+            }
+            transform.SetPositionAndRotation(spot, Quaternion.LookRotation(front.normalized, Vector3.up));
             placed = true;
+        }
+
+        Vector3 ViewerForward()
+        {
+            Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
+            if (forward.sqrMagnitude < 1e-4f) forward = Vector3.ProjectOnPlane(head.up, Vector3.up);
+            return forward.normalized;
         }
 
         // Moves along the floor and turns about the vertical axis; height always stays on the floor.
