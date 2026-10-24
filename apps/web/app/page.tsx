@@ -15,7 +15,7 @@ const GROUPS: GroupCopy[] = [
   { key: "learn", eyebrow: "Learn", intro: "They play the move at full size. Turn on Lesson to go step by step." },
   { key: "play", eyebrow: "Play", intro: "Chess and tennis at real size. Legends are labeled likenesses and never speak." },
   { key: "relive", eyebrow: "Moments", intro: "The moment itself. Pause it and walk around." },
-  { key: "talk", eyebrow: "Talk", intro: "They answer in their own cloned voice, with their permission. Every reply is labeled AI." },
+  { key: "talk", eyebrow: "Talk", intro: "Talk to them and they answer in their own voice." },
 ];
 
 export default function Home() {

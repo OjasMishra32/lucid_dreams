@@ -59,7 +59,6 @@ export const MOMENTS: Moment[] = [
     ids: ["ian-grandma"], // private unless her family agrees to showing; a private dream is never shown here
     sentence: "\\bsit with (her|him)\\b",
     action: "Bring them into your room",
-    credit: "Shown with the family’s written consent.",
   },
   {
     title: "You, perfected",

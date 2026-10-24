@@ -33,8 +33,8 @@ export const SCENES: SceneDef[] = [
   { key: "chess-fischer", group: "play", ids: ["bobby-fischer-uika"], title: "Chess with Bobby Fischer", said: "Play chess with me.", what: "His real openings, at his 1972 strength.", open: "mode=chess&strength=fischer", image: "/media/world-chess-bobby.jpg", label: "Stockfish at Fischer's peak rating. Not affiliated." },
   { key: "tennis", group: "play", ids: ["roger-federer-uika"], title: "Tennis with Federer", said: "Play a set with me.", what: "Full-size grass court. Flat, slice and kick serves.", open: "mode=tennis", image: "/media/world-tennis.jpg", label: "His likeness. AI opponent, not affiliated." },
   { key: "replay", group: "relive", ids: ["jump-shot-hq"], title: "Jump shot", said: "Let me walk around it.", what: "Freeze it mid-air and walk around it.", open: "dream=jump-shot-hq", credit: "Pexels" },
-  { key: "grandma", group: "talk", ids: ["ian-grandma"], title: "Grandma", said: "I just want to sit with her.", what: "Ian's grandmother, from a family video. She answers in Vietnamese, in her own voice.", open: "dream=ian-grandma", label: "Shown with her family's permission. Replies are labeled AI." },
-  { key: "vishal", group: "talk", ids: ["vishal-lhm", "vishal-head", "vishal"], title: "Vishal", said: "Hang out with me.", what: "Ask him anything. He answers in his own cloned voice.", open: "dream=vishal-lhm", label: "With his consent. Replies are labeled AI." },
+  { key: "grandma", group: "talk", ids: ["ian-grandma"], title: "Grandma", said: "I just want to sit with her.", what: "Ian's grandmother, from a family video. She answers in Vietnamese, in her own voice.", open: "dream=ian-grandma" },
+  { key: "vishal", group: "talk", ids: ["vishal-lhm", "vishal-head", "vishal"], title: "Vishal", said: "Hang out with me.", what: "Ask him anything. He answers in his own cloned voice.", open: "dream=vishal-lhm" },
 ];
 
 export interface SceneCard {
