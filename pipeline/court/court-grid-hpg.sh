@@ -15,7 +15,16 @@ source "$(dirname "$0")/court-lib.sh"
 (( $# >= 1 )) || fail "no run ids"
 [ -z "${EXTRA:-}${RESULT:-}" ] || fail "EXTRA/RESULT are set: the grid's variants are fixed (A/B extras: court-ab.sh)"
 VARIANTS=${VARIANTS:-"raw up"}; CAP=${CAP:-300000}; T=$((CAP / 1000))k; KEEP=${KEEP_FULL_VIEWS:-1}
-RAW_GB=${RAW_GB:-3}; UP_GB=${UP_GB:-8}; OUT_GB=${OUT_GB:-1}; SEED_GB=${SEED_GB:-8}; MIN_GB=${MIN_GB:-20}
+# per-run disk: measured on the newest earlier run that has the folder (scaled to 48 views), unless given; else guesses
+newest_gb() { local d n; d=$(ls -dt "$L"/runs/*/"$1" 2>/dev/null | head -1)
+  [ -n "$d" ] || return 0
+  n=$(ls "$d" | grep -c '\.mp4$' || true); (( n > 0 )) || return 0
+  du -sk "$d" | awk -v d="$d" -v n="$n" '{ printf "%d %s", $1 / 1048576 * 48 / n + 1, d }'; }
+read -r m_raw src_raw < <(newest_gb views/videos; echo) || true
+read -r m_up src_up < <(newest_gb views-up/videos; echo) || true
+RAW_GB=${RAW_GB:-${m_raw:-3}}; UP_GB=${UP_GB:-${m_up:-8}}
+OUT_GB=${OUT_GB:-1}; SEED_GB=${SEED_GB:-8}; MIN_GB=${MIN_GB:-20}
+echo "disk per run: views ${RAW_GB} GB (${src_raw:-guess}), views-up ${UP_GB} GB (${src_up:-guess}), outputs ${OUT_GB} GB"
 UP=0
 for v in $VARIANTS; do
   case $v in raw) ;; up) UP=1 ;; *) fail "variant '$v' (raw or up)" ;; esac
