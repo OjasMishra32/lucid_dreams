@@ -117,7 +117,9 @@ python -m lam.launch infer.lam --config configs/inference/lam-20k-8gpu.yaml \
   gaga_track_type="" cross_id=false test_sample=false rank=0 nodes=0 \
   video_dump=$OUT/videos image_dump=$WORK/images mesh_dump=$WORK/meshes
 mkdir -p $OUT/heads
-cp exps/cano_gs/$NAME-*_gs_offset.ply exps/cano_gs/$NAME-*_shaped_mesh.obj $OUT/heads/ 2>/dev/null || true
+# _textured_mesh.obj: every Gaussian's position in order (the .ply holds offsets); head_swap.py needs it
+cp exps/cano_gs/$NAME-*_gs_offset.ply exps/cano_gs/$NAME-*_shaped_mesh.obj exps/cano_gs/$NAME-*_textured_mesh.obj \
+  $OUT/heads/ 2>/dev/null || true
 cd $R && rm -rf $WORK/images $CWD
 ls -la $OUT/videos $OUT/heads
 [ -n "$(ls $OUT/heads/*_gs_offset.ply 2>/dev/null)" ] && echo LAM_HEAD_OK
