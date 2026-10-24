@@ -14,7 +14,8 @@ beside the recon, when made. --rank sorts best first: held-out real, then held-o
 print "-". --pick then orders each run's freezes, after the eye gate (no Janus face, no doubled figure: by eye on the
 gate sheet): a P42 failure drops out; an r2 freeze (trained on every real view) comes first when its held-out views PSNR
 is within 0.5 dB of the best r0/r1; the r0/r1 ones follow, ranked by --depth-view (the held-out real view that sees the
-source camera's depth axis), then the rest; the last word is the eye.
+source camera's depth axis; "stance" instead ranks by court_stance.py's distance to the measured stance, for runs
+where that view never solved), then the rest; the last word is the eye.
 """
 
 from __future__ import annotations
@@ -107,7 +108,12 @@ def pick_order(table: list[dict], depth_view: str | None = None, margin: float =
     r2 = [r for r in ok if (r["reals"] or 0) >= 2]
     best = max((r["views"] for r in r01 if r["views"] is not None), default=None)
     first = [r for r in r2 if r["views"] is not None and (best is None or r["views"] >= best - margin)]
-    depth = lambda r: r["byView"].get(depth_view) if depth_view else r["realHeld"]  # noqa: E731
+    def depth(r):  # higher is better: a held-out view's PSNR, or how close the stance is to the measured one
+        if depth_view == "stance":
+            st = r["stance"] or {}
+            ref = (st.get("ref") or {}).get("stance")
+            return -abs(st["stance"] - ref) if ref is not None and "stance" in st else None
+        return r["byView"].get(depth_view) if depth_view else r["realHeld"]
     neg = lambda v: -v if v is not None else float("inf")  # noqa: E731
     return (sorted(first, key=lambda r: neg(r["views"])) + sorted(r01, key=lambda r: (neg(depth(r)), neg(r["views"])))
             + sorted([r for r in r2 if r not in first], key=lambda r: neg(r["views"])))

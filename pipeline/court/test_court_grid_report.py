@@ -102,6 +102,16 @@ class Pick(unittest.TestCase):
         freeze(self.run, "raw-default-r2", 25.6, {}, p42=True)
         self.assertEqual(self.pick(), ["raw-default-r0", "raw-default-r1", "raw-default-r2"])
 
+    def test_stance_can_stand_in_for_the_depth_view(self):
+        freeze(self.run, "raw-default-r0", 26.4, {}, p42=True, stance=0.30)  # better views, worse stance
+        freeze(self.run, "raw-default-r1", 26.2, {}, p42=True, stance=0.42)
+        for d in self.run.glob("recon-*/stance.json"):
+            st = json.loads(d.read_text())
+            d.write_text(json.dumps(st | {"ref": {"stance": 0.45}}))
+        rows = list(rep.rows(self.run))
+        self.assertEqual([r["variant"] for r in rep.pick_order(rows, depth_view="stance")],
+                         ["raw-default-r1", "raw-default-r0"])  # 3 cm off the measured stance beats 15 cm
+
     def test_a_p42_failure_drops_out(self):
         freeze(self.run, "raw-default-r0", 26.0, {"D": 28.0}, p42=True)
         freeze(self.run, "raw-agree-r0", 27.0, {"D": 29.0}, p42=False)
