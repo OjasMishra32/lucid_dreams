@@ -57,6 +57,7 @@ for _k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB
 import numpy as np  # noqa: E402
 
 import assemble_audio as au  # noqa: E402
+import assemble_colour as col  # noqa: E402
 import assemble_geom as geo  # noqa: E402
 import assemble_splats as sp  # noqa: E402
 
@@ -707,6 +708,8 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         "_": {"sim": sim, "contact": contact, "count": b["count"], "proxy": b["proxy"], "cap": cut, "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
               "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
     }
+    if slot.get("lod"):
+        entry["lod"] = True  # load with Spark's level of detail (SplatMesh lod: true): the uncut body, budgeted by LoD
     if slot.get("run_report"):
         rr = dict(slot["run_report"])
         if slot.get("courtRun") and expand(slot["courtRun"]).exists():
@@ -1080,6 +1083,9 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
         w.piece("seat", any(w.pieces[f"player:{p['id']}"]["source"] == "real" for p in players) or bool(cfg.get("players")),
                 "Decision W: the pair's centre from the placed soles")
         others = others_piece(w, cfg, standin, S, spots, camF)
+        if cfg.get("colorMatch"):
+            colour_piece(w, cfg, players, video, camF, k1F)
+            colour_extras(w, cfg, others)
         stands = stands_piece(w, cfg, standin, S)
         audio = audio_piece(w, cfg, standin, S)
         light = {**LIGHT, **(cfg.get("light") or {})}
@@ -1249,6 +1255,17 @@ def node_validate(bundle: Path, webxr: Path) -> list[str]:
     return json.loads(p.stdout.strip().splitlines()[-1])
 
 
+LOD_PAIR_MAX = 300_000  # plan 8: a 250k/300k pair only with lod: true and a Q0 frame-time number
+
+
+def budget_verdict(total: int, pair: list) -> str:
+    """Why a bundle over SPLAT_BUDGET may still be tried: every pair body loads with LoD and none is past
+    LOD_PAIR_MAX ("lod ...": pending the headset's frame-time number), else what breaks the plan."""
+    if pair and all(lod for _, _, lod in pair) and all(n <= LOD_PAIR_MAX for _, n, _ in pair):
+        return "lod on the whole pair (" + ", ".join(f"{i} {n}" for i, n, _ in pair) + "): allowed with a Q0 frame-time number, still to come"
+    return "the pair " + ", ".join(f"{i} {n}{' lod' if lod else ''}" for i, n, lod in pair) + f" (over {SPLAT_BUDGET} needs lod: true on the pair, each <= {LOD_PAIR_MAX})"
+
+
 def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str], list[str], list[str]]:
     """(errors, pending, info). Errors: format.ts's, missing or unreadable files, sizes and codecs that disagree with
     court.json, coordinates that make no sense. Pending: what isn't measured or real yet."""
@@ -1269,6 +1286,7 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         return errs, pending, info
     v = court["video"]
     frames = json.loads((bundle / v["frames"]).read_text())
+    camF_v = frame_camera(court["camera"], frames, v)
     check_stream(bundle, "main", v, len(frames), v["segments"], errs, info)
     fb = v.get("fallbacks") or {}
     if isinstance(fb.get("small"), dict):  # the same show frame for frame
@@ -1290,11 +1308,12 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
                 if im is None or im.shape[:2] != fz.shape[:2]:
                     errs.append(f"{v[k]}: not the size of {v['freeze']}")
     # players
-    total = 0
+    total, pair = 0, []
     for p in court["freeze"]["players"]:
         s = sp.read_ply(bundle / p["splats"])
         r = sp.read_ply(bundle / p["reality"])
         total += len(s)
+        pair.append((p["id"], len(s), bool(p.get("lod"))))
         if len(r) != len(s):
             errs.append(f"{p['reality']}: {len(r)} Gaussians, {p['splats']} has {len(s)}")
         P = sp.solid(s)
@@ -1309,10 +1328,15 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         if not len(pos) or idx.max() >= len(pos):
             errs.append(f"{p['proxy']}: an empty or broken mesh")
             continue
-        tri = pos[idx.reshape(-1, 3)]
-        # a grid cell's two sides are each triangle's two shorter edges (the third is its diagonal): the longer side
-        cell = float(np.median(np.sort(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)[:, 1]))
-        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm")
+        tri = pos[idx.reshape(-1, 3)].astype(float)
+        # the sampling as camera F (and the seat on its ray) sees it: each edge across F's ray through the triangle;
+        # a grid cell's two sides are the two shorter of those (the third is its diagonal), and the longer side counts
+        ray = tri.mean(1) - camF_v.C
+        ray /= np.linalg.norm(ray, axis=1, keepdims=True)
+        edge = tri - np.roll(tri, 1, axis=1)
+        across = edge - np.einsum("tek,tk->te", edge, ray)[..., None] * ray[:, None, :]
+        cell = float(np.median(np.sort(np.linalg.norm(across, axis=2), axis=1)[:, 1]))
+        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm across F's rays")
         if cell > PROXY_CELL_M * 1.1:
             errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")
     bib = court["freeze"].get("ballInBody")
@@ -1362,7 +1386,8 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
             (pending if stand_in and not strict else errs).append(f"{o['id']}: {pr}" + (" (a stand-in)" if stand_in else ""))
     info.append(f"splats: {total} in all ({len(court['freeze']['players'])} players + {len(court['freeze']['others'])} extras), budget {SPLAT_BUDGET}")
     if total > SPLAT_BUDGET:
-        errs.append(f"splats: {total} Gaussians is over the {SPLAT_BUDGET} budget (plan 8)")
+        verdict = budget_verdict(total, pair)
+        (pending if verdict.startswith("lod") else errs).append(f"splats: {total} Gaussians is over the {SPLAT_BUDGET} budget (plan 8): {verdict}")
     b = court["freeze"]["ball"]
     near = min(geo.box_distance_xz(b["centre"], (p["bounds"]["min"], p["bounds"]["max"])) for p in court["freeze"]["players"])
     if near > 0.5 or not 0.1 < b["centre"][1] < 3.5:
@@ -1538,6 +1563,159 @@ def silhouette_piece(w: Writer, cfg: dict, players: list, camF: geo.Cam, k1F: fl
     return got
 
 
+def picture_at_f(root: Path, video: dict) -> np.ndarray:
+    """The show's own picture at F as the viewer decodes it: the live region of the main stream's F frame (BT.709,
+    limited range), sRGB 0-1."""
+    x, y, w_, h_ = video["regions"]["live"]
+    n = video["segments"]["eases"][0]["frames"][1]
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(root / video["file"]), "-vf",
+                          f"select=eq(n\\,{n}),crop={w_}:{h_}:{x}:{y},scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24",
+                          "-frames:v", "1", "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h_, w_, 3).astype(float) / 255
+
+
+def mask_at_f(slot: dict, camF: geo.Cam, k1F: float, w_: int, h_: int) -> np.ndarray | None:
+    """A player's own mask in camera F's (undistorted) image at w_ x h_, eroded 2 px off its edge: their SAM mask at F
+    (maskF, the raw frame), else their freeze run's crop mask set into the raw frame. None without either."""
+    import cv2
+
+    raw = None
+    if slot.get("maskF"):
+        raw = cv2.imread(str(expand(slot["maskF"])), cv2.IMREAD_GRAYSCALE)
+    elif slot.get("courtRun") and expand(slot["courtRun"]).exists():
+        run = json.loads(expand(slot["courtRun"]).read_text())
+        m = cv2.imread(str(expand(slot["courtRun"]).parent / "masks" / f"{int(run['K']):06d}.png"), cv2.IMREAD_GRAYSCALE)
+        if m is not None:
+            x0, y0, cw, ch = (int(v) for v in run["crop"])
+            raw = np.zeros((camF.h, camF.w), np.uint8)
+            raw[y0:y0 + ch, x0:x0 + cw] = m[: camF.h - y0, : camF.w - x0]
+    if raw is None:
+        return None
+    m = cv2.resize(undistort_image(raw, camF.scaled(raw.shape[1]), k1F), (w_, h_), interpolation=cv2.INTER_AREA) >= 128
+    return cv2.erode(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+
+
+def colour_piece(w: Writer, cfg: dict, players: list, video: dict, camF: geo.Cam, k1F: float) -> None:
+    """--color-match for the pair: each body's render at F against the show's picture at F (colour_match); a body
+    recoloured gets its freeze.ply and its reality copy rewritten (the same Gaussians left unseen)."""
+    pic = picture_at_f(w.root, video)
+    cam = camF.scaled(pic.shape[1])
+    for p in players:
+        mask = mask_at_f(cfg_player(cfg, p["id"]), camF, k1F, pic.shape[1], pic.shape[0])
+        if mask is None:
+            w.notes.append(f"colour: {p['id']} has no mask at F: not matched")
+            continue
+        s = sp.read_ply(w.root / p["splats"])
+        fixed, rep = colour_match(s, cam, pic, mask)
+        w.pieces[f"player:{p['id']}"]["colour"] = rep
+        if fixed is not None:
+            old = sp.read_ply(w.root / p["reality"])
+            seen = (old.dc == s.dc).all(1) & (old.rest == s.rest).all(1)
+            sp.write_ply(w.path(p["splats"]), fixed)
+            sp.write_ply(w.path(p["reality"]), sp.reality(fixed, seen))
+        w.notes.append(f"colour at F, {p['id']}: " + colour_note(rep))
+
+
+def colour_extras(w: Writer, cfg: dict, others: list) -> None:
+    """--color-match for the extras posed from camera C: each against C's own frame that posed it (the extra's
+    pose.frame; cameras.C's calibration, cameras.CFrames/<frame>.jpg, undistorted with that frame's k1), seen through
+    C over a crop round the extra, inside its own solid render."""
+    import cv2
+
+    cams = cfg.get("cameras") or {}
+    for o in others:
+        if o.get("pose") != "C" or not str(o.get("file", "")).endswith(".ply"):
+            continue
+        man = expand(cfg["extras"]) / o["id"] / "extra.json" if cfg.get("extras") else None
+        mj = json.loads(man.read_text()) if man is not None and man.exists() else {}
+        frame = (mj.get("pose") or {}).get("frame")
+        mask_c = safe_rel(mj["maskC"]) if mj.get("maskC") else None
+        if frame is None or not (cams.get("C") and cams.get("CFrames")):
+            w.notes.append(f"colour: extra {o['id']} has no camera C frame to match (pose.frame, cameras.C, cameras.CFrames): not matched")
+            continue
+        cal = json.loads(expand(cams["C"]).read_text())
+        fr = next((f for f in cal["frames"] if f.get("file") == f"{int(frame):06d}.jpg" or f.get("source_frame") == frame), None)
+        img = cv2.imread(str(expand(cams["CFrames"]) / f"{int(frame):06d}.jpg"), cv2.IMREAD_COLOR)
+        if fr is None or img is None:
+            w.notes.append(f"colour: extra {o['id']}: camera C's frame {frame} isn't in the calibration or the frames: not matched")
+            continue
+        W, H = (int(v) for v in cal["image_size"])
+        cam = geo.Cam(np.asarray(fr.get("C", cal["C"]), float), np.asarray(fr["R"], float).T, float(fr["f"]), (W - 1) / 2, (H - 1) / 2, W, H)
+        pic = undistort_image(img[..., ::-1], cam.scaled(img.shape[1]), float(fr.get("k1", 0.0))).astype(float) / 255
+        s = sp.read_ply(w.root / o["file"])
+        u, v, z = cam.project(s.pos[s.alpha > 0.5].astype(float))
+        u, v = u[z > 0], v[z > 0]
+        x0, y0 = max(0, int(np.floor(u.min())) - 40), max(0, int(np.floor(v.min())) - 40)
+        x1, y1 = min(W, int(np.ceil(u.max())) + 40), min(H, int(np.ceil(v.max())) + 40)
+        sub = geo.Cam(cam.C, cam.R, cam.f, cam.cx - x0, cam.cy - y0, x1 - x0, y1 - y0)
+        al = sp.render(s, sub)[1]
+        mask = al > 0.98
+        if mask_c is not None:  # the extra's own mask in C's raw frame: whoever stands in front of it is left out
+            raw = cv2.imread(str(man.parent / mask_c), cv2.IMREAD_GRAYSCALE)
+            mask &= undistort_image(raw, cam.scaled(raw.shape[1]), float(fr.get("k1", 0.0)))[y0:y1, x0:x1] >= 128
+        mask = cv2.erode(mask.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        fixed, rep = colour_match(s, sub, pic[y0:y1, x0:x1], mask, fit=mask_c is not None)
+        w.pieces.setdefault(f"extra:{o['id']}", {"source": "real", "detail": ""})["colour"] = {**rep, "against": f"camera C frame {frame}"}
+        if fixed is not None:
+            old = sp.read_ply(w.root / o["reality"])
+            seen = (old.dc == s.dc).all(1) & (old.rest == s.rest).all(1)
+            sp.write_ply(w.path(o["file"]), fixed)
+            sp.write_ply(w.path(o["reality"]), sp.reality(fixed, seen))
+        w.notes.append(f"colour at C{frame}, extra {o['id']}: " + colour_note(rep, measured_only=mask_c is None)
+                       + ("" if mask_c else " (measured only: no maskC of it in that frame, so anyone in front of it counts)"))
+
+
+def colour_note(rep: dict, measured_only: bool = False) -> str:
+    b, a = rep["before"]["deltaE"], (rep.get("after") or {}).get("deltaE")
+    inside = b["median"] <= COLOUR_BAR["median"] and b["p90"] <= COLOUR_BAR["p90"]
+    if not a:
+        return f"dE2000 median {b['median']} p90 {b['p90']} ({'inside the bar: left alone' if inside or not measured_only else 'past the bar'})"
+    verdict = "fit rejected, colours left as they were" if rep["fit"]["rejected"] else "fit applied"
+    return f"dE2000 median {b['median']} p90 {b['p90']}; with a linear-RGB fit {a['median']} / {a['p90']} ({verdict})"
+
+
+COLOUR_BAR = {"median": 2.0, "p90": 5.0}  # CIEDE2000 between the 3D at F and the picture it takes over from
+
+
+def colour_stats(a: np.ndarray, r: np.ndarray) -> dict:
+    """The 3D's colours `a` against the picture's `r` (N x 3 sRGB): per-channel mean and std of each, CIEDE2000."""
+    de = col.delta_e2000(col.srgb_to_lab(a), col.srgb_to_lab(r))
+    return {"pixels": len(a), "mean3D": rnd(a.mean(0), 4), "std3D": rnd(a.std(0), 4), "meanPicture": rnd(r.mean(0), 4),
+            "stdPicture": rnd(r.std(0), 4), "deltaE": {"median": round(float(np.median(de)), 3), "p90": round(float(np.percentile(de, 90)), 3)}}
+
+
+def colour_match(s: sp.Splats, cam: geo.Cam, ref: np.ndarray, mask: np.ndarray, fit: bool = True) -> tuple[sp.Splats | None, dict]:
+    """The hand-off's colour check: the splats rendered through `cam` against the picture `ref` (H x W x 3 sRGB, the
+    camera's size) over `mask` where the render is solid. Past COLOUR_BAR, a 3x3 + offset is fitted in linear RGB
+    from the base colours' render (SH degree 0: what the transform will change) to the picture, both blurred by 2 px
+    (a colour cast is broad; texture a pixel or two off isn't a colour, and fitting it would only flatten the body),
+    then applied to the splats' base colours (assemble_colour.recolour) and the full render measured again. The fit is
+    kept only when neither the median nor the p90 gets worse and the body keeps at least 85% of the picture's colour
+    spread in every channel. Returns (the recoloured splats, or None; the report)."""
+    import cv2
+
+    rgb, al = sp.render(s, cam)
+    use = mask & (al > 0.98)
+    rep = {"before": colour_stats(rgb[use], ref[use])}
+    d = rep["before"]["deltaE"]
+    if not fit or (d["median"] <= COLOUR_BAR["median"] and d["p90"] <= COLOUR_BAR["p90"]):
+        return None, rep
+    base = sp.render(s, cam, view=False)[0]
+    blur = lambda x: cv2.GaussianBlur(x.astype(np.float32), (0, 0), 2.0).astype(float)  # noqa: E731
+    M, b = col.fit_affine(col.srgb_to_linear(blur(base)[use]), col.srgb_to_linear(blur(ref)[use]))
+    fixed = col.recolour(s, M, b)
+    rgb2, _ = sp.render(fixed, cam)
+    rep["after"] = colour_stats(rgb2[use], ref[use])
+    a = rep["after"]["deltaE"]
+    # kept only if it helps and doesn't flatten the body: a fit pulled by texture that sits a pixel off shrinks the
+    # colours toward their mean (lower dE, a greyer body); a true cast keeps the picture's own spread
+    sd_pic = np.asarray(rep["after"]["stdPicture"])
+    flat = (sd_pic >= 0.02) & (np.asarray(rep["after"]["std3D"]) < 0.85 * sd_pic)  # a near-flat channel can't flatten
+    rejected = bool(a["median"] > d["median"] or a["p90"] > d["p90"] or flat.any())
+    rep["fit"] = {"M": np.round(M, 5).tolist(), "b": rnd(b, 5), "space": "linear RGB, the splats' base colours", "rejected": rejected}
+    return (None if rejected else fixed), rep
+
+
 def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None = None) -> list[Path]:
     """Small JPEGs of the assembled show to look at by eye: the live region at the middle of pass 1 (the watch), the
     middle of the first ease, its last frame (F), the make (the first show frame nearest makeSource), the first show
@@ -1631,6 +1809,7 @@ def main(argv=None) -> int:
     ap.add_argument("--validate", action="store_true", help="check the assembled bundle (no assembly)")
     ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
     ap.add_argument("--cap-pair", type=int, default=None, help="cut each pair body to this many Gaussians by contribution at F (plan 8: 200000)")
+    ap.add_argument("--color-match", action="store_true", help="match each pair body's colour at F to the show's picture (dE2000; fit past the bar)")
     ap.add_argument("--cap-psnr", action="store_true", help="with --cap-pair: measure the cut's cost (PSNR, seat view and an 8-view orbit)")
     ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
     ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
@@ -1640,6 +1819,8 @@ def main(argv=None) -> int:
     cfg = json.loads(expand(a.config).read_text())
     if a.cap_pair:
         cfg = {**cfg, "capPair": a.cap_pair, "capPsnr": a.cap_psnr or cfg.get("capPsnr")}
+    if a.color_match:
+        cfg = {**cfg, "colorMatch": True}
     if not (a.out or cfg.get("out")):
         ap.error("no bundle folder: give --out or the config's `out`")
     out = expand(a.out or cfg["out"])

@@ -205,6 +205,15 @@ class SplatRender(unittest.TestCase):
 
 
 
+class Budget(unittest.TestCase):
+    def test_over_budget_needs_lod_on_the_whole_pair(self):
+        import assemble as A
+
+        self.assertTrue(A.budget_verdict(660_000, [("a", 300_000, True), ("b", 300_000, True)]).startswith("lod"))
+        self.assertFalse(A.budget_verdict(660_000, [("a", 300_000, True), ("b", 300_000, False)]).startswith("lod"))
+        self.assertFalse(A.budget_verdict(760_000, [("a", 350_000, True), ("b", 350_000, True)]).startswith("lod"))
+
+
 class Placement(unittest.TestCase):
     def test_camera_mode_keeps_pixels_and_stands_on_the_floor(self):
         rng = np.random.default_rng(3)

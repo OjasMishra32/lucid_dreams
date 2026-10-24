@@ -17,6 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import assemble as A  # noqa: E402
 import assemble_audio as au  # noqa: E402
+import assemble_colour as col  # noqa: E402
 import assemble_geom as g  # noqa: E402
 import assemble_splats as sp  # noqa: E402
 from test_assemble import person  # noqa: E402
@@ -216,6 +217,81 @@ class Bundle(unittest.TestCase):
         self.assertLess(asm["players"]["a"]["footError"]["m"], 0.5)
         self.assertNotIn("footError", asm["players"]["b"])
         self.assertIn("ground clicks", asm["players"]["b"]["placement"]["depthNote"])
+
+    def test_colour_match_measures_each_body_against_the_picture_at_f(self):
+        """--color-match: each pair body's render at F against the show's own picture at F inside its mask; a body past
+        the bar is recoloured (freeze.ply and its reality copy alike, the same Gaussians unseen) and measured again."""
+        import cv2
+
+        court = json.loads((self.out / "court.json").read_text())
+        frames = json.loads((self.out / court["video"]["frames"]).read_text())
+        camF = A.frame_camera(court["camera"], frames, court["video"])
+        a = sp.read_ply(self.out / court["freeze"]["players"][0]["splats"])
+        cam = camF.scaled(960)
+        own = np.where(sp.coverage_image(a, cam, (0.0, 0.0, float(cam.w), float(cam.h)), cam.w, cam.h) >= 0.5, 255, 0).astype(np.uint8)
+        cv2.imwrite(str(self.tmp / "mask-colour-a.png"), cv2.resize(own, (camF.w, camF.h), interpolation=cv2.INTER_NEAREST))
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "maskF": str(self.tmp / "mask-colour-a.png")}, cfg["players"][1]]
+        code, out = self.assemble_with("colour", players=players, colorMatch=True)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        rep = asm["pieces"]["player:a"]["colour"]
+        self.assertGreater(rep["before"]["pixels"], 100)
+        self.assertIn("p90", rep["before"]["deltaE"])
+        if "after" in rep:
+            self.assertLessEqual(rep["after"]["deltaE"]["p90"], rep["before"]["deltaE"]["p90"])
+            fz, rl = sp.read_ply(out / "players/a/freeze.ply"), sp.read_ply(out / "players/a/reality.ply")
+            self.assertEqual(len(fz), len(rl))
+        self.assertNotIn("colour", asm["pieces"]["player:b"])  # no mask at F: not measured
+
+    def test_an_extra_is_colour_matched_to_the_frame_that_posed_it(self):
+        """An extra posed from camera C is measured against C's own frame (cameras.C's calibration and cameras.CFrames)
+        through C, inside its own solid render: its own picture matches; a graded copy of the frame is fitted to."""
+        import cv2
+
+        ex = self.tmp / "extras-c"
+        shutil.copytree(self.tmp / "extras", ex)
+        m = json.loads((ex / "x-one" / "extra.json").read_text())
+        m["pose"] = {"camera": "C", "frame": 7}
+        (ex / "x-one" / "extra.json").write_text(json.dumps(m))
+        placed = sp.read_ply(self.out / "others" / "x-one" / "freeze.ply")
+        foot = np.median(placed.pos[placed.alpha > 0.5], 0)
+        camC = A.look_from([0.0, 11.0, 31.0], foot, 2400.0, 960, 540)
+        calib = {"image_size": [960, 540], "C": camC.C.tolist(),
+                 "frames": [{"file": "000007.jpg", "C": camC.C.tolist(), "R": camC.R.T.tolist(), "f": camC.f, "k1": 0.0}]}
+        (self.tmp / "calib-c.json").write_text(json.dumps(calib))
+        frames = self.tmp / "c-frames"
+        frames.mkdir(exist_ok=True)
+        graded = col.recolour(placed, np.diag([0.7, 1.0, 1.25]), np.zeros(3))
+        rgb, al = sp.render(graded, camC)
+        cv2.imwrite(str(frames / "000007.jpg"), (np.clip(rgb, 0, 1)[..., ::-1] * 255).round().astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 100])
+        cams = {"C": str(self.tmp / "calib-c.json"), "CFrames": str(frames)}
+        # without the extra's own mask in C's frame, whoever stands in front of it would count: measured only
+        code, out = self.assemble_with("colour-extra-nomask", extras=str(ex), colorMatch=True, cameras=cams)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        rep = asm["pieces"]["extra:x-one"]["colour"]
+        self.assertGreater(rep["before"]["deltaE"]["p90"], 5)
+        self.assertNotIn("after", rep)
+        self.assertTrue(any("x-one" in n and "measured only" in n for n in asm["notes"]), asm["notes"])
+        # with it (extra.json maskC, C's raw frame): fitted
+        cv2.imwrite(str(ex / "x-one" / "mask-c.png"), np.where(al > 0.5, 255, 0).astype(np.uint8))
+        m["maskC"] = "mask-c.png"
+        (ex / "x-one" / "extra.json").write_text(json.dumps(m))
+        code, out = self.assemble_with("colour-extra", extras=str(ex), colorMatch=True, cameras=cams)
+        self.assertEqual(code, 0)
+        rep = json.loads((out / "assembly.json").read_text())["pieces"]["extra:x-one"]["colour"]
+        self.assertLess(rep["after"]["deltaE"]["median"], 1.5)
+        self.assertFalse(rep["fit"]["rejected"])
+
+    def test_a_pair_player_can_ask_for_spark_lod(self):
+        """players[].lod: the body ships whole and court.json asks the runtime to load it with Spark's LoD (lod: true)."""
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        code, out = self.assemble_with("lod", players=[{**cfg["players"][0], "lod": True}, cfg["players"][1]])
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        self.assertIs(court["freeze"]["players"][0]["lod"], True)
+        self.assertNotIn("lod", court["freeze"]["players"][1])
 
     def test_a_freeze_runs_crop_mask_is_the_silhouette_check(self):
         """With its freeze run's clip folder (court-run.json, masks/<K>.png, ignore/<K>.png), a player is checked at the
@@ -538,6 +614,17 @@ class Bundle(unittest.TestCase):
         (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "thin"))
         errs, _, _ = A.validate(bad, A.WEBXR)
         self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
+        # what counts is the sampling as F sees it: a 4 mm grid on a surface steeply sloped away from F passes, though
+        # its legs are ~2 cm long in 3D
+        camF = A.frame_camera(court["camera"], json.loads((bad / court["video"]["frames"]).read_text()), court["video"])
+        fwd, right = camF.axis, camF.R[:, 0]
+        down = np.cross(fwd, right)
+        gu, gv = np.meshgrid(np.arange(41) * 0.004, np.arange(41) * 0.004)
+        base = camF.C + 20.0 * fwd
+        pos = (base + gu[..., None] * right + gv[..., None] * down + 5.0 * gv[..., None] * fwd).reshape(-1, 3)
+        (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "sloped"))
+        errs, _, info = A.validate(bad, A.WEBXR)
+        self.assertFalse(any("proxy.glb" in e and "P8" in e for e in errs), errs)
 
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"
