@@ -1,0 +1,70 @@
+#!/bin/bash
+# Court Side masks on HiPerGator, from the Mac, with the HiPerGator session open (`ssh hpg true`). One step per call:
+#   court-masks-hpg.sh env                                                 upload the scripts, build the SAM env (once)
+#   court-masks-hpg.sh people <frames dir> <sam_plan.json> <sam_people.py> <staging dir>
+#                                                                          pack, upload, submit the all-people masks
+#   court-masks-hpg.sh sam <name> <upload dir>   upload a court_sam.py set (or folder of sets), submit court-sam-<name>
+#   court-masks-hpg.sh matte <clip> <masks dir> <staging dir> <name>...    pack, upload, submit the pair's soft edges
+#   court-masks-hpg.sh fetch people <dir>      masks-people.tar into <dir>, unpacked there (label/, prob/, objects.json)
+#   court-masks-hpg.sh fetch sam <name> <dir> [w,h]   masks-sam.tar into <dir>, unpacked there (w,h: a cropped set)
+#   court-masks-hpg.sh fetch matte <masks dir> <staging dir>    the alpha mattes into <masks dir>/<name>-alpha/
+# Data paths are arguments (nothing about the footage lives in git). The HPG side is court-hpg.sh: it checks the upload
+# and the group quota, submits, and deletes nothing. Env: DRY=1 prints what would run; HOST (hpg); MIN_GB.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+HOST=${HOST:-hpg}; L=/blue/iruchkin/vishalnaveen/lucid; C=$L/code/pipeline/court
+SSH="ssh -o ControlMaster=no -o BatchMode=yes"
+run() { if [ "${DRY:-0}" = 1 ]; then echo "+ $*"; else "$@"; fi; }
+if [ "${DRY:-0}" != 1 ]; then
+  $SSH "$HOST" true 2>/dev/null || { echo "open the HiPerGator connection first: ssh $HOST true" >&2; exit 3; }
+fi
+up_code() {
+  run $SSH "$HOST" "mkdir -p $C $L/data/court"
+  run rsync -a -e "$SSH" "$HERE"/court-lib.sh "$HERE"/court-hpg.sh "$HERE"/court-sam-env.sbatch \
+    "$HERE"/court-masks.sbatch "$HERE"/court-sam.sbatch "$HERE"/court-matte.sbatch "$HERE"/court_sam.py \
+    "$HERE"/court_matte.py "$HOST:$C/"
+}
+submit() { run $SSH "$HOST" "${MIN_GB:+MIN_GB=$MIN_GB }bash $C/court-hpg.sh $1"; }
+case "${1:-}" in
+  env)
+    up_code
+    submit court-sam-env ;;
+  people)
+    F=${2:?frames dir}; P=${3:?sam_plan.json}; S=${4:?sam_people.py}; O=${5:?staging dir}
+    run python3 -I "$HERE/sam_pack.py" people --frames "$F" --plan "$P" --code "$S" --out "$O"
+    up_code
+    run rsync -a --partial -e "$SSH" "$O/court-sam-people/" "$HOST:$L/data/court/court-sam-people/"
+    submit court-sam-people ;;
+  sam)
+    N=${2:?name}; U=${3:?upload dir}
+    up_code
+    run rsync -a --partial -e "$SSH" "$U/" "$HOST:$L/data/court/court-sam-$N/"
+    submit "court-sam-$N" ;;
+  matte)
+    V=${2:?clip}; M=${3:?masks dir}; O=${4:?staging dir}; shift 4
+    (( $# )) || { echo "name the masks to soften (folders in $M)" >&2; exit 1; }
+    run python3 -I "$HERE/court_matte.py" pack --video "$V" --masks "$M" --names "$@" --out "$O"
+    up_code
+    run rsync -a --partial -e "$SSH" "$O/court-matte/" "$HOST:$L/data/court/court-matte/"
+    submit court-matte ;;
+  fetch)
+    case "${2:-}" in
+      people)
+        O=${3:?dir}
+        run mkdir -p "$O"
+        run rsync -a -e "$SSH" "$HOST:$L/runs/court-sam-people/masks-people.tar" "$O/"
+        run tar -xf "$O/masks-people.tar" -C "$O" ;;
+      sam)
+        N=${3:?name}; O=${4:?dir}
+        run mkdir -p "$O"
+        run rsync -a -e "$SSH" "$HOST:$L/runs/court-sam-$N/masks-sam.tar" "$O/"
+        run python3 -I "$HERE/court_sam.py" unpack "$O/masks-sam.tar" --out "$O" ${5:+--size "$5"} ;;
+      matte)
+        M=${3:?masks dir}; O=${4:?staging dir}
+        run mkdir -p "$O"
+        run rsync -a -e "$SSH" "$HOST:$L/runs/court-matte/masks-matte.tar" "$O/"
+        run python3 -I "$HERE/court_matte.py" unpack "$O/masks-matte.tar" --masks "$M" ;;
+      *) echo "fetch people <dir> | fetch sam <name> <dir> [w,h] | fetch matte <masks dir> <staging dir>" >&2; exit 1 ;;
+    esac ;;
+  *) sed -n '2,12p' "$0" >&2; exit 1 ;;
+esac
