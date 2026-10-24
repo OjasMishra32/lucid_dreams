@@ -19,8 +19,16 @@ export const DREAMS_DIR = resolve(/*turbopackIgnore: true*/ process.env.LUCID_DR
 // The bridge's own state: uploads and jobs. Ignored by git.
 export const DATA_DIR = resolve(process.cwd(), ".data");
 
+/**
+ * Run and dream ids as the bridge and lucid_runner.py make them (a slug and a timestamp, or a queue id like
+ * "jump-shot"). Anything else never reaches the filesystem or the runner: lucid_runner passes ids into an SSH command.
+ */
+export function isRunId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(id);
+}
+
 export function readDream(id: string): Dream | null {
-  if (!/^[\w.-]+$/.test(id)) return null;
+  if (!isRunId(id)) return null;
   const p = join(DREAMS_DIR, id, "dream.json");
   if (!existsSync(p)) return null;
   try {

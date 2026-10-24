@@ -1,6 +1,7 @@
 import "server-only";
 import type { JobKind, JobStatus } from "../dream";
 import { slug } from "../dream";
+import { isRunId } from "./dreams";
 import { mockStatus } from "./mock";
 import { runnerStatus, startRunnerJob } from "./runner";
 import { allJobs, getJob, putJob, type JobRecord } from "./store";
@@ -24,6 +25,7 @@ export function createJob(job: Omit<JobRecord, "mode" | "createdAt">): JobRecord
 }
 
 export async function jobStatus(id: string): Promise<JobStatus | null> {
+  if (!isRunId(id)) return null; // every way into the runner comes through here
   const job = getJob(id);
   if (job?.mode === "mock") return mockStatus(job);
   if (MODE === "runner") return runnerStatus(id); // also answers for runs the autopilot started
