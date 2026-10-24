@@ -47,11 +47,11 @@ IDLE_SECONDS = 8.0
 MIN_OPACITY = 1 / 255
 WHITE = (255, 255, 255)
 
-# Renders: a portrait lens on the head (camera 1.8 m away, 14 degree vertical field of view) from the front, 45, 90
-# and 180 degrees round the person, and a full-body front view. Angles turn round +Y from the person's front (-Z).
+# Renders: a portrait lens on the head (camera 1.8 m away, 14 degree vertical field of view) and a full-body view, each
+# from the front, 45, 90, 135 and 180 degrees round the person. Angles turn round +Y from the person's front (-Z).
 PORTRAIT = dict(distance=1.8, fov=14.0, size=(768, 1024))
 FULL = dict(distance=4.2, fov=28.0, size=(720, 1440))
-ANGLES = (0, 45, 90, 180)
+ANGLES = (0, 45, 90, 135, 180)
 
 
 def photos_in(folder: Path, limit: int) -> list[Path]:
@@ -521,7 +521,8 @@ def standard_views(gs: dict) -> dict[str, np.ndarray]:
                                          PORTRAIT["fov"]) for a in ANGLES}
     alpha_y = gs["means"][gs["opacities"] > 0.5][:, 1]
     mid = np.array([0.0, float((alpha_y.max() + alpha_y.min()) / 2), 0.0])
-    views["full_000"] = render(gs, orbit_eye(mid, FULL["distance"], 0), mid, FULL["size"], FULL["fov"])
+    views.update({f"full_{a:03d}": render(gs, orbit_eye(mid, FULL["distance"], a), mid, FULL["size"], FULL["fov"])
+                  for a in ANGLES})
     return views
 
 
@@ -594,17 +595,18 @@ def photo_embeddings(ident: Identity, prep_dir: Path) -> tuple[list, float | Non
 
 # ------------------------------------------------------------------------------------------------- compare sheet
 def compare_sheet(rows: list[tuple[str, dict]], photos_jpg: Path | None, dest: Path) -> None:
+    """Per bundle: the full body, then the head, at each angle in ANGLES."""
     from PIL import Image, ImageDraw
 
-    keys = [f"portrait_{a:03d}" for a in ANGLES] + ["full_000"]
     th = 512
     label_w = 230
     tiles = []
     for label, views in rows:
-        ims = [Image.fromarray(views[k]) for k in keys]
-        ims = [im.resize((round(im.width * th / im.height), th), Image.LANCZOS) for im in ims]
-        tiles.append((label, ims))
-    width = label_w + sum(im.width for im in tiles[0][1])
+        for kind in ("full", "portrait"):
+            ims = [Image.fromarray(views[f"{kind}_{a:03d}"]) for a in ANGLES]
+            ims = [im.resize((round(im.width * th / im.height), th), Image.LANCZOS) for im in ims]
+            tiles.append((f"{label}  ({kind}: {', '.join(str(a) for a in ANGLES)} deg)", ims))
+    width = label_w + max(sum(im.width for im in ims) for _, ims in tiles)
     head = None
     if photos_jpg and photos_jpg.is_file():
         head = Image.open(photos_jpg).convert("RGB")
@@ -697,6 +699,52 @@ def build(args) -> None:
     print("BUILD_OK")
 
 
+def compare(args) -> None:
+    """The standard renders of any bundles, side by side, with identity against a prep folder's photos. Run from the
+    LHM++ checkout (the identity net reads ./pretrained_models)."""
+    import os
+
+    sys.path.insert(0, os.getcwd())
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    ident, embs, report = None, [], {"bundles": {}}
+    try:
+        ident = Identity()
+        embs, report["photo_vs_photo_identity"] = photo_embeddings(ident, Path(args.photos_prep))
+    except Exception as e:  # noqa: BLE001
+        print(f"[identity] unavailable: {e}")
+    rows, spins = [], []
+    for spec in args.bundles:
+        label, path = spec.split("=", 1)
+        gs = posed_gaussians(Path(path))
+        views = standard_views(gs)
+        save_views(views, out, label)
+        if args.turntable:
+            alpha_y = gs["means"][gs["opacities"] > 0.5][:, 1]
+            mid = np.array([0.0, float((alpha_y.max() + alpha_y.min()) / 2), 0.0])
+            spins.append([render(gs, orbit_eye(mid, FULL["distance"], 360 * k / args.turntable), mid, (480, 960),
+                                 FULL["fov"]) for k in range(args.turntable)])
+        entry = {"bundle": path, "gaussians": int(len(gs["means"]))}
+        if ident and embs:
+            try:
+                entry["identity"] = identity_scores(ident, embs, views)
+            except Exception as e:  # noqa: BLE001
+                print(f"[identity] skipped: {e}")
+        report["bundles"][label] = entry
+        rows.append((label, views))
+        print(f"[compare] {label}: {entry}")
+    sheet_photos = Path(args.photos_prep).parent / "raw.jpg"
+    compare_sheet(rows, sheet_photos, out / "compare.jpg")
+    if spins:  # the bundles turning side by side, in the order given
+        import imageio.v2 as iio
+
+        iio.mimwrite(out / "turntable.mp4", [np.concatenate(f, axis=1) for f in zip(*spins)], fps=24,
+                     codec="libx264", quality=8, macro_block_size=8)
+    (out / "compare.json").write_text(json.dumps(report, indent=1) + "\n")
+    print(json.dumps(report, indent=1))
+    print("COMPARE_OK", out / "compare.jpg")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -719,8 +767,13 @@ def main() -> None:
     b.add_argument("--intent", default=None)
     b.add_argument("--credit", default=None)
     b.add_argument("--compare-with", nargs="*", help="label=bundle_dir: render these the same way, side by side")
+    d = sub.add_parser("compare")
+    d.add_argument("bundles", nargs="+", help="label=bundle_dir")
+    d.add_argument("--photos-prep", required=True, help="a prep/raw folder: the photos identity is measured against")
+    d.add_argument("--out", required=True)
+    d.add_argument("--turntable", type=int, default=0, help="also write turntable.mp4 with this many frames, side by side")
     args = p.parse_args()
-    {"colour": colour, "prep": prep, "build": build}[args.cmd](args)
+    {"colour": colour, "prep": prep, "build": build, "compare": compare}[args.cmd](args)
 
 
 if __name__ == "__main__":
