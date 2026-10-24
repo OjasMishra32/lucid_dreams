@@ -64,9 +64,10 @@ const IDLE_KINDS: IdleKind[] = ["rest", "chin", "cheek", "clasped", "forearms", 
 const WEIGHTS: Record<Exclude<Mode, "move">, Partial<Record<IdleKind, number>>> = {
   // their own move to find: leaning in, over the board. No folded arms, forearms on the table or clasped hands: on a
   // body built from photos (bulkier than the SMPL-X these poses were tuned on) the forearms sink into the jacket.
-  think: { chin: 3, cheek: 2, leanBack: 0.35, rest: 1.4 },
+  // Nor (for now) a hand at the chin or cheek: the hand sinks into a photo-built face. Hands rest by the board.
+  think: { rest: 3, leanBack: 0.6 },
   // your move: watching, more at ease
-  wait: { leanBack: 2.4, rest: 2, chin: 1, cheek: 0.7 },
+  wait: { leanBack: 2.4, rest: 2 },
   over: { rest: 1, leanBack: 1 },
 };
 

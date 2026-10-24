@@ -898,7 +898,8 @@ export class SeatedOpponent {
 
   /** A loose fist under the chin, that elbow down on the table. */
   private chinHand(side: 0 | 1, out: HandIdle, a: number) {
-    const g = this.bodyPoint(HEAD, this.rig.chinOff).addScaledVector(DOWN, 0.03).addScaledVector(FWD, 0.01).addScaledVector(IN[side], (a - 0.5) * 0.02);
+    // under the chin, not in it: a head built from photos (hair, a fuller jaw) sits further out than SMPL-X's
+    const g = this.bodyPoint(HEAD, this.rig.chinOff).addScaledVector(DOWN, 0.05).addScaledVector(FWD, 0.045).addScaledVector(IN[side], (a - 0.5) * 0.02);
     this.handPose(this.rig.hands[side], UP.clone().multiplyScalar(0.9).addScaledVector(BACK, 0.4).addScaledVector(IN[side], 0.12), BACK, 0, out.q);
     out.p.copy(g).applyMatrix4(this.fromBundle);
     out.curl = 0.85 + 0.1 * a;
@@ -912,7 +913,7 @@ export class SeatedOpponent {
     const dir = UP.clone().multiplyScalar(0.85).addScaledVector(BACK, 0.25).addScaledVector(IN[side], 0.12).normalize();
     this.handPose(this.rig.hands[side], dir, IN[side], 0, out.q);
     // the heel of the hand under the jaw, the palm along the cheek
-    const wrist = this.bodyPoint(HEAD, this.rig.cheekOff[side]).addScaledVector(dir, -0.06).addScaledVector(OUT[side], 0.022).addScaledVector(FWD, 0.005 + 0.01 * a);
+    const wrist = this.bodyPoint(HEAD, this.rig.cheekOff[side]).addScaledVector(dir, -0.07).addScaledVector(OUT[side], 0.05).addScaledVector(FWD, 0.03 + 0.01 * a);
     this.fromWrist(side, wrist, out);
     out.curl = 0.15 + 0.15 * a;
     out.pole.copy(DOWN).addScaledVector(FWD, 0.1).addScaledVector(OUT[side], 0.3).normalize(); // the elbow straight down, never out over the board
