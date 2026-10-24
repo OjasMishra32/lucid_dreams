@@ -6,6 +6,35 @@ can perform any motion. It powers "you, perfected", teach mode, and the family-p
 HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development you can open an interactive GPU
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
+
+## TOP PRIORITY NOW (Sat 4:20 AM): Ghost Coach, approved
+
+Your plan (`docs/plans/vishal-feature.md`) is approved as your main feature: film your try, and your own body doing
+exactly what you did stands inside the teacher's replay; the joints where you differ glow; Gemini names the two
+biggest fixes; "Show me right" plays your body doing it correctly. Build on what already works: Raami's Gemini Live
+coach (the "Ask" button, `apps/webxr/src/coach.ts`, `/api/live/token`), your Watch me try and `/live`. Ship the
+Remix fallback first, as you planned.
+
+**Your two questions, answered:**
+1. **No `vishal` avatar exists yet.** Build your learner body with LHM++: put 8-16 photos of yourself from one
+   session (front, 3/4, side, one head-to-toe) in `$L/data/avatars/photos/vishal/`, then run
+   `sbatch --export=ALL,NAME=vishal,TITLE="Vishal" avatars/hpg/lhmpp-avatar.sbatch` (L4, about 4 min; Magnus's
+   took 9 s of inference) and `avatars/lhmpp_cleanup.py <bundle> --smplx $L/models/smplx/SMPLX_NEUTRAL.npz`. The
+   cleanup caps hand Gaussians, re-skins the fingers and clears clothing specks.
+2. **GVHMR can run on its own.** 4DAnyone bundles GVHMR, HMR2, ViTPose and YOLO weights
+   (`$L/repos/4DAnyone/models/gvhmr/`). Its pose-conditioning step took ~80 s per clip on a B200 in our runs, and
+   the entry point is `fdanyone/skeleton/pipeline.py`. A `pipeline/hpg/stage-gvhmr.sbatch` that writes only the
+   motion (B200, 3 CPUs, 16G) is yours to add.
+
+**Facts you'll hit:**
+- **GPUs:** all 24 are busy with replays until about 5 AM. Ask for 3 CPUs and 16-20G (real use is ~5G).
+- **Disk:** the lab has ~20 GB free; delete intermediates.
+- **Hands** are the weakest part of every photo-built avatar. Keep them low and still in demos; the chess
+  opponent no longer raises them.
+- `GEMINI_API_KEY` is still missing from `apps/web/.env.local` on the bridge Mac, so ask Ojasva for it before
+  testing the coach end to end.
+- Ian's `ian-grandma-avatar` and `ian-grandma-avatar-head` exist on HiPerGator (held). Check them with Ian.
+
 ## DECIDED (Sat 3:30 AM): passthrough only; the web app drops Places
 
 Ojasva: "the backgrounds are cooked; we only keep the passthrough." In the web app, remove the Places row from dream

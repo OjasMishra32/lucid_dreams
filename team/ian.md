@@ -3,6 +3,26 @@
 You own what people actually see: photoreal people standing on the real floor in Meta Quest 3S passthrough,
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
+
+## NOW (Sat 4:20 AM): what changed, and what to test on the Quest
+
+1. **Magnus Carlsen sits across the WebXR chess board** (`magnus-carlsen-lhm`: LHM++ from 8 photos, then a
+   cleanup for hands and jacket specks). He opens with his own repertoire, reaches, moves and looks up. Being added
+   now: varied, realistic idle behaviour (head and eyes, not hands), a guard so no hand ever passes into his body,
+   and **you press your own clock** after your move (fingertip tap in XR; click or space on a screen). Try
+   `?mode=chess&strength=carlsen` in the Quest browser and report at 1.5 m: face, hands, any clipping. Bobby
+   follows (LHM++ from colourised 1972 photos).
+2. **Your grandma: use LHM++.** It builds one person from many photos at once and beat the one-photo route by far
+   (Magnus's identity score 0.55 vs 0.23). Put 8-16 photos from one period in
+   `$L/data/avatars/photos/ian-grandma/` (optional `crops.json` to cut other people out), then
+   `sbatch --export=ALL,NAME=ian-grandma,TITLE="Grandma" avatars/hpg/lhmpp-avatar.sbatch` and
+   `avatars/lhmpp_cleanup.py` on the bundle. Your existing `ian-grandma-avatar(-head)` bundles stay held. A home
+   video is still the most real (a replay).
+3. **The ball:** LeBron's full-quality export now finds the real ball in the reconstruction itself
+   (`props.json` basketball, `"source": "reconstruction"`). Check that your props player shows it in his hands and
+   in flight.
+4. **Passthrough only** (from 3:30 AM), unchanged: no 360 places.
+
 ## DECIDED (Sat 3:30 AM): passthrough only, no 360 places
 
 Ojasva watched the full-quality jump shot on the court place and called it: "the backgrounds are cooked; we only
