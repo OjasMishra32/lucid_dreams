@@ -238,6 +238,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   };
   on("seatHere", () => {
     seat.place(head, head.yaw);
+    // ?solo: one person tests alone, so there is no hand-over to wait for (the seated, still head still gates it)
+    if (params.has("solo")) seat.arrival.handedOver = true;
     seatedEyeY = head.room[1];
     setup = false;
     lightsUp = -1; // seat.place re-arms seat.arrival: dark until the next hand-over
@@ -582,6 +584,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     scene.background = null;
     lastTime = -1;
     if (setup) go("arrival"); // a re-entry after Seat here keeps the phase, the anchor and the seat (9)
+    // ?solo: take the seat where the head is once tracking settles, instead of waiting for a Seat here press
+    if (setup && params.has("solo")) setTimeout(() => actions.get("seatHere")?.(), 1500);
     status.textContent = "In the headset";
   };
   enterButton.addEventListener("click", () => {
