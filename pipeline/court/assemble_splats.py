@@ -364,27 +364,135 @@ def depth_image(P, cam: Cam, nu: int, nv: int, oversample: int = 4, pct: float =
     return cv2.medianBlur(depth, 5), box
 
 
-def proxy_glb(P, alpha, cam: Cam, nu: int = 64, nv: int = 128, name: str = "proxy") -> bytes:
-    """A (nu + 1) x (nv + 1) depth mesh of the splats seen from `cam` (camera F), in court space: each vertex on F's
-    ray through its grid pixel, at the body's front depth there."""
-    P = np.asarray(P, float)
-    keep = np.asarray(alpha) > 0.3
-    depth, box = depth_image(P[keep] if keep.sum() > 100 else P, cam, nu, nv)
-    H, W = depth.shape
-    gu = np.linspace(box[0], box[2], nu + 1)
-    gv = np.linspace(box[1], box[3], nv + 1)
-    U, V = np.meshgrid(gu, gv)
-    ci = np.clip(((U - box[0]) / (box[2] - box[0]) * W).astype(int), 0, W - 1)
-    cj = np.clip(((V - box[1]) / (box[3] - box[1]) * H).astype(int), 0, H - 1)
-    Z = depth[cj, ci].astype(np.float64)
-    local = np.stack([(U - cam.cx) / cam.f * Z, (V - cam.cy) / cam.f * Z, Z], -1).reshape(-1, 3)
-    pos = (local @ cam.R.T + cam.C).astype(np.float32)
-    idx = []
-    for j in range(nv):
-        for i in range(nu):
-            a = j * (nu + 1) + i
-            idx += [a, a + nu + 1, a + 1, a + 1, a + nu + 1, a + nu + 2]
-    return glb(pos, np.array(idx), name)
+def quat_matrices(q) -> np.ndarray:
+    """Rotation matrices of (w, x, y, z) quaternions, (n, 3, 3)."""
+    w, x, y, z = np.moveaxis(normalise(np.asarray(q, float)), -1, 0)
+    return np.stack([np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)], -1),
+                     np.stack([2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)], -1),
+                     np.stack([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)], -1)], -2)
+
+
+def texel_of(u, v, box, W: int, H: int):
+    """Source pixel (u, v) -> continuous texel coordinates over `box` (pixel edges; texel i's centre is the pixel
+    box[0] + (i + 0.5) sx - 0.5, as proxies.ts samples it)."""
+    sx, sy = (box[2] - box[0]) / W, (box[3] - box[1]) / H
+    return (np.asarray(u) - box[0] + 0.5) / sx - 0.5, (np.asarray(v) - box[1] + 0.5) / sy - 0.5
+
+
+def bilinear(img: np.ndarray, x, y) -> np.ndarray:
+    """img sampled at continuous pixel-centre coordinates (x, y), clamped at the borders."""
+    H, W = img.shape
+    x, y = np.clip(np.asarray(x, float), 0, W - 1), np.clip(np.asarray(y, float), 0, H - 1)
+    x0, y0 = np.minimum(np.floor(x).astype(int), W - 2 if W > 1 else 0), np.minimum(np.floor(y).astype(int), H - 2 if H > 1 else 0)
+    x1, y1 = np.minimum(x0 + 1, W - 1), np.minimum(y0 + 1, H - 1)
+    fx, fy = x - x0, y - y0
+    return (img[y0, x0] * (1 - fx) * (1 - fy) + img[y0, x1] * fx * (1 - fy) + img[y1, x0] * (1 - fx) * fy + img[y1, x1] * fx * fy)
+
+
+def coverage_image(s: Splats, cam: Cam, box, W: int, H: int, max_r: int = 64, budget: int = 4_000_000) -> np.ndarray:
+    """How much of each texel of `box` (W x H over source pixels) the splats cover as a splat renderer composites
+    them: 1 - prod(1 - alpha_i G_i) (the order doesn't matter for coverage), each Gaussian's footprint its EWA
+    projection through `cam` (plus 3DGS's 0.3 px^2 low-pass), out to 3 sigma (at most max_r texels)."""
+    a = s.alpha
+    keep = a >= 1 / 255
+    t = (s.pos[keep].astype(float) - cam.C) @ cam.R  # camera coordinates (R is world-from-camera)
+    front = t[:, 2] > 1e-3
+    t, a = t[front], a[keep][front]
+    M = quat_matrices(s.quats[keep][front]) * np.exp(s.scales[keep][front].astype(float))[:, None, :]
+    Sc = np.einsum("ij,njk,kl->nil", cam.R.T, M @ np.swapaxes(M, 1, 2), cam.R)
+    tz = t[:, 2]
+    J = np.zeros((len(t), 2, 3))
+    J[:, 0, 0] = J[:, 1, 1] = cam.f / tz
+    J[:, 0, 2] = -cam.f * t[:, 0] / tz ** 2
+    J[:, 1, 2] = -cam.f * t[:, 1] / tz ** 2
+    S2 = J @ Sc @ np.swapaxes(J, 1, 2) + 0.3 * np.eye(2)
+    sx, sy = (box[2] - box[0]) / W, (box[3] - box[1]) / H
+    A, B, C = S2[:, 0, 0] / sx ** 2, S2[:, 0, 1] / (sx * sy), S2[:, 1, 1] / sy ** 2  # texel units
+    det = A * C - B * B
+    iA, iB, iC = C / det, -B / det, A / det
+    tu, tv = texel_of(cam.cx + cam.f * t[:, 0] / tz, cam.cy + cam.f * t[:, 1] / tz, box, W, H)
+    r = np.clip(np.ceil(3 * np.sqrt(0.5 * (A + C) + np.sqrt(0.25 * (A - C) ** 2 + B * B))), 1, max_r).astype(int)
+    inside = (tu + r >= 0) & (tu - r < W) & (tv + r >= 0) & (tv - r < H)
+    logT = np.zeros(W * H)
+    for rad in np.unique(r[inside]):
+        sel = np.flatnonzero(inside & (r == rad))
+        dy, dx = np.mgrid[-rad:rad + 1, -rad:rad + 1]
+        dx, dy = dx.ravel(), dy.ravel()
+        step = max(1, budget // len(dx))
+        for k in range(0, len(sel), step):
+            g = sel[k:k + step]
+            ix = np.rint(tu[g])[:, None].astype(int) + dx
+            iy = np.rint(tv[g])[:, None].astype(int) + dy
+            ex, ey = ix - tu[g][:, None], iy - tv[g][:, None]
+            alpha = np.minimum(0.99, a[g][:, None] * np.exp(-0.5 * (iA[g][:, None] * ex * ex + 2 * iB[g][:, None] * ex * ey + iC[g][:, None] * ey * ey)))
+            ok = (ix >= 0) & (ix < W) & (iy >= 0) & (iy < H) & (alpha >= 1 / 255)
+            logT += np.bincount((iy * W + ix)[ok], np.log1p(-alpha[ok]), minlength=W * H)
+    return 1 - np.exp(logT).reshape(H, W)
+
+
+def proxy_mesh(s: Splats, cam: Cam, cell_m: float = 0.004, cover: float = 0.5, depth_cells: int = 4, pct: float = 10.0):
+    """The splat-depth proxy seen from `cam` (camera F): a grid of square texels about cell_m wide at the body's
+    depth over the body's box in F's image; a texel is meshed (two triangles) only where the splats cover at least
+    `cover` of it (coverage_image), so the mesh's outline is the splats' own silhouette to a texel and there is no
+    mesh where there is no body. Every vertex lies on F's ray through its texel corner, at the body's front depth
+    there: per block of depth_cells^2 texels the pct percentile of the solid splats' depths (a floater in front moves
+    it little), empty blocks filled from their neighbours, median-filtered, sampled bilinearly. Returns (positions in
+    court space, triangle indices, info)."""
+    import cv2
+
+    keep = s.alpha > 0.3
+    keep = keep if keep.sum() > 100 else np.ones(len(s), bool)
+    u, v, z = cam.project(s.pos[keep].astype(float))
+    ok = z > 0
+    u, v, z = u[ok], v[ok], z[ok]
+    zm = float(np.median(z))
+    cell_px = cam.f * cell_m / zm
+    margin = 0.06 * cam.f / zm  # 6 cm past the solid splats' centres: room for their own width
+    u0, u1 = np.percentile(u, 0.05) - margin, np.percentile(u, 99.95) + margin
+    v0, v1 = np.percentile(v, 0.05) - margin, np.percentile(v, 99.95) + margin
+    W, H = int(np.ceil((u1 - u0) / cell_px)), int(np.ceil((v1 - v0) / cell_px))
+    box = (u0, v0, u0 + W * cell_px, v0 + H * cell_px)
+    on = coverage_image(s, cam, box, W, H) >= cover
+    # the front depth on coarse blocks
+    Wd, Hd = -(-W // depth_cells), -(-H // depth_cells)
+    tu, tv = texel_of(u, v, box, W, H)
+    ci = np.clip(np.rint(tu).astype(int) // depth_cells, 0, Wd - 1)
+    cj = np.clip(np.rint(tv).astype(int) // depth_cells, 0, Hd - 1)
+    cell = cj * Wd + ci
+    order = np.lexsort((z, cell))
+    cs, zs = cell[order], z[order]
+    starts = np.flatnonzero(np.r_[True, cs[1:] != cs[:-1]])
+    counts = np.diff(np.r_[starts, len(cs)])
+    pick = starts + np.floor((counts - 1) * pct / 100).astype(int)
+    EMPTY = np.float32(1e30)  # OpenCV turns inf into FLT_MAX, so empty cells carry a plain sentinel
+    depth = np.full(Wd * Hd, EMPTY, np.float32)
+    depth[cs[pick]] = zs[pick]
+    depth = depth.reshape(Hd, Wd)
+    for _ in range(max(Wd, Hd)):
+        if not (depth >= EMPTY).any():
+            break
+        grown = cv2.erode(depth, np.ones((3, 3), np.uint8), borderType=cv2.BORDER_REPLICATE)  # min of the neighbours
+        depth = np.where(depth < EMPTY, depth, grown)
+    depth = cv2.medianBlur(depth, 5) if min(Wd, Hd) >= 5 else depth
+    # the mesh: corners of meshed texels, each on its ray at the bilinear block depth
+    jj, ii = np.nonzero(on)
+    corners = np.unique(np.concatenate([jj * (W + 1) + ii, jj * (W + 1) + ii + 1, (jj + 1) * (W + 1) + ii, (jj + 1) * (W + 1) + ii + 1]))
+    cy_, cx_ = corners // (W + 1), corners % (W + 1)
+    Z = bilinear(depth.astype(np.float64), cx_ / depth_cells - 0.5, cy_ / depth_cells - 0.5)  # corner -> block coordinates
+    U = box[0] + cx_ * cell_px - 0.5
+    V = box[1] + cy_ * cell_px - 0.5
+    pos = (np.stack([(U - cam.cx) / cam.f * Z, (V - cam.cy) / cam.f * Z, Z], -1) @ cam.R.T + cam.C).astype(np.float32)
+    a, b, c, d = (np.searchsorted(corners, k) for k in (jj * (W + 1) + ii, jj * (W + 1) + ii + 1, (jj + 1) * (W + 1) + ii, (jj + 1) * (W + 1) + ii + 1))
+    idx = np.stack([a, c, b, b, c, d], 1).ravel()
+    info = {"cellM": round(cell_px * zm / cam.f, 5), "cellPx": round(cell_px, 3), "texels": [W, H], "meshed": int(on.sum()),
+            "vertices": len(pos), "triangles": len(idx) // 3, "depthM": round(zm, 3)}
+    return pos, idx, info
+
+
+def proxy_glb(s: Splats, cam: Cam, cell_m: float = 0.004, name: str = "proxy") -> tuple[bytes, dict]:
+    """proxy_mesh as a GLB (and its info)."""
+    pos, idx, info = proxy_mesh(s, cam, cell_m)
+    return glb(pos, idx, name), info
 
 
 def glb(pos: np.ndarray, idx: np.ndarray, name: str) -> bytes:

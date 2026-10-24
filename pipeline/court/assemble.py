@@ -74,6 +74,7 @@ BOARD_X, BOARD_HALF, BOARD_Y = 13.106, 0.915, (2.90, 3.97)
 LIGHT = {"crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5, "alternative": {"crowd": 0.16, "floor": 0.14}}
 SEAT = {"distance": 5.0, "distanceRange": [4, 7], "clear": 1.0}
 SPLAT_BUDGET = 500_000  # visible at the worst pose until the Quest says more (plan 8)
+PROXY_CELL_M = 0.005  # P8 (stream D): the pair's splat-depth proxies sampled at about half a centimetre
 PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|webp|ply|glb|bin|m4a|mp4|wav|spz)$", re.I)
 
 
@@ -621,7 +622,7 @@ def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: ge
         "bounds": sp.bounds(Pp), "seenFraction": round(float(seen.mean()), 3),
         "capsules": [{k: c[k] for k in ("a", "b", "r")} for c in sp.body_capsules(Pp)],
         "shadow": {"image": f"{base}/shadow.png", "rect": rect}, "reflection": {"image": f"{base}/reflection.png", "rect": rect},
-        "_": {"sim": sim, "contact": contact, "count": b["count"], "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
+        "_": {"sim": sim, "contact": contact, "count": b["count"], "proxy": b["proxy"], "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
               "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
     }
     if slot.get("run_report"):
@@ -743,13 +744,15 @@ def body_files(w: Writer, base: str, s: sp.Splats, sim: geo.Similarity, seen: np
     P = placed.pos[keep]
     sp.write_ply(w.path(f"{base}/freeze.ply"), placed)
     sp.write_ply(w.path(f"{base}/reality.ply"), sp.reality(placed, seen))
+    proxy = None
     if camF is not None:
-        w.path(f"{base}/proxy.glb").write_bytes(sp.proxy_glb(placed.pos, placed.alpha, camF, name=f"{Path(base).name}-proxy"))
+        data, proxy = sp.proxy_glb(placed, camF, name=f"{Path(base).name}-proxy")
+        w.path(f"{base}/proxy.glb").write_bytes(data)
     rect = sp.floor_rect(P)
     shadow, refl = sp.floor_maps(P, placed.alpha[keep], placed.rgb[keep], rect)
     sp.write_png(w.path(f"{base}/shadow.png"), shadow)
     sp.write_png(w.path(f"{base}/reflection.png"), refl)
-    return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean())}
+    return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean()), "proxy": proxy}
 
 
 def seen_of(s: sp.Splats, reality, spz: Path | None, w: Writer | None = None, who: str = "", same_space: bool = True) -> np.ndarray:
@@ -1201,6 +1204,12 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
         pos, idx = sp.read_glb((bundle / p["proxy"]).read_bytes())
         if not len(pos) or idx.max() >= len(pos):
             errs.append(f"{p['proxy']}: an empty or broken mesh")
+            continue
+        tri = pos[idx.reshape(-1, 3)]
+        cell = float(np.median(np.min(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)))
+        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm")
+        if cell > PROXY_CELL_M * 1.1:
+            errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")
     asm_pieces = json.loads((bundle / "assembly.json").read_text()).get("pieces", {}) if (bundle / "assembly.json").exists() else {}
     for o in court["freeze"]["others"]:
         problems = []

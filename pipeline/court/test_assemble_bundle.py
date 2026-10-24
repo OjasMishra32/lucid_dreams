@@ -386,6 +386,20 @@ class Bundle(unittest.TestCase):
         errs, _, _ = A.validate(bad, A.WEBXR, strict=True)
         self.assertTrue(any("P42" in e for e in errs), errs)
 
+    def test_a_coarse_proxy_fails_p8s_sampling(self):
+        """P8 needs the pair's proxies sampled at about half a centimetre at the silhouettes: a 5 cm grid fails."""
+        court = json.loads((self.out / "court.json").read_text())
+        info = json.loads((self.out / "assembly.json").read_text())["players"]["a"]["proxy"]
+        self.assertLessEqual(info["cellM"], 0.005)
+        bad = self.tmp / "coarse"
+        shutil.copytree(self.out, bad)
+        gu, gv = np.meshgrid(np.arange(11) * 0.05, np.arange(41) * 0.05)
+        pos = np.stack([5.0 + 0 * gu, gv, gu], -1).reshape(-1, 3)
+        idx = [[j * 11 + i, (j + 1) * 11 + i, j * 11 + i + 1] for j in range(40) for i in range(10)]
+        (bad / court["freeze"]["players"][0]["proxy"]).write_bytes(sp.glb(pos, np.array(idx).ravel(), "coarse"))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("proxy.glb" in e and "P8" in e for e in errs), errs)
+
     def test_a_validation_error_is_named(self):
         bad = self.tmp / "bad"
         shutil.copytree(self.out, bad)

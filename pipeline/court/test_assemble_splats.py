@@ -175,22 +175,61 @@ class Body(unittest.TestCase):
 
 
 class Proxy(unittest.TestCase):
-    def test_depth_mesh_sits_on_the_front_surface(self):
-        # a 0.4 m sphere of points 20 m in front of a camera: the mesh's centre vertex is on its near side
+    def one(self, centre, scales, alpha=0.9, quat=(1.0, 0.0, 0.0, 0.0)) -> sp.Splats:
+        return sp.Splats.new(np.array([centre], np.float32), np.array([quat], np.float32), np.log(np.array([scales], np.float32)),
+                             np.array([math.log(alpha / (1 - alpha))], np.float32), np.zeros((1, 3), np.float32))
+
+    def test_coverage_is_each_gaussians_projected_footprint(self):
+        # one Gaussian 20 m down the axis, 1 cm by 4 cm across the view: its footprint is 10 x 40 px (sigma) at f 20000
+        cam = look(np.array([0.0, 1.0, -20.0]), [0.0, 1.0, 0.0], w=400, h=400, f=20000.0)
+        s = self.one([0.0, 1.0, 0.0], [0.04, 0.01, 0.001], alpha=0.9)
+        box = (0.0, 0.0, 400.0, 400.0)
+        cov = sp.coverage_image(s, cam, box, 400, 400)
+        c = 200  # the centre texel (pixel centres at i + 0.5 - 0.5 = i ... texel 200 holds pixel 199.5..200.5)
+        self.assertAlmostEqual(cov[c, c], 0.9, delta=0.01)
+        # one sigma out: alpha * exp(-1/2), 40 px along u (the 4 cm axis, world x is image u), 10 px along v
+        self.assertAlmostEqual(cov[c, c + 40], 0.9 * math.exp(-0.5), delta=0.02)
+        self.assertAlmostEqual(cov[c + 10, c], 0.9 * math.exp(-0.5), delta=0.03)
+        self.assertLess(cov[c + 40, c], 0.01)
+        # two overlapping: 1 - (1 - a)(1 - b), whatever the order
+        two = sp.Splats(np.concatenate([s.table, self.one([0.0, 1.0, 0.5], [0.04, 0.01, 0.001], alpha=0.5).table]))
+        self.assertAlmostEqual(sp.coverage_image(two, cam, box, 400, 400)[c, c], 1 - 0.1 * 0.5, delta=0.01)
+
+    def test_proxy_is_fine_at_the_silhouette_and_open_where_no_body_is(self):
+        # two 0.3 m balls of splats 1 m apart, 20 m from the camera: the mesh covers each ball's front, nothing between
         rng = np.random.default_rng(11)
-        d = rng.normal(size=(20000, 3))
-        centre = np.array([5.0, 1.0, 0.0])
-        P = d / np.linalg.norm(d, axis=1, keepdims=True) * 0.4 + centre
-        cam = look(np.array([-15.0, 1.0, 0.0]), centre, w=3840, h=2160, f=20000.0)
-        glb = sp.proxy_glb(P, np.ones(len(P)), cam, nu=16, nv=16, name="ball")
-        pos, idx = sp.read_glb(glb)
-        self.assertEqual(len(pos), 17 * 17)
-        self.assertEqual(len(idx), 16 * 16 * 6)
-        mid = pos[8 * 17 + 8]
-        self.assertAlmostEqual(np.linalg.norm(mid - cam.C), 20.0 - 0.4, delta=0.03)
-        # every vertex lies on the camera's ray through its grid pixel: its own pixel back
+        cam = look(np.array([-15.0, 1.0, 0.0]), [5.0, 1.0, 0.0], w=3840, h=2160, f=20000.0)
+        balls = []
+        for z0 in (-0.5, 0.5):
+            d = rng.normal(size=(30000, 3))
+            balls.append(d / np.linalg.norm(d, axis=1, keepdims=True) * 0.3 + [5.0, 1.0, z0])
+        P = np.concatenate(balls)
+        n = len(P)
+        s = sp.Splats.new(P.astype(np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)), np.full((n, 3), math.log(0.006), np.float32),
+                          np.full(n, 4.0, np.float32), np.zeros((n, 3), np.float32))
+        pos, idx, info = sp.proxy_mesh(s, cam, cell_m=0.004)
+        self.assertLessEqual(info["cellM"], 0.0041)
+        # the ray between the balls misses the mesh: no triangle covers that pixel
         u, v, z = cam.project(pos)
-        self.assertTrue(np.all(z > 0))
+        tri = idx.reshape(-1, 3)
+        cu, cv = u[tri].mean(1), v[tri].mean(1)
+        mu, mv, _ = cam.project(np.array([5.0, 1.0, 0.0]))
+        self.assertFalse(np.any((np.abs(cu - mu) < 20) & (np.abs(cv - mv) < 20)))
+        # the front of a ball is where the mesh is: its nearest vertex on the ball's own axis ray, 0.3 m short of its centre
+        bu, bv, _ = cam.project(np.array([5.0, 1.0, 0.5]))
+        k = np.argmin((u - bu) ** 2 + (v - bv) ** 2)
+        self.assertAlmostEqual(float(np.linalg.norm(pos[k] - cam.C)), float(np.linalg.norm(np.array([5.0, 1.0, 0.5]) - cam.C)) - 0.3, delta=0.02)
+        # the silhouette: the mesh reaches the ball's edge (0.3 m, plus the splats' own half-width), not a cell beyond
+        r_px = np.hypot(u - bu, v - bv)[np.hypot(u - bu, v - bv) < 0.5 * cam.f / 20.0]
+        edge_px = 0.3 * cam.f / 20.0
+        self.assertGreater(r_px.max(), edge_px)
+        self.assertLess(r_px.max(), edge_px + 2.5 * 0.006 * cam.f / 20.0 + 2 * info["cellPx"])
+        # and is light enough to ship
+        self.assertLess(len(pos), 120_000)
+        glb, ginfo = sp.proxy_glb(s, cam, cell_m=0.004, name="balls")
+        gpos, gidx = sp.read_glb(glb)
+        np.testing.assert_allclose(gpos, pos, atol=1e-5)
+        self.assertEqual(ginfo["cellM"], info["cellM"])
 
 
 if __name__ == "__main__":
