@@ -5,7 +5,7 @@ as immersive courtside video from where the low camera stood; "Step into the cou
 one frame becomes 3D** (same pixels at the hand-off, then the world opens up); you stand and walk around the frozen
 moment, every player on court a solid 3D person; "Back to my seat" eases back into the video. Ojasva's bar: if the
 two main players aren't passing by noon, ship the main player alone.
-Updated Sat 9:11 AM. Vishal is up; the planning session keeps building.
+Updated Sat 9:17 AM. Vishal is up; the planning session keeps building.
 
 **Clip (decided by Vishal, 7:34 AM):** Luka Dončić's game-winning step-back three over Rudy Gobert, 2024 West finals
 Game 2, from the low courtside camera in the team's own all-angles upload. Kept
@@ -119,6 +119,11 @@ Biggest risks: the video-to-3D hand-off matching to the pixel (calibration), Luk
 
 ## Decisions
 
+- **Hand-off direction (planning session, 9:20 AM): "House Lights", held as a pool.** As time stops the crowd
+  dims and a pool of light holds the frozen pair; the 3D comes up under the picture, the picture fades over the
+  identical 3D, then the pool grows across the floor to your feet. One light field multiplies footage and 3D alike,
+  so the hand-off stays pixel-identical, and the darkness hides how small the filmed region is. Judged against
+  "Same Pixels" and "Depth Grows" on recordings (no measured pops; 0.20/255 at the hand-off).
 - **Where you sit (planning session, 9:10 AM):** the low camera stood ~25 m from the players on a very long lens,
   so from its own spot the play is a postcard. The seat sits on that camera's line of sight ~5 m from the pair;
   the footage is projected in layers (court, stands, a card per person) so it still lines up, and the 3D takes
