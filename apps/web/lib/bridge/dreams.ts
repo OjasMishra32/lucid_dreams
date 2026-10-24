@@ -18,7 +18,7 @@ export const REPO = findRepo();
 // Shared with pipeline/runner (fetch writes here) and apps/webxr (serves it on :5180).
 export const DREAMS_DIR = resolve(/*turbopackIgnore: true*/ process.env.LUCID_DREAMS_DIR ?? join(REPO, "dreams"));
 // The bridge's own state: uploads and jobs. Ignored by git.
-export const DATA_DIR = resolve(process.cwd(), ".data");
+export const DATA_DIR = resolve(/*turbopackIgnore: true*/ process.env.LUCID_DATA_DIR ?? join(process.cwd(), ".data"));
 
 /**
  * Run and dream ids as the bridge and lucid_runner.py make them (a slug and a timestamp, or a queue id like

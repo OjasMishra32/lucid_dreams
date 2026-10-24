@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { ExperienceState } from "@/lib/dream";
 import ShareButton from "./ShareButton";
+import WatchMeTry from "./WatchMeTry";
 import { ViewerLink } from "./ViewInRoom";
 
 const MODE: Record<string, string> = { teach: "Lesson", companion: "Companion", watch: "Watch", play: "Play" };
@@ -12,7 +13,7 @@ const PLACE: Record<string, string> = {
 };
 
 /** Video seconds per plan second: 1, unless the video is shorter than the clip the steps were timed on (a mock stand-in). */
-function span(v: HTMLVideoElement, clockS: number): number {
+export function span(v: HTMLVideoElement, clockS: number): number {
   return v.duration && v.duration < clockS - 0.05 ? v.duration / clockS : 1;
 }
 
@@ -27,6 +28,8 @@ export default function DreamExperience({
   durationS,
   shareUrl,
   initial,
+  tryOn = false,
+  teacherSrc = null,
 }: {
   id: string;
   kind: "replay" | "avatar";
@@ -34,6 +37,8 @@ export default function DreamExperience({
   durationS: number;
   shareUrl: string | null; // null: a private dream has no share link
   initial: ExperienceState;
+  tryOn?: boolean; // "Watch me try" is on: a Gemini key, a public replay (never a private or held dream)
+  teacherSrc?: string | null; // the teacher, side by side with the attempt
 }) {
   const [s, setS] = useState<ExperienceState>(initial);
   const [active, setActive] = useState(-1);
@@ -153,6 +158,9 @@ export default function DreamExperience({
                 ? `A real chess engine plays at ${e.play?.strength ?? "club"} strength. Not affiliated with any player.`
                 : plannedFrom(e.source, e.intent)}
           </p>
+          {tryOn && steps && steps.length > 0 && (
+            <WatchMeTry id={id} teacherSrc={teacherSrc} clockS={clockS} span={span} initial={e.feedback ?? null} />
+          )}
         </section>
       )}
     </>

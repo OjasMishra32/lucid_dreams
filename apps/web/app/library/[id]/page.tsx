@@ -8,7 +8,7 @@ import PlacesRow from "@/components/PlacesRow";
 import QuestUrl from "@/components/QuestUrl";
 import RealismPanel from "@/components/RealismPanel";
 import { heldIds, readDream } from "@/lib/bridge/dreams";
-import { ensureExperience } from "@/lib/bridge/experience";
+import { GEMINI_ON, ensureExperience } from "@/lib/bridge/experience";
 import { onThisMac, publicOrigin, viewerOrigin } from "@/lib/bridge/http";
 import { ensureRealism } from "@/lib/bridge/realism";
 import { dreamFile, formatCount, heightM, isPrivate, type Dream, type Strength } from "@/lib/dream";
@@ -135,7 +135,11 @@ export default async function DreamPage({ params }: Props) {
           <h1 className="page-title">{d.name}</h1>
           {d.createdAt && <p className="detail-date">Made {formatDate(d.createdAt)}</p>}
           {legend && <p className="detail-legend">{chessLabel(legend)} They never speak.</p>}
-          <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl} initial={experience} />
+          <DreamExperience id={d.id} kind={d.kind} name={d.name} durationS={d.durationS} shareUrl={shareUrl}
+            initial={experience}
+            tryOn={GEMINI_ON && !hidden && d.kind === "replay"}
+            teacherSrc={d.preview ? dreamFile(d.id, d.preview) : null}
+          />
           <PlacesRow id={d.id} planned={experience.state === "ready" ? experience.experience.environment : null} />
           {!hidden && <QuestUrl url={questUrl} />}
           {realism && <RealismPanel id={d.id} initial={realism} />}

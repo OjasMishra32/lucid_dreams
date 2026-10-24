@@ -260,6 +260,44 @@ main:focus, .compose:focus { outline: none; }
 .plan-pace { font-size: 13px; padding-top: 3px; color: var(--faint); white-space: nowrap; }
 .plan-working { display: flex; align-items: center; gap: 14px; color: var(--muted); }
 .plan-working p { margin: 0; }
+
+/* ---------- Watch me try ---------- */
+.detail .try { margin-top: 48px; padding-top: 4px; border-top: 1px solid var(--hairline); }
+.detail .try h2 { margin: 28px 0 8px; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.try h2:focus { outline: none; }
+.try-lede { font-size: 17px; color: var(--muted); margin: 0 0 18px; }
+.try-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 18px 0 0; }
+.try-lede + .try-actions { margin-top: 0; }
+.try-result ~ .try-lede { margin-top: 28px; }
+.try-frame { position: relative; width: min(100%, 300px); aspect-ratio: 3 / 4; border-radius: var(--radius); overflow: hidden; background: #0a0a0a; box-shadow: 0 0 0 1px var(--hairline) inset; }
+.try-frame video { width: 100%; height: 100%; object-fit: contain; }
+.try-live video { transform: scaleX(-1); } /* the live view is a mirror; the recording is not */
+.try-count { position: absolute; inset: 0; display: grid; place-items: center; font-size: 96px; font-weight: 700; background: rgba(0, 0, 0, 0.35); }
+.try-status { display: flex; align-items: center; gap: 10px; margin: 14px 0 0; font-size: 17px; color: var(--muted); min-height: 1.5em; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); flex: none; }
+.try-error { margin: 16px 0 0; padding: 14px 16px; border-radius: 14px; background: rgba(255, 69, 58, 0.12); color: #ff8a82; font-size: 15px; }
+.file-btn { position: relative; cursor: pointer; }
+.file-btn:focus-within { outline: 2px solid var(--link); outline-offset: 3px; }
+.file-btn input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.try-result { margin-top: 8px; }
+.try-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0; }
+.try-pair figure { margin: 0; }
+.try-pair .try-frame { width: 100%; }
+.try-pair figcaption { margin-top: 8px; text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); }
+.try-summary { font-size: 19px; line-height: 1.4; color: var(--text); margin: 22px 0 0; }
+.try-notes { list-style: none; margin: 20px 0 0; padding: 0; border-top: 1px solid var(--hairline); }
+.try-notes button {
+  display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 14px; align-items: start; width: 100%; text-align: left;
+  padding: 16px 8px; border-bottom: 1px solid var(--hairline); color: var(--muted); transition: background 0.25s ease, color 0.25s ease;
+}
+.try-notes button:hover { color: var(--text); }
+.try-notes button.on { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+.try-notes b { display: block; font-size: 17px; font-weight: 600; color: var(--text); }
+.try-notes button > span:nth-child(2) > span { display: block; font-size: 15px; margin-top: 2px; }
+.try-notes button.on .plan-t { color: var(--link); }
+.try-tone { font-size: 13px; font-weight: 600; padding-top: 3px; color: var(--warn); }
+.try-tone.good { color: var(--ok); }
+.try .btn:focus-visible { outline-offset: 3px; border-radius: 980px; }
 .back::before { content: "\2039  "; }
 
 /* ---------- make a dream ---------- */

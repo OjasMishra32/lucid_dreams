@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { Dream, Experience, ExperienceState } from "../dream";
 import { DATA_DIR, DREAMS_DIR, listDreams, readDream } from "./dreams";
 import { fetching } from "./fetches";
+import { mergeFeedback } from "./feedbackStore";
 import { humanError, writeExperience, type Plan } from "./gemini";
 import { fetchPrepped } from "./hpg";
 import { getJob } from "./store";
@@ -123,7 +124,8 @@ function restore(d: Dream): Experience | null {
     const e = JSON.parse(readFileSync(cached, "utf8")) as Experience;
     copyFileSync(cached, join(DREAMS_DIR, d.id, "experience.json"));
     linkInDream(d.id, intentOf(d));
-    return e;
+    mergeFeedback(d.id); // the learner's latest notes come back with the plan
+    return readExperience(d) ?? e;
   } catch {
     return null;
   }
@@ -200,18 +202,7 @@ async function make(id: string) {
   const pulled = join(SOURCES, `${id}.mp4`);
   try {
     if (plan.kind === "replay") {
-      // The clip window the person was built from: the local footage, cut on this Mac; failing that (a clip that only
-      // lives on HiPerGator, or one this Mac can't read), the run's prepped.mp4.
-      const src = clipOf(dream);
-      let cut = src ? await trim(src, durationS, join(tmp, "window.mp4")) : null;
-      if (!cut && RUNNER && !mock) {
-        mkdirSync(SOURCES, { recursive: true });
-        if (existsSync(pulled) || (await fetchPrepped(id, pulled))) cut = await trim({ path: pulled, offsetS: 0 }, durationS, join(tmp, "window.mp4"));
-      }
-      if (cut) plan.video = { path: cut, offsetS: 0, orbit: false };
-      else if (dream.preview && !mock && existsSync(join(DREAMS_DIR, id, dream.preview))) {
-        plan.video = { path: join(DREAMS_DIR, id, dream.preview), offsetS: 0, orbit: true }; // last resort: the orbit render
-      } else throw new Error("nothing Gemini can watch: the clip couldn't be cut and there's no preview");
+      plan.video = await teacherVideo(dream, durationS, tmp, mock);
     } else {
       const photo = photoOf(dream);
       if (photo) plan.photo = { path: await cleanPhoto(photo, tmp), mime: "image/jpeg" };
@@ -231,6 +222,27 @@ async function make(id: string) {
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/**
+ * What Gemini watches as the teacher: the clip window the person was built from, cut on this Mac (in `dir`); failing
+ * that (a clip that only lives on HiPerGator, or one this Mac can't read), the run's prepped.mp4; as a last resort the
+ * orbit render. Shared by the plan and "Watch me try".
+ */
+export async function teacherVideo(d: Dream, durationS: number, dir: string, mock = getJob(d.id)?.mode === "mock"): Promise<NonNullable<Plan["video"]>> {
+  const out = join(dir, "window.mp4");
+  const src = clipOf(d);
+  let cut = src ? await trim(src, durationS, out) : null;
+  if (!cut && RUNNER && !mock) {
+    const pulled = join(SOURCES, `${d.id}.mp4`);
+    mkdirSync(SOURCES, { recursive: true });
+    if (existsSync(pulled) || (await fetchPrepped(d.id, pulled))) cut = await trim({ path: pulled, offsetS: 0 }, durationS, out);
+  }
+  if (cut) return { path: cut, offsetS: 0, orbit: false };
+  if (d.preview && !mock && existsSync(join(DREAMS_DIR, d.id, d.preview))) {
+    return { path: join(DREAMS_DIR, d.id, d.preview), offsetS: 0, orbit: true }; // last resort: the orbit render
+  }
+  throw new Error("nothing Gemini can watch: the clip couldn't be cut and there's no preview");
 }
 
 /** experience.json into the bundle (and, when final, the cache), linked with the intent from dream.json. */

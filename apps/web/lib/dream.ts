@@ -64,11 +64,38 @@ export interface Experience {
   environment?: Environment; // only when the activity clearly has a home (piano: concert hall, basketball: court)
   objects?: string[]; // the objects that matter for the intent ("basketball", "hoop"); the pipeline's props.json builds them
   category?: string;
+  feedback?: Feedback; // "Watch me try": Gemini's notes on the learner's latest attempt (the video itself is never kept)
   durationS?: number; // the clip length the steps are timed on
   source?: "clip" | "preview" | "photo" | "intent"; // what Gemini looked at
   model?: string;
   createdAt?: string;
 }
+
+/**
+ * "Watch me try" (the learner records an attempt in the browser, Gemini compares it with the teacher's clip). Only these
+ * notes are kept: the attempt's video is deleted from Gemini and from the Mac as soon as the answer is in. Additive: it
+ * sits beside `steps` in experience.json, so players that don't know it run the lesson exactly as before.
+ */
+export interface FeedbackNote {
+  attemptT: number; // seconds into the learner's recording
+  teacherT: number | null; // seconds into the teacher's clip (the bundle's clock), when the note is about a moment there
+  tone: "good" | "fix";
+  title: string; // 1 to 4 words
+  note: string; // one sentence to the learner, read in the device's voice
+}
+export interface Feedback {
+  summary: string; // one plain sentence on the attempt as a whole
+  seen: boolean; // false: Gemini couldn't see the whole move (out of frame, too dark), and the summary says what to change
+  notes: FeedbackNote[];
+  attemptS: number; // how long the recording was
+  source: "clip" | "preview"; // what Gemini compared it with: the real clip, or the 3D person's orbit render
+  model?: string;
+  createdAt: string;
+}
+export type FeedbackState =
+  | { state: "ready"; feedback: Feedback }
+  | { state: "none" } // available, nothing recorded yet
+  | { state: "off" }; // no Gemini key, a private or held dream, or not a lesson
 
 export type ExperienceState =
   | { state: "ready"; experience: Experience }
@@ -137,11 +164,11 @@ export const STAGE_LABELS: Record<Stage, string> = {
 
 /**
  * A family's dream, shown only on the bridge Mac and never shared: dream.json's `"private": true`, or any of Ian's
- * grandma's runs (ian-grandma, ian-grandma-avatar, ian-grandma-avatar-head, ian-grandma-<date>-<time>) before theirs
+ * grandma's runs (any id starting ian-grandma: ian-grandma, ian-grandma-avatar, ian-grandma-avatar-head, ...) before theirs
  * carries the field.
  */
 export function isPrivate(d: { id: string; private?: boolean }): boolean {
-  return d.private === true || /^ian-grandma(-|$)/.test(d.id);
+  return d.private === true || /^ian-grandma/i.test(d.id);
 }
 
 export function dreamFile(id: string, file: string): string {
