@@ -2,3 +2,8 @@
 .data/
 next-env.d.ts
 *.tsbuildinfo
+
+# The root .gitignore drops every folder named dreams/ (meant for <repo>/dreams, the fetched bundles).
+# These two are the bridge's routes, not bundles: keep them.
+!/app/dreams/
+!/app/api/dreams/
