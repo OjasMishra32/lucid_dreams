@@ -55,8 +55,12 @@ class Bundle(unittest.TestCase):
         (ex / "x-two").mkdir(parents=True)
         (ex / "x-two" / "extra.json").write_text(json.dumps({"id": "x-two", "kind": "splats", "file": None, "pose": {"camera": "C"},
                                                              "foot": {"xz": [10.0, 2.0]}, "height_m": 1.9, "status": "planned"}))
+        cls.planes = [{"kind": "plane", "points": [[17.0, 0, -9.6], [17.0, 0, 9.6], [17.0, 2.5, 9.6], [17.0, 2.5, -9.6]]},
+                      {"kind": "plane", "points": [[18.5, 2.5, -9.6], [18.5, 2.5, 9.6], [18.5, 12, 9.6], [18.5, 12, -9.6]]}]
+        (cls.tmp / "stands.json").write_text(json.dumps({"proxy": cls.planes, "report": {"points": 50, "front": {"x": 17.0}, "upper": {"fit": False}}}))
         cam = S["camera"]
         cfg = {
+            "stands": {"proxyFile": str(cls.tmp / "stands.json")},
             "extras": str(ex),
             "title": "Synthetic", "caption": "Synthetic · two players", "credit": "Synthetic test bundle.",
             "out": str(cls.tmp / "bundle" / "court-side"), "calib": str(cls.tmp / "calib.json"),
@@ -85,6 +89,10 @@ class Bundle(unittest.TestCase):
             np.testing.assert_allclose(asm["players"][pid]["contact"], foot, atol=0.01)
         self.assertEqual([p["id"] for p in court["freeze"]["players"]], ["a", "b"])
         np.testing.assert_allclose(court["seat"]["pairCentre"], [6.0, 0.0, 1.05], atol=0.01)
+
+    def test_measured_stands_replace_the_stand_in(self):
+        court = json.loads((self.out / "court.json").read_text())
+        self.assertEqual(court["freeze"]["stands"], {"proxy": self.planes, "cards": []})
 
     def test_extras_stand_where_the_manifest_says(self):
         court = json.loads((self.out / "court.json").read_text())

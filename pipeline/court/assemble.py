@@ -539,13 +539,55 @@ def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF
     return out
 
 
+def make_stands(cfg: dict) -> dict:
+    """Triangulate the stands from the config's frame pairs (stands.triangulate: {"a": {calib, frames}, "b": {calib,
+    frames}, "pairs": [[a_frame, b_frame], ...]}, frames = a folder of <frame:06d>.png the calibration was solved on)
+    and write the proxy planes to stands.proxyFile. Slow (SIFT on 4K frames), so it is its own step."""
+    import cv2
+
+    import assemble_stands as stx
+
+    t = cfg["stands"]["triangulate"]
+    calibs = {k: json.loads(expand(t[k]["calib"]).read_text()) for k in ("a", "b")}
+
+    def calcam(k: str, n: int) -> stx.CalCam:
+        c = calibs[k]
+        fr = next(f for f in c["frames"] if f["source_frame"] == n)
+        W, H = c["image_size"]
+        return stx.CalCam(geo.Cam(np.asarray(c["C"], float), np.asarray(fr["R"], float).T, float(fr["f"]), (W - 1) / 2, (H - 1) / 2, W, H), float(fr.get("k1", 0.0)))
+
+    pts, per_pair = [], []
+    for a, b in t["pairs"]:
+        ia = cv2.imread(str(expand(t["a"]["frames"]) / f"{a:06d}.png"))
+        ib = cv2.imread(str(expand(t["b"]["frames"]) / f"{b:06d}.png"))
+        X, err = stx.triangulate_frames(ia, calcam("a", a), ib, calcam("b", b), max_err=t.get("maxErrPx", 3.0))
+        pts.append(X)
+        per_pair.append({"pair": [a, b], "points": int(len(X)), "medianErrPx": round(float(np.median(err)), 2) if len(err) else None})
+    X = np.concatenate(pts) if pts else np.zeros((0, 3))
+    planes, rep = stx.stands_planes(X)
+    out = {"proxy": planes, "report": {**rep, "pairs": per_pair}}
+    path = expand(cfg["stands"]["proxyFile"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, indent=1))
+    return out
+
+
 def stands_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
-    st = cfg.get("stands")
-    if st:
-        block = {"proxy": st["proxy"], "cards": []}
+    """The stands proxy measured from two cameras (stands.proxyFile, made by --make-stands) and the depth cards in
+    the config; without a measured proxy, the stand-in's proxy and card."""
+    st = cfg.get("stands") or {}
+    pf = expand(st["proxyFile"]) if st.get("proxyFile") else None
+    if pf is not None and pf.exists():
+        made = json.loads(pf.read_text())
+        block = {"proxy": made["proxy"], "cards": []}
         for c in st.get("cards", []):
             block["cards"].append({"id": c["id"], "image": w.copy(expand(c["image"]), f"stands/{c['id']}.png"), "quad": c["quad"]})
-        w.piece("stands", True, "config stands")
+        rep = made.get("report", {})
+        up = rep.get("upper", {})
+        w.piece("stands", True, f"front plane at x = {rep.get('front', {}).get('x')} m from {rep.get('points')} triangulated points; "
+                f"upper plane {'fitted' if up.get('fit') else 'guessed 1.5 m behind (no points that high)'}")
+        if not block["cards"]:
+            w.notes.append("stands: no depth cards yet (front row, photographers, ref): they need the clean plate and its people mattes")
         return block
     block = json.loads(json.dumps(S["freeze"]["stands"]))
     for rel in bundle_paths(block):
@@ -889,11 +931,16 @@ def main(argv=None) -> int:
     ap.add_argument("--validate", action="store_true", help="check the assembled bundle (no assembly)")
     ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
     ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
+    ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
     a = ap.parse_args(argv)
     cfg = json.loads(expand(a.config).read_text())
     if not (a.out or cfg.get("out")):
         ap.error("no bundle folder: give --out or the config's `out`")
     out = expand(a.out or cfg["out"])
+    if a.make_stands:
+        made = make_stands(cfg)
+        print(f"STANDS {expand(cfg['stands']['proxyFile'])}: {json.dumps(made['report'])}")
+        return 0
     if a.validate or a.report:
         if a.report:
             print(report(out))
