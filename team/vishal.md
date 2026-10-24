@@ -109,3 +109,24 @@ Next, in order:
    pull from it).
 5. **Family-photo person:** one old photo -> avatar + blinking idle, with the honest imagined share.
 
+
+## Update (Fri ~9 PM): your jobs are wired in
+
+`digs-finetune.sbatch` and `digs-perform.sbatch` are great. The autopilot on Ojasva's Mac now submits
+`digs-finetune.sbatch RUN_ID=jump-shot` (and `jump-shot-2`) by itself the moment each replay finishes and
+`digs-assets` has printed `ASSETS_OK` (queue items carry `"then"` jobs: `pipeline/runner/queue.json`). So the
+research table should exist tonight without anyone pressing anything. HiPerGator is back once you log in after the
+exam: Ojasva's Mac is sitting at the password prompt for your account.
+
+Next, in order:
+1. **Check the first table** in `$L/data/avatars/finetune/jump-shot/dreams/jump-shot-tuned.work/results.md` when it
+   lands; if the fine-tune doesn't beat the one-photo avatar on held-out views, tune it (steps, lr, which views)
+   before anything else. Copy `results.md` + `compare.png` numbers into `avatars/README.md` (Results section).
+2. **A seated idle** in `lucid_avatars/idle.py`: the same breathing / blinking / weight-shift loop, but sitting (hips
+   on a chair 0.45 m high, forearms resting on a table at 0.75 m, looking down at a board in front). The chess mode
+   will sit an avatar opponent across the board. Same `motion.json` format.
+3. **A reach-and-place motion**: given a board-local start and end square (5 cm squares, board centre at the origin,
+   your side at -Z), the right hand reaches, "picks", carries and places, about 1.2 s, returning to the seated idle.
+   Pure numpy IK on the arm chain is fine; write it as `lucid_avatars/reach.py` with a test. The WebXR chess plays it
+   whenever the engine moves.
+4. Hands and face pass, then the family-photo person (unchanged from before).

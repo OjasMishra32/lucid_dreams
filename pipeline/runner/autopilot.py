@@ -4,6 +4,8 @@
 Every minute: any new video in ~/Downloads/lucid-clips/ (once it has finished copying) is submitted to HiPerGator;
 finished runs are fetched into <repo>/dreams/<id>/, where the viewer's library picks them up. With --seed-samples it
 also runs 4DAnyone's sample clips of real people. Waits until SMPL-X is installed on HiPerGator before submitting.
+A queue item's "then" jobs, e.g. [{"job": "avatars/hpg/digs-finetune.sbatch", "env": {}}], are submitted with
+RUN_ID=<its id> once its run is done and the avatar assets are installed.
 
     python3 pipeline/runner/autopilot.py [--seed-samples 3]
 State: <repo>/dreams/.autopilot.json
@@ -22,6 +24,7 @@ DROP = Path.home() / "Downloads" / "lucid-clips"
 VIDEO = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 SAMPLES = runner.REMOTE + "/repos/4DAnyone/data/source/pexels"
 SMPLX = runner.REMOTE + "/repos/4DAnyone/models/body_models/smplx/SMPLX_NEUTRAL.npz"
+ASSETS_READY = f"grep -l ASSETS_OK {runner.REMOTE}/jobs/lucid-digs-assets-*.log >/dev/null 2>&1 && echo yes || echo no"
 
 
 def log(msg: str) -> None:
@@ -44,10 +47,10 @@ def main():
     while True:
         try:
             ready = runner.remote(f"test -f {SMPLX} && echo yes || echo no").strip() == "yes"
+            queue = json.loads(Path(a.queue).read_text()) if Path(a.queue).exists() else []
             if not ready:
                 log("waiting for SMPL-X on HiPerGator")
             else:
-                queue = json.loads(Path(a.queue).read_text()) if Path(a.queue).exists() else []
                 for item in queue:
                     if item["clip"] in [v["clip"] for v in state["submitted"].values()]:
                         continue
@@ -84,6 +87,21 @@ def main():
                 elif st["status"] == "failed":
                     log(f"{run_id} failed at {st['stage']}")
                     state["fetched"].append(run_id)
+            # follow-up jobs on finished runs (job paths are relative to the repo clone on HiPerGator)
+            followed = state.setdefault("followed", [])
+            for item in queue:
+                rid, jobs = item.get("id"), item.get("then", [])
+                if not jobs or rid in followed or rid not in state["fetched"] or runner.status(rid)["status"] != "done":
+                    continue
+                if runner.remote(ASSETS_READY).strip() != "yes":
+                    log(f"{rid}: done; its follow-ups wait for the avatar assets")
+                    continue
+                for job in jobs:
+                    env = ",".join(f"{k}={v}" for k, v in {"RUN_ID": rid, **job.get("env", {})}.items())
+                    jid = runner.remote(f"cd {runner.REMOTE}/repos/lucid_dreams && git pull -q --ff-only && "
+                                        f"sbatch --parsable --export=ALL,{env} {job['job']}").strip()
+                    log(f"{rid}: submitted {job['job']} as job {jid}")
+                followed.append(rid)
             state_path.write_text(json.dumps(state, indent=2))
         except SystemExit as e:  # a dropped connection shouldn't kill the loop
             log(f"error: {e}")

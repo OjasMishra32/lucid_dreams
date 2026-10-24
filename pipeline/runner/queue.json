@@ -1,4 +1,4 @@
 [
-  {"clip": "/blue/iruchkin/vishalnaveen/lucid/data/clips/pexels-20521082.mp4", "name": "Jump shot", "id": "jump-shot", "startS": 3.0},
-  {"clip": "/blue/iruchkin/vishalnaveen/lucid/data/clips/pexels-20521018.mp4", "name": "Jump shot, take two", "id": "jump-shot-2", "startS": 3.0}
+  {"clip": "/blue/iruchkin/vishalnaveen/lucid/data/clips/pexels-20521082.mp4", "name": "Jump shot", "id": "jump-shot", "startS": 3.0, "then": [{"job": "avatars/hpg/digs-finetune.sbatch"}]},
+  {"clip": "/blue/iruchkin/vishalnaveen/lucid/data/clips/pexels-20521018.mp4", "name": "Jump shot, take two", "id": "jump-shot-2", "startS": 3.0, "then": [{"job": "avatars/hpg/digs-finetune.sbatch"}]}
 ]

@@ -71,3 +71,16 @@ Test data now: `samples/synthetic-test/` in the repo (frame 0 as PLY, frames 0-3
 8. **Performance report:** fps vs Gaussians on Quest 3S, so Ojasva sets the export cap; LOD if needed.
 9. **Max-fidelity mode:** PC streaming over Quest Link if anyone has a Windows laptop with an RTX GPU.
 10. **Capture:** record a clean passthrough video of a person in the room for Atina's demo video.
+
+## Update (Fri ~9 PM): after your OpenXR + hand-tracking push
+
+Nice: Android OpenXR settings, Meta hand tracking and the batch APK build are in. Still the order:
+1. **Sequence player** (all frames, swap at `fps`, preload, loop) and 2. **runtime SPZ loading**: these are what
+   the demo needs first. Real bundles start landing in `dreams/` on Ojasva's Mac tonight once HiPerGator is back.
+3. **Hands-only, no controllers** (the WebXR app now works this way; copy the feel): pinch to grab, release to
+   drop; buttons pressed by pushing an index fingertip through them, firing once per push (not repeatedly while the
+   finger rests there); a long pinch (~0.9 s) on empty space re-places things. Reference: `apps/webxr/src/chess/game.ts`
+   (`XrButton`, `handOccluder`).
+4. **Real hands in front of virtual things:** in passthrough, render the tracked hand mesh depth-only (a material
+   with colour writes off, drawn first) so your real fingers stay visible in front of a person or object you reach
+   past. Meta's hand mesh + a `ColorMask 0` shader does it in Unity.

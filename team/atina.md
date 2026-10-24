@@ -66,3 +66,14 @@ not for long coding sessions. Read `AGENTS.md` first.
   anonymous record IDs, permission scope, status and private evidence labels; it does not expose family messages.
 - No app code, shared contracts or pipeline settings are changed by this preparation work. Ian receives UI
   designs later; Ojasva remains the contact for automatic intake and processing results.
+
+## Update (Fri ~9 PM): kit looks great, now the real things
+
+The capture and consent kit is exactly right. The Friday milestone now is the physical part: three clips AirDropped
+into `~/Downloads/lucid-clips/` on Ojasva's Mac, and the family consent request actually sent.
+
+New thing for the story: `?mode=chess` in the WebXR app (`https://<mac>:5180/?mode=chess` on the Quest) is a
+side mode: a real-size chess board on your table, pieces moved with your bare hands, an engine opponent from club
+level up to Fischer's and Carlsen's peak ratings (labelled "Stockfish at X's peak rating. Not affiliated." Keep that
+wording anywhere it appears). In the video it's a 5-10 second "and it's not just people" beat after the main demo;
+in Devpost, one line under "what's next / also built". Never say or imply we have the real players.
