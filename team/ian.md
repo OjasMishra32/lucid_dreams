@@ -19,20 +19,35 @@ Best Social Impact entry. It has to be the most real and most careful thing we s
      the face; it's the difference between a person and a mannequin), plus one head-to-toe photo for the body. Two
      or three close-ups from slightly different angles help. Black-and-white is fine: it's colourised on the photo
      and labelled colourised.
-3. **Where it goes:**
-   - Video: `~/Downloads/lucid-clips/ian-grandma.mp4` on Ojasva's Mac, with `ian-grandma.txt` holding one line,
-     "I just want to sit with her". The autopilot runs it.
-   - Photos: the head-to-toe one to `~/Downloads/lucid-photos/ian-grandma.jpg` (+ the same `.txt`); close-ups to
-     `$L/data/avatars/faces/ian-grandma/` on HiPerGator.
-   - If you're logged in to HiPerGator yourself, set `L=/blue/iruchkin/vishalnaveen/lucid` and run:
-     - face: `sbatch --export=ALL,NAME=ian-grandma $L/code/avatars/hpg/lam-head.sbatch` (an L4, about 5 min);
-     - body: `sbatch --export=ALL,IMAGE=$L/data/avatars/inputs/ian-grandma.jpg,ID=ian-grandma,NAME="Grandma" $L/code/avatars/hpg/digs-sample.sbatch`;
-     - video: `python3 pipeline/runner/lucid_runner.py submit hpg:<path to the clip> --name "Grandma" --id ian-grandma --intent "I just want to sit with her"`
-       (from the repo on Ojasva's Mac).
-   - Vishal's `head-swap.sbatch` then puts the face on the body, and his idle loop (breathing, blinks) keeps her
-     from looking frozen.
+3. **Where it goes.** Not through the drop folders: those name runs `ian-grandma-<date>-<time>`, and `dreams/.held`
+   only matches exact ids, so she would land in the library, `/kiosk` and `/showcase`. Instead, from the repo on the
+   Mac you submit from (with the shared HiPerGator connection up: `zsh pipeline/hpg/hpg-login.sh`):
+   - **Hold first**, before anything is submitted: add these three ids, one per line, to `dreams/.held` on that Mac
+     (and on Ojasva's, where the bridge runs): `ian-grandma`, `ian-grandma-avatar`, `ian-grandma-avatar-head`.
+     Only on the Macs: the head swap refuses anyone in the `.held` beside the bundles on HiPerGator.
+   - Video: `python3 pipeline/runner/lucid_runner.py submit <clip> --name "Grandma" --id ian-grandma --intent "I just want to sit with her"`
+   - Photos: copy them to HiPerGator from the Mac (`H=hpg:/blue/iruchkin/vishalnaveen/lucid/data/avatars`,
+     `S="ssh -o ControlPath=~/.ssh/cm-hpg"`): `$S hpg mkdir -p ${H#hpg:}/inputs ${H#hpg:}/faces/ian-grandma`, then
+     `rsync -e "$S" <body photo> $H/inputs/ian-grandma.jpg` and `rsync -e "$S" <close-ups>/*.jpg $H/faces/ian-grandma/`.
+     Then on HiPerGator,
+     `L=/blue/iruchkin/vishalnaveen/lucid; cd $L/repos/lucid_dreams/avatars/hpg` and:
+     - body: `sbatch --export=ALL,IMAGE=$L/data/avatars/inputs/ian-grandma.jpg,ID=ian-grandma-avatar,NAME="Grandma" digs-sample.sbatch`
+       (this, not the runner's `--kind avatar`: the head swap reads avatars from `data/avatars/dreams/`, where
+       digs-sample writes them);
+     - face: `sbatch --export=ALL,NAME=ian-grandma lam-head.sbatch` (an L4, about 5 min);
+     - head swap, once both are done: `sbatch --export=ALL,NAME=ian-grandma,AVATAR=ian-grandma-avatar head-swap.sbatch`
+       makes `ian-grandma-avatar-head`. It refuses anyone not in `CONSENTED` in `avatars/lucid_avatars/head_swap.py`:
+       ask Vishal to add `ian-grandma` on your word that the family's written consent is in. Check the log for
+       `HEAD_SWAP_OK` and look at its `compare.png`. Vishal's idle loop (breathing, blinks) keeps her from looking frozen.
+   - These are GPU jobs: tell Ojasva before you submit (AGENTS.md: he runs the queue).
 4. **Private by default:**
-   - `ian-grandma` goes in `dreams/.held` until you've seen it and say it's right.
+   - Held dreams never come home on their own (the autopilot skips them) and the bridge hides them from the Quest
+     library. To see her: the replay with `python3 pipeline/runner/lucid_runner.py fetch ian-grandma`; the avatar with
+     `rsync -a -e "$S" $H/dreams/ian-grandma-avatar-head dreams/`. Then
+     `adb push dreams/<id> /sdcard/Android/data/com.luciddreams.quest/files/dreams/` and play her from device storage.
+   - Once you say she's right: add `"private": true` to her `dream.json`, then take her ids out of `.held`. The Quest
+     library then lists her, but the landing page, `/showcase`, `/kiosk` and share links still leave her out (Raami's
+     Sat 2:35 AM entry). Drop `"private"` only if the family agreed to showing.
    - Never on the public site, the kiosk or `/showcase` unless the family agreed to showing.
    - Never in git; HiPerGator copies are deleted after the event.
 5. **The moment itself:** `companion` mode, `beside` you on a sofa or chair in your room, her voice from where she
