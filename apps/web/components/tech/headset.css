@@ -1,0 +1,3 @@
+/* The headset render (lib/three/headset.ts) fills its sticky stage; the page draws its captions over it. */
+.headset-host { position: absolute; inset: 0; }
+.headset-host .headset-gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }

@@ -738,3 +738,7 @@ main:focus, .compose:focus { outline: none; }
   *, *::before, *::after { transition: none !important; animation: none !important; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+@media (max-width: 420px) {
+  .nav-tech { display: none; }
+}

@@ -1,0 +1,196 @@
+/* The technology page: apple.com's dark product-page language (black, SF Pro, big quiet headlines) with the math set
+   large in KaTeX and every visual live. One accent, Apple's blue. */
+
+.tech {
+  --t-ink: #f5f5f7;
+  --t-ink-2: #a1a1a6;
+  --t-ink-3: #86868b;
+  --t-line: rgba(255, 255, 255, 0.12);
+  --t-blue: #2997ff;
+  --t-content: 1120px;
+  --t-gutter: max(22px, calc((100vw - var(--t-content)) / 2));
+  background: #000;
+  color: var(--t-ink);
+  overflow-x: clip;
+}
+.tech h1, .tech h2, .tech h3 { font-weight: 600; color: var(--t-ink); }
+.tech p { color: var(--t-ink-2); font-size: 19px; line-height: 1.5; }
+.tech .quiet { color: var(--t-ink-3); font-size: 15px; }
+.tech a { color: var(--t-blue); }
+.t-num { color: var(--t-blue) !important; font-size: 17px !important; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 10px; }
+
+/* the math */
+.eq { margin: 26px 0; padding: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+.eq .katex-display { margin: 0; text-align: left; }
+.eq .katex-display > .katex { text-align: left; }
+.t-hero-eq .eq .katex-display > .katex { text-align: center; }
+.atlas-step .eq .katex { font-size: 1.16em; }
+.eq .katex { font-size: 1.32em; color: var(--t-ink); }
+.eq figcaption { font-size: 13px; color: var(--t-ink-3); margin-top: 8px; }
+.eq-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 40px; }
+.tech .katex { color: var(--t-ink); }
+
+/* the opening */
+.t-hero { padding: 160px var(--t-gutter) 120px; text-align: center; position: relative; }
+.t-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(60% 50% at 50% 38%, rgba(41, 151, 255, 0.16), rgba(41, 151, 255, 0) 70%);
+}
+.t-eyebrow { font-size: 21px !important; font-weight: 600; color: var(--t-ink-3) !important; margin: 0 0 12px; position: relative; }
+.t-hero h1 {
+  font-size: clamp(48px, 8.4vw, 104px); line-height: 1.02; letter-spacing: -0.035em; margin: 0 auto; max-width: 1000px; position: relative;
+  background: linear-gradient(180deg, #fff 40%, #b8c6da); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.t-lede { font-size: clamp(19px, 2vw, 24px) !important; line-height: 1.42 !important; max-width: 760px; margin: 28px auto 0 !important; position: relative; }
+.t-hero-eq { display: flex; justify-content: center; margin: 64px auto 0; position: relative; }
+.t-hero-eq .eq .katex { font-size: clamp(1.4em, 3.2vw, 2.6em); }
+.t-hero-eq .katex-display { text-align: center; }
+.t-toc { list-style: none; padding: 0; margin: 56px auto 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; position: relative; }
+.t-toc a {
+  display: inline-block; font-size: 15px; padding: 9px 18px; border-radius: 980px; color: var(--t-ink);
+  background: rgba(255, 255, 255, 0.08); transition: background 0.2s;
+}
+.t-toc a:hover { background: rgba(255, 255, 255, 0.16); text-decoration: none; }
+.t-toc li { counter-increment: toc; }
+
+/* a chapter: text beside its visual, or above it (t-wide) */
+.t-chapter {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 72px; align-items: center;
+  padding: 140px var(--t-gutter); border-top: 1px solid var(--t-line);
+}
+.t-chapter h2, .t-fill h2 { font-size: clamp(36px, 4.6vw, 56px); line-height: 1.07; letter-spacing: -0.02em; margin: 0 0 22px; }
+.t-chapter.t-wide { grid-template-columns: minmax(0, 1fr); gap: 48px; }
+.t-chapter.t-wide .t-text { max-width: 920px; }
+
+/* the one-Gaussian playground */
+.gp { display: grid; grid-template-columns: 1fr; gap: 24px; }
+.gp-canvas { width: 100%; aspect-ratio: 1.12; border-radius: 28px; background: #000; touch-action: none; cursor: grab; box-shadow: 0 0 0 1px var(--t-line); }
+.gp-canvas:active { cursor: grabbing; }
+.gp-read { display: grid; gap: 14px; }
+.mx-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mx-name { font-family: "Times New Roman", ui-serif, Georgia, serif; font-style: italic; font-size: 26px; color: var(--t-ink); width: 1.2em; }
+.mx { position: relative; display: inline-block; padding: 6px 14px; }
+.mx::before, .mx::after { content: ""; position: absolute; top: 0; bottom: 0; width: 7px; border: 1.5px solid var(--t-ink-2); }
+.mx::before { left: 0; border-right: 0; }
+.mx::after { right: 0; border-left: 0; }
+.mx-cells { display: grid; grid-template-columns: repeat(2, auto); gap: 4px 18px; font-variant-numeric: tabular-nums; font-size: 17px; color: var(--t-ink); text-align: right; }
+.mx-accent .mx-cells { color: #8cc8ff; }
+.gp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 24px; margin: 6px 0 0; }
+.gp-facts div { border-top: 1px solid var(--t-line); padding-top: 8px; }
+.gp-facts dt { font-size: 13px; color: var(--t-ink-3); }
+.gp-facts dd { margin: 2px 0 0; font-size: 17px; color: var(--t-ink); font-variant-numeric: tabular-nums; }
+.gp-key { font-size: 13px !important; color: var(--t-ink-3) !important; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 0; }
+.gp-key i { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 6px; border-top: 2px solid #fff; }
+.gp-key .k-2 { border-top-color: rgba(255, 255, 255, 0.7); }
+.gp-key .k-k { border-top: 2px dashed rgba(255, 255, 255, 0.55); }
+.gp-key .k-q { border-top: 2px dashed rgba(255, 159, 10, 0.8); }
+
+/* the atlas: the live dancer pinned beside the chapters that take her apart */
+.t-atlas { border-top: 1px solid var(--t-line); }
+.atlas { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-width: 0; padding: 0 var(--t-gutter); gap: 48px; }
+.atlas-stage { position: sticky; top: var(--nav-h, 48px); height: calc(100vh - var(--nav-h, 48px)); height: calc(100svh - var(--nav-h, 48px)); }
+.atlas-host { position: absolute; inset: 0; }
+.atlas-host canvas { width: 100% !important; height: 100% !important; display: block; }
+.atlas-chips { position: absolute; left: 0; right: 0; bottom: 28px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; pointer-events: none; }
+.atlas-chips span { font-size: 13px; padding: 6px 12px; border-radius: 980px; color: var(--t-ink-3); background: rgba(255, 255, 255, 0.06); transition: all 0.35s; }
+.atlas-chips span.on { color: #000; background: var(--t-ink); }
+.atlas-wait { position: absolute; inset: 0; display: grid; place-content: center; font-size: 15px !important; }
+.atlas-steps { padding: 20vh 0; }
+.atlas-step { min-height: 90vh; display: flex; flex-direction: column; justify-content: center; opacity: 0.28; transition: opacity 0.5s; }
+.atlas-step.on { opacity: 1; }
+.atlas-step h3 { font-size: clamp(32px, 3.8vw, 48px); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 18px; }
+
+/* to a pixel: the ray through a slice */
+.comp { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 40px; align-items: start; }
+.comp-canvas { width: 100%; height: 460px; border-radius: 28px; background: #0a0a0c; touch-action: none; cursor: ew-resize; box-shadow: 0 0 0 1px var(--t-line); }
+.comp-table { width: 100%; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
+.comp-table th { text-align: right; font-weight: 500; color: var(--t-ink-3); padding: 6px 8px; border-bottom: 1px solid var(--t-line); font-family: "Times New Roman", ui-serif, serif; font-style: italic; font-size: 17px; }
+.comp-table td { text-align: right; padding: 6px 8px; color: var(--t-ink); border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.comp-table th:first-child, .comp-table td:first-child { text-align: left; color: var(--t-ink-3); }
+.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2); }
+.swatch.big { width: 56px; height: 56px; border-radius: 14px; }
+.comp-result { display: flex; align-items: center; gap: 18px; margin-top: 22px; }
+.comp-result p { margin: 0; color: var(--t-ink); font-size: 19px; }
+.comp-result p.quiet { color: var(--t-ink-3); font-size: 15px; }
+
+/* the fit */
+.t-truth { display: grid; gap: 14px; }
+.t-cap { margin: 0; }
+.t-measured { margin-top: 24px; overflow-x: auto; }
+.t-measured .measured { color: var(--t-ink); }
+
+/* the ball */
+.traj { display: grid; gap: 22px; }
+.traj-canvas { width: 100%; height: 360px; border-radius: 28px; background: linear-gradient(#0a0a0c, #060d07); box-shadow: 0 0 0 1px var(--t-line); }
+.traj-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px 32px; }
+.traj-controls label, .fill-controls label { display: grid; gap: 8px; font-size: 15px; color: var(--t-ink-3); }
+.traj-controls b, .fill-controls b { color: var(--t-ink); font-weight: 500; }
+.tech input[type="range"] { width: 100%; accent-color: var(--t-blue); }
+.traj-legend { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 10px 28px; }
+.traj-legend li { font-size: 17px; color: var(--t-ink); display: flex; align-items: center; gap: 8px; }
+.traj-legend i { width: 18px; height: 3px; border-radius: 2px; }
+.traj-legend .quiet { margin-left: 4px; }
+
+/* the headset */
+.t-headset { border-top: 1px solid var(--t-line); }
+.hs-track { position: relative; height: 320vh; }
+.hs-stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }
+.hs-stage::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.88), rgba(0, 0, 0, 0.6) 32%, rgba(0, 0, 0, 0) 58%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0) 45%);
+}
+.hs-caps { position: absolute; left: var(--t-gutter); bottom: 9vh; max-width: 460px; pointer-events: none; z-index: 2; }
+.hs-cap { position: absolute; left: 0; bottom: 0; width: min(460px, calc(100vw - 44px)); opacity: 0; transform: translateY(18px); transition: opacity 0.6s, transform 0.6s; }
+.hs-cap.on { opacity: 1; transform: none; }
+.hs-cap h2 { font-size: clamp(32px, 4vw, 48px); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 14px; }
+.hs-cap p { font-size: 17px; }
+
+/* every Gaussian costs pixels */
+.t-fill { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 72px; align-items: start; padding: 140px var(--t-gutter); border-top: 1px solid var(--t-line); }
+.fill { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 32px 72px; align-items: start; }
+.fill-out { display: grid; gap: 22px; }
+.fill-controls { display: grid; gap: 18px; }
+.seg { display: inline-flex; background: rgba(255, 255, 255, 0.08); border-radius: 980px; padding: 3px; justify-self: start; }
+.seg button { font: inherit; font-size: 15px; color: var(--t-ink-2); background: none; border: 0; padding: 8px 16px; border-radius: 980px; cursor: pointer; }
+.seg button.on { background: var(--t-ink); color: #000; }
+.fill-big { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.fill-big b { font-size: clamp(72px, 9vw, 120px); line-height: 1; letter-spacing: -0.04em; font-weight: 600; font-variant-numeric: tabular-nums; background: linear-gradient(180deg, #fff, #8cc8ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.fill-big span { font-size: 19px; color: var(--t-ink-2); max-width: 260px; }
+.fill-bar { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.fill-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--t-blue), #8cc8ff); transition: width 0.3s; }
+.fill-cap { margin: -18px 0 0; }
+.fill-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 28px; margin: 0; }
+.fill-facts div { border-top: 1px solid var(--t-line); padding-top: 8px; }
+.fill-facts dt { font-size: 13px; color: var(--t-ink-3); }
+.fill-facts dd { margin: 2px 0 0; font-size: 17px; color: var(--t-ink); font-variant-numeric: tabular-nums; }
+
+/* the close */
+.t-close { text-align: center; padding: 160px var(--t-gutter) 140px; border-top: 1px solid var(--t-line); }
+.t-close h2 { font-size: clamp(40px, 6vw, 80px); line-height: 1.04; letter-spacing: -0.03em; margin: 0; }
+.t-actions { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 36px; }
+.t-credits { max-width: 640px; margin: 48px auto 0; }
+
+@media (max-width: 1023px) {
+  .t-chapter, .t-fill { grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 96px var(--t-gutter); }
+  .fill { grid-template-columns: minmax(0, 1fr); }
+  .comp { grid-template-columns: minmax(0, 1fr); }
+  .comp-canvas { height: 380px; }
+  /* one column: the stage sticks within the whole atlas (a grid row of its own would leave it no room to stick) */
+  .atlas { display: block; }
+  .atlas-step { max-width: 100%; }
+  .atlas-step .eq .katex { font-size: 1em; }
+  .atlas-stage { top: var(--nav-h, 48px); height: 52vh; height: 52svh; z-index: 1; margin: 0 calc(-1 * var(--t-gutter)); background: #000; }
+  .atlas-chips { bottom: 10px; }
+  .atlas-steps { padding: 0 0 10vh; position: relative; z-index: 2; margin-top: -52svh; }
+  /* each chapter leaves the stage its top half, then sits on black under it */
+  .atlas-step {
+    min-height: 0; display: block; opacity: 1; padding: 56svh var(--t-gutter) 14vh; margin: 0 calc(-1 * var(--t-gutter));
+    background: linear-gradient(#000, #000) no-repeat 0 54svh / 100% calc(100% - 54svh);
+  }
+  .eq .katex { font-size: 1.12em; }
+  .hs-caps { left: 22px; right: 22px; bottom: 6vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas-step, .hs-cap, .fill-bar i { transition: none; }
+}

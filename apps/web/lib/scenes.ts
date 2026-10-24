@@ -174,3 +174,13 @@ export function playClips(): { key: string; title: string; line: string; src: st
     .filter((c) => existsSync(join(dir, `play-${c.key}.mp4`)))
     .map((c) => ({ ...c, src: `/media/play-${c.key}.mp4`, poster: existsSync(join(dir, `play-${c.key}.jpg`)) ? `/media/play-${c.key}.jpg` : null }));
 }
+
+/** GVHMR's body fit for the hero's frame (joints.json, frame 0): 22 SMPL-X joints in bundle space, for the skeleton. */
+export function heroJoints(frame = 0): number[][] | null {
+  try {
+    const j = JSON.parse(readFileSync(join(DREAMS_DIR, "dance-01", "joints.json"), "utf8")) as { frames: number[][][] };
+    return j.frames[frame] ?? null;
+  } catch {
+    return null;
+  }
+}

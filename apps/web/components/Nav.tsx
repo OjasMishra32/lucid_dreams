@@ -11,6 +11,7 @@ export default function Nav() {
     <nav className={path === "/" ? "nav nav-light" : "nav"}>
       <div className="nav-inner">
         <Link href="/" className="wordmark">Lucid Dreams</Link>
+        <Link href="/technology" className={`${on("/technology")} nav-tech`}>Technology</Link>
         <Link href="/library" className={on("/library")}>Library</Link>
         <Link href="/live" className={`${on("/live")} nav-live`}>Live</Link>
         <ViewerLink query="mode=chess" className="nav-link nav-chess">Chess</ViewerLink>

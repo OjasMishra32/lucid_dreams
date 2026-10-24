@@ -8,6 +8,8 @@ import { MeasuredTable, TruthSlider } from "@/components/home/Measured";
 import { ViewerLink } from "@/components/ViewInRoom";
 import { castCards, heroFrames, measured, playClips, rigCameras, scenes } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import "./home.css";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +22,18 @@ const BUILT_ON = [
   { name: "GVHMR", when: "2024", what: "Reads real human motion from footage: the joints you follow, every tennis stroke." },
   { name: "Gemini", when: "Google", what: "Turns your one sentence into a plan: a lesson, a game, company." },
   { name: "Spark and WebXR", when: "Quest 3S browser", what: "Draws hundreds of thousands of Gaussians a frame, life size, in passthrough." },
+];
+
+// the equations the home page's strip runs through: one for each chapter of /technology
+const MATH = [
+  String.raw`\Sigma=R\,S\,S^{\top}R^{\top}`,
+  String.raw`\Sigma'=J\,W\,\Sigma\,W^{\top}J^{\top}`,
+  String.raw`C=\sum_i c_i\,\alpha_i\prod_{j<i}(1-\alpha_j)`,
+  String.raw`\lambda\,\tilde{\mathbf x}=K\,[R\mid\mathbf t]\,\tilde{\mathbf X}`,
+  String.raw`\mathcal L=0.8\,\mathcal L_1+0.2\,(1-\mathrm{SSIM})`,
+  String.raw`M(\boldsymbol\beta,\boldsymbol\theta)=W(\bar T+B_S+B_P,\,J,\,\boldsymbol\theta,\,\mathcal W)`,
+  String.raw`\dot{\mathbf v}=\mathbf g-k_D\lVert\mathbf v\rVert\mathbf v+k_L C_L\lVert\mathbf v\rVert^2\,\hat{\boldsymbol\omega}\times\hat{\mathbf v}`,
+  String.raw`N_{\mathrm{px}}=\sum_i 4k^2\sigma_{1i}\sigma_{2i}(f/z_i)^2`,
 ];
 
 export default function Home() {
@@ -140,6 +154,23 @@ export default function Home() {
             </p>
           </div>
         )}
+      </section>
+
+      <section className="math-teaser" aria-labelledby="math-title">
+        <p className="eyebrow-x reveal">Technology</p>
+        <h2 id="math-title" className="section-head reveal">The mathematics, all of it.</h2>
+        <p className="section-sub reveal">
+          Anisotropic Gaussians, EWA projection, front-to-back compositing, 4DAnyone&rsquo;s 48 cameras, MCMC densification,
+          SMPL-X, Magnus lift and the fill rate of a Quest 3S, each with a live visual you can take apart.
+        </p>
+        <div className="math-strip" aria-hidden="true">
+          <div className="math-run">
+            {[...MATH, ...MATH].map((tex, i) => (
+              <span key={i} className="math-item" dangerouslySetInnerHTML={{ __html: katex.renderToString(tex, { throwOnError: false, output: "html", strict: false }) }} />
+            ))}
+          </div>
+        </div>
+        <p className="math-go reveal"><Link href="/technology" className="link-x">Explore the technology</Link></p>
       </section>
 
       <section className="built">

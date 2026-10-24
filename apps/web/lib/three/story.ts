@@ -119,7 +119,7 @@ function floor() {
 }
 
 /** 4DAnyone's rig in three.js terms, re-centred on the point all 48 cameras look at, +Y up, the person's front +Z. */
-function rigPoses(cams: RigCamera[]) {
+export function rigPoses(cams: RigCamera[]) {
   const poses = cams.map((c) => {
     const m = c.c2w;
     const pos = new THREE.Vector3(m[0][3], m[1][3], m[2][3]);
