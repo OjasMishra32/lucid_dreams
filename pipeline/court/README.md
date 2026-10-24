@@ -31,7 +31,8 @@ Look at `<out>/<set>/sheet.jpg`, `edge-<k>.png` and `k-vs-ref.png` before upload
 
 With the HiPerGator session open (`ssh hpg true`):
 ```bash
-PLAN=1 pipeline/court/court-grid.sh <out>/runs [id...]    # uploads, runs the checks, submits nothing
+CHECK=1 pipeline/court/court-grid.sh <out>/runs [id...]   # read-only: are these ids new on /blue? free space
+PLAN=1 pipeline/court/court-grid.sh <out>/runs [id...]    # UPLOADS (mkdir + rsync), runs the checks, submits nothing
 NGPU=4 pipeline/court/court-grid.sh <out>/runs [id...]    # one court-job per run; job ids printed
 python3 <L>/code/pipeline/court/court_grid_report.py <L>/runs/court-*   # on a compute node or the Mac, once fetched
 ```

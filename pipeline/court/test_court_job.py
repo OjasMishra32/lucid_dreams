@@ -348,5 +348,53 @@ class Submit(unittest.TestCase):
         self.assertIn("PREFLIGHT FAIL: id", out)
 
 
+class GridCheck(unittest.TestCase):
+    """court-grid.sh CHECK=1: one read-only ssh (stubbed to run here), no upload, no mkdir."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = self.root = Path(self.tmp.name)
+        self.L, self.runs, bin_ = root / "blue", root / "runs", root / "bin"
+        (self.L / "code" / "pipeline" / "court").mkdir(parents=True)
+        (self.L / "code" / "pipeline" / "court" / "court-lib.sh").write_text((HERE / "court-lib.sh").read_text())
+        bin_.mkdir()
+        self.log = root / "calls.log"
+        for name, body in (("ssh", 'echo "ssh $*" >> "$CALLS"; exec bash -c "${@: -1}"'),
+                           ("rsync", 'echo "rsync $*" >> "$CALLS"'),
+                           ("blue_quota", "printf 'Storage quotas for group x:\\nblue2  4.990T  5T  5T  -  1\\n'")):
+            f = bin_ / name
+            f.write_text(f"#!/bin/bash\n{body}\n")
+            f.chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{bin_}:{os.environ['PATH']}", "CALLS": str(self.log),
+                    "COURT_HPG_L": str(self.L), "CHECK": "1"}
+        for rid in ("court-a-r2", "court-b-r2"):
+            make_data(self.runs, rid)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def grid(self):
+        before = sorted(str(x) for x in self.L.rglob("*"))
+        p = subprocess.run(["bash", str(HERE / "court-grid.sh"), str(self.runs), "court-a-r2", "court-b-r2"],
+                           capture_output=True, text=True, env=self.env)
+        self.assertEqual(sorted(str(x) for x in self.L.rglob("*")), before)  # nothing made on "HPG"
+        calls = self.log.read_text().splitlines()
+        self.assertFalse([c for c in calls if c.startswith("rsync") or "mkdir" in c], calls)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_new_ids_pass_and_nothing_changes(self):
+        rc, out = self.grid()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("CHECK OK", out)
+        self.assertIn("group free: 10 GB", out)
+
+    def test_an_id_already_on_blue_fails(self):
+        (self.L / "data" / "court" / "court-b-r2").mkdir(parents=True)
+        rc, out = self.grid()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"EXISTS {self.L}/data/court/court-b-r2", out)
+        self.assertNotIn("CHECK OK", out)
+
+
 if __name__ == "__main__":
     unittest.main()
