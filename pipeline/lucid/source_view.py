@@ -238,6 +238,71 @@ class SourceView:
         return self._render(trainer, params, self.viewmat, self.K, w, h, bg=bg, degree=degree)
 
     # ---------------------------------------------------------------------------------------------------------------
+    # Per frame: the generated views and the real clip disagree by a few cm (4DAnyone's person isn't quite the real
+    # one), and a solve on a chunk's first frame drifts over the chunk. Trained on both everywhere, a reconstruction
+    # keeps both copies of a limb, half transparent: a ghost. So each frame re-aligns the camera to the person the
+    # views made, and the real frame then only counts where the two agree.
+
+    def refine(self, trainer, params, frame: int, steps: int = 60) -> float:
+        """Nudges the camera so the current Gaussians line up with this frame's real silhouette (pose only, from where
+        it was). Keeps the old pose if the new one is worse. Returns the silhouette IoU after."""
+        dev = self.device
+        frozen = {k: v.detach() for k, v in params.items()}
+        tgt = self.target(frame)
+        w, h = self.size
+        r = min(1.0, 1280.0 / h)
+        ws, hs = max(16, int(round(w * r))), max(16, int(round(h * r)))
+        t = F.interpolate(tgt.permute(0, 3, 1, 2), size=(hs, ws), mode="area")[0].permute(1, 2, 0)
+        m = t[..., 3]
+        v = t[..., 4] if t.shape[-1] > 4 else torch.ones_like(m)
+        gt = t[..., :3] * m[..., None] + (1 - m[..., None])
+        K = self.K.clone()
+        K[:2] *= r
+        white = torch.ones(1, 3, device=dev)
+
+        def iou_of(vm):
+            with torch.no_grad():
+                _, a, _ = self._render(trainer, frozen, vm, K, ws, hs, bg=white)
+                a = a[0, ..., 0] > 0.5
+                mm, vv = m > 0.5, v > 0.5
+                return float((a & mm & vv).sum() / ((a | mm) & vv).sum().clamp_min(1))
+
+        before = iou_of(self.viewmat)
+        xi = torch.zeros(6, device=dev, requires_grad=True)
+        opt = torch.optim.Adam([xi], lr=1e-3)
+        for _ in range(steps):
+            rgb, a, _ = self._render(trainer, frozen, se3_exp(xi) @ self.viewmat, K, ws, hs, bg=white)
+            loss = ((a[0, ..., 0] - m).abs() * v).mean() + 0.5 * ((rgb[0] - gt).abs() * v[..., None]).mean()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        vm = (se3_exp(xi) @ self.viewmat).detach()
+        after = iou_of(vm)
+        if after > before:
+            self.viewmat = vm
+            return after
+        return before
+
+    def agreeing(self, trainer, params, frame: int, margin_px: int = 3) -> tuple[torch.Tensor, float]:
+        """This frame's real target with a last channel that counts only where the views' person and the real one agree
+        (both person, or both background), a few pixels in from where they don't, and never an ignored pixel. Returns
+        (target [1,h,w,5], share of the person's pixels that agree)."""
+        tgt = self.target(frame)
+        with torch.no_grad():
+            _, a, _ = self.render(trainer, params, 0, torch.ones(1, 3, device=self.device))
+            ours = a[0, ..., 0] > 0.5
+            real = tgt[0, ..., 3] > 0.5
+            disagree = (ours != real).float()[None, None]
+            if margin_px > 0:  # grow the disagreement a little: its edge is where ghosts start
+                disagree = F.max_pool2d(disagree, 2 * margin_px + 1, stride=1, padding=margin_px)
+            agree = 1 - disagree[0, 0]
+            valid = tgt[0, ..., 4] if tgt.shape[-1] > 4 else torch.ones_like(agree)
+            person = (ours | real).float() * valid
+            share = float((agree * person).sum() / person.sum().clamp_min(1))
+            v = (agree * valid)[None, ..., None]
+        return torch.cat([tgt[..., :4], v], -1).contiguous(), share
+
+    # ---------------------------------------------------------------------------------------------------------------
     # the face at the clip's native resolution: a person reads as real or not by the face, so it gets its own crop of
     # the real frame, at full 4K detail and extra weight. Frames where the camera can't see the face (the back of the
     # head, a hand over it) get none.

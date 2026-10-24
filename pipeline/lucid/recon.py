@@ -55,6 +55,10 @@ def parse_args(argv=None):
                         "the foreground model: one player's mask when others share the frame")
     p.add_argument("--source-ignore", type=Path, default=None,
                    help="same naming, white = pixels left out of every real-view loss (another player)")
+    p.add_argument("--source-agree", action="store_true",
+                   help="per frame: re-align the real camera to the views' person and let the real frame count only "
+                        "where the two agree (no ghost limbs where 4DAnyone's person and the real one differ)")
+    p.add_argument("--source-refine-steps", type=int, default=60, help="pose steps per frame with --source-agree")
     p.add_argument("--source-focal", type=float, default=None,
                    help="the clip camera's known focal length in full-resolution pixels, held instead of solved")
     p.add_argument("--face-weight", type=float, default=0.0,
@@ -320,10 +324,23 @@ def main(argv=None):
             params = clone_params(params)
         src = source.target(frame) if source is not None and source.ready else None
         face = face_of(frame)
-        params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src, face)
+        agree = {}
+        if src is not None and warm and args.source_agree:
+            # the views first, so the person takes this frame's pose; then the camera follows them, and the real frame
+            # counts only where the views' person and the real one agree (no second, half-transparent limb)
+            params = trainer.fit(params, rgba, args.iters_warm // 2, warm, None, None)
+            agree["sourceIou"] = round(source.refine(trainer, params, frame, args.source_refine_steps), 4)
+            src, share = source.agreeing(trainer, params, frame)
+            agree["sourceAgree"] = round(share, 4)
+            params = trainer.fit(params, rgba, args.iters_warm, True, src, face)
+        else:
+            params = trainer.fit(params, rgba, args.iters_warm if warm else args.iters_first, warm, src, face)
         if source is not None and not warm and source.solve(trainer, params, front_ids):
             trainer.source = source
             src = source.target(frame)
+            if args.source_agree:
+                src, share = source.agreeing(trainer, params, frame)
+                agree = {"sourceIou": source.report.get("iou"), "sourceAgree": round(share, 4)}
             if args.face_weight > 0:
                 try:
                     n_faces = source.find_faces()
@@ -332,8 +349,9 @@ def main(argv=None):
                     print(f"[source] face crops off: {type(e).__name__}: {e}", flush=True)
             face = face_of(frame)
             params = trainer.fit(params, rgba, args.source_iters, True, src, face)
-        metrics = trainer.evaluate(params, rgba)
+        metrics = trainer.evaluate(params, rgba) | agree
         if src is not None:
+            src = source.target(frame)  # scored over every pixel that counts, agreeing or not, as before
             with torch.no_grad():
                 white = torch.ones(1, 3, device=args.device)
                 pred, _, _ = source.render(trainer, params, int(round(math.sqrt(params["shN"].shape[1] + 1))) - 1, white)
