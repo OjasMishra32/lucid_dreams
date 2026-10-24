@@ -372,6 +372,7 @@ STANDOFF_M = {"hair": 0.045, "back": 0.030, "other": 0.030}  # furthest from its
 # keeps the person's shape in offsets from the mean FLAME, so a face Gaussian may sit 2 cm off; a collar 4 cm)
 HAIR_REGIONS = ("scalp", "forehead", "left_ear", "right_ear")
 NECK_REGIONS = ("neck", "boundary")
+BACK_SEAM_DROP_M = 0.04  # the seam behind the neck sits this much lower than under the chin
 COLLAR_REACH_M = 0.03  # a head model's neck under seam + this is checked against the body's collar
 SMOOTH_K = 256  # seen Gaussians averaged for a repainted colour (smooth across the back of the head)
 CHIN_GAP_M = 0.03  # the seam sits this far under the chin (UIKA's face and lips): the whole jaw and upper neck are
@@ -505,6 +506,13 @@ def through_collar(xyz: np.ndarray, is_neck: np.ndarray, cloth_xyz: np.ndarray, 
     return out
 
 
+def back_of_neck(xyz: np.ndarray, neck: np.ndarray) -> np.ndarray:
+    """0 in front of the neck's vertical axis and at its sides, rising to 1 straight behind it (SMPL-X's rest pose
+    faces +Z): the cosine of the angle to -Z, floored at 0."""
+    d = np.asarray(xyz, dtype=np.float64)[:, [0, 2]] - np.asarray(neck, dtype=np.float64)[[0, 2]]
+    return np.clip(-d[:, 1] / np.maximum(np.linalg.norm(d, axis=1), 1e-9), 0, 1)
+
+
 def own_bundle_errors(person: str, src: Path, new_id: str) -> list[str]:
     """The body has to be the person's own avatar, and the new bundle a new <person>-... id that never replaces a
     bundle this step didn't write."""
@@ -631,14 +639,18 @@ def cmd_distill(a) -> int:
     collar = through_collar(ug.xyz, np.isin(regions[near], NECK_REGIONS), body_k.xyz[cloth],
                             rest[J["neck"]][[0, 2]], seam_y + COLLAR_REACH_M)
     edits["throughCollar"] = int((collar & keep_u).sum())
-    sel = keep_u & ~collar & (ug.xyz[:, 1] > seam_lo)
+    # behind, the seam drops (BACK_SEAM_DROP_M): the nape's skin then reaches down into the collar instead of ending in
+    # a faded band above it (the collar check above trims whatever would poke out)
+    seam_at = seam_y - BACK_SEAM_DROP_M * back_of_neck(ug.xyz, rest[J["neck"]])
+    sel = keep_u & ~collar & (ug.xyz[:, 1] > seam_at - H.BAND_M)
     # UIKA leaves gaps at the back of the head (its own renders smear over them): through them one sees the face from
     # behind. An opaque shell on the SMPL-X scalp, just under UIKA's hair and coloured like the seen hair, closes them
     hair_lift = 0.8 * float(np.median(dist[seen_hair])) if seen_hair.any() else 0.01
     shell = scalp_shell(verts, faces, lbs, seam_lo, flame_a, flame_u, regions, ug.xyz[seen_hair], rgb_u[seen_hair],
                         ug.xyz[keep_u & (u_alpha > 0.5)], hair_lift, seed=a.seed)
     anchor = np.concatenate([ug.xyz[sel], shell.xyz])
-    fade = D.seam_fade(anchor[:, 1], seam_y)
+    fade = np.clip((anchor[:, 1] - (np.concatenate([seam_at[sel], np.full(len(shell), seam_y)]) - H.BAND_M))
+                   / H.BAND_M, 0, 1)
     rgb_t = np.concatenate([rgb_u[sel], np.clip(0.5 + SH_C0 * shell.f_dc, 0, 1)])
     s_alpha = 1 / (1 + np.exp(-shell.opacity))
     edits["shell"] = len(shell)
@@ -881,7 +893,7 @@ def cmd_distill(a) -> int:
         "exportCheck": {"psnr": round(check_psnr, 2), "alphaError": round(check_alpha, 4)},
         "size": {"uika": size_uika, "avatar": size_body},
         "body": a.body, "seam": {"y": round(seam_y, 4), "chinY": round(chin_y, 4), "jawJointY": round(float(rest[J["jaw"], 1]), 4),
-                 "bandM": H.BAND_M, "offsetM": a.seam_offset, "bodyAbove": body_above},
+                 "bandM": H.BAND_M, "backDropM": BACK_SEAM_DROP_M, "offsetM": a.seam_offset, "bodyAbove": body_above},
         "edits": edits, "seeds": n_u,
         "fit": {"steps": a.steps, "pruned": pruned, "cloned": cloned, "split": split,
                 "views": len(views), "heldOut": int(len(held)), "size": W,

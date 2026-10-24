@@ -161,3 +161,10 @@ def test_through_collar_drops_a_neck_outside_the_collar_only():
     out = U.through_collar(neck, np.ones(len(neck), dtype=bool), collar, np.zeros(2), below_y=0.15)
     assert out[:72].all() and not out[72:].any()
     assert not U.through_collar(neck, np.zeros(len(neck), dtype=bool), collar, np.zeros(2), 0.15).any()  # only necks
+
+
+def test_back_of_neck_is_one_behind_and_zero_in_front():
+    neck = np.array([0.0, 0.1, 0.02])
+    pts = np.array([[0, 0, -0.05], [0, 0, 0.09], [0.07, 0, 0.02], [0.05, 0, -0.03]])
+    w = U.back_of_neck(pts, neck)
+    assert w[0] == pytest.approx(1) and w[1] == 0 and w[2] == pytest.approx(0) and 0.5 < w[3] < 0.8
