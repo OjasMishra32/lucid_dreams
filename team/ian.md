@@ -222,3 +222,10 @@ What makes it simple, and what to do the same way in Unity:
 - Captions: WebVTT parsed like captions.ts (tags stripped, HTML entities decoded, which the WebXR canvas doesn't
   do: Atina's captions.py escapes `&`), quiet pill at 60% height, 0.42 m toward you.
 
+## Decisions: props (Ian, Fri night)
+
+- Ball maths ported line for line from props.ts (sample, bounce rule, fade, jump fade, backspin, shadow). Opaque when
+  whole, a transparent copy only while fading, so it sorts right against the person.
+- Built under the person's transform, so props share its handedness mirror and every placement. Checked on a test
+  track: exact on frames, on the curve between, fades across nulls, never under the floor, rim at 3.05 m.
+

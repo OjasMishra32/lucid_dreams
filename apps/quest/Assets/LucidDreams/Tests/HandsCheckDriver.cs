@@ -58,6 +58,13 @@ namespace LucidDreams.Tests
                 Done = true;
                 yield break;
             }
+            if (!string.IsNullOrEmpty(player.Dream.props))
+            {
+                yield return PropsChecks(root);
+                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
+                Done = true;
+                yield break;
+            }
             if (!string.IsNullOrEmpty(player.Dream.voice) || !string.IsNullOrEmpty(player.Dream.captions))
             {
                 yield return SpeechChecks(root);
@@ -160,6 +167,61 @@ namespace LucidDreams.Tests
 
             Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
             Done = true;
+        }
+
+        // The ball on its track and a regulation hoop, in the person's space.
+        IEnumerator PropsChecks(Transform root)
+        {
+            var props = FindAnyObjectByType<DreamProps>();
+            float until = Time.realtimeSinceStartup + 20f;
+            while (props.HoopCount == 0 && Time.realtimeSinceStartup < until) yield return null;
+            Check(props.HoopCount == 1 && props.Root != null, $"props.json builds: {props.HoopCount} hoop, unknown kinds ignored");
+
+            var json = MiniJson.Obj(MiniJson.Parse(File.ReadAllText(Path.Combine(player.bundle, player.Dream.props))), "props");
+            var track = MiniJson.Arr(MiniJson.Arr(json["objects"], "objects")[0] is System.Collections.Generic.Dictionary<string, object> ball ? ball["track"] : null, "track");
+            Vector3 T(int f) { var v = MiniJson.Floats(track[f], 3, "track"); return new Vector3(v[0], v[1], v[2]); }
+            float fps = player.Dream.fps;
+            player.Pause();
+
+            player.Seek(5f / fps);
+            yield return new WaitForSeconds(0.3f);
+            Check(Vector3.Distance(props.BallPosition, T(5)) < 0.001f && props.BallVisible && props.BallAlpha >= 1f,
+                $"on a frame, the ball is exactly on its track ({props.BallPosition} vs {T(5)})");
+            player.Seek(15.5f / fps);
+            yield return Frames(2);
+            var mid = props.BallPosition;
+            float span = Vector3.Distance(T(15), T(16));
+            Check(Vector3.Distance(mid, T(15)) > 0.2f * span && Vector3.Distance(mid, T(16)) > 0.2f * span
+                  && Vector3.Distance(mid, (T(15) + T(16)) / 2f) < 0.25f * span,
+                $"between frames it follows the curve, not jumping ({mid} between {T(15)} and {T(16)})");
+            player.Seek(10.5f / fps);
+            yield return new WaitForSeconds(0.35f);
+            Check(!props.BallVisible, $"where the track is null it fades out (alpha {props.BallAlpha:F2})");
+            player.Seek(13f / fps);
+            yield return Frames(2);
+            bool fadingIn = props.BallAlpha < 1f;
+            yield return new WaitForSeconds(0.3f);
+            Check(fadingIn && props.BallVisible && props.BallAlpha >= 1f, "and fades back in when it's found again");
+            Render(Path.Combine(outputDir, "props-side.png"), root.position + root.right * 4.5f + Vector3.up * 1.7f, root.position + root.forward * 0.8f + Vector3.up * 1.6f);
+
+            float lowest = float.MaxValue;
+            for (float f = 25f; f <= 28f; f += 0.1f)
+            {
+                player.Seek(f / fps);
+                yield return null;
+                lowest = Mathf.Min(lowest, props.BallPosition.y);
+            }
+            Check(lowest >= 0.12f - 1e-4f, $"through the bounce it never goes through the floor (lowest centre {lowest:F3} m)");
+
+            var ring = props.Root.transform.Find("Hoop/Ring");
+            var glass = props.Root.transform.Find("Hoop/Glass");
+            var rimWorld = root.InverseTransformPoint(ring.position);
+            Check(ring != null && Mathf.Abs(rimWorld.y - (3.05f - 0.008f)) < 0.001f && Mathf.Abs(rimWorld.z - 1.6f) < 0.001f,
+                $"the rim is at 3.05 m, 1.6 m in front of them ({rimWorld})");
+            Check(glass != null && Vector3.Distance(glass.localScale, new Vector3(1.83f, 1.07f, 0.025f)) < 1e-4f, "on a regulation 1.83 x 1.07 m board");
+            player.Seek(5f / fps);
+            yield return new WaitForSeconds(0.3f);
+            Render(Path.Combine(outputDir, "props-eye.png"));
         }
 
         // Their voice from where they stand, in step with the clip, and their words as a caption in front of them.

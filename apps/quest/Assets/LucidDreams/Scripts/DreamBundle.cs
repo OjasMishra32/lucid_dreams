@@ -29,6 +29,7 @@ namespace LucidDreams
         public string experience; // experience.json: the plan written from the intent
         public string guide; // guide.json from the bridge's Gemini guide
         public string captions; // captions.vtt: what the person says, in the clip's own time
+        public string props; // props.json: the ball's path, a hoop
 
         public bool IsReplay => kind == "replay";
         public bool IsAvatar => kind == "avatar";

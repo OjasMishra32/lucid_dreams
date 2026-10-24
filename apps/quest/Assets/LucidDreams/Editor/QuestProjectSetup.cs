@@ -247,6 +247,31 @@ namespace LucidDreams.Editor
             controls.player = player;
             controls.placer = placer;
             dreamGo.AddComponent<DreamSpeech>().player = player;
+            var props = dreamGo.AddComponent<DreamProps>();
+            props.player = player;
+            props.person = personGo.transform;
+            props.shadowShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/ContactShadow.shader");
+            props.ball = PropMaterial("Ball", Color.white, 0f, 0.34f, normalMap: true);
+            props.ballFading = PropMaterial("Ball fading", Color.white, 0f, 0.34f, normalMap: true, transparent: true);
+            props.rimOrange = PropMaterial("Rim orange", Hex(0xd4501c), 0.5f, 0.62f);
+            props.steel = PropMaterial("Steel", Hex(0x1d1e21), 0.35f, 0.5f);
+            props.standBase = PropMaterial("Stand base", Hex(0x161618), 0.05f, 0.15f);
+            props.paint = PropMaterial("Board paint", Hex(0xf5f5f3), 0f, 0.45f, doubleSided: true);
+            props.glass = PropMaterial("Board glass", new Color(1f, 1f, 1f, 0.09f), 0f, 0.96f, transparent: true);
+            props.glassEdge = PropMaterial("Board glass edge", WithAlpha(Hex(0x9cc7bd), 0.55f), 0f, 0.85f, transparent: true);
+            props.cord = PropMaterial("Net cord", WithAlpha(Hex(0xf7f7f5), 0.9f), 0f, 0.1f, transparent: true);
+
+            // Light for the solid props only (Gaussians carry their own light): a soft sky and one key light.
+            var keyGo = new GameObject("Prop key light");
+            var key = keyGo.AddComponent<Light>();
+            key.type = LightType.Directional;
+            key.intensity = 1.4f;
+            key.shadows = LightShadows.None;
+            keyGo.transform.rotation = Quaternion.Euler(55f, -25f, 0f);
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+            RenderSettings.ambientSkyColor = new Color(0.6f, 0.6f, 0.6f);
+            RenderSettings.ambientEquatorColor = new Color(0.45f, 0.44f, 0.42f);
+            RenderSettings.ambientGroundColor = Hex(0x8a8178) * 0.6f;
             var shadow = dreamGo.AddComponent<ContactShadow>();
             shadow.shader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/ContactShadow.shader");
             shadow.player = player;
@@ -296,6 +321,45 @@ namespace LucidDreams.Editor
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+        }
+
+        static Color Hex(int rgb) => new Color(((rgb >> 16) & 255) / 255f, ((rgb >> 8) & 255) / 255f, (rgb & 255) / 255f, 1f);
+        static Color WithAlpha(Color c, float a) => new Color(c.r, c.g, c.b, a);
+
+        // A URP Lit material asset for props (assets, so the build keeps their shader variants).
+        static Material PropMaterial(string name, Color color, float metallic, float smoothness,
+            bool normalMap = false, bool transparent = false, bool doubleSided = false)
+        {
+            string dir = "Assets/LucidDreams/Props";
+            Directory.CreateDirectory(dir);
+            string path = $"{dir}/{name}.mat";
+            var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m == null)
+            {
+                m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                AssetDatabase.CreateAsset(m, path);
+            }
+            m.SetColor("_BaseColor", color);
+            m.SetFloat("_Metallic", metallic);
+            m.SetFloat("_Smoothness", smoothness);
+            m.SetFloat("_Cull", doubleSided ? 0f : 2f);
+            if (normalMap) { m.EnableKeyword("_NORMALMAP"); m.SetFloat("_BumpScale", 1f); }
+            if (transparent)
+            {
+                m.SetFloat("_Surface", 1f);
+                m.SetFloat("_Blend", 0f);
+                m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                // alpha for the passthrough compositor: coverage, not alpha squared
+                m.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+                m.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                m.SetFloat("_ZWrite", 0f);
+                m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                m.SetOverrideTag("RenderType", "Transparent");
+                m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            }
+            EditorUtility.SetDirty(m);
+            return m;
         }
 
         // Fidelity first: full SH, full sort precision, and center depth so Quest reprojection keeps the person stable.

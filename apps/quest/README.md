@@ -68,6 +68,20 @@ as the README allows.
 - **Captions** (`captions.vtt`): a quiet dark pill in front of them at 60% of their height, toward you, fading in and
   out with each cue, up to two lines.
 
+## Props (props.json)
+
+The ball and hoop are built in code at real size, like `apps/webxr/src/props.ts`, as children of the person (so they
+share its space and come along wherever it's placed):
+
+- **Basketball:** follows `track` on the same clip clock as the person (lessons included): centripetal Catmull-Rom
+  between frames, straight lines in and out of a floor bounce, never through the floor, fades out across `null`s and
+  in after a jump, backspin from its velocity, a soft shadow that widens with height. The pebbled skin and its
+  8 seams are generated (worker thread) with a matching normal map.
+- **Hoop:** regulation: ring 0.457 m inside at `rim` height, board 1.83 x 1.07 m with its border and shooter's
+  square, diamond net, arms, pole and base, turned to `facing`.
+- Prop materials are URP Lit assets in `Assets/LucidDreams/Props/`, lit by one key light and a soft ambient that
+  only solid objects see (Gaussians carry their own light). Unknown kinds are ignored.
+
 ## What you came to do (experience.json)
 
 The player reads the bundle's `experience.json` (AGENTS.md, Contracts, "Experience"), or guesses a plan from
@@ -114,7 +128,8 @@ Unity -batchmode -projectPath apps/quest -executeMethod LucidDreams.Editor.Playb
 `HandsCheck` drives simulated hands through every gesture in the real scene, checks each outcome and renders the
 eye view (a finger in front of the person must hide it). Given a bundle with a teach plan it checks the lesson
 instead: placement, step timing, your turn, Back / Again / Next and the voice; with a `voice` or `captions` it checks
-those (decode, mouth position, sync, quiet when paused or slowed, cue text). With `-bridge <url>` (no bundle) it
+those (decode, mouth position, sync, quiet when paused or slowed, cue text); with `props` it checks the ball on its
+track, fades, the bounce and the hoop's regulation sizes. With `-bridge <url>` (no bundle) it
 checks the library from an empty cache: list, download, play from the headset, then offline. For an avatar bundle,
 `-expect <dir>` compares the GPU-skinned positions with reference poses (`frameN.bin` from `skinning.py`'s
 `pose_points`, `frameN.dq.bin` from a dual-quaternion blend of its `skin_matrices`):
