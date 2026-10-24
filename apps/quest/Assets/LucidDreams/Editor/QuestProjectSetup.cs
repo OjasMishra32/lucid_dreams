@@ -51,7 +51,6 @@ namespace LucidDreams.Editor
             ConfigureRenderPipeline();
             ConfigureXR();
             ImportTextResources();
-            ImportPlaces();
             BuildScene();
 
             AssetDatabase.SaveAssets();
@@ -82,43 +81,6 @@ namespace LucidDreams.Editor
             if (AssetDatabase.IsValidFolder("Assets/TextMesh Pro")) return;
             var pkg = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(TMPro.TMP_Text).Assembly);
             UnityEditor.AssetPackage.Package.Import($"{pkg.resolvedPath}/Package Resources/TMP Essential Resources.unitypackage", false);
-        }
-
-        // The six CC0 panoramas live once, in apps/webxr/public/places (WebP, which Unity can't import). Convert them to
-        // JPEG textures the app loads on demand (git-ignored: regenerated here).
-        static void ImportPlaces()
-        {
-            string source = Path.GetFullPath(Path.Combine(Application.dataPath, "../../webxr/public/places"));
-            const string dir = "Assets/LucidDreams/Resources/Places";
-            Directory.CreateDirectory(dir);
-            foreach (var place in DreamPlaces.All)
-            {
-                string from = Path.Combine(source, $"{place.id}.webp"), to = $"{dir}/{place.id}.jpg";
-                if (!File.Exists(from)) { Debug.LogWarning($"[Lucid Dreams] No panorama for {place.id} at {from}"); continue; }
-                if (!File.Exists(to) || File.GetLastWriteTimeUtc(to) < File.GetLastWriteTimeUtc(from))
-                {
-                    using var sips = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/usr/bin/sips",
-                        $"-s format jpeg -s formatOptions 92 \"{from}\" --out \"{Path.GetFullPath(to)}\"") { UseShellExecute = false, CreateNoWindow = true });
-                    sips.WaitForExit();
-                    if (sips.ExitCode != 0) { Debug.LogWarning($"[Lucid Dreams] Couldn't convert {from} (macOS sips)"); continue; }
-                }
-                AssetDatabase.ImportAsset(to);
-                var importer = (TextureImporter)AssetImporter.GetAtPath(to);
-                importer.textureType = TextureImporterType.Default;
-                importer.sRGBTexture = true;
-                importer.mipmapEnabled = true;
-                importer.wrapModeU = TextureWrapMode.Repeat;
-                importer.wrapModeV = TextureWrapMode.Clamp;
-                importer.filterMode = FilterMode.Trilinear;
-                importer.anisoLevel = 4;
-                importer.maxTextureSize = 4096;
-                importer.textureCompression = TextureImporterCompression.CompressedHQ;
-                importer.SetPlatformTextureSettings(new TextureImporterPlatformSettings
-                {
-                    name = "Android", overridden = true, maxTextureSize = 4096, format = TextureImporterFormat.ASTC_6x6,
-                });
-                importer.SaveAndReimport();
-            }
         }
 
         static void ConfigurePlayer()
@@ -392,17 +354,6 @@ namespace LucidDreams.Editor
             steps.placer = placer;
             steps.voice = voice;
             steps.head = camGo.transform;
-
-            // Places: a 360-degree environment around the person instead of your room.
-            var placesGo = new GameObject("Places");
-            var places = placesGo.AddComponent<DreamPlaces>();
-            places.head = camGo.transform;
-            places.placer = placer;
-            places.player = player;
-            places.passthrough = camGo.GetComponent<ARCameraManager>();
-            places.handOccluder = occluder;
-            places.shader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/LucidDreams/Shaders/Place.shader");
-            bar.places = places;
 
             var interaction = dreamGo.AddComponent<DreamHands>();
             interaction.hands = tracker;

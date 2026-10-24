@@ -67,13 +67,9 @@ namespace LucidDreams.Tests
             }
             Check(!placer.Seat.seated && placer.person.localPosition == Vector3.zero && placer.GetComponent<DreamBench>().Root == null,
                 "standing: feet on the floor, no bench");
-            if (DreamPlaces.Starting(player.Experience?.environment, player.Experience?.intent ?? player.Dream.intent) != null)
-            {
-                yield return PlacesChecks(root);
-                Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
-                Done = true;
-                yield break;
-            }
+            // Passthrough only: the person is always in your real room, whatever the plan's environment says.
+            Check(!FindObjectsByType<FingertipButton>(FindObjectsInactive.Include).Any(b => b.label.text.StartsWith("Place")),
+                "passthrough only: no Place button on the rail");
             if (!string.IsNullOrEmpty(player.Dream.props))
             {
                 yield return PropsChecks(root);
@@ -159,11 +155,21 @@ namespace LucidDreams.Tests
             player.Scrub(0.4f);
             int frameBefore = player.Frame;
             var realityButton = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text == "Reality check");
-            Check(realityButton != null, "reality button shows for a bundle with reality frames");
+            Check(realityButton != null, "the rail has a Reality check button");
             if (realityButton != null)
             {
                 yield return Push(realityButton);
                 yield return Frames(3);
+            }
+            if (realityButton != null && !player.HasReality)
+            {
+                // A bundle with no reality frames (the committed sample): the popover says so, with nothing to toggle.
+                var unavailable = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Unavailable");
+                Check(unavailable != null && !player.ShowingReality, $"Reality check opens and says this dream has no imagined detail to show ({unavailable?.text})");
+                yield return Push(realityButton);
+            }
+            else if (realityButton != null)
+            {
                 var seen = FindObjectsByType<TMPro.TMP_Text>(FindObjectsInactive.Exclude).FirstOrDefault(t => t.name == "Seen");
                 Check(seen != null && seen.text == "50% seen by the camera · blue was imagined" && !player.ShowingReality,
                     $"Reality check opens and says how much was seen, before anything is tinted ({seen?.text})");
@@ -193,48 +199,6 @@ namespace LucidDreams.Tests
 
             Debug.Log($"[Lucid Dreams] Hands check: {(Failures == 0 ? "PASS" : $"{Failures} FAILED")}");
             Done = true;
-        }
-
-        // A place around the person: chosen by the plan or the intent, passthrough off once it's in, cycled by fingertip.
-        IEnumerator PlacesChecks(Transform root)
-        {
-            Check(DreamPlaces.Starting("concert-hall", "teach me this jump shot")?.id == "concert-hall"
-                  && DreamPlaces.Starting("room", "teach me this jump shot") == null
-                  && DreamPlaces.Starting(null, "sit with me and teach me this piece on the piano")?.id == "concert-hall"
-                  && DreamPlaces.Starting(null, "I just want to sit with her") == null,
-                "environment wins (room included), then the intent, else your room");
-            var places = FindAnyObjectByType<DreamPlaces>();
-            var occluder = FindAnyObjectByType<HandOccluder>();
-            float until = Time.realtimeSinceStartup + 10f;
-            while (places.Opacity < 1f && Time.realtimeSinceStartup < until) yield return null;
-            yield return Frames(3);
-            Check(places.Current?.id == "court" && places.Opacity >= 1f, $"'{player.Dream.intent}' starts on the court ({places.Name})");
-            Check(!places.PassthroughOn && !occluder.enabled, "once it's in, passthrough and the hand stand-ins are off");
-            player.Pause();
-            player.Seek(5f / player.Dream.fps);
-            yield return Frames(3);
-            Render(Path.Combine(outputDir, "place-court-eye.png"));
-            Render(Path.Combine(outputDir, "place-court-side.png"), root.position + root.right * 3.2f + Vector3.up * 1.4f, root.position + Vector3.up * 0.9f);
-
-            var button = FindObjectsByType<FingertipButton>(FindObjectsInactive.Exclude).FirstOrDefault(b => b.label.text.StartsWith("Place:"));
-            Check(button != null && button.label.text == "Place: Court", $"the rail names the place ({button?.label.text})");
-            yield return Push(button);
-            yield return new WaitForSeconds(0.2f);
-            Check(places.Current?.id == "gym" && places.Opacity < 1f, "a push crossfades to the next place");
-            yield return new WaitForSeconds(0.8f);
-            Check(places.Opacity >= 1f && !places.PassthroughOn, "and it settles in");
-            Render(Path.Combine(outputDir, "place-gym-eye.png"));
-            foreach (var expect in new[] { "ring", "studio", "mountains" })
-            {
-                yield return Push(button);
-                Check(places.Current?.id == expect, $"then {expect}");
-            }
-            yield return new WaitForSeconds(0.8f);
-            Render(Path.Combine(outputDir, "place-mountains-eye.png"));
-            yield return Push(button);
-            Check(places.Current == null && places.PassthroughOn, "and back to your room: passthrough comes back first");
-            yield return new WaitForSeconds(0.8f);
-            Check(!places.Visible && occluder.enabled, "the place fades away and your hands stay in front again");
         }
 
         // The ball on its track and a regulation hoop, in the person's space.
@@ -725,6 +689,7 @@ namespace LucidDreams.Tests
 
         IEnumerator Push(FingertipButton button)
         {
+            if (button == null) yield break; // its own Check already failed; don't stop the rest
             var front = button.transform.TransformPoint(new Vector3(0f, 0f, -30f));
             var through = button.transform.TransformPoint(new Vector3(0f, 0f, 6f));
             for (int i = 0; i <= 10; i++)

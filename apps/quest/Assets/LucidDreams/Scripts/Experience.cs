@@ -16,7 +16,7 @@ namespace LucidDreams
         public string title;
         public string summary;
         public string place; // facing (default), beside, ahead
-        public string environment; // a place around the person (concert-hall, court, gym, ring, studio, mountains) or "room"
+        public string environment; // a place around the person; ignored: the Quest app is passthrough only
         public List<string> objects = new(); // what matters for the intent ("piano", "bench"); props.json builds them
         public List<ExperienceStep> steps = new();
         public ExperiencePlay play;

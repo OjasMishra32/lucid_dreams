@@ -103,17 +103,10 @@ the scene for an avatar bundle with a `companion` or `play` plan.
 - **Captions** (`captions.vtt`): a quiet dark pill in front of them at 60% of their height, toward you, fading in and
   out with each cue, up to two lines.
 
-## Places
+## Passthrough only
 
-A **Place** button on the rail cycles Your room -> Concert hall -> Court -> Gym -> Boxing ring -> Studio -> Mountains
--> Your room, as in `apps/webxr/src/places.ts`. Each is a CC0 Poly Haven panorama (`apps/webxr/public/places/`,
-credits there) on a 30 m sphere whose bottom is flattened into a floor at your floor, so the person and their shadow
-stand on it and it stays put as you walk. The chosen column is turned straight ahead of you, behind the person. A dream
-starts in `experience.json`'s `environment` (`room` keeps your room), else the place its intent suggests (piano /
-music -> concert hall, basketball -> court, a fight -> ring, a workout -> gym), else your room. Changes crossfade over
-0.6 s; once a place is fully in, passthrough is switched off (and the hand stand-ins with it), and comes back before
-it fades away. Set Up Project converts the WebP panoramas to textures (macOS `sips`, git-ignored, about 23 MB in
-the APK).
+The person is always in your real room, in passthrough: there are no 360-degree places (decided Sat 3:30 AM, as in
+WebXR). `experience.json`'s `environment` is read but ignored, and the APK carries no panoramas.
 
 ## Props (props.json)
 
