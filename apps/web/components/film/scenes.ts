@@ -393,23 +393,22 @@ const avatar: Scene = {
 const apart: Scene = {
   key: "apart",
   dur: 6.5,
+  gl: { x: 760, y: 0, w: 1160, h: 1080 },
   async mount(host, s) {
     if (!s.data.frame) return () => {};
-    const { mountStory } = await import("@/lib/three/story");
-    return mountStory(host, { frame: s.data.frame, reality: null, cameras: [] }, {
-      // the story's exploded view: apart from 0.30 to 0.37, whole again by 0.46
-      progress: () => (s.t < 2.6 ? lerp(0.25, 0.37, ramp(s.t, 0.4, 2.4)) : lerp(0.37, 0.46, ramp(s.t, 3.8, 6.0))),
-      loading: () => {},
-      ready: () => {},
+    const { mountForming } = await import("@/lib/three/forming");
+    // whole, burst into her Gaussians, whole again
+    return mountForming(host, s.data.frame, {
+      amount: () => (s.t < 3 ? 1 - ramp(s.t, 0.5, 2.3) : ramp(s.t, 3.6, 5.8)),
+      active: () => true,
       failed: () => {},
-      hud: () => {},
     });
   },
-  preroll: { t: 0, seconds: 3, waitMs: 400 },
+  preroll: { t: 0, seconds: 2, waitMs: 400 },
   draw(g, t, s) {
     const n = s.data.count ?? 289466;
-    rise(g, fmt(n), 120, 230, span(t, 1.2, 2.0, 5.2, 5.9), { size: 150, weight: 700, track: -5 });
-    rise(g, "3D Gaussians, in one frame of her", 126, 290, span(t, 1.5, 2.3, 5.2, 5.9), { size: 34, weight: 500, color: INK2 });
+    rise(g, fmt(n), 120, 520, span(t, 1.2, 2.0, 5.4, 6.1), { size: 150, weight: 700, track: -5 });
+    rise(g, "3D Gaussians, in one frame of her", 126, 580, span(t, 1.5, 2.3, 5.4, 6.1), { size: 34, weight: 500, color: INK2 });
   },
 };
 
@@ -417,6 +416,7 @@ const apart: Scene = {
 const anatomy: Scene = {
   key: "anatomy",
   dur: 13,
+  gl: { x: 860, y: 0, w: 1060, h: 1080 },
   async mount(host, s) {
     if (!s.data.frame) return () => {};
     const { mountAnatomy } = await import("@/lib/three/anatomy");

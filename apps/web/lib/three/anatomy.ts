@@ -196,7 +196,7 @@ export async function mountAnatomy(host: HTMLElement, input: AnatomyInput, hooks
     camera.aspect = w / Math.max(1, h);
     camera.updateProjectionMatrix();
   };
-  let onScreen = false;
+  let onScreen = true; // until the observer says otherwise (a hidden page may never report)
   const io = new IntersectionObserver(([e]) => (onScreen = e.isIntersecting), { rootMargin: "20% 0px" });
   io.observe(host);
 
