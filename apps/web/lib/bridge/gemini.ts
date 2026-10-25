@@ -253,7 +253,6 @@ async function writeOllamaGemmaExperience(
   debug.raw?.(raw);
   return { ...experience, source, model: process.env.GEMMA_MODEL! };
 }
-
 /** A direct env override is useful for QA; otherwise choose the newest instruction-tuned Gemma the key can list. */
 async function planModels(): Promise<string[]> {
   const configured = process.env.GEMINI_MODEL?.split(",").map((m) => m.trim()).filter(Boolean) ?? [];
