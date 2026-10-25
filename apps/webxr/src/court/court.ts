@@ -18,6 +18,7 @@ import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { handSides } from "../xr/menu";
 import { COURT_QUALITY, SPLAT_QUALITY } from "../xr/quality";
+import { FloorArrows } from "./arrows";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
 import { demoMode } from "./demo";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
@@ -36,6 +37,7 @@ import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
 import { RESET_OUT_S, ResetFade, ResetVeil, StepGlow } from "./transitions";
 import { Warp } from "./warp";
+import { RING_FROM_S, RING_S } from "./warpLanding";
 import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
@@ -64,6 +66,8 @@ const CLEAN_FLOOR_S = 1;
 /** The demo lands in a fully, evenly lit arena: under the warp's flash the floor's pool gives way to the even house
  * light over the last LAND_EVEN_S before F, and the cinema mask lifts from LAND_MASK_S before F to LAND_MASK_S after. */
 const LAND_EVEN_S = 0.3;
+/** The demo's floor guide (arrows.ts) comes up this long after F: the picture gone and the warp's shockwave ring done. */
+const GUIDE_FROM_S = RING_FROM_S + RING_S;
 const LAND_MASK_S = 0.3;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
@@ -254,6 +258,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
+  // the demo's floor guide (arrows.ts): glowing trails round the pair once the 3D has the court; `?demo=0` = the old show
+  const arrows = demoMode ? new FloorArrows(court) : null;
+  if (arrows) world.add(arrows.group);
   /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
   const screenWatch = (level: number) => {
     if (!screen) return;
@@ -489,6 +496,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     sound.room(roomP);
     vrHands.fade(roomP);
     opening.hide(); // drawn only in the arrival (below)
+    // the floor guide: only once the 3D has the court, from GUIDE_FROM_S after F (below)
+    if (setup || !(phase === "open" || phase === "walking" || (phase === "handoff" && tF >= GUIDE_FROM_S))) arrows?.reset();
     courtWorld.edge(demoMode ? Infinity : seat.boundsDistance(head)); // the demo: the arena whole wherever the head goes
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
@@ -591,6 +600,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           fullLight();
           video.mask(landMask(tF));
         }
+        if (tF >= GUIDE_FROM_S) arrows?.update(head, dt, seat.world, roomP);
         if (tF >= HANDOFF_END) {
           tClean = 0;
           go("open");
@@ -603,6 +613,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         tClean += dt;
         screenAside(0, cleanFloor(), demoMode ? 1 : 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
         freeze.update(head, dt);
+        arrows?.update(head, dt, seat.world, roomP);
         if (demoMode) fullLight();
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
         else if (tLight < HANDOFF_END) {
