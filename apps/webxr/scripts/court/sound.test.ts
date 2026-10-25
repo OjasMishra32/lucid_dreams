@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ARRIVAL_FROM_DB, MASTER_DB, MIX_TRIM_DB, ROOM_DUCK_DB, RUSH_S, STOP_DUCK_DB, STOP_HUSH_HZ, STOP_OPEN_HZ, Sound, arrivalGain, stopDb, stopHz,
+  ARRIVAL_FROM_DB, MASTER_DB, MIX_TRIM_DB, ROOM_DUCK_DB, RUSH_S, SECOND_WAVE_S, STOP_DUCK_DB, STOP_HUSH_HZ, STOP_OPEN_HZ, Sound, WHOOSH_S, arrivalGain, stopDb, stopHz,
 } from "../../src/court/sound.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +27,7 @@ test("the curves hit the plan's numbers and never reach silence", () => {
   assert.equal(stopHz(1), STOP_HUSH_HZ);
   assert.equal(stopDb(0), 0);
   assert.equal(stopDb(1), STOP_DUCK_DB);
-  assert.ok(Math.abs(STOP_DUCK_DB + 14) < 1e-9 && STOP_HUSH_HZ === 700 && STOP_OPEN_HZ === 18000);
+  assert.ok(Math.abs(STOP_DUCK_DB + 20) < 1e-9 && STOP_HUSH_HZ === 350 && STOP_OPEN_HZ === 18000);
   assert.ok(RUSH_S === 0.6 && ROOM_DUCK_DB === -18);
   assert.equal(arrivalGain(0), 0);
   assert.ok(Math.abs(arrivalGain(1) - 1) < 1e-12);
@@ -142,7 +142,7 @@ window.renderSound = async (spec) => {
     file: (p) => p,
   };
   const buffers = { bed: bedBuffer(off, spec.bed, 6.37), swell: bedBuffer(off, spec.swell ?? "tone1k", spec.swellSeconds ?? 0.3), sfx: bedBuffer(off, "tone3k", 0.2), sfxB: bedBuffer(off, "tone400", 0.2) };
-  const sound = new Sound(bundle, { context: off, decode: async (path) => buffers[path] });
+  const sound = new Sound(bundle, { context: off, decode: async (path) => buffers[path], moments: spec.moments });
   await sound.load();
   sound.start();
   const errors = [];
@@ -275,6 +275,8 @@ interface Spec {
   frames?: object[];
   swell?: string;
   swellSeconds?: number;
+  /** false: the crowd bus alone, without the synthesized moments (the plan's numbers are measured on it). */
+  moments?: boolean;
 }
 interface Render {
   l: Float32Array;
@@ -366,7 +368,7 @@ const arrival = (t0 = 0.5, dur = 2.5): Call[] =>
 
 // ---------------- the checks ----------------
 
-test("P19 gain staging: the steady crowd mix sits at the bed's own loudness (-23) lifted by MASTER_DB (-18), within 1.5 dB", async () => {
+test("P19 gain staging: the steady crowd mix sits at the bed's own loudness (-23) plus MASTER_DB, within 1.5 dB", async () => {
   const calls = [...perFrame(7, (t) => [listen(t)]), ...arrival()];
   const s = new Signal(await render({ seconds: 7, bed: "noise", calls }));
   const steady = s.db(3.5, 6.9);
@@ -409,18 +411,18 @@ test("the arrival swells the crowd 18 dB up to the steady mix, smoothly and mono
 const ease = (t0: number, seconds: number, extra: (t: number) => Call[] = () => []): Call[] =>
   perFrame(t0 + seconds + 1.5, (t) => [listen(t), ...(t >= t0 ? [{ t, fn: "timeStop", args: [smootherstep((t - t0) / seconds)] }] : []), ...extra(t)]);
 
-test("P20 the time stop: low-pass and about -14 dB over the 1.2 s ease, a hush and not silence", async () => {
+test("P20 the time stop: low-pass and about -20 dB over the 1.2 s ease, a hush and not silence", async () => {
   const T0 = 4.4;
-  const s = new Signal(await render({ seconds: 7.3, bed: "tones", calls: [...arrival(), ...ease(T0, 1.2)] }));
+  const s = new Signal(await render({ seconds: 7.3, bed: "tones", calls: [...arrival(), ...ease(T0, 1.2)], moments: false }));
   const low = (a: number, b: number) => s.db(a, b, 150) - s.db(...REF, 150);
   const high = (a: number, b: number) => s.db(a, b, 9000) - s.db(...REF, 9000);
   const mid = (a: number, b: number) => s.db(a, b, 3000) - s.db(...REF, 3000);
   assert.ok(Math.abs(low(T0 - 0.1, T0)) < 0.3, "nothing moves before the ease starts");
-  assert.ok(Math.abs(low(T0 + 0.55, T0 + 0.65) - STOP_DUCK_DB / 2) < 2.2, `half-way ${low(T0 + 0.55, T0 + 0.65).toFixed(1)} dB`);
-  assert.ok(Math.abs(low(T0 + 1.4, T0 + 2.6) - STOP_DUCK_DB) < 1, `duck ${low(T0 + 1.4, T0 + 2.6).toFixed(1)} dB vs -14`);
+  assert.ok(Math.abs(low(T0 + 0.55, T0 + 0.65) - STOP_DUCK_DB / 2) < 0.16 * -STOP_DUCK_DB, `half-way ${low(T0 + 0.55, T0 + 0.65).toFixed(1)} dB`); // 16% of the duck (2.2 dB of the plan's 14)
+  assert.ok(Math.abs(low(T0 + 1.4, T0 + 2.6) - STOP_DUCK_DB) < 1, `duck ${low(T0 + 1.4, T0 + 2.6).toFixed(1)} dB vs ${STOP_DUCK_DB}`);
   assert.ok(high(T0 + 1.4, T0 + 2.6) < -30, `9 kHz is ${high(T0 + 1.4, T0 + 2.6).toFixed(0)} dB down`);
   assert.ok(mid(T0 + 1.4, T0 + 2.6) < -25 && mid(T0 + 1.4, T0 + 2.6) > -60, `3 kHz is ${mid(T0 + 1.4, T0 + 2.6).toFixed(0)} dB down`);
-  assert.ok(s.db(T0 + 1.4, T0 + 2.6, 150) > s.db(...REF, 150) - 16, "the crowd is still audible under the hush");
+  assert.ok(s.db(T0 + 1.4, T0 + 2.6, 150) > s.db(...REF, 150) + STOP_DUCK_DB - 2, "the crowd is still audible under the hush");
   assert.ok(s.db(T0 + 1.4, T0 + 2.6, 150) > -80, "never silence");
   // ramp timing: 90% of the way (-12.6 dB) lands about 0.73 of the ease in (smootherstep), a few tens of ms late
   const t90 = s.cross(150, s.db(...REF, 150) + 0.9 * STOP_DUCK_DB, T0, T0 + 2.5, true)!;
@@ -431,7 +433,7 @@ test("P20 the rush back on play: the filter opens and the crowd returns over 0.6
   const T0 = 4.4;
   const T1 = T0 + 1.2 + 1.0;
   const calls = [...arrival(), ...ease(T0, 1.2, (t) => (t >= T1 ? [listen(t, SEAT, clockAt(10, "resume"))] : []))];
-  const s = new Signal(await render({ seconds: T1 + 2, bed: "tones", calls }));
+  const s = new Signal(await render({ seconds: T1 + 2, bed: "tones", calls, moments: false }));
   const ref = s.db(...REF, 150);
   const low = (a: number, b: number) => s.db(a, b, 150) - ref;
   assert.ok(Math.abs(low(T1 - 0.3, T1) - STOP_DUCK_DB) < 1, "held in the hush until play");
@@ -471,7 +473,7 @@ for (const bed of ["sine50", "sine2500"]) {
     const OUT = T1 + 1; // See my room out, then back: both fades are inside the render
     const BACK = OUT + 1.4;
     const END = BACK + 1.4;
-    const steady = new Signal(await render({ seconds: 5, bed, calls: [...perFrame(5, (t) => [listen(t)]), { t: 0, fn: "arrive", args: [1] }] }));
+    const steady = new Signal(await render({ seconds: 5, bed, calls: [...perFrame(5, (t) => [listen(t)]), { t: 0, fn: "arrive", args: [1] }], moments: false }));
     const baseline = steady.maxJump(2, 5);
     const calls = [
       ...arrival(),
@@ -481,7 +483,7 @@ for (const bed of ["sine50", "sine2500"]) {
         { t, fn: "room", args: [t < OUT ? 0 : t < BACK ? Math.min(1, (t - OUT) / 0.6) : Math.max(0, 1 - (t - BACK) / 0.8)] },
       ]),
     ];
-    const s = new Signal(await render({ seconds: END + 0.5, bed, calls }));
+    const s = new Signal(await render({ seconds: END + 0.5, bed, calls, moments: false }));
     const worst = s.maxJump(0.1, END + 0.5);
     assert.ok(worst <= baseline * 1.05, `max jump ${worst.toExponential(3)} vs steady ${baseline.toExponential(3)}`);
     const inRoom = s.maxJump(OUT - 0.1, END + 0.4);
@@ -525,7 +527,7 @@ test("the swell fires once each time the show passes the make; the step-in swell
     perFrame(((to - from) / 72), (t, i) => [listen(t0 + t, SEAT, clockAt(from + i))]).map((c) => ({ ...c, t: c.t }));
   // pass A: 0..100 once, then 0..40 again (a jump back that doesn't reach the make at 60)
   const passes: Call[] = [{ t: 0, fn: "arrive", args: [1] }, ...sweep(0, 100, 0.2), ...sweep(0, 40, 2.0), { t: 3.2, fn: "oneShot", args: ["stepIn"] }];
-  const s = new Signal(await render({ seconds: 4.2, bed: "sine50", calls: passes, oneShots, events, frames, makeSource: 60, swellSeconds: 0.3 }));
+  const s = new Signal(await render({ seconds: 4.2, bed: "sine50", calls: passes, oneShots, events, frames, makeSource: 60, swellSeconds: 0.3, moments: false }));
   const onsets = (hz: number, lo: number, from = 0, to = 4.2) => {
     const out: number[] = [];
     let was = false;
@@ -540,7 +542,7 @@ test("the swell fires once each time the show passes the make; the step-in swell
   const swell = onsets(1000, floor + 25, 0, 3.1);
   assert.equal(swell.length, 1, `one swell for one pass over the make: ${swell}`);
   assert.ok(Math.abs(swell[0] - (0.2 + 60 / 72)) < 0.1, `on the make frame (${swell[0].toFixed(2)} s vs ${(0.2 + 60 / 72).toFixed(2)})`);
-  const squeaks = onsets(3000, s.db(0.05, 0.15, 3000) + 25, 0, 3.1); // before the step-in's whoosh sweeps through 3 kHz
+  const squeaks = onsets(3000, s.db(0.05, 0.15, 3000) + 25);
   assert.equal(squeaks.length, 2, `the event fires on each pass over its frame: ${squeaks}`);
   assert.ok(Math.abs(squeaks[0] - (0.2 + 30 / 72)) < 0.1);
   const peak = (a: number, b: number) => Math.max(...Array.from({ length: Math.round((b - a) / 0.01) }, (_, i) => s.db(a + i * 0.01, a + i * 0.01 + 0.03, 1000)));
@@ -549,7 +551,7 @@ test("the swell fires once each time the show passes the make; the step-in swell
   assert.ok(Math.abs(make - stepIn - 12) < 1.5, `step-in is ${(make - stepIn).toFixed(1)} dB under the make`);
   // a second full pass fires again
   const again: Call[] = [{ t: 0, fn: "arrive", args: [1] }, ...sweep(0, 100, 0.2), ...sweep(0, 100, 1.9)];
-  const s2 = new Signal(await render({ seconds: 3.6, bed: "sine50", calls: again, oneShots, events, frames, makeSource: 60, swellSeconds: 0.3 }));
+  const s2 = new Signal(await render({ seconds: 3.6, bed: "sine50", calls: again, oneShots, events, frames, makeSource: 60, swellSeconds: 0.3, moments: false }));
   let n = 0;
   let was = false;
   for (let t = 0; t < 3.5; t += 0.01) {
@@ -581,6 +583,109 @@ test("events: each one plays its own file (same kind, different files), and thro
   const peak = (s: Signal) => Math.max(...Array.from({ length: 30 }, (_, i) => s.db(a + i * 0.005, a + i * 0.005 + 0.03, 3000)));
   const drop = peak(full) - peak(half);
   assert.ok(Math.abs(drop - -20 * Math.log10(arrivalGain(0.5))) < 1, `event follows the arrival fade (${drop.toFixed(1)} dB vs ${(-20 * Math.log10(arrivalGain(0.5))).toFixed(1)})`);
+});
+
+// ---------------- the moments (synthesized; measured as the difference a render with them makes) ----------------
+
+/** The moments alone: the same calls rendered with and without them, subtracted (everything else is deterministic). */
+async function moments(spec: Spec): Promise<Signal> {
+  const on = await render(spec);
+  const off = await render({ ...spec, moments: false });
+  const sub = (a: Float32Array, b: Float32Array) => a.map((v, i) => v - b[i]);
+  return new Signal({ ...on, l: sub(on.l, off.l), r: sub(on.r, off.r) });
+}
+/**
+ * Hard onsets or cuts in [t0, t1) (their times): a 1 ms window at half or more of its surroundings' peak right next to
+ * 3 ms of near-silence (2%). Every moment ramps in and out over 6 ms or more, so none should show.
+ */
+function clicks(d: Signal, t0: number, t1: number): number[] {
+  const env: number[] = [];
+  for (let t = t0; t < t1; t += 0.001) env.push(10 ** (d.db(t, t + 0.001) / 20));
+  const out: number[] = [];
+  const quiet = (a: number, b: number, level: number) => env.slice(a, b).every((v) => v < 0.02 * level);
+  for (let k = 3; k < env.length - 4; k++) {
+    if (env[k] < 1e-5) continue;
+    const after = Math.max(...env.slice(k, k + 50));
+    const before = Math.max(...env.slice(Math.max(0, k - 50), k + 1));
+    if ((env[k] > 0.5 * after && quiet(k - 3, k, after)) || (env[k] > 0.5 * before && quiet(k + 1, k + 4, before))) out.push(+(t0 + k * 0.001).toFixed(3));
+  }
+  return out;
+}
+
+test("the click check sees a click: the make's roar cut on hard is caught, the roar itself is not", async () => {
+  const frames = Array.from({ length: 101 }, (_, i) => ({ src: i }));
+  const calls: Call[] = [{ t: 0, fn: "arrive", args: [1] }, ...perFrame(100 / 72, (t, i) => [listen(t + 0.2, SEAT, clockAt(i))])];
+  const d = await moments({ seconds: 2.5, bed: "sine50", calls, oneShots: [], frames, makeSource: 60 });
+  const M = 0.2 + 60 / 72;
+  assert.deepEqual(clicks(d, M - 0.1, 2.4), [], "the roar ramps in");
+  const cut = Math.round((M + 0.6) * SR);
+  const hard = (x: Float32Array) => x.map((v, i) => (i < cut ? 0 : v));
+  const clicked = new Signal({ ...d.render, l: hard(d.render.l), r: hard(d.render.r) });
+  assert.ok(clicks(clicked, M + 0.5, M + 0.7).length > 0, "a hard onset is caught");
+});
+
+test("the freeze is felt: a reverse swell builds into F, a sub thump lands on F, then only the hush and room tone", async () => {
+  const T0 = 4.4;
+  const F = Math.ceil((T0 + 1.2) / FRAME) * FRAME; // the first frame the ease's p is exactly 1
+  const d = await moments({ seconds: F + 3.2, bed: "tones", calls: [...arrival(), ...ease(T0, 1.2)] });
+  const building = d.db(F - 0.3, F - 0.03);
+  assert.ok(building > d.db(T0 + 0.2, T0 + 0.5) + 15, `the reverse swell builds (${building.toFixed(1)} dBFS before F)`);
+  assert.ok(building - MASTER_DB > -50 && building - MASTER_DB < -25, `and is heard (${(building - MASTER_DB).toFixed(1)} dB before the master)`);
+  assert.ok(d.db(F - 0.15, F - 0.02, 80) < d.db(F + 0.01, F + 0.15, 80) - 20, "the thump lands on F, not before");
+  assert.ok(d.db(F + 0.01, F + 0.15, 80) - MASTER_DB > -35, `a thump you feel (${(d.db(F + 0.01, F + 0.15, 80) - MASTER_DB).toFixed(1)} dB at 80 Hz before the master)`);
+  assert.ok(d.db(F + 0.15, F + 0.4, 2000) < building - 20, "the swell stops short at F");
+  assert.ok(d.db(F + 2.2, F + 3.1) - MASTER_DB < -65, "then nothing but the hush and room tone");
+  assert.deepEqual(clicks(d, T0, F + 1.5), [], "no clicks");
+});
+
+test("Back to my seat: a riser climbs from the sit into the resume, then gives way to the crowd's rush", async () => {
+  const T0 = 4.4;
+  const OUT = T0 + 1.7;
+  const SIT = T0 + 2.8;
+  const T1 = SIT + 1.8;
+  const calls = [
+    ...arrival(),
+    ...perFrame(T1 + 1.5, (t) => [
+      t >= T1 ? listen(t, SEAT, clockAt(10, "resume")) : listen(t),
+      ...(t >= T0 && t < T1 ? [{ t, fn: "timeStop", args: [smootherstep((t - T0) / 1.2)] }] : []),
+      { t, fn: "room", args: [t < OUT ? 0 : t < SIT ? Math.min(1, (t - OUT) / 0.6) : Math.max(0, 1 - (t - SIT) / 0.8)] },
+    ]),
+  ];
+  const d = await moments({ seconds: T1 + 1.6, bed: "tones", calls });
+  const top = d.db(T1 - 0.35, T1 - 0.05);
+  assert.ok(top > d.db(SIT + 0.05, SIT + 0.4) + 10, `it climbs over the hand-back (${top.toFixed(1)} dBFS at the top)`);
+  assert.ok(top - MASTER_DB > -50 && top - MASTER_DB < -25, `and is heard (${(top - MASTER_DB).toFixed(1)} dB before the master)`);
+  assert.ok(d.db(SIT - 0.3, SIT, 2000) < d.db(T1 - 0.35, T1 - 0.05, 2000) - 15, "not before the sit (in its own band, above the thump's tail)");
+  assert.ok(d.db(T1 + 0.7, T1 + 1.5) < top - 25, "the rush takes over");
+  assert.deepEqual(clicks(d, SIT - 0.2, T1 + 1.5), [], "no clicks");
+});
+
+test("the make erupts: a decorrelated roar at the stand sources (spatial), and a second wave SECOND_WAVE_S later", async () => {
+  const left: Vec3[] = [[-10, 2, -3], [-10, 2, -1], [-10, 2, 1], [-10, 2, 3], [-10, 4, 0]];
+  const head = { room: [0, 1.15, 0], court: [0, 1.15, 0], yaw: 0, quaternion: yawQuat(0) };
+  const frames = Array.from({ length: 101 }, (_, i) => ({ src: i }));
+  const calls: Call[] = [{ t: 0, fn: "arrive", args: [1] }, ...perFrame(100 / 72, (t, i) => [listen(t + 0.2, head, clockAt(i))])];
+  const M = 0.2 + 60 / 72;
+  const d = await moments({ seconds: M + 4.6, bed: "sine50", sources: left, calls, oneShots: [{ file: "swell", at: "make", gainDb: 0 }], frames, makeSource: 60, swellSeconds: 0.3 });
+  assert.ok(d.db(M + 0.1, M + 0.6, 2000) > d.db(0.1, M - 0.1, 2000) + 30, "the roar comes in on the make");
+  assert.ok(d.db(M + 0.1, M + 0.6) - MASTER_DB > -40, `and is big (${(d.db(M + 0.1, M + 0.6) - MASTER_DB).toFixed(1)} dB before the master)`);
+  const [l, r] = d.ears(M + 0.1, M + 1.5, 2000);
+  assert.ok(l - r > 4, `from the stands, not the head: the stands on the left are on the left (${(l - r).toFixed(1)} dB)`);
+  const W = M + SECOND_WAVE_S;
+  assert.ok(d.db(W + 0.05, W + 0.3, 1000) > d.db(W - 0.3, W - 0.05, 1000) + 5, `a second wave (${(d.db(W + 0.05, W + 0.3, 1000) - d.db(W - 0.3, W - 0.05, 1000)).toFixed(1)} dB)`);
+  assert.ok(d.db(M + 4.4, M + 4.6) - MASTER_DB < -75, "and it settles");
+  assert.deepEqual(clicks(d, M - 0.1, M + 4.5), [], "no clicks");
+});
+
+test("the step-in whoosh is air, not hiss: swept through the mids, low-passed, smooth, gone after WHOOSH_S", async () => {
+  const T = 1.0;
+  const calls: Call[] = [{ t: 0, fn: "arrive", args: [1] }, ...perFrame(0.1, (t) => [listen(t)]), { t: T, fn: "oneShot", args: ["stepIn"] }];
+  const d = await moments({ seconds: T + WHOOSH_S + 0.8, bed: "sine50", calls });
+  const level = d.db(T, T + WHOOSH_S);
+  assert.ok(d.db(T, T + WHOOSH_S, 8000) < d.db(T, T + WHOOSH_S, 800) - 20, `no hiss: 8 kHz ${(d.db(T, T + WHOOSH_S, 8000) - d.db(T, T + WHOOSH_S, 800)).toFixed(1)} dB under the mids`);
+  assert.ok(level - MASTER_DB > -50 && level - MASTER_DB < -27, `under the crowd, still heard (${(level - MASTER_DB).toFixed(1)} dB before the master)`);
+  assert.ok(d.db(T + WHOOSH_S + 0.1, T + WHOOSH_S + 0.7) - MASTER_DB < -85, "gone");
+  assert.deepEqual(clicks(d, T - 0.05, T + WHOOSH_S + 0.2), [], "no clicks");
 });
 
 test("AudioContext: start() resumes inside the tap, the first gesture resumes it if the browser held it back, update() asks again while suspended", async () => {
