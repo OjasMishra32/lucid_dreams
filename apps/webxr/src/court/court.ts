@@ -32,6 +32,7 @@ import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
 import { RESET_OUT_S, ResetFade, ResetVeil, StepGlow } from "./transitions";
+import { Warp } from "./warp";
 import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
@@ -232,6 +233,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const resetVeil = new ResetVeil();
   scene.add(resetVeil.mesh);
   const stepGlow = new StepGlow();
+  // demo mode (`?demo=0` is the plain show): Step into the court warps from the screen into the court (warp.ts)
+  const warp = screen && params.get("demo") !== "0" ? new Warp(screen) : null;
+  if (warp) scene.add(warp.group);
   // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
@@ -627,6 +631,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     const charge = ease ? (tF + ease.seconds) / Math.max(1e-3, ease.seconds - SCREEN_EASE_S) : null;
     const { glow, wave } = stepGlow.update(dt, charge);
     screen?.glow(glow, wave);
+    // the warp rides the ease's last seconds into F and is gone the instant F lands; off in every other phase
+    warp?.update(phase === "easing" ? tF : null, head.room);
   };
 
   // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again
