@@ -65,28 +65,63 @@ over a ducked bed.
 | 21 | 2:47-2:53 | Ian lifts the headset off, sits for a second | Piano | |
 | 22 | 2:53-3:00 | End card | Piano resolves | "Lucid Dreams. Anyone from any video, standing in your room." getluciddreams.vercel.app · team names · "AI voices are labeled. Public figures are likenesses, not affiliated." |
 
-## What to film
+## What to film (checklist)
 
-Headset recordings: on the Quest press the Meta button, then Camera, then Record video (in Settings, Camera, pick
-landscape 1080p if it's offered). Move your head slowly and keep the person in the middle; headset footage shakes.
-Record 3 takes of each, 10 to 20 seconds. Film the phone b-roll at the same time when you can (someone on an iPhone,
-4K, from the side, room lights on), so the edit can cut between your view and you in the room.
+**Every headset take:** Meta button, Camera, Record video. Start recording, wait 2 s, do the thing, hold 2 s after.
+15 to 30 s a take, 3 takes of each. Move your head slowly and keep the person in the middle, 1.5 to 2 m away. Room
+lights on, room tidy, nothing private in view. Turn the microphone on for the Talk takes (Settings, Camera). Copy the
+recordings to `~/Downloads/lucid-video/quest/` (OpenMTP over USB), named loosely (`chess-2.mp4`).
 
-1. **Ian and his grandma** (most important, 5+ takes each): Ian on his bed at night scrolling to her old video on
-   his phone (close on the phone); Ian putting the headset on; headset view of her appearing; Ian asking her
-   something in Vietnamese with Talk and her answer with the English line and "AI voice" in frame; Ian's face from
-   the side; Ian lifting the headset off. Ian chooses his own words and says his own line.
-2. **Make one on an iPhone**: screen-record picking a dance clip from the camera roll on the site and typing a
-   sentence. Stop before tapping Make unless we want a real run.
-3. **Learn**: dance-01 with Lesson on (step card, your turn), follow-along targets showing, golf swing with the club,
-   guitar with the chord, tai chi with Mirror.
-4. **Play**: chess with Magnus (handshake, you move a piece by pinch, his reach and clock press, label in frame);
-   tennis with Federer (handshake at the net, toss and serve, a rally); basketball (pass to LeBron, he catches and
-   shoots; you shoot at the hoop).
-5. **Talk with Vishal**: ask him something short, his full answer, caption in frame.
-6. **Reality check**: tap it on the dancer so she turns partly blue; and the palm menu opening on your hand.
-7. **Wide b-roll**: you in the room with each person, from behind and the side, so the room and the person read
-   together.
+**Ian and his grandma** (the most important shots; Ian in the room, his OK; 5 takes of each)
+- [ ] Phone b-roll: Ian on his bed at night, scrolling his camera roll to an old video of her, close on the phone
+- [ ] Phone b-roll: Ian putting the headset on
+- [ ] Headset (`/xr/?dream=ian-grandma`): she appears in his room, life size; hold on her 10 s, no talking
+- [ ] Headset, mic on: Ian presses Talk and asks her something in Vietnamese; her answer plays with the Vietnamese,
+      the English line and "AI voice" in frame
+- [ ] A second, warmer exchange for the ending (Ian chooses what to say)
+- [ ] Phone b-roll: Ian's face from the side while she answers
+- [ ] Phone b-roll: Ian lifting the headset off, sitting for a moment
+
+**Make one** (iPhone screen recording)
+- [ ] On https://getluciddreams.vercel.app scroll to Make one, pick a dance clip from the camera roll, type "teach
+      me this dance". Stop before tapping Make.
+
+**Learn**
+- [ ] Dance (`/xr/?dream=dance-01`): she dances at full size in the room, wide, her feet on your floor
+- [ ] Dance with Lesson on (palm menu): the step card, a step slowed down, "your turn"
+- [ ] Follow along: the glowing targets on your head and wrists while you copy her
+- [ ] Tai chi (`/xr/?dream=taichi-01`) with Mirror, you moving with him
+- [ ] Golf (`/xr/?dream=golf-01`): his swing, then you with the club, hitting the ball off the tee
+- [ ] Guitar (`/xr/?dream=guitar-01`): the guitar at your waist, your left hand on the neck, a strum
+
+**Play**
+- [ ] Chess (`/xr/?mode=chess&strength=carlsen`): Magnus offers his hand, you shake it (label in frame)
+- [ ] Chess: you pinch a piece and move it; he thinks, reaches, moves his piece, presses the clock
+- [ ] Chess (`strength=fischer`): one take of Bobby reaching across the board
+- [ ] Tennis (`/xr/?mode=tennis`): Federer walks to the net, the handshake (label in frame)
+- [ ] Tennis: your toss and serve, then a rally of 3+ shots
+- [ ] Basketball (`/xr/?dream=lebron-shot`): you pass, he catches and shoots; then you shoot at the hoop
+
+**Talk**
+- [ ] Vishal (`/xr/?dream=vishal`), mic on: ask him something short ("What's up, Vishal?"); his full answer with the
+      caption and "AI voice" in frame
+
+**The tech, in the headset**
+- [ ] Reality check on the dancer: tap it, she turns partly blue, the "% seen" note; walk halfway round her
+- [ ] Pause the jump shot mid-air and walk all the way around him
+- [ ] The palm menu opening on your left hand, pressing a button with your right finger
+
+**Wide b-roll** (phone, someone else filming, 4K, from behind and the side)
+- [ ] You shaking Magnus's hand in empty air; you serving; you passing the ball; you copying the dancer
+- [ ] Ian sitting with his grandma (her side of the room empty in real life)
+
+**Don't film**
+- The library list, loading spinners, the browser's address bar, an "Enter AR" button, notifications
+- Anything that stutters: if the person drops frames, stop and retake
+- Faces up close on the legends or Federer (soft close up): keep 1 m or more
+- Held or test people (Federer's library entry, test bundles, old LeBron); anything not in the list above
+- Music playing in the room, other people's faces without their OK, private screens
+- Grandma without Ian in the room saying yes to the take
 
 ## Voiceover
 
