@@ -22,7 +22,9 @@ Lucid Dreams takes a video or a couple of photos, plus one sentence about what y
 
 **Learn:** Watch a dancer, a golfer, a tai chi form or a guitarist at real size. Lesson mode breaks the move into parts, slows them down and repeats them, then pauses so you can have a go. Follow along places glowing markers where your head and wrists should be, based on the clip's own 3D body joints.
 
-**Play:** Play chess against photoreal Bobby Fischer and Magnus Carlsen likenesses who think, reach across the board, move their pieces, press the clock and shake your hand (Stockfish at each one's peak rating; not affiliated; they never speak). Play tennis against a Roger Federer likeness with full rules (an AI opponent, not affiliated). Pass the ball to LeBron and he'll catch it and shoot (demo footage, not affiliated).
+**Play:** Play chess against photoreal Bobby Fischer and Magnus Carlsen likenesses who think, reach across the board, move their pieces, press the clock and shake your hand (Stockfish at each one's peak rating; not affiliated; they never speak). Play tennis against a Roger Federer likeness with full rules (an AI opponent, not affiliated). Shoot around with LeBron: hit your own shot, then pass him the ball and he catches it and shoots with his real release (demo footage, not affiliated).
+
+**Court Side:** Step inside a real NBA play, rebuilt in 3D at real size. Freeze it mid-air with the ball in the air and walk around the players, then press play (real footage, not affiliated with the NBA or the players).
 
 **Talk:** A photoreal Vishal, made from a 16-second video of him turning around, answers out loud in his cloned voice. Ian's grandma answers in Vietnamese with an English caption underneath. They both agreed to this, and every reply is labeled AI voice.
 
@@ -45,6 +47,8 @@ where Â is the rendered silhouette and the last term holds small penalties on o
 **Export:** Every frame is exported as SPZ (about 10x smaller than PLY), plus a Reality check copy in which every Gaussian the real camera couldn't see is tinted blue. GVHMR's body fit gives 22 joints per frame in the person's own space. The real ball is tracked in 3D: a candidate must be orange all the way around, stay clear of every limb, move less than 15 m/s between frames, and fall whenever it leaves the hands.
 
 **Animated avatars:** LHM++ creates a rigged SMPL-X body from 8 to 16 photos, or from the 14 sharpest frames of a phone video. UIKA renders the head from 91 views, and we distill those renders into new, opaque Gaussians on the body's own head, so nothing is pasted on. Then we add blinks and a 20-second living idle. The browser poses all of it live with dual-quaternion skinning.
+
+**Lesson plans:** Your sentence and eight frames of the clip become `experience.json`: the steps, their speed and repeats, and where the person stands. Gemma 4 (E4B) writes it locally through Ollama, so the clip never leaves the laptop (branch `atina/gemma-planner`). The lessons in the live library use hand-checked plans.
 
 **Headset:** A WebXR app built with three.js and Spark runs in the Quest browser with hand tracking only: a palm-up menu, world anchors, and nothing moves unless you press a button. Spark sorts the Gaussians and blends them front to back:
 
@@ -96,7 +100,7 @@ Measure and lock 72 fps on the Quest, shorten the time it takes to get someone i
 
 ## Built with
 
-4danyone, lhm++, uika, gvhmr, gsplat, gaussian-splatting, pytorch, python, three.js, webxr, typescript, next.js, react, unity, openxr, meta-quest, mediapipe, whisper, openai, elevenlabs, stockfish, katex, hipergator, vercel, cloudflare
+4danyone, lhm++, uika, gvhmr, gsplat, gaussian-splatting, spark, pytorch, python, gemma, ollama, three.js, webxr, typescript, next.js, react, unity, openxr, meta-quest, mediapipe, whisper, openai, elevenlabs, stockfish, katex, hipergator, vercel, cloudflare
 
 ## Try it out links
 
@@ -109,4 +113,5 @@ Measure and lock 72 fps on the Quest, shorten the time it takes to get someone i
 - Demo video link (3 minutes max).
 - Gallery images.
 - Teammates, by Devpost invite.
-- Sponsor prizes on Devpost: Best Open Source Project (MLH) is ticked. The MLH one is Best Use of Gemma, not Gemini, and we do not use Gemma. Not Twinly.
+- Sponsor prizes on Devpost: Best Open Source Project (MLH). Best Use of Gemma: Gemma 4 writes the lesson plans locally, but that code is on the `atina/gemma-planner` branch, not main. Not Twinly.
+- Gallery, in order (`~/Downloads/lucid-video/devpost/`): 01 thumbnail, 02 learn, 03 chess, 04 tennis and LeBron, 05 Court Side, 06 Talk, 07 Ian's grandma, 08 how it works, 09 the headset, 10 fresh off the frontier.
