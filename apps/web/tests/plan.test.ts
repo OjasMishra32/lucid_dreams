@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { clean, type Plan } from "../lib/bridge/gemini";
+import { clean, shouldRepairTeachPlan, type Plan } from "../lib/bridge/gemini";
 import { compare, fromExperience, loadCases, type IntentCase } from "./intents";
 
 // clean() with canned model outputs: no key, no network. npm run test:plan
@@ -205,6 +205,17 @@ describe("lessons", () => {
     const e = clean(answer({ mode: "teach", place: "ahead", steps: STEPS }), { name: "Test", intent: "teach me this jump shot", kind: "replay", durationS: D, intentOnly: true });
     assert.equal(e.mode, "teach");
     assert.equal(e.steps?.length, 3);
+  });
+
+  test("an explicit replay lesson with unusable steps gets one model-side repair, never invented steps", () => {
+    const requested = replay("teach me this jump shot");
+    const unusable = clean(answer({ mode: "teach", place: "ahead", steps: [STEPS[0]] }), requested);
+    assert.equal(unusable.mode, "watch");
+    assert.equal(shouldRepairTeachPlan(requested, unusable), true);
+
+    assert.equal(shouldRepairTeachPlan(avatar("teach me this jump shot"), { mode: "companion" }), false);
+    assert.equal(shouldRepairTeachPlan(replay("teach me chess"), { mode: "watch" }), false);
+    assert.equal(shouldRepairTeachPlan(replay("let me watch this jump shot"), { mode: "watch" }), false);
   });
 
   test("steps stay inside the clip, in order, without overlaps, at sane speeds", () => {
