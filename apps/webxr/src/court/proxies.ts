@@ -18,15 +18,17 @@
 // it carries on round the picture wherever the pan filmed, so the cinema mask darkens it to a night-game level
 // (CINEMA_SURROUND) instead of black, and the plates' feathered edges blend into the same scene; inside F's frame the
 // plate covers it, so the hand-off is unchanged there. Off the camera ray the courtside plate and the far image fade
-// out (P30 as opacity, not darkness) to the imagined bowl behind them (world.ts) instead of to black. With a surround
-// every footage floor (the plates' floor in both layers, the far image's) shows only where its camera saw the floor
-// about as sharply as you see it (lightfield.ts lightSharp): from the seat the low camera's bottom rows smear over
-// metres of floor as streaks, and world.ts's clean floor shows there instead.
+// out (P30 as opacity, not darkness) to the imagined bowl behind them (world.ts) instead of to black. The far image is
+// a mosaic of the pan, flatter and warmer than the plate: it is toned to the plate by a curve measured where the two
+// show the same rays (surround.ts toneCurve; the bowl's crowd tiles, cut from the same mosaic, take the same curve).
+// With a surround every footage floor (the plates' floor in both layers, the far image's) shows only where its camera
+// saw the floor about as sharply as you see it (lightfield.ts lightSharp): from the seat the low camera's bottom rows
+// smear over metres of floor as streaks, and world.ts's clean floor shows there instead.
 import * as THREE from "three";
-import { cameraOf, rotate, conjugate, type PinholeCamera } from "./camera";
+import { cameraOf, rotate, conjugate, scaled, type PinholeCamera } from "./camera";
 import type { CourtBundle, SurroundFar, Vec3 } from "./format";
 import { PART, type LightField } from "./lightfield";
-import { bowlLayout, farCamera } from "./surround";
+import { TONE_GLSL, TONE_IDENTITY, bowlLayout, farCamera, toneCurve, type ToneCurve } from "./surround";
 import type { ShowVideo } from "./video";
 
 /** True once stream D has built this module. */
@@ -39,7 +41,7 @@ export const ORDER_VIDEO = 50;
 /** How dark the cinema mask makes the world round the lit footage region (House Lights' rig). */
 export const CINEMA = 0.96;
 /** ...when the bundle has a surround: the far image and the bowl round the picture stay at a night game's level. */
-export const CINEMA_SURROUND = 0.55;
+export const CINEMA_SURROUND = 0.45;
 /** The far image's long side on the GPU, texels (a 2x-wide far image keeps several texels per Quest pixel, 19.5 px/deg). */
 const FAR_TEXELS = 2048;
 /** The far image fades out over this share of it at its own edges. */
@@ -570,6 +572,7 @@ const farFrag = (light: string) => /* glsl */ `
   ${footageGlsl(light)}
   uniform sampler2D uFar; uniform mat3 uFarR; uniform vec4 uFarK; uniform vec2 uFarSize; uniform float uFarFocal;
   uniform vec4 uBowl; uniform float uBowlR;
+  ${TONE_GLSL}
   uniform vec4 uClipPlane[${MAX_CLIPS}]; uniform vec4 uClipSpan[${MAX_CLIPS}]; uniform int uClips;
   varying vec3 vCourt; varying float vKind;
   bool behindStands(vec3 p) {
@@ -599,7 +602,7 @@ const farFrag = (light: string) => /* glsl */ `
     vec2 e = min(uv, 1.0 - uv);
     t.a *= smoothstep(0.0, ${FAR_EDGE.toFixed(3)}, e.x) * smoothstep(0.0, ${FAR_EDGE.toFixed(3)}, e.y);
     if (t.a <= 0.002) discard;
-    vec3 col = relight(t.rgb, stands ? lightOfCrowdLit(vCourt) : lightOfFloor(vCourt));
+    vec3 col = relight(encodeSrgb(toneToPlate(decodeSrgb(t.rgb))), stands ? lightOfCrowdLit(vCourt) : lightOfFloor(vCourt));
     col = lightDither(col * (1.0 - uWipe));
     float room = stands ? lightRoomStands() : lightRoomFloor();
     // the floor: from near the seat only, and there only where camera F saw it about as sharply as this eye sees it
@@ -733,6 +736,11 @@ export class Proxies {
   private loaded = false;
   /** The far image's mesh (surround.far), null without one. */
   private far: THREE.Mesh | null = null;
+  /** The surround's tone to the plate (surround.ts toneCurve): uniforms the far image and world.ts's bowl share. */
+  readonly tone = { uToneGain: { value: new THREE.Vector3(1, 1, 1) }, uToneX: { value: [...TONE_IDENTITY.x] }, uToneY: { value: [...TONE_IDENTITY.y] } };
+  /** The far image's tone to the plate once measured (null: no far image). */
+  readonly measured: Promise<ToneCurve | null>;
+  private measure: (m: ToneCurve | null) => void = () => {};
   /** The bundle has a surround, and it is shown (`surround(on)`, dev: the e2e's before/after). */
   private readonly hasSurround: boolean;
   private surroundOn: boolean;
@@ -772,6 +780,7 @@ export class Proxies {
       uSharpFloor: { value: 0 },
       uPlateScale: { value: (court.video.regions?.plate[2] ?? court.camera.width) / court.camera.width },
     };
+    this.measured = new Promise((done) => (this.measure = done));
     this.hasSurround = !!court.surround;
     this.surroundOn = this.hasSurround && !(import.meta.env?.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("surround") === "off");
     this.applySurround();
@@ -864,6 +873,7 @@ export class Proxies {
         this.warnOnce(`the far image could not be loaded (${(e as Error)?.message ?? e}); the arena goes on without it`);
         return null;
       });
+    if (!this.far) this.measure(null);
 
     // the pair's splat-depth proxies, seen from camera F
     const ball = court.freeze.ball;
@@ -1072,6 +1082,22 @@ export class Proxies {
     const data = pixels(img);
     const a = pixels(alphaImg);
     for (let i = 3; i < data.length; i += 4) data[i] = a[i - 3];
+    const cam = farCamera(court, frames, far);
+    // the tone to the plate, measured from these pixels where F's clean plate shows the same rays
+    const plateImg = court.video.freezeClean ? await loader.loadAsync(this.bundle.file(court.video.freezeClean)).catch(() => null) : null;
+    const plate = plateImg ? { w: plateImg.width, h: plateImg.height, data: (() => {
+      const cv = document.createElement("canvas");
+      cv.width = plateImg.width;
+      cv.height = plateImg.height;
+      const g = cv.getContext("2d", { willReadFrequently: true })!;
+      g.drawImage(plateImg, 0, 0);
+      return g.getImageData(0, 0, cv.width, cv.height).data;
+    })() } : null;
+    const tone = measureTone(data, w, h, scaled(cam, w), plate, plate ? scaled(this.cameraF, plate.w) : null);
+    this.tone.uToneGain.value.set(...tone.gain);
+    this.tone.uToneX.value = tone.x;
+    this.tone.uToneY.value = tone.y;
+    this.measure(tone);
     const texture = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
     texture.colorSpace = THREE.NoColorSpace; // raw sRGB bytes, as the plates read theirs
     texture.generateMipmaps = true;
@@ -1091,7 +1117,6 @@ export class Proxies {
     g.setAttribute("position", new THREE.Float32BufferAttribute(quads.flatMap((q) => q.pts.flat()), 3));
     g.setAttribute("aKind", new THREE.Float32BufferAttribute(quads.flatMap((q) => [q.kind, q.kind, q.kind, q.kind]), 1));
     g.setIndex(quads.flatMap((_, i) => [0, 1, 2, 0, 2, 3].map((k) => 4 * i + k)));
-    const cam = farCamera(court, frames, far);
     const m = new THREE.ShaderMaterial({
       uniforms: {
         ...this.shared,
@@ -1102,6 +1127,7 @@ export class Proxies {
         uFarK: { value: new THREE.Vector4(cam.f, cam.cx, cam.cy, 0) },
         uFarSize: { value: new THREE.Vector2(cam.width, cam.height) },
         uFarFocal: { value: cam.f * (w / cam.width) },
+        ...this.tone,
         uBowl: { value: new THREE.Vector4(bowl.x0, bowl.x1, bowl.z0, bowl.z1) },
         uBowlR: { value: bowl.r },
       },
@@ -1153,6 +1179,43 @@ export class Proxies {
     texture.needsUpdate = true; // rows run from the top: texture t = row / h, sampled with the box's top-left coordinates
     return { texture, box, ref };
   }
+}
+
+/** sRGB byte to linear light. */
+const LINEAR = Float32Array.from({ length: 256 }, (_, i) => (i / 255 <= 0.04045 ? i / 255 / 12.92 : ((i / 255 + 0.055) / 1.055) ** 2.4));
+
+/**
+ * The far image's tone to the plate, from its RGBA bytes (w x h, rows from the top) and its camera at that size: far
+ * texels filmed (alpha) whose rays F's clean plate shows clear of its edges, paired with the plate's (toneCurve).
+ */
+export function measureTone(
+  data: ArrayLike<number>, w: number, h: number, cam: PinholeCamera, plate: { w: number; h: number; data: ArrayLike<number> } | null,
+  camF: PinholeCamera | null,
+): ToneCurve {
+  if (!plate || !camF) return structuredClone(TONE_IDENTITY);
+  const STEP = 4;
+  // the far camera's axes in F's camera axes (one centre: a ray is a direction)
+  const toF = ([[1, 0, 0], [0, 1, 0], [0, 0, 1]] as Vec3[]).map((v) => rotate(conjugate(camF.q), rotate(cam.q, v)));
+  const farS: number[] = [];
+  const plateS: number[] = [];
+  for (let v = 0; v < h; v += STEP)
+    for (let u = 0; u < w; u += STEP) {
+      const o = 4 * (v * w + u);
+      if (data[o + 3] < 250) continue;
+      const x = (u - cam.cx) / cam.f;
+      const y = (v - cam.cy) / cam.f;
+      const fx = toF[0][0] * x + toF[1][0] * y + toF[2][0];
+      const fy = toF[0][1] * x + toF[1][1] * y + toF[2][1];
+      const fz = toF[0][2] * x + toF[1][2] * y + toF[2][2];
+      if (fz <= 0) continue;
+      const pu = (camF.cx + (camF.f * fx) / fz) / plate.w;
+      const pv = (camF.cy + (camF.f * fy) / fz) / plate.h;
+      if (pu <= 0.12 || pu >= 0.88 || pv <= 0.12 || pv >= 0.88) continue;
+      const q = 4 * (Math.round(pv * plate.h) * plate.w + Math.round(pu * plate.w));
+      farS.push(LINEAR[data[o]], LINEAR[data[o + 1]], LINEAR[data[o + 2]]);
+      plateS.push(LINEAR[plate.data[q]], LINEAR[plate.data[q + 1]], LINEAR[plate.data[q + 2]]);
+    }
+  return toneCurve(farS, plateS);
 }
 
 /** Camera-from-court rotation as a three Matrix3 (the shaders' uCamR). */

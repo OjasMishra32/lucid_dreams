@@ -38,6 +38,12 @@ const BOARD = { hx: 4.2, hz: 3.2, y0: 14, y1: 18.5, band: { inset: 0.5, y0: 13.4
 const ARC_STEP = (6 * Math.PI) / 180;
 /** Segments per corner arc in ringPoints (each arc is ARC_N + 1 points). */
 const ARC_N = Math.max(1, Math.ceil(Math.PI / 2 / ARC_STEP));
+/**
+ * The crowd's rows as the tiles show them on the stands wall (surround.crowd's vertical metres): the broadcast camera
+ * looks up the rake, so a seat row's 0.4 m rise shows as ~0.475 m between head rows. A tile holds round(its height /
+ * this) rows; each tier shows one of them over its own rise.
+ */
+export const SEEN_ROW = 0.475;
 /** Without crowd tiles the procedural crowd's virtual tile is this wide, metres. */
 const VIRTUAL_TILE_M = 6;
 
@@ -197,15 +203,16 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
       heightM: (b[3] - b[1]) / crowd!.pxPerM,
     };
   });
-  /** Tiers that share their tiles: the fewest rows any tile holds at this rise (its rows stacked up those tiers). */
-  const groupOf = (rise: number) => (tiles.length ? Math.max(1, Math.min(...tiles.map((t) => Math.round(t.heightM / rise)))) : 1);
+  /** Tiers that share their tiles: the fewest rows any tile holds (its rows stacked up those tiers). */
+  const rowsOf = (heightM: number) => Math.max(1, Math.round(heightM / SEEN_ROW));
+  const group = tiles.length ? Math.min(...tiles.map((t) => rowsOf(t.heightM))) : 1;
   /**
    * One tier of crowd: billboards round the ring at offset o standing on tread y, tiles laid along it at real scale,
    * from the start of each of the ring's 8 sections (4 corners, 4 straights). Tier r of the deck is row r mod G of
    * its group's tiles (G tiers a group): the group's tiers draw the same tiles, so on the straights their columns
    * line up and each tile shows whole, its top G rows one per tier.
    */
-  const tier = (kind: number, o: number, y: number, rise: number, r: number, G: number) => {
+  const tier = (kind: number, o: number, y: number, r: number, G: number) => {
     const pts = ringPoints(l, o);
     const cum = [0];
     for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
@@ -228,7 +235,7 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
         // a tile, at random and either way round (the same for the group's tiers)
         const pick = tiles.length ? tiles[Math.floor(random() * tiles.length)] : null;
         const w = pick ? pick.widthM : VIRTUAL_TILE_M;
-        const k = pick ? Math.max(1, Math.round(pick.heightM / rise)) : 1;
+        const k = pick ? rowsOf(pick.heightM) : 1;
         const row = k - G + p;
         const mirror = random() < 0.5;
         const shade = 0.92 + 0.16 * random();
@@ -263,12 +270,12 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
   }
   // the upper deck: its back wall, the tiers outermost first, the parapet and the ribbon board on its fascia
   band(UPPER_BACK_O, UPPER_Y0 + (UPPER.rows - 3) * UPPER.rise, ROOF.edge + 0.01, [BOWL_KIND.structure, 1, 0, 0]);
-  for (let u = UPPER.rows - 1; u >= 0; u--) tier(BOWL_KIND.upper, UPPER_O0 + u * UPPER.tread, UPPER_Y0 + u * UPPER.rise, UPPER.rise, u, groupOf(UPPER.rise));
+  for (let u = UPPER.rows - 1; u >= 0; u--) tier(BOWL_KIND.upper, UPPER_O0 + u * UPPER.tread, UPPER_Y0 + u * UPPER.rise, u, group);
   band(BACK_O, RIBBON.y0 + RIBBON.h, RIBBON.y0 + RIBBON.h + PARAPET_H, [BOWL_KIND.structure, 2, 0, 0]);
   band(BACK_O, RIBBON.y0, RIBBON.y0 + RIBBON.h, [BOWL_KIND.led, 1, 0, 0]);
   // the lower bowl: its back wall, the tiers outermost first, the LED dasher at its foot
   band(BACK_O, LOWER.firstTread + (LOWER.rows - 6) * LOWER.rise, RIBBON.y0, [BOWL_KIND.structure, 0, 0, 0]);
-  for (let r = LOWER.rows - 1; r >= 0; r--) tier(BOWL_KIND.crowd, LOWER.seat + r * LOWER.tread, LOWER.firstTread + r * LOWER.rise, LOWER.rise, r, groupOf(LOWER.rise));
+  for (let r = LOWER.rows - 1; r >= 0; r--) tier(BOWL_KIND.crowd, LOWER.seat + r * LOWER.tread, LOWER.firstTread + r * LOWER.rise, r, group);
   band(DASHER.o, 0, DASHER.h, [BOWL_KIND.led, 0, 0, 0]);
   // the centre-hung scoreboard over centre court: its bottom, the four screens, then the LED band under it (faces out)
   {
@@ -294,3 +301,91 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
     index: new Uint32Array(index),
   };
 }
+
+// ---------------- the surround's tone: the pan's mosaic (the far image, the crowd tiles) to the plate's exposure ----------------
+
+/**
+ * The surround's footage is a mosaic of the pan, blended flatter and a little warmer than the broadcast's own plate.
+ * The curve that takes it back, measured where the far image and F's clean plate show the same rays: per-channel
+ * gains (their medians matched), then log luminance through five knots (the mosaic's percentiles onto the plate's),
+ * slope 1 beyond them. proxies.ts measures it; the far image and the bowl's crowd tiles (cut from the same mosaic)
+ * go through it (TONE_GLSL).
+ */
+export interface ToneCurve {
+  gain: [number, number, number];
+  /** log(luminance + TONE_EPS) knots: the mosaic's (x) and the plate's (y). */
+  x: number[];
+  y: number[];
+}
+export const TONE_EPS = 1e-3;
+const TONE_P = [0.05, 0.25, 0.5, 0.75, 0.95];
+/** The curve never stretches or squeezes a stretch of log luminance more than this. */
+const TONE_SLOPE: [number, number] = [0.6, 2.0];
+/** Fewer paired samples than this: the identity. */
+const TONE_MIN = 2000;
+export const TONE_IDENTITY: ToneCurve = { gain: [1, 1, 1], x: [-6, -5, -4, -3, -2], y: [-6, -5, -4, -3, -2] };
+
+const LUMA = [0.2126, 0.7152, 0.0722];
+const lumaOf = (r: number, g: number, b: number) => LUMA[0] * r + LUMA[1] * g + LUMA[2] * b;
+const quantile = (sorted: Float64Array, p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))];
+
+/** The curve from paired linear RGB samples of the mosaic and the plate (the same rays, the same count). */
+export function toneCurve(far: ArrayLike<number>, plate: ArrayLike<number>): ToneCurve {
+  const n = Math.min(far.length, plate.length) / 3;
+  if (n < TONE_MIN) return structuredClone(TONE_IDENTITY);
+  const median = (a: ArrayLike<number>, c: number) => {
+    const v = new Float64Array(n);
+    for (let i = 0; i < n; i++) v[i] = a[3 * i + c];
+    return quantile(v.sort(), 0.5);
+  };
+  const gain = [0, 1, 2].map((c) => {
+    const mf = median(far, c);
+    return mf > 1e-6 ? Math.min(2, Math.max(0.5, median(plate, c) / mf)) : 1;
+  }) as [number, number, number];
+  const lf = new Float64Array(n);
+  const lp = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    lf[i] = Math.log(lumaOf(far[3 * i] * gain[0], far[3 * i + 1] * gain[1], far[3 * i + 2] * gain[2]) + TONE_EPS);
+    lp[i] = Math.log(lumaOf(plate[3 * i], plate[3 * i + 1], plate[3 * i + 2]) + TONE_EPS);
+  }
+  lf.sort();
+  lp.sort();
+  const x = TONE_P.map((p) => quantile(lf, p));
+  const y = TONE_P.map((p) => quantile(lp, p));
+  // knots strictly increasing, and each segment's slope within TONE_SLOPE, built out from the median
+  for (let i = 1; i < x.length; i++) x[i] = Math.max(x[i], x[i - 1] + 1e-3);
+  const m = TONE_P.indexOf(0.5);
+  const clampSlope = (dy: number, dx: number) => Math.min(TONE_SLOPE[1], Math.max(TONE_SLOPE[0], dy / dx)) * dx;
+  for (let i = m + 1; i < x.length; i++) y[i] = y[i - 1] + clampSlope(y[i] - y[i - 1], x[i] - x[i - 1]);
+  for (let i = m - 1; i >= 0; i--) y[i] = y[i + 1] - clampSlope(y[i + 1] - y[i], x[i + 1] - x[i]);
+  return { gain, x, y };
+}
+
+/** A linear RGB colour through the curve (TONE_GLSL's toneToPlate). */
+export function toneApply(c: readonly number[], t: ToneCurve): [number, number, number] {
+  const g = [c[0] * t.gain[0], c[1] * t.gain[1], c[2] * t.gain[2]];
+  const l = lumaOf(g[0], g[1], g[2]);
+  const x = Math.log(l + TONE_EPS);
+  const k = t.x.length - 1;
+  let y = x - t.x[0] + t.y[0];
+  for (let i = 0; i < k; i++) if (x >= t.x[i]) y = t.y[i] + ((x - t.x[i]) * (t.y[i + 1] - t.y[i])) / Math.max(t.x[i + 1] - t.x[i], 1e-4);
+  if (x > t.x[k]) y = t.y[k] + (x - t.x[k]);
+  const s = Math.max(Math.exp(y) - TONE_EPS, 0) / Math.max(l, 1e-6);
+  return [g[0] * s, g[1] * s, g[2] * s];
+}
+
+/** toneApply in GLSL: uniforms uToneGain (vec3), uToneX[5], uToneY[5] (toneUniforms). */
+export const TONE_GLSL = /* glsl */ `
+uniform vec3 uToneGain;
+uniform float uToneX[5];
+uniform float uToneY[5];
+vec3 toneToPlate(vec3 lin) {
+  vec3 c = lin * uToneGain;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float x = log(l + ${TONE_EPS.toExponential()});
+  float y = x - uToneX[0] + uToneY[0];
+  for (int i = 0; i < 4; i++) if (x >= uToneX[i]) y = uToneY[i] + (x - uToneX[i]) * (uToneY[i + 1] - uToneY[i]) / max(uToneX[i + 1] - uToneX[i], 1e-4);
+  if (x > uToneX[4]) y = uToneY[4] + (x - uToneX[4]);
+  return c * (max(exp(y) - ${TONE_EPS.toExponential()}, 0.0) / max(l, 1e-6));
+}
+`;

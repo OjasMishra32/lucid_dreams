@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { Court, SurroundCrowd, SurroundFar } from "../../src/court/format.ts";
-import { APRON_M, BOWL_KIND, LOWER, UPPER, bowlArrays, bowlLayout, farCamera, insideBowl, ringPoints } from "../../src/court/surround.ts";
+import { APRON_M, BOWL_KIND, LOWER, SEEN_ROW, TONE_IDENTITY, UPPER, bowlArrays, bowlLayout, farCamera, insideBowl, ringPoints, toneApply, toneCurve } from "../../src/court/surround.ts";
 import { project } from "../../src/court/camera.ts";
 import { FIXTURE } from "./standin.mjs";
 
@@ -97,7 +97,7 @@ test("the lower bowl: 20 tiers of 0.85 m tread and 0.4 m rise, crowd tiles at re
     const t = crowd.tiles.findIndex((b) => xs[0] >= b[0] && xs[1] <= b[2] && ys[0] >= b[1] && ys[1] <= b[3]);
     assert.ok(t >= 0, `quad's rect ${xs} ${ys} inside a tile`);
     const b = crowd.tiles[t];
-    assert.equal(q.info[2], Math.max(1, Math.round((b[3] - b[1]) / pxPerM / LOWER.rise)), "rows per tile");
+    assert.equal(q.info[2], Math.max(1, Math.round((b[3] - b[1]) / pxPerM / SEEN_ROW)), "rows per tile (their seen pitch on the wall)");
     assert.ok(q.info[1] >= 0 && q.info[1] < q.info[2] && Number.isInteger(q.info[1]), "the tier's row in its tile");
   }
   // real scale along the row: a whole tile spans its own width in metres
@@ -127,7 +127,7 @@ test("a few tiers in a row share their tiles: on a straight their columns line u
   const c = court();
   const l = bowlLayout(c);
   const a = bowlArrays(c, crowd, 5);
-  // the +z side's straight, tiers 0 and 1 (every test tile holds 5 rows at 0.4 m: a group of 5)
+  // the +z side's straight, tiers 0 and 1 (every test tile is 2 m: 4 rows at SEEN_ROW, a group of 4)
   const side = quads(a).filter((q) => q.kind === BOWL_KIND.crowd && q.corners.every((p) => p[2] > l.z1 + 0.1 && p[0] < l.x1 - l.r + 1e-6 && p[0] > l.x0 + l.r - 1e-6));
   const at = (r: number) => side.filter((q) => Math.abs(Math.min(...q.corners.map((p) => p[1])) - (LOWER.firstTread + r * LOWER.rise)) < 1e-4);
   const [t0, t1] = [at(0), at(1)];
@@ -197,4 +197,47 @@ test("the far image is a pinhole camera at camera F's centre and rotation with i
   const d = [ax[0] + w * tx + (y * tz - z * ty), ax[1] + w * ty + (z * tx - x * tz), ax[2] + w * tz + (x * ty - y * tx)];
   const px = project(cam, [c.camera.centre[0] + 10 * d[0], c.camera.centre[1] + 10 * d[1], c.camera.centre[2] + 10 * d[2]])!;
   assert.ok(Math.abs(px[0] - 1100) < 1e-6 && Math.abs(px[1] - 600) < 1e-6);
+});
+
+test("the surround's footage is toned to the plate from their overlap: a flat, warm mosaic comes back to the plate's contrast and colour", () => {
+  // the plate: log luminance spread wide; the mosaic: the same pixels flattened round their median and tinted red
+  let seed = 9;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const n = 20000;
+  const plate = new Float32Array(3 * n);
+  const far = new Float32Array(3 * n);
+  const med = Math.log(0.015);
+  for (let i = 0; i < n; i++) {
+    const g = med + 1.6 * (rnd() + rnd() + rnd() - 1.5) * 2;
+    const tint = [0.9 + 0.2 * rnd(), 1, 0.9 + 0.2 * rnd()];
+    const l = Math.exp(g);
+    for (let c = 0; c < 3; c++) plate[3 * i + c] = l * tint[c];
+    const lf = Math.exp(med + (g - med) * 0.6);
+    far[3 * i] = lf * tint[0] * 1.5;
+    far[3 * i + 1] = lf * tint[1];
+    far[3 * i + 2] = lf * tint[2] * 0.9;
+  }
+  const t = toneCurve(far, plate);
+  const L = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  const q = (a: number[], p: number) => [...a].sort((x, y) => x - y)[Math.floor(p * (a.length - 1))];
+  const lp: number[] = [];
+  const lt: number[] = [];
+  const rg: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const out = toneApply([far[3 * i], far[3 * i + 1], far[3 * i + 2]], t);
+    lt.push(Math.log(L(out) + 1e-3));
+    lp.push(Math.log(L([plate[3 * i], plate[3 * i + 1], plate[3 * i + 2]]) + 1e-3));
+    if (out[1] > 1e-5) rg.push(out[0] / out[1]); // (the darkest are crushed to black: no colour to judge)
+  }
+  for (const p of [0.1, 0.25, 0.5, 0.75, 0.9]) assert.ok(Math.abs(q(lt, p) - q(lp, p)) < 0.15, `p${p}: ${q(lt, p)} vs the plate's ${q(lp, p)}`);
+  assert.ok(Math.abs(q(rg, 0.5) - 1) < 0.06, `red / green ${q(rg, 0.5)}`);
+  // the same pixels: nothing to do; too few: the identity
+  const same = toneCurve(plate, plate);
+  assert.ok(same.gain.every((g) => Math.abs(g - 1) < 1e-6) && same.x.every((x, i) => Math.abs(x - same.y[i]) < 1e-6));
+  assert.deepEqual(toneCurve(far.subarray(0, 300), plate.subarray(0, 300)), TONE_IDENTITY);
+  // slopes stay within reason however the samples fall
+  for (let i = 0; i + 1 < t.x.length; i++) {
+    const s = (t.y[i + 1] - t.y[i]) / (t.x[i + 1] - t.x[i]);
+    assert.ok(s >= 0.6 - 1e-9 && s <= 2.0 + 1e-9, `segment ${i} slope ${s}`);
+  }
 });
