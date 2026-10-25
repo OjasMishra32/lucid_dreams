@@ -1,8 +1,9 @@
 # The film: 3:00, strict
 
-The video is our whole presentation: one continuous montage that opens and closes on one true story (Ian hasn't been
-home in four years, and his grandma stands in his room and answers him) and, in between, grows from "oh" to "oh, this
-is insane". The tech is never a separate section: every world gets an x-ray moment, a cut into the machine at the
+The video is our whole presentation: one continuous montage built on two true stories that mirror each other. Ian
+hasn't been home in four years, and his grandma stands in his room and answers him. Ojasva grew up reading Bobby
+Fischer's games in chess books, and Bobby sits across a real table from him and plays. Someone far away, and someone
+he never got to meet. In between, it grows from "oh" to "oh, this is insane". The tech is never a separate section: every world gets an x-ray moment, a cut into the machine at the
 exact second you're seeing it (the headset assembling as it goes on, the 48 cameras landing around the dancer, the
 ball's tracked path, the Talk timing under Vishal's answer). Apple style: black, white, one blue, SF Pro, nothing
 fake, every number measured.
@@ -30,12 +31,14 @@ of type; the voiceover is recorded last, over the finished cut, and only says wh
 
 | Time | Beat | Picture | X-ray (the tech, woven in) |
 | --- | --- | --- | --- |
-| 0:00-0:28 | **Four years** | Black, grandma's real voice from her old video; Ian's phone glowing in the dark; "I haven't been home in four years" (his words); the headset on; she's in his room, life size; he asks her something in Vietnamese and she answers; his face | none: only "AI voice" and the English line under hers |
-| 0:28-0:31 | **Title** | Black, "Lucid Dreams"; the song comes in | |
-| 0:31-0:37 | **Put it on** | Your view coming up into the room | the Quest 3S assembling, its two eyes beaming out, cut back into your view of the room |
-| 0:37-0:44 | **Who's there** | Your room, and Magnus is sitting at a real walnut table across from you | |
-| 0:44-0:50 | **Made from photos** | Cut into the machine | the legends render: Magnus and Bobby pulling together out of their own Gaussians, "LHM++ builds each body from photos. UIKA rebuilds each face." |
-| 0:50-1:22 | **Chess (the hero)** | Magnus rises a little and holds his hand out; you shake it. He sits back, thinks, chin on his fist. You pinch a piece and move it. He reaches across, takes a piece between thumb and finger, sets it down, presses the clock, looks up at you. A capture: your piece goes into your hand, you hit the clock with it. Then Bobby: his handshake, his reach. | "Stockfish at Magnus Carlsen's peak rating. Not affiliated." the whole time he's in frame; one callout on his hand mid-reach: "arm IK, 75,000 frames checked: his hand never passes through a piece" |
+| 0:00-0:24 | **Four years** | Black, grandma's real voice from her old video; Ian's phone glowing in the dark; "I haven't been home in four years" (his words); she's in his room, life size; he asks her something in Vietnamese and she answers; his face | none: only "AI voice" and the English line under hers |
+| 0:24-0:27 | **Title** | Black, "Lucid Dreams"; the song comes in | |
+| 0:27-0:33 | **The book** | Phone b-roll: Ojasva's worn chess book open to one of Fischer's games, his finger on the moves; his line, in his words (e.g. how he learned the game from Bobby's games) | |
+| 0:33-0:38 | **Put it on** | His view coming up into the room | the Quest 3S assembling, its two eyes beaming out |
+| 0:38-0:46 | **Bobby** | A walnut table in his room, and Bobby Fischer is sitting there. He rises a little, holds his hand out across the table, looks at him. Ojasva shakes it. | "Stockfish at Bobby Fischer's peak rating. Not affiliated." the whole time he's in frame |
+| 0:46-0:50 | **From six photos** | Cut into the machine | the legends render, Bobby's side first: "6 photos, 1966 and 1972, colorized", his body pulling together |
+| 0:50-1:06 | **The game** | Bobby thinks; Ojasva moves; Bobby reaches across, takes a piece, sets it down, hits the clock, looks up at him. Quiet: just the clock and the pieces. | one callout on his hand mid-reach: "his hand never passes through a piece: 75,000 frames checked" |
+| 1:06-1:18 | **And Magnus** | The song kicks up. Magnus's handshake, his reach, his clock press, fast | "Stockfish at Magnus Carlsen's peak rating. Not affiliated."; the legends render, Magnus's side: "14 public photos · LHM++ body · UIKA face" |
 | 1:22-1:30 | **How a person is made** | Cut out of the game into the machine | the dancer's reconstruction: her phone video, 4DAnyone's 48 cameras landing ("1 phone video. 48 views."), then the fit: twelve B200s, 290,000 Gaussians pulling together |
 | 1:30-1:46 | **Play** | Federer's handshake at the net, your serve, a rally; you pass to LeBron, he catches and shoots | the ball's flight traced over the rally, "240 Hz · drag · Magnus lift · grass"; the real ball's tracked path over LeBron's shot |
 | 1:46-1:52 | **Learn** | Golf off the tee, a guitar strum, tai chi with Mirror, one beat each | |
@@ -43,7 +46,7 @@ of type; the voiceover is recorded last, over the finished cut, and only says wh
 | 1:58-2:12 | **Talk** | "What's up, Vishal?" and he answers out loud | his 14 frames flying into his body before he answers; the timing bar under his answer, "hears 1.5 s · answers 1.0 s · speaks 0.5 s" |
 | 2:12-2:16 | **On a headset** | You moving through the chess game, smooth | the heat map, "115 million pixels per eye" dropping to 34 |
 | 2:16-2:26 | **Anyone** | The fastest cuts: Magnus's clock press, Federer's serve, LeBron's release, Bobby's reach, Vishal laughing, a beat each | numbers flashing on the cuts: Aug 2026 · 48 views · 290,000 · 3.1 s |
-| 2:26-2:53 | **Home** | The song drops to the guitar. Ian and his grandma again: she says something warm, he answers, he sits with her; he lifts the headset off; the chair across from him is empty | none |
+| 2:26-2:53 | **Home** | The song drops to the guitar. Ian and his grandma again: she says something warm, he answers, he sits with her. Ojasva and Bobby: the game ends, Bobby holds his hand out again, Ojasva shakes it. Both headsets come off. Two empty chairs. | none |
 | 2:53-3:00 | **End** | "Lucid Dreams. Anyone from any video, standing in your room." · link · team · labels | |
 
 ## What to film (checklist)
