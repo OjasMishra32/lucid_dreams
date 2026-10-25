@@ -38,6 +38,8 @@ is the stand-in's.
   seat        {distance, distanceRange, clear}
   clips       the folder of the clips' run folders (<id>/court-run.json: the still camera each clip was cut with)
   cameras     {C: calibration JSON of camera C}: where extras posed from C were seen from
+  surround    {canvas, cams, mosaic, cover, crowd: {tiles, pxPerM}, ...}: the pan's mosaic as camera F's far picture and tiles of
+              its crowd (court.json `surround`; assemble_surround.py documents the keys, and adds one to a finished bundle)
   light       overrides of the light field's levels
   metrics     {seatPsnr: {...}}: measured elsewhere (handoff_check.py), copied in
 """
@@ -66,6 +68,7 @@ import assemble_carve as cv  # noqa: E402
 import assemble_colour as col  # noqa: E402
 import assemble_geom as geo  # noqa: E402
 import assemble_splats as sp  # noqa: E402
+import assemble_surround as sr  # noqa: E402
 
 REPO = HERE.parents[1]
 WEBXR = REPO / "apps" / "webxr"
@@ -101,7 +104,7 @@ def rnd(v, d=4):
 PLATE_KEYS = ("freezeClean", "standsMask", "inpaintMask")
 # every field format.ts declares as a bundle path (a string under one of these keys, anywhere in court.json)
 PATH_KEYS = {"floor", "floorSeen", "file", "frames", "cards", "freeze", "freezeClean", "standsMask", "inpaintMask", "element",
-             "splats", "reality", "proxy", "image", "bed"}
+             "splats", "reality", "proxy", "image", "bed", "alpha", "atlas"}
 
 
 def declared_paths(o, key: str | None = None) -> list[str]:
@@ -1415,6 +1418,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
             spz_piece(w, players, others, camF)
         stands = stands_piece(w, cfg, standin, S)
         audio = audio_piece(w, cfg, standin, S)
+        surround = sr.make_surround(w, cfg["surround"], camera, video, frames, stands, cfg["surround"].get("k1Show", k1F if calib is not None else None)) if cfg.get("surround") else None
         light = {**LIGHT, **(cfg.get("light") or {})}
         w.piece("light", True, "plan 3.3 levels (both sets)")
         metrics = metrics_piece(cfg, calib_json, camF, frames, players)
@@ -1432,6 +1436,7 @@ def assemble(cfg: dict, standin: Path, out: Path) -> dict:
                        "ball": {k: v for k, v in ball.items() if k not in ("ballInBody", "_ballInBodyCount")},
                        "others": others, "stands": stands, **({"ballInBody": ball["ballInBody"]} if ball.get("ballInBody") else {})},
             "audio": audio, "metrics": metrics,
+            **({"surround": surround} if surround else {}),
         }
         if cfg.get("waivers"):
             court_json["waivers"] = sorted(cfg["waivers"])  # a gate waived for a test build: never shippable
@@ -1635,6 +1640,7 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
                 im = cv2.imread(str(bundle / v[k]), cv2.IMREAD_UNCHANGED)
                 if im is None or im.shape[:2] != fz.shape[:2]:
                     errs.append(f"{v[k]}: not the size of {v['freeze']}")
+    errs += sr.check_block(bundle, court.get("surround"), info)
     # players
     total, pair = 0, []
     for p in court["freeze"]["players"]:
@@ -1791,7 +1797,7 @@ def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str]
                         f"held-out {rr.get('heldOutPsnr')}, P42 iouFinal {(p or {}).get('iouFinal')} (iouSolve {(p or {}).get('iouSolve', rr.get('iou'))}), "
                         f"focal {(p or {}).get('focal')} vs FOCAL {(p or {}).get('FOCAL')}")
         for k, pc_ in json.loads(asm.read_text())["pieces"].items():
-            if pc_["source"] != "real":
+            if pc_["source"] not in ("real", "imagined"):  # imagined is by design (the crowd's bowl), not pending
                 pending.append(f"{k}: {pc_['detail']}")
     waived = set(court.get("waivers") or [])
     if waived:
