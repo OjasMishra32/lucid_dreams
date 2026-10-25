@@ -22,6 +22,7 @@ import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { expectedFiles, loads, megabytes } from "./loading";
+import { Opening } from "./opening";
 import { Probe, viewOf } from "./probe";
 import { judgeRate, wantRate, type XrRate } from "./rate";
 import { BUILT as PROXIES_BUILT, Proxies, layerVisibility } from "./proxies";
@@ -224,6 +225,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // the view: the cinema screen for the watch (default), or ?view=courtside, the footage projected into the arena (V1.2)
   const screen = viewMode(params.get("view")) === "screen" ? new CinemaScreen(bundle, video.regions.live, seat.spot) : null;
   if (screen) world.add(screen.mesh);
+  // the opening title, where the screen will be, over the arrival's lights-up (opening.ts)
+  const opening = new Opening(bundle, seat.spot);
+  world.add(opening.group);
   /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
   const screenWatch = (level: number) => {
     if (!screen) return;
@@ -438,6 +442,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     screen?.room(roomP);
     sound.room(roomP);
     vrHands.fade(roomP);
+    opening.hide(); // drawn only in the arrival's lights-up (below)
     courtWorld.edge(seat.boundsDistance(head));
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
@@ -458,6 +463,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         feed(first);
         video.wipe(1 - p);
         screenWatch(p);
+        opening.update(lightsUp, roomP);
         if (lightsUp >= LIGHTS_UP_S) {
           light.set("watch", 0);
           video.wipe(0);
