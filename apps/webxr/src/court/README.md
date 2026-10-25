@@ -63,6 +63,7 @@ Exit 0 when every check that ran passed, 1 on a failure, 3 when every scenario a
 | `ball` | integrator | one ball at F: with `freeze.ballInBody` the holder's splats (no card, no sphere), else the 3D's sphere; the ball's card goes with the holder's through the resume; run on the stand-in and on `standin.mjs --ball-in-body --out <dir outside the checkout>` with `--bundle <dir>` | written |
 | `solo` | integrator | `?solo` (one person testing alone): Seat here taken by itself, the lights up on a seated, still head with no hand-over, then the watch; run with `--query solo` | written |
 | `freezehold` | integrator | the clock's frame reaches the video and the proxies every frame after F, See my room's jump lands the picture on F, a rushed fade never rushes the light (P44) | written; waits on video, proxies, handoff |
+| `surround` | loop | with `court.surround`: stills from the seat in the watch, at F after the hand-off, at three walk stops, behind and up at the roof, the surround on and off; the black share (luma < 8) at most half; nothing changes well inside the picture; the Reality check tints the imagined bowl and leaves the far image; SKIPs without a surround | written |
 
 `ctx` (see the top of `e2e.mjs`): `nextFrame()`, `frames(n)`, `until(phase, max)`, `save(name)` (the next frame as a
 PNG; resolves with its log, view included), `pressFrames(action, n)` (press and the next n frames in one go: frames
@@ -256,6 +257,7 @@ Stubs called every frame are no-ops; one-off actions that aren't built throw `"<
 | `world.ts` | E `look` | floor, rendered court, the hoop (`props.ts` `standaloneHoop` at `court.rim`), darkness, dome, `room`, `edge` |
 | `freeze.ts` | E `look` | splats, extras, ball, shadows, reflections, capsule fade, Reality |
 | `sound.ts` | F `sound` | HRTF crowd, arrival, time stop, room murmur, one-shots, events |
+| `surround.ts` | loop | with `court.surround`: the imagined bowl's layout and merged geometry (crowd tiles at real scale, back to front), the far image's camera; world.ts draws the bowl, proxies.ts the far image (`surround(on)` on both; `?surround=off` in dev) |
 
 Rules: every button, presenter key and probe action is queued to the next XR frame, right after its head pose is
 read (anchors need the XRFrame; Seat here takes that head); one action's throw is logged once and never costs the

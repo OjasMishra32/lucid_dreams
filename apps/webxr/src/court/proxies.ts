@@ -13,10 +13,17 @@
 // linear light by the one light field (lightfield.ts `glsl`: courtLight, the room's opacity, the dither), the
 // courtside plate also by the off-ray dim (`dim(p)`, world.ts, P30), the plate by the Reality check. Domes and
 // spheres are never used (3.3: they misalign by 0.16-1.2 deg). Stream D (`handoff`) builds it.
+// With `court.surround.far` (surround.ts) the pan's far end, people removed, is one more layer of the 3D under the
+// plates: projected from camera F's centre on the same floor (up to the bowl's foot), stands proxy and backboard,
+// it carries on round the picture wherever the pan filmed, so the cinema mask darkens it to a night-game level
+// (CINEMA_SURROUND) instead of black, and the plates' feathered edges blend into the same scene; inside F's frame the
+// plate covers it, so the hand-off is unchanged there. Off the camera ray the courtside plate and the far image fade
+// out (P30 as opacity, not darkness) to the imagined bowl behind them (world.ts) instead of to black.
 import * as THREE from "three";
 import { cameraOf, rotate, conjugate, type PinholeCamera } from "./camera";
-import type { CourtBundle, Vec3 } from "./format";
+import type { CourtBundle, SurroundFar, Vec3 } from "./format";
 import { PART, type LightField } from "./lightfield";
+import { bowlLayout, farCamera } from "./surround";
 import type { ShowVideo } from "./video";
 
 /** True once stream D has built this module. */
@@ -28,6 +35,12 @@ export const ORDER_BACKGROUND = -50;
 export const ORDER_VIDEO = 50;
 /** How dark the cinema mask makes the world round the lit footage region (House Lights' rig). */
 export const CINEMA = 0.96;
+/** ...when the bundle has a surround: the far image and the bowl round the picture stay at a night game's level. */
+export const CINEMA_SURROUND = 0.55;
+/** The far image's long side on the GPU, texels (a 2x-wide far image keeps several texels per Quest pixel, 19.5 px/deg). */
+const FAR_TEXELS = 2048;
+/** The far image fades out over this share of it at its own edges. */
+const FAR_EDGE = 0.03;
 /** The lit region's edges are feathered over this share of the frame (3.2: ~10%). */
 export const FEATHER = 0.1;
 /** A pair player's card reaches their splat depth this close to F, real seconds (the 1.2 s ease's span at 0.6x). */
@@ -400,6 +413,7 @@ const CAMERA_GLSL = /* glsl */ `
 const footageGlsl = (light: string) => /* glsl */ `
   ${light}
   uniform float uOpacity; uniform float uMask; uniform float uFeather; uniform float uWipe; uniform float uDim; uniform float uReality;
+  uniform float uCinema; uniform float uDimAlpha;
   vec3 decodeSrgb(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
   vec3 encodeSrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
   vec3 relight(vec3 c, float k) { return abs(k - 1.0) < 1e-6 ? c : encodeSrgb(decodeSrgb(c) * k); }
@@ -410,7 +424,9 @@ const footageGlsl = (light: string) => /* glsl */ `
   vec3 realityTint(vec3 c, float k) { return mix(c, vec3(0.22, 0.45, 1.0) * (0.35 + 0.65 * dot(c, vec3(0.2126, 0.7152, 0.0722))), 0.6 * k); }
   // the light field's parts (lightfield.ts PART); the courtside plate also dims off the camera ray (P30, perceived)
   float lightOfFloor(vec3 p) { return courtLight(vec3(p.x, 0.0, p.z), ${PART.floor.toFixed(1)}); }
-  float lightOfCrowd(vec3 p) { return courtLight(p, ${PART.crowd.toFixed(1)}) * pow(max(0.0, 1.0 - uDim), 2.2); }
+  float crowdDim() { return pow(max(0.0, 1.0 - uDim), 2.2); }
+  float lightOfCrowdLit(vec3 p) { return courtLight(p, ${PART.crowd.toFixed(1)}); }
+  float lightOfCrowd(vec3 p) { return lightOfCrowdLit(p) * crowdDim(); }
   float lightOfPerson(vec3 foot) { return courtLight(vec3(foot.x, 0.0, foot.z), ${PART.person.toFixed(1)}); }
   // what the camera saw behind a point: the floor where its ray lands, else the crowd
   float lightBehind(vec3 p) { vec3 d = normalize(p - uCamC); return d.y < -1e-4 ? lightOfFloor(uCamC + d * (uCamC.y / -d.y)) : lightOfCrowd(p); }`;
@@ -449,7 +465,8 @@ const plateFrag = (light: string) => /* glsl */ `
     // the floor's light; the stands', the depth cards' and the crowd's pixels on the floor the crowd's (F's stands mask)
     vec3 uvF = camFUv(vCourt);
     float crowd = uKind == 1 ? 1.0 : uKind == 0 && uHasStands && uvF.z > 0.0 ? region(uStands, clamp(uvF.xy, 0.0, 1.0)).r : 0.0;
-    col = relight(col, mix(lightOfFloor(vCourt), lightOfCrowd(vCourt), crowd));
+    // off the camera ray the crowd's pixels go dark (P30), or with a surround fade out to the bowl behind (uDimAlpha)
+    col = relight(col, mix(lightOfFloor(vCourt), mix(lightOfCrowd(vCourt), lightOfCrowdLit(vCourt), uDimAlpha), crowd));
     if (uHasInpaint && uvF.z > 0.0) col = realityTint(col, uReality * step(0.5, region(uInpaint, clamp(uvF.xy, 0.0, 1.0)).r));
     col = lightDither(col * (1.0 - uWipe));
     // See my room and the edge fade: the arena's opacity, the stands' or the floor's, inside the layers' blend so the
@@ -457,7 +474,7 @@ const plateFrag = (light: string) => /* glsl */ `
     float room = uKind == 1 ? lightRoomStands() : lightRoomFloor();
     // the floor plate is frame F's picture on the court plane: it holds only from near the seat; walking off F's view
     // the light field's clean court floor takes over (lightFilmedFloor, stream E). In edge, so both layers take it
-    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0);
+    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0) * mix(1.0, crowdDim(), crowd * uDimAlpha);
     float a = uLayer == 0 ? uOpacity * edge : uOpacity >= 1.0 ? 0.0 : edge * (1.0 - uOpacity) / max(1.0 - uOpacity * edge, 1e-4);
     gl_FragColor = vec4(col * a, a);
   }`;
@@ -511,8 +528,64 @@ const shellFrag = (light: string) => /* glsl */ `
     }
     vec2 uv = (camPx(p) + 0.5) / uSrc;
     float room = kind == 0.0 ? lightRoomFloor() : lightRoomStands();
-    float a = uMask * ${CINEMA.toFixed(3)} * (kind < 0.0 ? 1.0 : outside(uv, toCam(p).z)) * room;
+    float a = uMask * uCinema * (kind < 0.0 ? 1.0 : outside(uv, toCam(p).z)) * room;
     gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+  }`;
+
+const FAR_VERT = /* glsl */ `
+  attribute float aKind;
+  varying vec3 vCourt; varying float vKind;
+  void main() {
+    vCourt = position;
+    vKind = aKind;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+
+/**
+ * The far image (surround.far): the pan's far end, people removed, one pinhole image at camera F's centre, projected
+ * onto the floor (kind 0: in front of the stands and the bowl's foot, held only near the seat as the floor plate is),
+ * the stands proxy (1: the crowd's light; fading out off the camera ray, P30) and the backboard (2). Its alpha is
+ * where the pan filmed. Under the plates in the 3D (their feathered edges blend into it), over the bowl.
+ */
+const farFrag = (light: string) => /* glsl */ `
+  ${CAMERA_GLSL}
+  ${footageGlsl(light)}
+  uniform sampler2D uFar; uniform mat3 uFarR; uniform vec4 uFarK; uniform vec2 uFarSize;
+  uniform vec4 uBowl; uniform float uBowlR;
+  uniform vec4 uClipPlane[${MAX_CLIPS}]; uniform vec4 uClipSpan[${MAX_CLIPS}]; uniform int uClips;
+  varying vec3 vCourt; varying float vKind;
+  bool behindStands(vec3 p) {
+    for (int i = 0; i < ${MAX_CLIPS}; i++) {
+      if (i >= uClips) break;
+      float along = dot(p.xz, uClipSpan[i].xy);
+      if (dot(uClipPlane[i].xyz, p) + uClipPlane[i].w < 0.0 && along >= uClipSpan[i].z && along <= uClipSpan[i].w) return true;
+    }
+    return false;
+  }
+  // surround.ts bowlDistance: metres outside the bowl's foot (a rounded rectangle)
+  float bowlDistance(vec2 p) {
+    vec2 q = vec2(max(uBowl.x + uBowlR - p.x, p.x - (uBowl.y - uBowlR)), max(uBowl.z + uBowlR - p.y, p.y - (uBowl.w - uBowlR)));
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uBowlR;
+  }
+  void main() {
+    bool floorKind = vKind < 0.5;
+    bool stands = vKind > 0.5 && vKind < 1.5;
+    vec3 c = uFarR * (vCourt - uCamC);
+    vec2 uv = (vec2(uFarK.y, uFarK.z) + uFarK.x * c.xy / c.z + 0.5) / uFarSize;
+    vec2 gx = dFdx(uv);
+    vec2 gy = dFdy(uv);
+    if (floorKind && (behindStands(vCourt) || bowlDistance(vCourt.xz) > 0.0)) discard;
+    if (c.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
+    vec4 t = textureGrad(uFar, uv, gx, gy); // rows from the top
+    // the image's own edges fade over FAR_EDGE of it into the bowl behind, so the pan's end is never a hard line
+    vec2 e = min(uv, 1.0 - uv);
+    t.a *= smoothstep(0.0, ${FAR_EDGE.toFixed(3)}, e.x) * smoothstep(0.0, ${FAR_EDGE.toFixed(3)}, e.y);
+    if (t.a <= 0.002) discard;
+    vec3 col = relight(t.rgb, stands ? lightOfCrowdLit(vCourt) : lightOfFloor(vCourt));
+    col = lightDither(col * (1.0 - uWipe));
+    float room = stands ? lightRoomStands() : lightRoomFloor();
+    float k = floorKind ? lightFilmedFloor(vCourt) : stands ? crowdDim() : 1.0;
+    gl_FragColor = vec4(col, t.a * k * room);
   }`;
 
 /** A person card's grid: vertices across and down its box. */
@@ -638,6 +711,11 @@ export class Proxies {
   private readonly warned = new Set<string>();
   private depthOverride = 0;
   private loaded = false;
+  /** The far image's mesh (surround.far), null without one. */
+  private far: THREE.Mesh | null = null;
+  /** The bundle has a surround, and it is shown (`surround(on)`, dev: the e2e's before/after). */
+  private readonly hasSurround: boolean;
+  private surroundOn: boolean;
   /** The show frame last projected (-1 none). */
   private projected = -1;
   private readonly cameraF: PinholeCamera;
@@ -669,7 +747,12 @@ export class Proxies {
       uWipe: { value: 0 },
       uDim: { value: 0 },
       uReality: { value: 0 },
+      uCinema: { value: CINEMA },
+      uDimAlpha: { value: 0 },
     };
+    this.hasSurround = !!court.surround;
+    this.surroundOn = this.hasSurround && !(import.meta.env?.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("surround") === "off");
+    this.applySurround();
     this.setCamera(camF);
     video.listen(() => this.sync());
     this.sync();
@@ -752,6 +835,13 @@ export class Proxies {
         (layer === 0 ? this.videoPlates : this.backgroundPlates).push(mesh);
         this.group.add(mesh);
       }
+
+    // the far image (surround.far): one mesh over the floor, the stands planes and the backboard, under the plates
+    if (court.surround?.far)
+      this.far = await this.farMesh(court.surround.far, clips).catch((e: unknown) => {
+        this.warnOnce(`the far image could not be loaded (${(e as Error)?.message ?? e}); the arena goes on without it`);
+        return null;
+      });
 
     // the pair's splat-depth proxies, seen from camera F
     const ball = court.freeze.ball;
@@ -841,6 +931,21 @@ export class Proxies {
     this.shared.uDim.value = Math.min(1, Math.max(0, p));
   }
 
+  /**
+   * Show the bundle's surround or not (dev: `?surround=off` and the e2e's before/after): the far image, the cinema
+   * mask's night-game level and the plate's fade off the camera ray (P30). Without a surround in the bundle, nothing.
+   */
+  surround(on: boolean): void {
+    this.surroundOn = this.hasSurround && on;
+    this.applySurround();
+  }
+
+  private applySurround(): void {
+    this.shared.uCinema.value = this.surroundOn ? CINEMA_SURROUND : CINEMA;
+    this.shared.uDimAlpha.value = this.surroundOn ? 1 : 0;
+    if (this.far) this.far.visible = this.surroundOn;
+  }
+
   /** The Reality check: tint the inpainted plate behind the players and the filled holes. */
   reality(on: boolean): void {
     this.shared.uReality.value = on ? 1 : 0;
@@ -918,6 +1023,88 @@ export class Proxies {
     });
     this.materials.push(m);
     return m;
+  }
+
+  /**
+   * The far image's layer: far.jpg with far-alpha.png as its alpha, at most FAR_TEXELS on its long side (mipmapped),
+   * on one mesh of the floor quad, the stands planes and the backboard (aKind 0, 1, 2), drawn over the bowl and under
+   * the 3D's plates. It blends like the arena (world.ts overRoom): the colour by its alpha, the alpha the larger.
+   */
+  private async farMesh(far: SurroundFar, clips: Record<string, THREE.IUniform>): Promise<THREE.Mesh> {
+    const { court, frames } = this.bundle;
+    const loader = new THREE.ImageLoader();
+    const [img, alphaImg] = await Promise.all([loader.loadAsync(this.bundle.file(far.image)), loader.loadAsync(this.bundle.file(far.alpha))]);
+    const s = Math.min(1, FAR_TEXELS / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * s));
+    const h = Math.max(1, Math.round(img.height * s));
+    const pixels = (src: HTMLImageElement) => {
+      const cv = document.createElement("canvas");
+      cv.width = w;
+      cv.height = h;
+      const g = cv.getContext("2d", { willReadFrequently: true })!;
+      g.imageSmoothingQuality = "high";
+      g.drawImage(src, 0, 0, w, h);
+      return g.getImageData(0, 0, w, h).data;
+    };
+    const data = pixels(img);
+    const a = pixels(alphaImg);
+    for (let i = 3; i < data.length; i += 4) data[i] = a[i - 3];
+    const texture = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+    texture.colorSpace = THREE.NoColorSpace; // raw sRGB bytes, as the plates read theirs
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    texture.needsUpdate = true;
+    this.textures.push(texture);
+    // the floor, the stands planes and the backboard, one geometry
+    const bowl = bowlLayout(court);
+    const quads: { pts: readonly Vec3[]; kind: number }[] = [
+      { pts: [[bowl.x0, 0, bowl.z1], [bowl.x1, 0, bowl.z1], [bowl.x1, 0, bowl.z0], [bowl.x0, 0, bowl.z0]], kind: 0 },
+      ...court.freeze.stands.proxy.map((p) => ({ pts: p.points, kind: 1 })),
+      { pts: court.court.backboard, kind: 2 },
+    ];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(quads.flatMap((q) => q.pts.flat()), 3));
+    g.setAttribute("aKind", new THREE.Float32BufferAttribute(quads.flatMap((q) => [q.kind, q.kind, q.kind, q.kind]), 1));
+    g.setIndex(quads.flatMap((_, i) => [0, 1, 2, 0, 2, 3].map((k) => 4 * i + k)));
+    const cam = farCamera(court, frames, far);
+    const m = new THREE.ShaderMaterial({
+      uniforms: {
+        ...this.shared,
+        ...(this.light.uniforms as Record<string, THREE.IUniform>),
+        ...clips,
+        uFar: { value: texture },
+        uFarR: { value: camRotation(cam) },
+        uFarK: { value: new THREE.Vector4(cam.f, cam.cx, cam.cy, 0) },
+        uFarSize: { value: new THREE.Vector2(cam.width, cam.height) },
+        uBowl: { value: new THREE.Vector4(bowl.x0, bowl.x1, bowl.z0, bowl.z1) },
+        uBowlR: { value: bowl.r },
+      },
+      vertexShader: FAR_VERT,
+      fragmentShader: farFrag(lightChunk(this.light.glsl)),
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.SrcAlphaFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      blendEquationAlpha: THREE.MaxEquation,
+      blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneFactor,
+    });
+    m.polygonOffset = true;
+    m.polygonOffsetFactor = -1;
+    m.polygonOffsetUnits = -4;
+    m.forceSinglePass = true; // one pass in index order (floor, stands, backboard), not three's back-then-front pair
+    this.materials.push(m);
+    const mesh = new THREE.Mesh(g, m);
+    mesh.name = "proxy-far";
+    mesh.renderOrder = ORDER_BACKGROUND - 2;
+    mesh.frustumCulled = false;
+    mesh.visible = this.surroundOn;
+    this.group.add(mesh);
+    return mesh;
   }
 
   /** Rasterise a player's proxy from camera F into a dilated depth texture (distance along each ray, as an offset from its median). */

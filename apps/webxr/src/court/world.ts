@@ -9,9 +9,16 @@
 // three 0.186 clears to (0, 0, 0, 0) in an alpha-blend session (three.module.js:1379-1381), so the dome is what makes
 // the arena opaque (P33). See my room and the always-on edge fade lower it and the arena's surfaces (P34, P35); the
 // Reality check tints everything not filmed blue (P23). Stream E (`look`) builds it.
+// With `court.surround` the dim boxes give way to an imagined NBA bowl (surround.ts: 20 lower tiers of real crowd
+// tiles from surround.crowd at real scale, an LED dasher and ribbon board, an upper deck, a dark roof and a
+// centre-hung scoreboard; one merged mesh, one atlas, one draw call) lit for a night game: the lower bowl in the
+// court's spill at the crowd's level, the upper deck darker, the roof very dark under the fixtures' glows, the boards
+// glowing on their own. All of it is imagined, so the Reality check tints it blue; the far image (proxies.ts) is real
+// and is never tinted.
 import * as THREE from "three";
 import { standaloneHoop } from "../props";
 import { cameraOf, type PinholeCamera } from "./camera";
+import { APRON_M, DASHER, LOWER, UPPER, bowlArrays, bowlLayout } from "./surround";
 import type { CourtBundle } from "./format";
 import { PART, REACH_GLSL, edgeLevel, fixtureGlow, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
 import type { Proxies } from "./proxies";
@@ -26,10 +33,13 @@ export const BUILT = true;
 const LINE_WHITE = new THREE.Color().setRGB(0.72, 0.72, 0.69);
 const LINE_NAVY = new THREE.Color().setRGB(0.012, 0.022, 0.07);
 const LANE_PAINT = new THREE.Color().setRGB(0.014, 0.03, 0.095);
-/** The out-of-bounds apron (a deeper stain of the hardwood), metres past the lines, and the arena floor beyond it. */
-const APRON_M = 2.0;
+/** The out-of-bounds apron (a deeper stain of the hardwood; APRON_M metres past the lines), and the arena floor beyond it. */
 const APRON_STAIN = 0.62;
 const ARENA_FLOOR = new THREE.Color().setRGB(0.004, 0.004, 0.005);
+const ARENA_DARK = new THREE.Vector3(ARENA_FLOOR.r, ARENA_FLOOR.g, ARENA_FLOOR.b);
+/** With a surround: the house lights' spill on the floor (a share of the crowd's light), and the floor beyond the apron the apron's wood darker still. */
+const HOUSE_FLOOR = 0.2;
+const COURTSIDE_STAIN = 0.3;
 /** The seating bowl: tiers from this far past the sidelines / baselines, never filmed. */
 const BOWL = { side: 3.2, end: 3.6, tiers: 7, depth: 0.85, rise: 0.42, base: 0.45 };
 /** The house lights: fixtures over the court, igniting one after another through the arrival (fixtureGlow). */
@@ -63,6 +73,7 @@ uniform vec3 uNavy;
 uniform vec3 uPaint;
 uniform vec3 uBlue;
 uniform float uReality;
+uniform float uHouseFloor; // with a surround: the house lights' spill on the floor, as a share of the crowd's light (0: none)
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -147,7 +158,7 @@ void main() {
   // the footage where it was filmed and you see it near its own camera's ray (lightFilmedFloor: all of it from the seat)
   float filmed = seen * lightFilmedFloor(vLightCourt);
   vec3 col = mix(clean, texture2D(uFloorMap, uv).rgb, filmed);
-  col *= lightFloor(p, lightReach(vLightCourt));
+  col *= max(lightFloor(p, lightReach(vLightCourt)), uHouseFloor * lightCrowd());
   col = mix(col, uBlue * (0.04 + dot(col, vec3(0.2126, 0.7152, 0.0722))), (1.0 - filmed) * 0.75 * uReality);
   gl_FragColor = vec4(col, lightRoomFloor());
   #include <colorspace_fragment>
@@ -170,6 +181,107 @@ void main() {
   vec3 shirt = mix(vec3(0.004, 0.004, 0.005), vec3(0.008, 0.0075, 0.007) * tint * (0.7 + 0.6 * hash(cell + 7.0)), step(0.3, h));
   shirt *= 1.0 - 0.5 * smoothstep(0.5, 3.5, w.y); // the upper rows fall into the dark
   vec3 col = shirt * lightHouse();
+  col = mix(col, uBlue * (0.03 + dot(col, vec3(0.2126, 0.7152, 0.0722))), 0.75 * uReality);
+  gl_FragColor = vec4(col, lightRoomStands());
+  #include <colorspace_fragment>
+  gl_FragColor.rgb = lightDither(gl_FragColor.rgb);
+}
+`;
+
+const ARENA_VERTEX = /* glsl */ `
+VERTEX_LIGHT
+attribute vec2 aSurf;
+attribute vec4 aTile;
+attribute vec4 aInfo;
+varying vec2 vSurf;
+varying vec4 vTile;
+varying vec4 vInfo;
+void main() {
+  vec4 w = modelMatrix * vec4(position, 1.0);
+  vLightCourt = lightCourt(w);
+  vSurf = aSurf;
+  vTile = aTile;
+  vInfo = aInfo;
+  gl_Position = projectionMatrix * viewMatrix * w;
+}
+`;
+
+/** The imagined bowl (surround.ts bowlArrays: aInfo.x is BOWL_KIND), lit for a night game; linear colours. */
+const ARENA_FRAGMENT = /* glsl */ `
+FRAGMENT_LIGHT
+varying vec3 vLightCourt;
+varying vec2 vSurf;
+varying vec4 vTile;
+varying vec4 vInfo;
+uniform sampler2D uAtlas;
+uniform float uHasAtlas;
+uniform vec3 uBlue;
+uniform float uReality;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// without crowd tiles: seated people every ~0.5 m along the tier (s metres), the row's heads at its top (t: 0-1 up it)
+vec3 crowdOf(float s, float t, float seed) {
+  float cell = floor(s / 0.52);
+  float x = fract(s / 0.52) - 0.5 + (hash(vec2(cell, seed)) - 0.5) * 0.2;
+  float h = hash(vec2(cell, seed * 7.0));
+  vec3 shirt = mix(vec3(0.03, 0.035, 0.05), mix(vec3(0.16, 0.16, 0.15), vec3(0.06, 0.05, 0.12), step(0.6, h)), step(0.25, h));
+  vec3 skin = mix(vec3(0.16, 0.09, 0.06), vec3(0.4, 0.26, 0.18), hash(vec2(cell, seed * 3.0)));
+  float head = step(length(vec2(x * 0.52, (t - 0.8) * 0.4)), 0.1);
+  float body = step(abs(x), 0.36) * step(t, 0.62);
+  return mix(mix(vec3(0.012, 0.012, 0.015), shirt, body * step(0.08, h)), skin, head * step(0.08, h));
+}
+// the LED boards (emissive): a dark ground with soft ad panels and a bright edge line; which: 0 dasher, 1 ribbon, 2 scoreboard band
+vec3 ledOf(vec2 s, float which) {
+  float span = which < 0.5 ? 9.0 : 13.0;
+  float panel = floor(s.x / span);
+  float u = fract(s.x / span);
+  float h = s.y / (which < 0.5 ? ${DASHER.h.toFixed(2)} : 1.0);
+  float pick = hash(vec2(panel, which));
+  vec3 accent = pick < 0.4 ? vec3(0.03, 0.1, 0.24) : pick < 0.65 ? vec3(0.015, 0.12, 0.08) : pick < 0.85 ? vec3(0.13, 0.13, 0.14) : vec3(0.2, 0.035, 0.025);
+  vec3 col = vec3(0.003, 0.007, 0.02); // a deep navy ground
+  float inPanel = step(0.03, u) * step(u, 0.97);
+  float logo = step(0.07, u) * step(u, 0.25) * step(0.18, h) * step(h, 0.82);
+  float glyph = step(0.42, hash(vec2(floor(s.x / 0.16), panel + 7.0))) * step(0.36, h) * step(h, 0.64) * step(0.31, u) * step(u, 0.9);
+  float rule = step(h, 0.07) + step(0.93, h);
+  col += inPanel * (accent * (logo + 0.55 * rule) + vec3(0.1) * glyph);
+  return col;
+}
+void main() {
+  float kind = vInfo.x;
+  float house = lightCrowd();          // the crowd's level, the arrival in it
+  float glow = pow(uLightLevel.w, 2.4); // the boards glow on their own: they follow the arrival only
+  vec3 col;
+  if (kind < 1.5) {
+    // a tier's crowd: the billboard's top rise is its own row of the tile (row vInfo.y of vInfo.z), the rows in front below it
+    float rise = kind < 0.5 ? ${LOWER.rise.toFixed(2)} : ${UPPER.rise.toFixed(2)};
+    float t = (vInfo.y + 1.0) / vInfo.z - vSurf.y / (vInfo.z * rise);
+    // sampled outside the branch (its mip level needs the neighbours' coordinates); seeded per billboard (its top)
+    vec3 tile = texture2D(uAtlas, mix(vTile.xy, vTile.zw, vec2(vSurf.x, clamp(t, 0.0, 1.0)))).rgb;
+    vec3 c = vec3(0.012, 0.012, 0.015); // seat backs
+    if (t >= 0.0) c = uHasAtlas > 0.5 ? tile : crowdOf(vSurf.x * 6.0, fract(t * vInfo.z), vInfo.w * 31.0 + floor((vLightCourt.y + vSurf.y) * 10.0 + 0.5));
+    // the lower bowl in the court's spill, darker up the rows; the upper deck under the house lights only
+    float spill = kind < 0.5 ? 1.0 - 0.3 * smoothstep(1.0, 9.5, vLightCourt.y) : 0.42 - 0.14 * smoothstep(11.0, 19.0, vLightCourt.y);
+    col = c * vInfo.w * spill * house;
+  } else if (kind < 2.5) {
+    col = ledOf(vSurf, vInfo.y) * glow;
+  } else if (kind < 3.5) {
+    // walls and the parapet: dark concrete, a little lighter low down where the court's light reaches
+    float panel = 0.85 + 0.15 * hash(vec2(floor(vSurf.x / 4.0), vInfo.y));
+    col = vec3(0.016, 0.016, 0.019) * panel * (vInfo.y > 1.5 ? 1.6 : 1.0) * house;
+  } else if (kind < 4.5) {
+    // the roof: very dark, its trusses a shade lighter in the house lights
+    // the roof: very dark, a little of the court's light reaching its middle, its trusses a shade lighter
+    vec2 g = abs(fract(vSurf / 6.0 + 0.5) - 0.5) * 6.0;
+    float truss = 1.0 - smoothstep(0.06, 0.2, min(g.x, g.y));
+    float bounce = 1.0 + 0.8 * (1.0 - smoothstep(6.0, 30.0, length(vSurf)));
+    col = mix(vec3(0.011, 0.011, 0.014), vec3(0.04, 0.04, 0.046), truss) * bounce * house;
+  } else if (kind < 5.5) {
+    col = vec3(0.03, 0.03, 0.034) * house;
+  } else {
+    // the scoreboard's screens: dark with a soft gradient and a faint score block
+    vec2 q = vSurf;
+    float block = step(0.3, q.x) * step(q.x, 0.7) * step(0.35, q.y) * step(q.y, 0.75);
+    col = (vec3(0.012, 0.018, 0.035) + vec3(0.02, 0.025, 0.05) * q.y + block * vec3(0.06, 0.07, 0.09)) * glow;
+  }
   col = mix(col, uBlue * (0.03 + dot(col, vec3(0.2126, 0.7152, 0.0722))), 0.75 * uReality);
   gl_FragColor = vec4(col, lightRoomStands());
   #include <colorspace_fragment>
@@ -282,8 +394,17 @@ export class CourtWorld {
   private readonly proxies: Proxies;
   private readonly reachU = { uReachCentre: { value: new THREE.Vector3() }, uReachPlanes: { value: [0, 1, 2, 3].map(() => new THREE.Vector4()) } };
   private readonly realityU = { value: 0 };
+  private readonly houseFloorU = { value: 0 };
   private readonly blueU = { value: REALITY_BLUE.clone() };
   private floor: THREE.Mesh | null = null;
+  /** The floor's colour beyond the apron (uDark): the arena floor, or with a surround the courtside wood. */
+  private floorDark: { value: THREE.Vector3 } | null = null;
+  private readonly courtsideDark = new THREE.Vector3();
+  /** The dim boxes (no surround, or the surround switched off) and the imagined bowl (surround). */
+  private bowl: THREE.Mesh | null = null;
+  private arenaBowl: THREE.Mesh | null = null;
+  private readonly hasSurround: boolean;
+  private surroundOn: boolean;
   private glows: THREE.Sprite[] = [];
   private hoop: THREE.Group | null = null;
   private hoopMats: { m: THREE.Material; base: number }[] = [];
@@ -314,6 +435,8 @@ export class CourtWorld {
     const seat = params.has("seat") ? Number(params.get("seat")) : undefined;
     light.fitFrames(bundle.frames);
     light.select({ set, seatDistance: seat });
+    this.hasSurround = !!bundle.court.surround;
+    this.surroundOn = this.hasSurround && !(import.meta.env.DEV && params.get("surround") === "off");
     this.dome = new THREE.Mesh(
       new THREE.SphereGeometry(50, 16, 8),
       // opaque and first in the opaque list: a `transparent` material would be sorted after every opaque object and,
@@ -367,10 +490,12 @@ export class CourtWorld {
     const wood = new THREE.Color().setRGB(woodRgb[0], woodRgb[1], woodRgb[2], THREE.SRGBColorSpace);
     const paint = tones.paint ? new THREE.Color().setRGB(tones.paint[0], tones.paint[1], tones.paint[2], THREE.SRGBColorSpace) : LANE_PAINT;
     const light = this.light;
+    this.courtsideDark.set(wood.r, wood.g, wood.b).multiplyScalar(COURTSIDE_STAIN);
 
-    // the floor: court, apron and the dark arena floor out to the bowl
-    const size = 2 * (halfL + BOWL.end + 1);
-    const floorGeo = new THREE.PlaneGeometry(size, 2 * (halfW + BOWL.side + 1), 1, 1);
+    // the floor: court, apron and the dark arena floor out to the bowl (the imagined bowl's foot, with a surround)
+    const foot = this.hasSurround ? bowlLayout(court) : null;
+    const size = 2 * Math.max(halfL + BOWL.end + 1, foot ? Math.max(foot.x1, -foot.x0) + 1 : 0);
+    const floorGeo = new THREE.PlaneGeometry(size, 2 * Math.max(halfW + BOWL.side + 1, foot ? Math.max(foot.z1, -foot.z0) + 1 : 0), 1, 1);
     floorGeo.rotateX(-Math.PI / 2);
     const floorMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -383,7 +508,8 @@ export class CourtWorld {
         uCourt: { value: new THREE.Vector4(halfL, halfW, APRON_M, halfL - Math.abs(c.rim[0])) },
         uWood: { value: new THREE.Vector3(wood.r, wood.g, wood.b) },
         uApron: { value: new THREE.Vector3(wood.r, wood.g, wood.b).multiplyScalar(APRON_STAIN) },
-        uDark: { value: new THREE.Vector3(ARENA_FLOOR.r, ARENA_FLOOR.g, ARENA_FLOOR.b) },
+        uDark: (this.floorDark = { value: ARENA_DARK.clone() }),
+        uHouseFloor: this.houseFloorU,
         uWhite: { value: new THREE.Vector3(LINE_WHITE.r, LINE_WHITE.g, LINE_WHITE.b) },
         uNavy: { value: new THREE.Vector3(LINE_NAVY.r, LINE_NAVY.g, LINE_NAVY.b) },
         uPaint: { value: new THREE.Vector3(paint.r, paint.g, paint.b) },
@@ -414,6 +540,10 @@ export class CourtWorld {
     bowl.renderOrder = -890;
     bowl.frustumCulled = false;
     this.group.add(bowl);
+    this.bowl = bowl;
+    // the imagined bowl round the court, with a surround (its crowd tiles mipmapped in one atlas)
+    if (this.hasSurround) this.arenaBowl = await this.arenaMesh();
+    this.surround(this.surroundOn);
 
     // the house lights over the court
     const tex = glowTexture();
@@ -500,6 +630,19 @@ export class CourtWorld {
     this.refresh();
   }
 
+  /**
+   * Show the bundle's surround or not (dev: `?surround=off` and the e2e's before/after): the imagined bowl or the dim
+   * boxes, and proxies.ts's far image and cinema level. Without a surround in the bundle, always the dim boxes.
+   */
+  surround(on: boolean): void {
+    this.surroundOn = this.hasSurround && on;
+    if (this.bowl) this.bowl.visible = !this.surroundOn;
+    if (this.arenaBowl) this.arenaBowl.visible = this.surroundOn;
+    this.houseFloorU.value = this.surroundOn ? HOUSE_FLOOR : 0;
+    if (this.floorDark) this.floorDark.value.copy(this.surroundOn ? this.courtsideDark : ARENA_DARK);
+    this.proxies.surround(on);
+  }
+
   /** The Reality check: tint everything the camera never filmed (the rendered court, the bowl, the hoop). */
   reality(on: boolean): void {
     this.realityU.value = on ? 1 : 0;
@@ -542,6 +685,39 @@ export class CourtWorld {
     if (import.meta.env.DEV && look().world === this) delete look().world;
   }
 
+
+  /** The imagined bowl (surround.ts bowlArrays): one mesh, the crowd atlas (surround.crowd) or the procedural crowd. */
+  private async arenaMesh(): Promise<THREE.Mesh> {
+    const crowd = this.bundle.court.surround?.crowd ?? null;
+    const atlas = crowd ? await new THREE.TextureLoader().loadAsync(this.bundle.file(crowd.atlas)).catch(() => null) : null;
+    if (atlas) {
+      atlas.colorSpace = THREE.SRGBColorSpace;
+      atlas.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      atlas.minFilter = THREE.LinearMipmapLinearFilter;
+      atlas.generateMipmaps = true;
+      this.textures.push(atlas);
+    }
+    const a = bowlArrays(this.bundle.court, atlas ? crowd : null);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(a.position, 3));
+    g.setAttribute("aSurf", new THREE.BufferAttribute(a.surf, 2));
+    g.setAttribute("aTile", new THREE.BufferAttribute(a.tile, 4));
+    g.setAttribute("aInfo", new THREE.BufferAttribute(a.info, 4));
+    g.setIndex(new THREE.BufferAttribute(a.index, 1));
+    const m = new THREE.ShaderMaterial({
+      uniforms: { ...this.light.uniforms, uAtlas: { value: atlas }, uHasAtlas: { value: atlas ? 1 : 0 }, uBlue: this.blueU, uReality: this.realityU },
+      vertexShader: ARENA_VERTEX.replace("VERTEX_LIGHT", this.light.glslVertex),
+      fragmentShader: ARENA_FRAGMENT.replace("FRAGMENT_LIGHT", this.light.glsl),
+      depthWrite: false,
+    });
+    overRoom(m);
+    const mesh = new THREE.Mesh(g, m);
+    mesh.name = "court-arena-bowl";
+    mesh.renderOrder = -890;
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+    return mesh;
+  }
 
   /** The arena's opacity from See my room and the edge, onto the dome, the field and the hoop; the lights' levels. */
   private refresh(): void {
