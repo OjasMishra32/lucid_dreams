@@ -1,6 +1,6 @@
 // The opening title (opening.ts) over the arrival's lights-up (after Seat here and the hand-over, or --query solo's own
-// seat): stills at points of the lights-up (out/opening-*.png) to look at, the title never drawn in the dark hold, and
-// the watch on time after it. The light steps themselves are opening.test.ts's (every texel at 72 and 90 Hz).
+// seat): stills at points of the lights-up (out/opening-*.png) to look at (with ?solo one in the dark hold too, where
+// the title rises), the hold black after a hand-over (P27), and the watch on time after it. The light steps themselves are opening.test.ts's (every texel at 72 and 90 Hz).
 // Owner: the integrator.
 import { rig } from "../rig.mjs";
 
@@ -8,23 +8,28 @@ export const owner = "integrator";
 export const needs = ["seat", "light"];
 
 const HZ = 72;
-/** Seconds into the lights-up to save (TITLE_IN_S 0-1.75, full, TITLE_OUT_S 1.95-3.7, the watch at 3.8). */
-const AT = [0.4, 0.9, 1.4, 1.9, 2.5, 3.1, 3.6];
+/** Seconds into the lights-up to save (EARLY's fade out 1.6-3.7, the watch at 3.8), and into the solo hold. */
+const AT = [0.3, 0.9, 1.5, 2.2, 2.9, 3.5];
+const HOLD_AT = 0.8;
 
 export default async function opening(ctx) {
-  if (!new URL(ctx.page.url()).searchParams.has("solo")) {
+  const solo = new URL(ctx.page.url()).searchParams.has("solo");
+  if (!solo) {
     await ctx.nextFrame();
     await ctx.seatHere();
     await rig(ctx).handOver();
   }
   const dark = [];
   let f = (await ctx.frames(1))[0];
+  let held = null;
   for (let n = 0; n < HZ * 15 && f.lightsUp < 0; n++) {
     if (!f.setup) dark.push(f);
-    f = (await ctx.frames(1))[0];
+    if (solo && !held && dark.length >= HOLD_AT * HZ) f = held = (await ctx.save("opening-00-hold")) ?? f;
+    else f = (await ctx.frames(1))[0];
   }
+  if (solo) ctx.check("the opening: a still in the solo dark hold", !!held, held ? `lightsUp ${held.lightsUp}` : `hold ${dark.length} frames`);
   ctx.check("the opening: the lights-up starts", f.lightsUp >= 0, `lightsUp ${f.lightsUp}`);
-  if (!ctx.timing) ctx.check("the opening: nothing drawn in the dark hold", dark.every((d) => d.luma <= 2), `mean luma max ${Math.max(0, ...dark.map((d) => d.luma))} over ${dark.length} frames`);
+  if (!ctx.timing && !ctx.realtime && !solo) ctx.check("the opening: nothing drawn in the dark hold after a hand-over", dark.every((d) => d.luma <= 2), `mean luma max ${Math.max(0, ...dark.map((d) => d.luma))} over ${dark.length} frames`);
   const saved = [];
   for (const at of AT) {
     while (f.phase === "arrival" && f.lightsUp < at - 0.5 / HZ) f = (await ctx.frames(1))[0];

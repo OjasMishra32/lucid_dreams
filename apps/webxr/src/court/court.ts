@@ -134,6 +134,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let phase: Phase = "arrival";
   let setup = true; // until Seat here
   let lightsUp = -1;
+  let titleT = 0; // the opening title's clock (opening.ts): from Seat here with ?solo, from the lights-up otherwise
   let tF = 0; // seconds from F (the hand-off's clock)
   let tLight = 0; // seconds from F in real time: the light's, which a rushed fade never rushes (handoff's lightT, P44)
   let fed = -1; // the show frame this display frame handed the video and the proxies (-1 none)
@@ -333,6 +334,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     seatedEyeY = head.room[1];
     setup = false;
     lightsUp = -1; // seat.place re-arms seat.arrival: dark until the next hand-over
+    titleT = 0;
     light.set("dark", 0);
     go("arrival");
   });
@@ -463,7 +465,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         feed(first);
         video.wipe(1 - p);
         screenWatch(p);
-        opening.update(lightsUp, roomP);
+        if (lightsUp >= 0 || params.has("solo")) titleT += dt;
+        opening.update(titleT, lightsUp, params.has("solo"), roomP);
         if (lightsUp >= LIGHTS_UP_S) {
           light.set("watch", 0);
           video.wipe(0);

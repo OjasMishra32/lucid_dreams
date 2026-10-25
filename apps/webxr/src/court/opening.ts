@@ -13,37 +13,50 @@ import { SCREEN_EYE_M, SCREEN_M, screenPose } from "./screen";
 
 export const TITLE = "COURT SIDE";
 export const SUBTITLE = "LUCID DREAMS · GATOR HACK V";
-/** The title's fade in and out, seconds into the lights-up: it is gone 0.1 s before the watch (ARRIVAL_S 3.8). */
-export const TITLE_IN_S: [number, number] = [0, 1.75];
-export const TITLE_OUT_S: [number, number] = [1.95, 3.7];
-/** The subtitle comes in a beat later and leaves with the title. */
-export const SUB_IN_S: [number, number] = [0.5, 1.9];
 /**
- * Blur to sharp: the sharp letter takes over from the soft one over SHARP_S, starting SHARP_START_S into the line's own
- * fade in and SHARP_STAGGER_S later per letter out from the centre; every letter is sharp before the fade out starts.
+ * Two clocks: `t`, seconds since the title began, and `up`, seconds into the lights-up (negative in the dark hold). With
+ * ?solo the title begins at Seat here, in the dark hold, which lasts at least the arrival's still second
+ * (ARRIVAL_STILL_S), so it rises in the dark ("early"); after a hand-over the hold stays black (P27) and it begins with
+ * the lights-up ("late": shorter fades, so a lower peak). Either way it is gone 0.1 s before the watch (ARRIVAL_S 3.8).
  */
-export const SHARP_S = 1.6;
-export const SHARP_START_S = 0.05;
+export interface Timeline {
+  /** The title's fade in on t, the subtitle's, and both lines' fade out on up. */
+  titleIn: [number, number];
+  subIn: [number, number];
+  out: [number, number];
+  /** The sharp letter takes over from the soft one over sharpS from sharpStart (+ SHARP_STAGGER_S a letter off centre). */
+  sharpStart: number;
+  sharpS: number;
+  subSharp: [number, number];
+  /** The whole light's scale: the late fades are shorter, so its peak is lower (P44). */
+  gain: number;
+}
+export const EARLY: Timeline = { titleIn: [0, 2.4], subIn: [0.7, 2.6], out: [1.6, 3.7], sharpStart: 0.05, sharpS: 2.05, subSharp: [0.8, 2.55], gain: 1 };
+export const LATE: Timeline = { titleIn: [0, 1.75], subIn: [0.5, 1.9], out: [1.95, 3.7], sharpStart: 0.05, sharpS: 1.6, subSharp: [0.65, 1.95], gain: 0.78 };
 export const SHARP_STAGGER_S = 0.05;
-export const SUB_SHARP: [number, number] = [0.65, 1.95];
-/** The letters close up from WIDE_EM to REST_EM of tracking over TRACK_S (an ease out). */
-export const TRACK_S = 3.2;
-export const WIDE_EM = 0.6;
-export const REST_EM = 0.2;
-/** The drift (as at 7 m): from DEPTH_M behind its rest to it over DEPTH_S (an ease out), then DRIFT_M toward the eye on the way out. */
-export const DEPTH_M = 0.9;
-export const DEPTH_S = 2.4;
-export const DRIFT_M = 0.35;
-/** Peak display values (0-1, encoded) of the letter (soft or sharp) and of its glow; the subtitle is SUB_PEAK of the title. */
-export const PEAK_TEXT = 0.33;
-export const PEAK_GLOW = 0.07;
+/** The letters close up from WIDE_EM to REST_EM of tracking over TRACK_S on t (an ease out). */
+export const TRACK_S = 3.4;
+export const WIDE_EM = 0.75;
+export const REST_EM = 0.14;
+/** The drift (as at 7 m): from DEPTH_M behind its rest to it over DEPTH_S on t (an ease out), then DRIFT_M toward the eye on the way out. */
+export const DEPTH_M = 1.6;
+export const DEPTH_S = 3.0;
+export const DRIFT_M = 0.6;
+/**
+ * Peak display values (0-1, encoded) of the letter (soft or sharp), its bloom and the anamorphic streak through the
+ * title; the subtitle is SUB_PEAK of the title. Their sum over EARLY's shortest fade keeps P44 (opening.test.ts).
+ */
+export const PEAK_TEXT = 0.38;
+export const PEAK_GLOW = 0.08;
+export const PEAK_STREAK = 0.05;
 export const SUB_PEAK = 0.7;
 /** The title floats this far from the eye, in front of the screen on the same ray (stereo sets it off the picture). */
 export const TITLE_M = 3.4;
-/** The title's em and the subtitle's, metres as if at the screen's 7 m (the group is scaled to TITLE_M). */
-const TITLE_EM_M = 0.56;
-const SUB_EM_M = 0.16;
-const SUB_TRACK_EM = 0.34;
+/** The title's em and the subtitle's, metres as if at the screen's 7 m (the group is scaled to TITLE_M); the streak's size. */
+const TITLE_EM_M = 0.72;
+const SUB_EM_M = 0.17;
+const SUB_TRACK_EM = 0.38;
+const STREAK_M: [number, number] = [8.4, 0.2];
 const FONT = `-apple-system, "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, system-ui, sans-serif`;
 const TITLE_PX = 128;
 const SUB_PX = 96;
@@ -52,31 +65,32 @@ type Line = "title" | "sub";
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 const easeOut = (u: number) => 1 - (1 - clamp01(u)) ** 3;
 const span = (t: number, [a, b]: [number, number]) => (t - a) / (b - a);
-const peakOf = (line: Line) => (line === "title" ? 1 : SUB_PEAK);
-const levelOf = (t: number, line: Line) => (t < 0 ? 0 : Math.min(ramp(span(t, line === "title" ? TITLE_IN_S : SUB_IN_S)), 1 - ramp(span(t, TITLE_OUT_S))));
+const peakOf = (line: Line, tl: Timeline) => (line === "title" ? 1 : SUB_PEAK) * tl.gain;
+const levelOf = (t: number, up: number, line: Line, tl: Timeline) =>
+  t < 0 ? 0 : Math.min(ramp(span(t, line === "title" ? tl.titleIn : tl.subIn)), up < 0 ? 1 : 1 - ramp(span(up, tl.out)));
 
-/** A line's light at t seconds into the lights-up (0 dark, its peak at full). */
-export function lineLevel(t: number, line: Line): number {
-  return levelOf(t, line) * peakOf(line);
+/** A line's light (0 dark, its peak at full). */
+export function lineLevel(t: number, up: number, line: Line, tl: Timeline): number {
+  return levelOf(t, up, line, tl) * peakOf(line, tl);
 }
 /**
  * How much of that light is the sharp letter (the rest is the soft one), a letter `step` letters off the centre: its own
  * ramp, never more than the line's level, so each band's weight only ever moves as fast as one ramp (P44).
  */
-export function sharpAt(t: number, line: Line, step = 0): number {
-  const s = line === "title" ? ramp((t - SHARP_START_S - step * SHARP_STAGGER_S) / SHARP_S) : ramp(span(t, SUB_SHARP));
-  return Math.min(s, levelOf(t, line)) * peakOf(line);
+export function sharpAt(t: number, up: number, line: Line, tl: Timeline, step = 0): number {
+  const s = line === "title" ? ramp((t - tl.sharpStart - step * SHARP_STAGGER_S) / tl.sharpS) : ramp(span(t, tl.subSharp));
+  return Math.min(s, levelOf(t, up, line, tl)) * peakOf(line, tl);
 }
 /** Tracking (em) and the drift toward the eye (metres, negative is behind its rest). */
 export function trackAt(t: number): number {
   return REST_EM + (WIDE_EM - REST_EM) * (1 - easeOut(t / TRACK_S));
 }
-export function depthAt(t: number): number {
-  return -DEPTH_M * (1 - easeOut(t / DEPTH_S)) + DRIFT_M * ramp(span(t, TITLE_OUT_S));
+export function depthAt(t: number, up: number, tl: Timeline): number {
+  return -DEPTH_M * (1 - easeOut(t / DEPTH_S)) + (up < 0 ? 0 : DRIFT_M * ramp(span(up, tl.out)));
 }
-/** A texel's display value (the shader's own sum) from the line's level and sharp weight: sharp, soft and glow coverage 0-1. */
-export function texel(level: number, sharpW: number, sharp: number, soft: number, glow: number): number {
-  return PEAK_TEXT * ((level - sharpW) * soft + sharpW * sharp) + PEAK_GLOW * level * glow;
+/** A texel's display value (the shaders' own sums) from the line's level and sharp weight: sharp, soft, glow and streak coverage 0-1. */
+export function texel(level: number, sharpW: number, sharp: number, soft: number, glow: number, streak = 0): number {
+  return PEAK_TEXT * ((level - sharpW) * soft + sharpW * sharp) + PEAK_GLOW * level * glow + PEAK_STREAK * level * streak;
 }
 
 const VERT = /* glsl */ `
@@ -100,6 +114,31 @@ void main() {
   float b = uPeak.x * ((uLevel - uSharp) * soft + uSharp * sharp) + uPeak.y * uLevel * glow;
   gl_FragColor = vec4(uTint * b, 0.0);
 }`;
+// the anamorphic streak: a thin horizontal light through the title, falling off to nothing at its ends and edges
+const STREAK_FRAG = /* glsl */ `
+uniform float uLevel;
+uniform float uPeak;
+uniform vec3 uTint;
+varying vec2 vUv;
+void main() {
+  vec2 q = vUv * 2.0 - 1.0;
+  float along = pow(max(0.0, 1.0 - q.x * q.x), 3.0);
+  float across = exp(-9.0 * q.y * q.y) * (1.0 - q.y * q.y);
+  gl_FragColor = vec4(uTint * (uPeak * uLevel * along * across), 0.0);
+}`;
+
+
+/** Added onto the frame, over everything (the screen it gives way to too), the framebuffer's alpha (the passthrough's) kept. */
+const ADDED = {
+  transparent: true,
+  depthTest: false,
+  depthWrite: false,
+  blending: THREE.CustomBlending,
+  blendSrc: THREE.OneFactor,
+  blendDst: THREE.OneFactor,
+  blendSrcAlpha: THREE.ZeroFactor,
+  blendDstAlpha: THREE.OneFactor,
+} as const;
 
 interface Glyph {
   mesh: THREE.Mesh;
@@ -160,6 +199,8 @@ export class Opening {
   private readonly sub: Glyph[] = [];
   private readonly textures: THREE.Texture[] = [];
   private readonly lines = [new THREE.Group(), new THREE.Group()];
+  private readonly streak: THREE.Mesh;
+  private readonly streakLevel = { value: 0 };
 
   /** `seat`: the dolly seat's floor point and F's direction along the floor (seat.ts Seat.spot), as the screen's. */
   constructor(bundle: CourtBundle, seat: { floor: Vec3; forward: Vec3 }) {
@@ -175,17 +216,30 @@ export class Opening {
       .setPosition(pose.centre[0] + near * pose.normal[0], pose.centre[1] + near * pose.normal[1], pose.centre[2] + near * pose.normal[2]);
     this.group.visible = false;
     const [titleLine, subLine] = this.lines;
-    titleLine.position.y = 0.14;
-    subLine.position.y = -0.46;
+    titleLine.position.y = 0.16;
+    subLine.position.y = -0.62;
     this.group.add(titleLine, subLine);
 
     const letters = [...TITLE];
-    const t = atlas(letters, TITLE_PX, 600);
+    const t = atlas(letters, TITLE_PX, 700);
     const centre = (letters.length - 1) / 2;
     letters.forEach((_, i) => this.title.push(this.glyph(t, i, TITLE_EM_M, [1, 0.985, 0.96], Math.round(Math.abs(i - centre)), titleLine)));
     const s = atlas([SUBTITLE], SUB_PX, 500, SUB_TRACK_EM);
     this.sub.push(this.glyph(s, 0, SUB_EM_M, [0.82, 0.86, 0.93], 0, subLine));
     this.textures.push(t.texture, s.texture);
+    this.streak = new THREE.Mesh(
+      new THREE.PlaneGeometry(...STREAK_M),
+      new THREE.ShaderMaterial({
+        uniforms: { uLevel: this.streakLevel, uPeak: { value: PEAK_STREAK }, uTint: { value: new THREE.Color(0.62, 0.78, 1) } },
+        vertexShader: VERT,
+        fragmentShader: STREAK_FRAG,
+        ...ADDED,
+      }),
+    );
+    this.streak.name = "court-opening-streak";
+    this.streak.renderOrder = 1001;
+    this.streak.frustumCulled = false;
+    titleLine.add(this.streak);
   }
 
   private glyph(a: ReturnType<typeof atlas>, i: number, emM: number, tint: [number, number, number], step: number, line: THREE.Group): Glyph {
@@ -198,14 +252,7 @@ export class Opening {
       uniforms,
       vertexShader: VERT,
       fragmentShader: FRAG,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor,
-      blendSrcAlpha: THREE.ZeroFactor,
-      blendDstAlpha: THREE.OneFactor,
+      ...ADDED,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = `court-opening-${i}`;
@@ -215,11 +262,15 @@ export class Opening {
     return { mesh, uniforms, advance: a.advances[i], step };
   }
 
-  /** `t`: seconds into the lights-up (negative: the dark hold, nothing drawn); `roomP`: See my room's fade. */
-  update(t: number, roomP: number): void {
+  /**
+   * `t`: seconds since the title began (negative: not yet); `up`: seconds into the lights-up (negative: the dark hold);
+   * `early`: it began in the dark hold (EARLY), else with the lights-up (LATE); `roomP`: See my room's fade.
+   */
+  update(t: number, up: number, early: boolean, roomP: number): void {
+    const tl = early ? EARLY : LATE;
     const k = 1 - roomP;
-    const title = lineLevel(t, "title") * k;
-    const sub = lineLevel(t, "sub") * k;
+    const title = lineLevel(t, up, "title", tl) * k;
+    const sub = lineLevel(t, up, "sub", tl) * k;
     this.group.visible = title > 0 || sub > 0;
     if (!this.group.visible) return;
     // the letters close up about the line's centre
@@ -230,13 +281,14 @@ export class Opening {
       g.mesh.position.x = (x + g.advance / 2) * TITLE_EM_M;
       x += g.advance + track;
       g.uniforms.uLevel.value = title;
-      g.uniforms.uSharp.value = sharpAt(t, "title", g.step) * k;
+      g.uniforms.uSharp.value = sharpAt(t, up, "title", tl, g.step) * k;
     }
     for (const g of this.sub) {
       g.uniforms.uLevel.value = sub;
-      g.uniforms.uSharp.value = sharpAt(t, "sub") * k;
+      g.uniforms.uSharp.value = sharpAt(t, up, "sub", tl) * k;
     }
-    const z = depthAt(t);
+    this.streakLevel.value = title;
+    const z = depthAt(t, up, tl);
     this.lines[0].position.z = z;
     this.lines[1].position.z = z;
   }
@@ -252,5 +304,7 @@ export class Opening {
       (g.mesh.material as THREE.Material).dispose();
     }
     for (const t of this.textures) t.dispose();
+    this.streak.geometry.dispose();
+    (this.streak.material as THREE.Material).dispose();
   }
 }
