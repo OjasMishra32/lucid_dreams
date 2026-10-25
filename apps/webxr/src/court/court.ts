@@ -241,16 +241,18 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     screen.opacity = level;
     proxies.footage(0);
     courtWorld.filmed(0);
+    light.evenAt(1); // the floor lit evenly by the arena: no spotlight while the screen plays
   };
   /**
    * The Screen view off the watch: the footage on the 3D (the Courtside path) coming in as the screen goes, the screen
    * at `level`, and the footage floor at `floor`: up as the screen goes by default (F: all of it, pixel-exact).
    */
-  const screenAside = (level: number, floor = 1 - level) => {
+  const screenAside = (level: number, floor = 1 - level, even = level) => {
     if (!screen) return;
     screen.opacity = level;
     proxies.footage(1 - level);
     courtWorld.filmed(floor);
+    light.evenAt(even); // the floor's light: even while the screen is up, the pool only under the projected picture at F
   };
   /** The footage floor once the 3D has the court: clean wood over CLEAN_FLOOR_S from the open. */
   const cleanFloor = () => 1 - smooth(tClean / CLEAN_FLOOR_S);
@@ -554,7 +556,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "walking":
         feed(clock.state.frame);
         tClean += dt;
-        screenAside(0, cleanFloor()); // the Screen view: clean wood under the 3D, F's floor footage gone
+        screenAside(0, cleanFloor(), 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
         freeze.update(head, dt);
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
         if (tLight < HANDOFF_END) {
@@ -588,11 +590,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
             clock.resume();
             tBack = 0;
             go("resume");
-          } else screenAside(0, video.opacity); // the footage floor comes back with the picture over it
+          } else screenAside(0, video.opacity, 1 - video.opacity); // the footage floor and its light come back with the picture over it
         } else {
           light.set("return", tBack);
           tClean += dt;
-          screenAside(0, cleanFloor());
+          screenAside(0, cleanFloor(), 1 - cleanFloor());
         }
         break;
       }

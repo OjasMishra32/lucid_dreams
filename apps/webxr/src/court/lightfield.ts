@@ -384,6 +384,7 @@ export class LightField {
   private arrivalS = 1;
   private grow = -1e3; // seconds into the pool's growth (negative: not started)
   private evenT = 0; // seconds into the floor's ease to the arena's even light (even())
+  private evenManual: number | null = null; // the Screen view's own even floor (evenAt), else null
   /** The ease's own t when it ended, so "handoff" carries the floor dim on (0: no ease seen, the dims start at F). */
   private easeAtF = 0;
   /** An ease that began with the pool open waits this long (the pool gathering) before the floor dims. */
@@ -627,6 +628,15 @@ export class LightField {
     this.push();
   }
 
+  /**
+   * The Screen view sets the even floor itself in every phase (0 the pool, 1 the house spill): no spotlight on the floor
+   * while its screen plays, the pool only as the projected picture takes F; null hands it back to even().
+   */
+  evenAt(level: number | null): void {
+    this.evenManual = level === null ? null : Math.min(1, Math.max(0, level));
+    this.push();
+  }
+
   /** How long the even floor takes to come in (or go): the pool's level 1 to the house spill's, at LEVEL_S a unit. */
   evenS(): number {
     return changeS(1, perceived(HOUSE_SPILL) * this.crowdLevel * this.arrival, 1);
@@ -776,7 +786,7 @@ export class LightField {
     (this.uniforms.uLightLevel.value as Vec4).set(this.floorOut, this.crowdLevel, this.config.pair, this.arrival);
     (this.uniforms.uLightGrow.value as Vec4).x = this.grow;
     (this.uniforms.uLightGrow.value as Vec4).w = this.config.floor;
-    this.uniforms.uLightEven.value = this.evenT > 0 ? ramp(this.evenT / this.evenS()) : 0;
+    this.uniforms.uLightEven.value = this.evenManual ?? (this.evenT > 0 ? ramp(this.evenT / this.evenS()) : 0);
     const s = this.levels;
     s.crowd = this.crowd();
     s.stands = s.crowd;
