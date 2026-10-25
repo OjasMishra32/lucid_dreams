@@ -124,6 +124,9 @@ function ballMaterial(light: LightField, freeze: THREE.Texture | null, cam: { ce
   });
 }
 
+/** The baked shadow's opacity as 1 - (1 - a)^this: its 0.7 core under the feet to ~0.85, its soft spread ~1.6x. */
+const CONTACT_DEEPEN = 1.6;
+
 /** A floor map (shadow or reflection) on its FloorRect, just above the floor. */
 function floorQuad(rect: FloorMap["rect"], material: THREE.Material, order: number): THREE.Mesh {
   const [x0, z0, x1, z1] = rect;
@@ -145,7 +148,10 @@ const QUAD_VERTEX = /* glsl */ `
     gl_Position = projectionMatrix * viewMatrix * w;
   }`;
 
-/** Contact shadow: black at the map's alpha (straight alpha), darkening only; dithered against 8-bit banding. */
+/**
+ * Contact shadow: black at the map's alpha (straight alpha) deepened by CONTACT_DEEPEN (the clean wood after the
+ * hand-off has no filmed shadow left under the feet), darkening only; dithered against 8-bit banding.
+ */
 function shadowMaterial(map: THREE.Texture, k: { value: number }): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: { uMap: { value: map }, uK: k },
@@ -155,7 +161,7 @@ function shadowMaterial(map: THREE.Texture, k: { value: number }): THREE.ShaderM
       varying vec2 vUv;
       float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
       void main() {
-        float a = texture2D(uMap, vUv).a * uK;
+        float a = (1.0 - pow(1.0 - texture2D(uMap, vUv).a, ${CONTACT_DEEPEN.toFixed(2)})) * uK;
         a += (ign(gl_FragCoord.xy) - 0.5) / 255.0 * step(0.002, a);
         gl_FragColor = vec4(0.0, 0.0, 0.0, clamp(a, 0.0, 1.0));
       }`,
