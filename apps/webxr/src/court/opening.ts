@@ -15,15 +15,17 @@ export const TITLE = "COURT SIDE";
 export const SUBTITLE = "LUCID DREAMS · GATOR HACK V";
 /**
  * Two clocks: `t`, seconds since the title began, and `up`, seconds into the lights-up (negative in the dark hold). With
- * ?solo the title begins at Seat here, in the dark hold, which lasts at least the arrival's still second
- * (ARRIVAL_STILL_S), so it rises in the dark ("early"); after a hand-over the hold stays black (P27) and it begins with
- * the lights-up ("late": shorter fades, so a lower peak). Either way it is gone 0.1 s before the watch (ARRIVAL_S 3.8).
+ * ?solo ("early") the title is a stage of its own on the dark screen: it begins at Seat here, reveals, holds a beat and
+ * fades on t, and the lights-up (and with it the broadcast) waits for EARLY_STAGE_S as well as the still head, so it
+ * starts under the title's last light. After a hand-over ("late") the hold stays black (P27): the title begins with the
+ * lights-up, over the rising picture, with shorter fades (so a lower peak). Either way nothing is left at the watch.
  */
 export interface Timeline {
-  /** The title's fade in on t, the subtitle's, and both lines' fade out on up. */
+  /** The title's fade in on t, the subtitle's, and both lines' fade out (on t when outOnT, else on up). */
   titleIn: [number, number];
   subIn: [number, number];
   out: [number, number];
+  outOnT: boolean;
   /** The sharp letter takes over from the soft one over sharpS from sharpStart (+ SHARP_STAGGER_S a letter off centre). */
   sharpStart: number;
   sharpS: number;
@@ -31,8 +33,10 @@ export interface Timeline {
   /** The whole light's scale: the late fades are shorter, so its peak is lower (P44). */
   gain: number;
 }
-export const EARLY: Timeline = { titleIn: [0, 2.4], subIn: [0.7, 2.6], out: [1.6, 3.7], sharpStart: 0.05, sharpS: 2.05, subSharp: [0.8, 2.55], gain: 1 };
-export const LATE: Timeline = { titleIn: [0, 1.75], subIn: [0.5, 1.9], out: [1.95, 3.7], sharpStart: 0.05, sharpS: 1.6, subSharp: [0.65, 1.95], gain: 0.78 };
+export const EARLY: Timeline = { titleIn: [0, 2.2], subIn: [0.6, 2.5], out: [2.9, 5.0], outOnT: true, sharpStart: 0.05, sharpS: 2.05, subSharp: [0.7, 2.45], gain: 1 };
+export const LATE: Timeline = { titleIn: [0, 1.75], subIn: [0.5, 1.9], out: [1.95, 3.7], outOnT: false, sharpStart: 0.05, sharpS: 1.6, subSharp: [0.65, 1.95], gain: 0.78 };
+/** EARLY: the lights-up may start this long after Seat here (the title 70% through its fade out, the screen still dark). */
+export const EARLY_STAGE_S = 4.4;
 export const SHARP_STAGGER_S = 0.05;
 /** The letters close up from WIDE_EM to REST_EM of tracking over TRACK_S on t (an ease out). */
 export const TRACK_S = 3.4;
@@ -66,8 +70,13 @@ const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 const easeOut = (u: number) => 1 - (1 - clamp01(u)) ** 3;
 const span = (t: number, [a, b]: [number, number]) => (t - a) / (b - a);
 const peakOf = (line: Line, tl: Timeline) => (line === "title" ? 1 : SUB_PEAK) * tl.gain;
+/** How far through its fade out the title is (0 before it starts). */
+const outOf = (t: number, up: number, tl: Timeline) => {
+  const u = tl.outOnT ? t : up;
+  return u < 0 ? 0 : ramp(span(u, tl.out));
+};
 const levelOf = (t: number, up: number, line: Line, tl: Timeline) =>
-  t < 0 ? 0 : Math.min(ramp(span(t, line === "title" ? tl.titleIn : tl.subIn)), up < 0 ? 1 : 1 - ramp(span(up, tl.out)));
+  t < 0 ? 0 : Math.min(ramp(span(t, line === "title" ? tl.titleIn : tl.subIn)), 1 - outOf(t, up, tl));
 
 /** A line's light (0 dark, its peak at full). */
 export function lineLevel(t: number, up: number, line: Line, tl: Timeline): number {
@@ -86,7 +95,7 @@ export function trackAt(t: number): number {
   return REST_EM + (WIDE_EM - REST_EM) * (1 - easeOut(t / TRACK_S));
 }
 export function depthAt(t: number, up: number, tl: Timeline): number {
-  return -DEPTH_M * (1 - easeOut(t / DEPTH_S)) + (up < 0 ? 0 : DRIFT_M * ramp(span(up, tl.out)));
+  return -DEPTH_M * (1 - easeOut(t / DEPTH_S)) + DRIFT_M * outOf(t, up, tl);
 }
 /** A texel's display value (the shaders' own sums) from the line's level and sharp weight: sharp, soft, glow and streak coverage 0-1. */
 export function texel(level: number, sharpW: number, sharp: number, soft: number, glow: number, streak = 0): number {
@@ -291,6 +300,11 @@ export class Opening {
     const z = depthAt(t, up, tl);
     this.lines[0].position.z = z;
     this.lines[1].position.z = z;
+  }
+
+  /** Whether the lights-up may start, `t` seconds after the title began: EARLY waits for its stage. */
+  ready(t: number, early: boolean): boolean {
+    return !early || t >= EARLY_STAGE_S;
   }
 
   /** Nothing drawn (every phase but the arrival). */

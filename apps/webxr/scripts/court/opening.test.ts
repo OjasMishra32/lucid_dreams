@@ -1,9 +1,9 @@
-// opening.ts: the title over the arrival (from Seat here with ?solo, else the lights-up). Run: npm run test:court
+// opening.ts: the title in the arrival (its own stage on the dark screen with ?solo, else over the lights-up). Run: npm run test:court
 import "./ts-resolve.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { lineLevel, sharpAt, trackAt, depthAt, texel, EARLY, LATE, TITLE, REST_EM, WIDE_EM } = await import("../../src/court/opening.ts");
+const { lineLevel, sharpAt, trackAt, depthAt, texel, EARLY, LATE, EARLY_STAGE_S, TITLE, REST_EM, WIDE_EM } = await import("../../src/court/opening.ts");
 const { ARRIVAL_S } = await import("../../src/court/lightfield.ts");
 const { ARRIVAL_STILL_S } = await import("../../src/court/seatmath.ts");
 
@@ -20,14 +20,18 @@ const values = (t: number, up: number, tl: Timeline): number[] => {
     }
   return out;
 };
-/** The arrival's frames from the title's start: `hold` seconds of dark hold, then the lights-up to past the watch. */
-const run = (hz: number, hold: number, tl: Timeline, f: (t: number, up: number) => void) => {
-  for (let n = -1; n <= Math.ceil((hold + ARRIVAL_S) * hz) + 2; n++) f(n / hz, n / hz - hold);
+/**
+ * The arrival's frames from the title's start: the still head's trigger `still` seconds after Seat here, the lights-up
+ * from then (late) or once the title's stage is through too (early), to past the watch.
+ */
+const run = (hz: number, still: number, tl: Timeline, f: (t: number, up: number) => void) => {
+  const start = tl === EARLY ? Math.max(still, EARLY_STAGE_S) : 0;
+  for (let n = -1; n <= Math.ceil((start + ARRIVAL_S) * hz) + 2; n++) f(n / hz, n / hz - start);
 };
 const cases: [string, Timeline, number][] = [
-  ["early, the shortest hold", EARLY, ARRIVAL_STILL_S],
-  ["early, a 1.3 s hold", EARLY, 1.3],
-  ["early, a 4 s hold", EARLY, 4],
+  ["early, the shortest still", EARLY, ARRIVAL_STILL_S],
+  ["early, a 4.5 s wait for a still head", EARLY, 4.5],
+  ["early, an 8 s wait", EARLY, 8],
   ["late (the hand-over: no title in the hold)", LATE, 0],
 ];
 
@@ -50,21 +54,25 @@ test("nothing before it begins, gone before the watch, and bright in between", (
     let peak = 0;
     run(72, hold, tl, (t, up) => {
       const v = values(t, up, tl);
-      if (t <= 0 || up >= ARRIVAL_S - 0.1) assert.ok(v.every((x) => x === 0), `${name}: lit at t ${t.toFixed(2)}, up ${up.toFixed(2)}`);
+      const gone = tl === EARLY ? t >= EARLY.out[1] : up >= ARRIVAL_S - 0.1;
+      if (t <= 0 || gone) assert.ok(v.every((x) => x === 0), `${name}: lit at t ${t.toFixed(2)}, up ${up.toFixed(2)}`);
       peak = Math.max(peak, ...v);
     });
     assert.ok(peak > (tl === EARLY ? 0.5 : 0.39), `${name}: peak ${peak.toFixed(3)}`);
   }
-  // early: full, and every letter sharp, before the fade out at the shortest hold
-  const t = ARRIVAL_STILL_S + EARLY.out[0];
-  assert.ok(lineLevel(t, EARLY.out[0], "title", EARLY) > 0.999);
-  for (let step = 0; step <= steps; step++) assert.ok(sharpAt(t, EARLY.out[0], "title", EARLY, step) > 0.999 && sharpAt(t, EARLY.out[0], "sub", EARLY) > 0.69);
+  // early: full, and every letter sharp, for the beat before the fade out, all in the dark hold
+  assert.ok(EARLY.out[0] - EARLY.titleIn[1] >= 0.5 && EARLY_STAGE_S > EARLY.out[0], "a beat at full, on the dark screen");
+  const t = EARLY.out[0];
+  assert.ok(lineLevel(t, -1, "title", EARLY) > 0.999);
+  for (let step = 0; step <= steps; step++) assert.ok(sharpAt(t, -1, "title", EARLY, step) > 0.999 && sharpAt(t, -1, "sub", EARLY) > 0.69);
+  // the lights-up starts under the title's last light: at most a quarter of it left
+  assert.ok(lineLevel(EARLY_STAGE_S, 0, "title", EARLY) < 0.3 && lineLevel(EARLY_STAGE_S, 0, "title", EARLY) > 0);
 });
 
 test("the letters close up and the line drifts in to rest", () => {
   assert.ok(Math.abs(trackAt(0) - WIDE_EM) < 1e-9 && Math.abs(trackAt(10) - REST_EM) < 1e-9);
   for (let t = 0; t < 3.8; t += 0.05) assert.ok(trackAt(t + 0.05) <= trackAt(t) + 1e-12);
   assert.ok(depthAt(0, -1, EARLY) < -1, "starts behind its rest");
-  assert.ok(Math.abs(depthAt(2.6, 1.6, EARLY)) < 0.05, "at rest at full");
+  assert.ok(Math.abs(depthAt(EARLY.out[0], -1, EARLY)) < 0.05, "at rest at full");
   assert.ok(sharpAt(0.8, -1, "title", EARLY, 0) > sharpAt(0.8, -1, "title", EARLY, 4), "the centre sharpens first");
 });
