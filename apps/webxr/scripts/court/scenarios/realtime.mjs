@@ -55,11 +55,15 @@ export default async function realtime(ctx) {
   // ---- the watch: the footage plays, moving, keeping up, and no 3D
   const start = await ctx.until("watching", 72 * 40);
   ctx.check("realtime: the watch starts after Enter and the arrival", start.at(-1)?.phase === "watching", `${start.at(-1)?.phase} after ${start.length} frames`);
-  const w1 = await watchFor(3);
+  // the watch proper: pass 1 and pass 2, up to the ease ?solo's own step starts (it can fall inside 8 s of wall time)
+  const easing = (x) => x.segment === "ease" || x.segment === "freeze";
+  const w1 = await watchFor(3, easing);
   await ctx.save("rt-01-watch-3s");
-  const w2 = await watchFor(5);
+  const w2 = easing(w1.at(-1)) ? [] : await watchFor(5, easing);
   await ctx.save("rt-02-watch-8s");
-  for (const [name, w] of [["first 3 s", w1], ["3-8 s", w2]]) {
+  for (const [name, all] of [["first 3 s", w1], ["3-8 s", w2]]) {
+    const w = all.filter((x) => !easing(x));
+    if (w.length < 2) continue;
     const p = playing(w);
     report[name] = p;
     ctx.check(`realtime: the watch (${name}) shows the footage moving`, p.perS >= MOVING_PER_S, `${p.shown} different show frames in ${p.seconds.toFixed(1)} s (${p.perS.toFixed(1)}/s)`);
@@ -71,11 +75,12 @@ export default async function realtime(ctx) {
     }
   }
 
-  // ---- Step into the court early in pass 2: the ease lands on F, F's own pixels hold, then the 3D takes over
-  const toPass2 = await watchFor(20, (x) => x.segment === "pass2" && x.frame >= segments.pass2[0] + 24);
-  ctx.check("realtime: pass 2 is reached", toPass2.at(-1)?.segment === "pass2", `segment ${toPass2.at(-1)?.segment}, show frame ${toPass2.at(-1)?.frame}`);
-  // no press: ?solo steps into the court by itself (court.ts AUTO_STEP_FRAMES); the checks below see it reach the 3D
-  const ease = [];
+  // ---- no press: ?solo steps into the court by itself in pass 2 (court.ts AUTO_STEP_FRAMES); the ease lands on F, F's
+  // own pixels hold, then the 3D takes over
+  const last = (w2.length ? w2 : w1).at(-1);
+  const toEase = easing(last) ? [last] : await watchFor(40, easing);
+  ctx.check("realtime: ?solo steps into the court by itself (the ease starts with no press)", toEase.at(-1)?.segment === "ease", `segment ${toEase.at(-1)?.segment}, show frame ${toEase.at(-1)?.frame}`);
+  const ease = toEase.at(-1)?.segment === "ease" ? [toEase.at(-1)] : [];
   let savedBefore = false;
   let savedF = false;
   for (let i = 0; i < 72 * 20; i++) {
