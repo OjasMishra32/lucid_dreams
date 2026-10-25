@@ -18,6 +18,7 @@ const FPS = 15; // frames per second Gemini sees: enough for a jump shot's relea
 const TEACH_REQUEST = /\b(teach me|show me how|help me learn|break it down|coach me)\b/;
 const run = promisify(execFile);
 const GEMMA_FRAME_COUNT = 8;
+const OLLAMA_URL = (process.env.OLLAMA_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
 let discoveredPlanModels: Promise<string[]> | null = null;
 
 /** Keep a stalled provider request from blocking a job or a resumable QA batch indefinitely. */
@@ -150,6 +151,7 @@ export async function writeExperience(
   p: Plan,
   debug: { raw?: (json: Record<string, unknown>) => void } = {},
 ): Promise<Omit<Experience, "createdAt">> {
+  if (process.env.GEMMA_MODEL) return writeOllamaGemmaExperience(p, debug);
   const d = p.durationS.toFixed(2);
   const parts: object[] = [];
   let source: Experience["source"] = "intent";
@@ -201,6 +203,55 @@ export async function writeExperience(
   }
   debug.raw?.(raw);
   return { ...experience, source, model: result.model };
+}
+
+/** Local, open Gemma path for the MLH prize. Ollama receives only the selected local frames. */
+async function writeOllamaGemmaExperience(
+  p: Plan,
+  debug: { raw?: (json: Record<string, unknown>) => void },
+): Promise<Omit<Experience, "createdAt">> {
+  const d = p.durationS.toFixed(2);
+  let source: Experience["source"] = "intent";
+  let images: string[] = [];
+  if (p.video) {
+    const frames = await videoFrames(p.video.path, p.video.offsetS, p.durationS) as { inlineData: { data: string } }[];
+    images = frames.map((frame) => frame.inlineData.data);
+    source = p.video.orbit ? "preview" : "clip";
+  } else if (p.photo) {
+    images = [(await imagePart(p.photo.path, p.photo.mime) as { inlineData: { data: string } }).inlineData.data];
+    source = "photo";
+  }
+  const media = p.video
+    ? `These ${images.length} frames are evenly spaced through the ${d}-second clip. Frame ${images.length} is near ${d} seconds; use their order for step timing.`
+    : p.photo ? "This is one photo, so they cannot perform a move: choose companion, watch, or chess for an avatar only."
+      : "No image is attached: plan honestly from the sentence alone.";
+  const who = p.kind === "avatar" ? "This is an avatar from a photo; chess is allowed." : "This is a replay of recorded motion; chess is not allowed.";
+  const explicitLesson = TEACH_REQUEST.test(p.intent ?? "");
+  const tennisLesson = /tennis\s+serve/i.test(p.intent ?? "");
+  const prompt = `Dream name: ${p.name}\nUser intent: ${p.intent ?? "No stated intent."}\n${who}\n${media}\n` +
+    (explicitLesson
+      ? `This is an explicit lesson request. You MUST set mode to "teach" and include 2-6 ordered steps, each with numeric start/end inside 0-${d}, title, and tip. Do not return watch. For example: {"mode":"teach","steps":[{"start":0,"end":${(p.durationS / 2).toFixed(1)},"title":"First move","tip":"Watch the first motion."},{"start":${(p.durationS / 2).toFixed(1)},"end":${d},"title":"Finish","tip":"Complete the motion."}]}. `
+      : `Only set mode to teach for an explicit lesson request; ordinary watching is facing unless the user says they want to follow along. `) +
+    `${tennisLesson ? `For this tennis serve, use mode "teach", place "ahead", no environment, and two timed serve steps. ` : ""}Return exactly one JSON object with mode, title, summary, place, and optional category, steps, environment, objects, and strength.`;
+  const ask = async (repair = false) => {
+    const request = (structured: boolean) => fetch(`${OLLAMA_URL}/api/chat`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: process.env.GEMMA_MODEL, stream: false, ...(structured ? { format: SCHEMA } : {}),
+        messages: [{ role: "system", content: SYSTEM }, { role: "user", content: repair ? `${prompt}\nReturn a complete runnable teach plan only when supported; never invent steps.` : prompt, images }] }),
+    });
+    let response = await request(true);
+    // Gemma 4's MLX runner currently advertises vision but not Ollama schema mode.
+    // Keep JSON-only prompting as a compatible local fallback; clean() remains the contract gate.
+    if (response.status === 501) response = await request(false);
+    if (!response.ok) throw new Error(`Local Gemma failed (${response.status}): ${await response.text()}`);
+    const body = await response.json() as { message?: { content?: string } };
+    return parseGemmaJson(body.message?.content ?? "");
+  };
+  let raw = await ask();
+  let experience = clean(raw, p);
+  if (shouldRepairTeachPlan(p, experience)) { raw = await ask(true); experience = clean(raw, p); }
+  debug.raw?.(raw);
+  return { ...experience, source, model: process.env.GEMMA_MODEL! };
 }
 
 /** A direct env override is useful for QA; otherwise choose the newest instruction-tuned Gemma the key can list. */
@@ -539,12 +590,14 @@ export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience,
 
   let environment = (ENVIRONMENTS as readonly string[]).includes(str(raw.environment)) ? (str(raw.environment) as Environment) : undefined;
   const named = NAMED_PLACES.find(([re]) => re.test(said))?.[1];
+  const activityHome = agreed((a) => a.home);
   if (named) environment = named;
+  else if (environment === "room" && activityHome && activityHome !== "room") environment = activityHome;
   else if (!environment && (mode === "play" || mode === "companion")) environment = "room";
   else if (!environment) {
     // An activity with no home says "room" out loud: left out, the players pick a place from the sentence's words
     // themselves (apps/webxr/src/places.ts, DreamPlaces.cs), and "fold this paper box" would open in the boxing ring.
-    const home = agreed((a) => a.home);
+    const home = activityHome;
     environment = home === null ? "room" : home;
   }
 
@@ -558,6 +611,7 @@ export function clean(input: Record<string, unknown>, p: Plan): Omit<Experience,
     if (BASKETBALL.test(text)) objects.push("basketball", ...(SHOOTING.test(text) ? ["hoop"] : []));
   }
   objects.push(...(Array.isArray(raw.objects) ? raw.objects : []).map(noun).filter(Boolean));
+  if (objects.includes("piano")) objects.push("bench");
 
   const fromSentence = STRENGTH_WORDS.find(([re]) => re.test(said))?.[1]; // null: not plain, so the model's
   const strength = fromSentence ?? ((STRENGTHS as readonly string[]).includes(str(raw.strength)) ? (str(raw.strength) as Strength) : "club");

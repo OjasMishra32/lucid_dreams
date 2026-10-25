@@ -90,10 +90,9 @@ async function main() {
     return 1;
   }
 
-  if (!process.env.GEMINI_API_KEY) {
+  if (!process.env.GEMINI_API_KEY && !process.env.GEMMA_MODEL) {
     console.log(
-      "Gemma wasn't asked: this needs GEMINI_API_KEY (from https://aistudio.google.com/apikey) in apps/web/.env.local " +
-        "or the environment. With it, every sentence is planned and checked.",
+      "A planner wasn't asked: set GEMMA_MODEL for local Ollama Gemma, or GEMINI_API_KEY for the bridge Gemini path.",
     );
     return 0;
   }

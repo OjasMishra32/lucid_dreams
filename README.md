@@ -29,7 +29,7 @@ Sources and licenses for every person shown are in [demo/credits.md](demo/credit
  a video or photo + one sentence
         │
         ▼
- web app (upload, 5-second window, consent) ──► Gemini writes the plan: experience.json
+ web app (upload, 5-second window, consent) ──► Gemma 4 E4B via Ollama writes the plan: experience.json
         │
         ▼
  HiPerGator (12 GPUs per person)
@@ -44,7 +44,7 @@ Sources and licenses for every person shown are in [demo/credits.md](demo/credit
 ```
 
 1. **Ask.** The [web app](apps/web) takes a clip or photo and your sentence, checks the clip in the browser (one
-   person, whole body), and lets you pick the five seconds that matter. Gemini watches the move and writes the plan,
+   person, whole body), and lets you pick the five seconds that matter. Gemma 4 E4B via Ollama reads the selected local frames and writes the plan,
    `experience.json`: the steps of a lesson, where the person stands, the place around them.
 2. **See all the way round.** [4DAnyone](https://github.com/ant-research/4DAnyone) turns one casual video into
    consistent 360-degree multi-view video, so a single phone clip becomes enough to rebuild a whole person.
@@ -103,7 +103,7 @@ Each app has its own README with details.
 ```bash
 npm --prefix apps/web install
 npm --prefix apps/web run dev            # mock jobs and the sample dream; open http://<this Mac>:5170
-npm --prefix apps/web run demo           # real HiPerGator jobs (Ojasva's Mac); Gemini needs GEMINI_API_KEY in apps/web/.env.local
+npm --prefix apps/web run demo           # real HiPerGator jobs (Ojasva's Mac); Gemini features need GEMINI_API_KEY in apps/web/.env.local
 ```
 
 **WebXR viewer** ([apps/webxr](apps/webxr)), port 5180, in the Quest browser or on a laptop:

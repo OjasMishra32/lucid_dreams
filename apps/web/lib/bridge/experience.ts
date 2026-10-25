@@ -34,7 +34,8 @@ type Queue = {
 const g = globalThis as unknown as { __lucidExperiences?: Queue; __lucidExperienceTimer?: ReturnType<typeof setInterval> };
 const state: Queue = (g.__lucidExperiences ??= { queue: [], working: null, failed: new Map(), upgradeTried: new Map() });
 
-export const GEMINI_ON = Boolean(process.env.GEMINI_API_KEY);
+// Plans can be written either by Gemini on the bridge or by local Ollama Gemma.
+export const GEMINI_ON = Boolean(process.env.GEMINI_API_KEY || process.env.GEMMA_MODEL);
 
 // Dreams the autopilot brings home get their plan within a minute, whether or not anyone opens a page.
 if (GEMINI_ON && !g.__lucidExperienceTimer) {
