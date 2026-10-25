@@ -22,6 +22,9 @@ const sleep = async (ms: number) => {
   while (realNow() < until) await tick();
 };
 
+// React's development mode runs an effect twice (mount, unmount, mount): only one render may own the scene's frames
+let rendering = false;
+
 function virtualClock() {
   let now = performance.now();
   const base = Date.now() - now;
@@ -79,6 +82,12 @@ export default function Film({ data }: { data: FilmData }) {
     let stop = false;
 
     (async () => {
+      if (capture) {
+        // the throwaway first run is torn down synchronously: after one tick only the real one is still standing
+        await tick();
+        if (stop || rendering) return;
+        rendering = true;
+      }
       await scene.prepare?.(s);
       const host = glRef.current!;
       if (scene.mount) dispose = await scene.mount(host, s);
@@ -150,6 +159,7 @@ export default function Film({ data }: { data: FilmData }) {
         await post(`i=${i}`, blob);
         if (i % 30 === 0) setStatus(`${scene.key} · rendering ${i} / ${n}`);
       }
+      if (stop) return; // torn down mid-render: leave the frames to the render that replaced this one
       const done = await post(`do=done&fps=${fps}`);
       setStatus(done.ok ? `${scene.key} · done · ${done.out}` : `${scene.key} · encode failed`);
       document.title = done.ok ? `done ${scene.key}` : `failed ${scene.key}`;

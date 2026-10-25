@@ -13,6 +13,7 @@ export interface FilmData {
   seen: number | null; // her seen fraction
   count: number | null; // her Gaussians per frame
   cameras: unknown[]; // 4DAnyone's rig for her clip
+  joints: number[][] | null; // GVHMR's 22 body joints for her frame
   clip: string; // her source video
   overdraw: string; // the frame-budget heat maps
   vishal: {
@@ -102,6 +103,31 @@ function round(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
 }
 
 const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
+
+type Run = { s: string; italic?: boolean; sub?: boolean; sup?: boolean; serif?: boolean };
+/** A line of math set by hand: italic letters in a serif, operators in SF, sub- and superscripts small. */
+function formula(g: CanvasRenderingContext2D, runs: Run[], x0: number, y: number, k: number, size = 36, align: "left" | "center" = "left") {
+  if (k <= 0.001) return;
+  g.save();
+  g.globalAlpha = k;
+  g.filter = k < 0.999 ? `blur(${((1 - k) * 10).toFixed(2)}px)` : "none";
+  g.fillStyle = INK;
+  g.textBaseline = "alphabetic";
+  const fontOf = (r: Run) => `${r.italic ? "italic " : ""}400 ${r.sub || r.sup ? size * 0.62 : size}px ${r.serif ? SERIF : FONT}`;
+  let width = 0;
+  for (const r of runs) {
+    g.font = fontOf(r);
+    width += g.measureText(r.s).width + (r.sub || r.sup ? 2 : 0);
+  }
+  let x = align === "center" ? x0 - width / 2 : x0;
+  const dy = (1 - k) * 18;
+  for (const r of runs) {
+    g.font = fontOf(r);
+    g.fillText(r.s, x, y + dy + (r.sub ? size * 0.22 : r.sup ? -size * 0.42 : 0));
+    x += g.measureText(r.s).width + (r.sub || r.sup ? 2 : 0);
+  }
+  g.restore();
+}
 
 /** The fit's loss, typeset by hand: italic letters in a serif, norms as bars, subscripts small and low. */
 function math(g: CanvasRenderingContext2D, x0: number, y: number, k: number) {
@@ -363,6 +389,65 @@ const avatar: Scene = {
   },
 };
 
+// she comes apart into her Gaussians and back together (the home page's own exploded view)
+const apart: Scene = {
+  key: "apart",
+  dur: 6.5,
+  async mount(host, s) {
+    if (!s.data.frame) return () => {};
+    const { mountStory } = await import("@/lib/three/story");
+    return mountStory(host, { frame: s.data.frame, reality: null, cameras: [] }, {
+      // the story's exploded view: apart from 0.30 to 0.37, whole again by 0.46
+      progress: () => (s.t < 2.6 ? lerp(0.25, 0.37, ramp(s.t, 0.4, 2.4)) : lerp(0.37, 0.46, ramp(s.t, 3.8, 6.0))),
+      loading: () => {},
+      ready: () => {},
+      failed: () => {},
+      hud: () => {},
+    });
+  },
+  preroll: { t: 0, seconds: 3, waitMs: 400 },
+  draw(g, t, s) {
+    const n = s.data.count ?? 289466;
+    rise(g, fmt(n), 120, 230, span(t, 1.2, 2.0, 5.2, 5.9), { size: 150, weight: 700, track: -5 });
+    rise(g, "3D Gaussians, in one frame of her", 126, 290, span(t, 1.5, 2.3, 5.2, 5.9), { size: 34, weight: 500, color: INK2 });
+  },
+};
+
+// what she's made of: splats, each Gaussian as its true ellipse, only the centres, and the skeleton inside
+const anatomy: Scene = {
+  key: "anatomy",
+  dur: 13,
+  async mount(host, s) {
+    if (!s.data.frame) return () => {};
+    const { mountAnatomy } = await import("@/lib/three/anatomy");
+    const modeAt = (t: number) => (t < 2.2 ? "splats" : t < 6.0 ? "ellipsoids" : t < 8.8 ? "centres" : "skeleton");
+    return mountAnatomy(host, { frame: s.data.frame, reality: s.data.reality, cameras: [], joints: s.data.joints }, {
+      mode: () => modeAt(s.t),
+      loading: () => {},
+      ready: () => {},
+      failed: () => {},
+    });
+  },
+  preroll: { t: 0, seconds: 2, waitMs: 1500 },
+  draw(g, t) {
+    rise(g, "What she's made of.", 120, 190, span(t, 0.2, 1.0, 1.9, 2.4), { size: 72, track: -1.5 });
+    rise(g, "Every Gaussian, drawn to one σ.", 120, 190, span(t, 2.5, 3.3, 5.6, 6.1), { size: 62, track: -1.2 });
+    formula(g, [
+      { s: "G", italic: true, serif: true }, { s: "(" }, { s: "x", italic: true, serif: true }, { s: ") = exp(−½ (" },
+      { s: "x", italic: true, serif: true }, { s: " − " }, { s: "μ", italic: true, serif: true }, { s: ")" },
+      { s: "⊤", sup: true }, { s: " Σ", serif: true }, { s: "−1", sup: true }, { s: " (" }, { s: "x", italic: true, serif: true },
+      { s: " − " }, { s: "μ", italic: true, serif: true }, { s: "))" },
+    ], 120, 270, span(t, 3.0, 3.8, 5.6, 6.1), 38);
+    formula(g, [
+      { s: "Σ = " }, { s: "R S S", italic: true, serif: true }, { s: "⊤", sup: true }, { s: " R", italic: true, serif: true }, { s: "⊤", sup: true },
+      { s: "   position, rotation, scale, opacity, color" },
+    ], 120, 330, span(t, 3.6, 4.4, 5.6, 6.1), 30);
+    rise(g, "Only their centres.", 120, 190, span(t, 6.3, 7.1, 8.4, 8.9), { size: 62, track: -1.2 });
+    rise(g, "The body inside: 22 joints, from the same video.", 120, 190, ramp(t, 9.1, 9.9), { size: 56, track: -1.0 });
+    rise(g, "GVHMR body fit · SMPL-X", 124, 246, ramp(t, 9.6, 10.4), { size: 28, weight: 500, color: INK3 });
+  },
+};
+
 // a chess legend, full frame: the body LHM++ built from public photos pulling together out of its own Gaussians
 function legend(key: string, file: string, name: string, from: string[], count: string): Scene {
   return {
@@ -599,4 +684,4 @@ const end: Scene = {
   },
 };
 
-export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end];
+export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy];
