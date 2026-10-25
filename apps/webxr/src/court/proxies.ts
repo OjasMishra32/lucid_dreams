@@ -716,6 +716,8 @@ export class Proxies {
   /** The bundle has a surround, and it is shown (`surround(on)`, dev: the e2e's before/after). */
   private readonly hasSurround: boolean;
   private surroundOn: boolean;
+  /** The footage drawn on the 3D at all (screen.ts: off while the Screen view's cinema screen plays the watch). */
+  private footageOn = true;
   /** The show frame last projected (-1 none). */
   private projected = -1;
   private readonly cameraF: PinholeCamera;
@@ -943,7 +945,18 @@ export class Proxies {
   private applySurround(): void {
     this.shared.uCinema.value = this.surroundOn ? CINEMA_SURROUND : CINEMA;
     this.shared.uDimAlpha.value = this.surroundOn ? 1 : 0;
-    if (this.far) this.far.visible = this.surroundOn;
+    if (this.far) this.far.visible = this.surroundOn && this.footageOn;
+  }
+
+  /**
+   * The footage on the 3D (the plates on both layers, the cards, the far image) shown or not; the cinema mask's shell
+   * stays (it dims the arena). The Screen view hides it while its screen plays the watch (screen.ts).
+   */
+  footage(on: boolean): void {
+    if (on === this.footageOn) return;
+    this.footageOn = on;
+    this.applySurround();
+    this.updateVisibility();
   }
 
   /** The Reality check: tint the inpainted plate behind the players and the filled holes. */
@@ -996,9 +1009,10 @@ export class Proxies {
   private updateVisibility(): void {
     if (!this.loaded) return;
     const show = layerVisibility(this.video.opacity, this.video.maskLevel);
-    for (const m of this.videoPlates) m.visible = show.plates;
-    for (const s of this.slots) s.mesh.visible = s.used && show.cards;
-    for (const m of this.backgroundPlates) m.visible = show.background;
+    const f = this.footageOn;
+    for (const m of this.videoPlates) m.visible = show.plates && (f || m.name === "proxy-cinema-mask");
+    for (const s of this.slots) s.mesh.visible = s.used && show.cards && f;
+    for (const m of this.backgroundPlates) m.visible = show.background && f;
   }
 
   private warnOnce(msg: string): void {
@@ -1102,7 +1116,7 @@ export class Proxies {
     mesh.name = "proxy-far";
     mesh.renderOrder = ORDER_BACKGROUND - 2;
     mesh.frustumCulled = false;
-    mesh.visible = this.surroundOn;
+    mesh.visible = this.surroundOn && this.footageOn;
     this.group.add(mesh);
     return mesh;
   }

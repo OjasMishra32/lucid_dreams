@@ -25,6 +25,7 @@ import { loads, megabytes } from "./loading";
 import { Probe, viewOf } from "./probe";
 import { judgeRate, wantRate, type XrRate } from "./rate";
 import { BUILT as PROXIES_BUILT, Proxies, layerVisibility } from "./proxies";
+import { CinemaScreen, SCREEN_EASE_S, SCREEN_FADE_S, viewMode } from "./screen";
 import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
 import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
@@ -131,6 +132,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let tLight = 0; // seconds from F in real time: the light's, which a rushed fade never rushes (handoff's lightT, P44)
   let fed = -1; // the show frame this display frame handed the video and the proxies (-1 none)
   let tBack = 0; // seconds from the sit (the hand-back's clock)
+  let tScreen = -1; // the Screen view: seconds into the screen's dissolve back in after the hand-back; -1 none
   let inRoom = false;
   let roomP = 0;
   let reality = false;
@@ -210,6 +212,27 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const seatLock = new PersistentLock(renderer, world); // persistent anchors, and the session's bounded-floor for Seat
   const seat = new Seat(court, frames, world, seatLock, params.has("seat") ? Number(params.get("seat")) : undefined);
   world.add(proxies.group);
+  // the view: the cinema screen for the watch (default), or ?view=courtside, the footage projected into the arena (V1.2)
+  const screen = viewMode(params.get("view")) === "screen" ? new CinemaScreen(bundle, video.regions.live, seat.spot) : null;
+  if (screen) world.add(screen.mesh);
+  /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
+  const screenWatch = (level: number) => {
+    if (!screen) return;
+    screen.opacity = level;
+    proxies.footage(false);
+  };
+  /** The Screen view off the watch: the footage on the 3D (the Courtside path), the screen at `level`. */
+  const screenAside = (level: number) => {
+    if (!screen) return;
+    screen.opacity = level;
+    proxies.footage(true);
+  };
+  // the setup page (before Seat here) is the arena as the projection shows it; the screen comes up with the arrival
+  screenAside(0);
+  const smooth = (u: number) => {
+    const x = Math.min(1, Math.max(0, u));
+    return x * x * x * (x * (6 * x - 15) + 10);
+  };
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
   // what draws a ball this frame (the e2e's ball scenario): the ball's card on the video layer, the 3D's own sphere,
   // the holder's splats (freeze.ballInBody); and the holder's card, which the ball's goes with
@@ -336,6 +359,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     tBack = 0;
     rushed = false;
     restored = false;
+    tScreen = -1;
+    screenWatch(1);
     clock.restart();
   };
   // Replay, on the menu in every phase after the arrival (3.6): the watch from pass 1
@@ -350,6 +375,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (setup) return;
     restart();
     feed(court.video.segments.pass1[0]);
+    screenAside(0);
     setup = true;
     lightsUp = -1;
     go("arrival");
@@ -379,6 +405,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     // See my room, in every phase
     roomP = Math.min(1, Math.max(0, roomP + (inRoom ? dt / ROOM_OUT_S : -dt / ROOM_BACK_S)));
     courtWorld.room(roomP);
+    screen?.room(roomP);
     sound.room(roomP);
     vrHands.fade(roomP);
     courtWorld.edge(seat.boundsDistance(head));
@@ -400,6 +427,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         const first = court.video.segments.pass1[0];
         feed(first);
         video.wipe(1 - p);
+        screenWatch(p);
         if (lightsUp >= LIGHTS_UP_S) {
           light.set("watch", 0);
           video.wipe(0);
@@ -413,6 +441,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         if (!(inRoom && phase !== "resume")) clockState = clock.update(dt); // the clock holds in the room (3.6)
         const s = clock.state;
         feed(s.frame);
+        screenWatch(1);
         // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)
         courtWorld.frame(video.stats.onScreen >= 0 ? video.stats.onScreen : s.frame);
         video.prime(s.nextJump);
@@ -424,6 +453,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           light.set("ease", ease ? ease.seconds + tF : 0);
           sound.timeStop(Math.max(0, Math.min(1, hush)));
           if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
+          // the Screen view: over the ease's last SCREEN_EASE_S (show seconds, slowing into F) the screen dissolves
+          // into the same picture projected into the arena, so F lands on the Courtside path, pixel-exact from the seat
+          if (screen && tF >= -SCREEN_EASE_S) screenAside(1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S));
         }
         if (phase === "easing" && s.segment === "freeze") {
           tF = 0;
@@ -440,6 +472,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       }
       case "handoff": {
         feed(clock.state.frame);
+        screenAside(0);
         const [, fadeEnd] = BEATS.videoFades;
         // rushed: whatever is left of the fade plays out in RISE_FADE_S, at the rate latched at the rise (P10); the
         // light keeps the unrushed time
@@ -456,6 +489,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "open":
       case "walking":
         feed(clock.state.frame);
+        screenAside(0);
         freeze.update(head, dt);
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
         if (tLight < HANDOFF_END) {
@@ -471,17 +505,26 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           restored = true;
           inRoom = false;
           tBack = BACK_BEATS.videoReturns[0];
+          tScreen = -1;
           ui.setPhase(phase, flags());
         }
         if (restored) {
           tBack += dt;
-          handback(tBack, parts);
-          if (tBack >= HANDBACK_END) {
+          handback(Math.min(tBack, HANDBACK_END), parts);
+          // the Screen view: F's projected picture back, then the screen dissolves in over it before the make
+          if (tBack >= HANDBACK_END && screen && tScreen < SCREEN_FADE_S) {
+            tScreen = Math.max(0, tScreen) + dt;
+            screenAside(smooth(tScreen / SCREEN_FADE_S));
+          } else if (tBack >= HANDBACK_END) {
+            tScreen = -1;
             clock.resume();
             tBack = 0;
             go("resume");
-          }
-        } else light.set("return", tBack);
+          } else screenAside(0);
+        } else {
+          light.set("return", tBack);
+          screenAside(0);
+        }
         break;
       }
       case "ended":
