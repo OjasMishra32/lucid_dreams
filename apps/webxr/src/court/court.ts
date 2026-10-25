@@ -228,17 +228,17 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const screenWatch = (level: number) => {
     if (!screen) return;
     screen.opacity = level;
-    proxies.footage(false);
+    proxies.footage(0);
     courtWorld.filmed(0);
   };
   /**
-   * The Screen view off the watch: the footage on the 3D (the Courtside path), the screen at `level`, and the footage
-   * floor at `floor`: up as the screen goes by default (F: all of it, pixel-exact).
+   * The Screen view off the watch: the footage on the 3D (the Courtside path) coming in as the screen goes, the screen
+   * at `level`, and the footage floor at `floor`: up as the screen goes by default (F: all of it, pixel-exact).
    */
   const screenAside = (level: number, floor = 1 - level) => {
     if (!screen) return;
     screen.opacity = level;
-    proxies.footage(true);
+    proxies.footage(1 - level);
     courtWorld.filmed(floor);
   };
   /** The footage floor once the 3D has the court: clean wood over CLEAN_FLOOR_S from the open. */
@@ -538,6 +538,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           tLight = Math.min(HANDOFF_END, tLight + dt);
           light.set("handoff", tLight);
         }
+        // once the hand-off's light has landed the arena lights the floor evenly: the pool's cone toward the pair fades
+        light.even(dt, tLight >= HANDOFF_END);
         break;
       case "returning": {
         feed(clock.state.frame);
@@ -550,6 +552,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           tScreen = -1;
           ui.setPhase(phase, flags());
         }
+        light.even(dt, false); // the floor's pool back for the resume
         if (restored) {
           tBack += dt;
           handback(Math.min(tBack, HANDBACK_END), parts);
