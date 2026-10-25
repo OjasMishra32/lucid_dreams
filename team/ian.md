@@ -15,13 +15,12 @@ moving smoothly at full frame rate. Read `AGENTS.md` first.
    - In the viewer (`apps/webxr/src/talk.ts`): when a limit hits, the caption says so plainly ("Talk is resting, try
      again in a few minutes") and nothing hangs.
    - Test it from the laptop viewer (Talk works there without a headset). Push it and add one Status log line.
-2. **Talk's replies from Gemma.** The MLH prize here is **Best Use of Gemma** (Google's open model), not Gemini.
-   Today `gpt-4o-mini` writes the replies, so have Gemma write them for Vishal and your grandma, with the same rules:
-   short, in their own words, never invents memories, labelled AI voice, her Vietnamese with the English line. Use
-   Atina's key and the newest `gemma-...-it` the Gemini API lists (or Gemma on the Mac through Ollama, which keeps a
-   family's words on the machine). Keep Whisper and ElevenLabs, and fall back to `gpt-4o-mini` if Gemma fails or runs
-   slow. Measure the round trip over 10 tries each (today's median is 3.1 s: heard 1.5, reply 1.0, spoken 0.5) and
-   put the numbers in the Status log. Keys stay in `apps/talk/.env`, never in git.
+2. **Talk's replies from Gemini.** The replies are written by `gpt-4o-mini` today, so Gemini isn't in the feature
+   judges try most. Once Atina's Gemini key is in place, have Gemini Flash write the replies for Vishal and your
+   grandma, with the same rules: short, in their own words, never invents memories, labelled AI voice, her Vietnamese
+   with the English line. Keep Whisper and ElevenLabs, and fall back to `gpt-4o-mini` if Gemini fails or runs slow.
+   Measure the round trip over 10 tries each (today's median is 3.1 s: heard 1.5, reply 1.0, spoken 0.5) and put
+   the numbers in the Status log. Keys stay in `apps/talk/.env`, never in git.
 3. **The public README** (MLH Best Open Source reads it) is from Saturday 1 AM: DiGS-era, Raami's app, the retired
    site. Rewrite it from what's true now (AGENTS.md Status log; numbers from the SUBMISSION table below):
    - one line of what it is and the one link (website, `/xr/` for the headset)

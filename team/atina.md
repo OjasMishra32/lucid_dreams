@@ -22,8 +22,7 @@ not for long coding sessions. Read `AGENTS.md` first.
      phone still, 5+ s) and a sentence; time it from upload to ready and check Gemma's plan fits the sentence. If it
      fails at submit, HiPerGator's login on Ojasva's Mac has lapsed: Vishal logs in again.
    - Results in `docs/gemma-qa.md` and a Status log line. Once it works, tell Ojasva: he ticks "Best Use of Gemma
-     (MLH)" on the Devpost and adds one line about it. Ian is moving Talk's replies to Gemma too (his item 2), so
-     share the key and what you learn about the model with him.
+     (MLH)" on the Devpost and adds one line about it.
 2. **Real-phone check of the website** (iPhone Safari, plus Android if anyone has one) at
    https://getluciddreams.vercel.app, top to bottom: the opening dancer, the Quest 3S, the scene tabs and their
    videos, How it works (Vishal's six steps), the Technology chapters (drag each one) and Make one. Safari broke
