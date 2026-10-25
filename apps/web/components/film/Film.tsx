@@ -139,7 +139,12 @@ export default function Film({ data }: { data: FilmData }) {
         scene.draw(g, s.t, s);
         og.fillStyle = "#000";
         og.fillRect(0, 0, W, H);
-        for (const c of host.querySelectorAll("canvas")) og.drawImage(c, box.x, box.y, box.w, box.h);
+        for (const c of host.querySelectorAll("canvas")) {
+          // a scene can split its 3D layer into boxes of its own (the legends, side by side)
+          const el = c.parentElement!;
+          if (el === host) og.drawImage(c, box.x, box.y, box.w, box.h);
+          else og.drawImage(c, box.x + el.offsetLeft, box.y + el.offsetTop, el.clientWidth, el.clientHeight);
+        }
         og.drawImage(overlayRef.current!, 0, 0);
         const blob = await new Promise<Blob>((r) => out.toBlob((b) => r(b!), "image/jpeg", 0.95));
         await post(`i=${i}`, blob);

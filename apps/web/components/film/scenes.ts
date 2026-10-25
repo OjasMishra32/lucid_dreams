@@ -362,6 +362,32 @@ const avatar: Scene = {
   },
 };
 
+// a chess legend, full frame: the body LHM++ built from public photos pulling together out of its own Gaussians
+function legend(key: string, file: string, name: string, from: string[], count: string): Scene {
+  return {
+    key,
+    dur: 9,
+    gl: { x: 760, y: 0, w: 1160, h: 1080 },
+    async mount(host, s) {
+      const { mountForming } = await import("@/lib/three/forming");
+      return mountForming(host, file, { amount: () => ramp(s.t, 0.6, 6.2), active: () => true, failed: () => {} });
+    },
+    preroll: { t: 0, seconds: 1, waitMs: 1200 },
+    draw(g, t) {
+      rise(g, name, 120, 300, ramp(t, 0.3, 1.1), { size: 84, track: -2 });
+      from.forEach((l, i) => rise(g, l, 124, 372 + i * 48, ramp(t, 0.9 + i * 0.25, 1.7 + i * 0.25), { size: 34, weight: 500, color: INK2 }));
+      rise(g, "LHM++ builds his body.", 120, 600, ramp(t, 3.0, 3.8), { size: 44 });
+      rise(g, "UIKA rebuilds his face.", 120, 668, ramp(t, 4.6, 5.4), { size: 44 });
+      rise(g, count, 120, 780, ramp(t, 6.0, 6.8), { size: 30, weight: 600, color: INK3 });
+      text(g, `Stockfish at ${name}'s peak rating. Not affiliated.`, 120, 990, { size: 26, weight: 500, color: INK3, alpha: ramp(t, 0.3, 1.1) });
+    },
+  };
+}
+const bobby = legend("bobby", "/dreams/bobby-fischer-uika/avatar/avatar.ply", "Bobby Fischer",
+  ["from 6 photos,", "1966 and 1972, colorized"], "217,331 Gaussians · 55 joints");
+const magnus = legend("magnus", "/dreams/magnus-carlsen-uika-360/avatar/avatar.ply", "Magnus Carlsen",
+  ["from 14 public photos,", "2015 to 2017"], "197,285 Gaussians · 55 joints");
+
 // the frame-budget heat map: black, deep blue, the site's blue, light blue, white
 const STOPS: [number, [number, number, number]][] = [
   [0, [6, 8, 14]],
@@ -572,4 +598,4 @@ const end: Scene = {
   },
 };
 
-export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, headset, talk, numbers, end];
+export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end];
