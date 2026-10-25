@@ -161,9 +161,18 @@ export class Talk {
   private async ask(blob: Blob) {
     this.abort = new AbortController();
     const signal = this.abort.signal;
+    // never left thinking: a reply that hasn't come back in 30 s is given up on
+    let late = false;
+    const giveUp = window.setTimeout(() => {
+      late = true;
+      this.abort?.abort();
+    }, 30_000);
     try {
       const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(this.who)}?session=${this.session}`, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob, signal });
-      const j = (await r.json()) as { heard?: string; reply?: string; english?: string; audio?: string | null; error?: string };
+      const j = (await r.json().catch(() => ({}))) as { heard?: string; reply?: string; english?: string; audio?: string | null; error?: string };
+      // the Talk server's limits (each visitor's turns an hour, everyone's for the day, 20 s recordings): said plainly
+      if (r.status === 429) return this.say(j.error || "Talk is resting, try again in a few minutes.");
+      if (r.status === 413) return this.say(j.error || "That was too long: keep it under 20 seconds.");
       if (!r.ok || j.error) throw new Error(j.error || `Talk ${r.status}`);
       if (!j.reply) return this.say("I didn't catch that. Press Talk and try again.");
       this.text = j.reply;
@@ -174,7 +183,7 @@ export class Talk {
         const ctx = this.sound.context;
         if (ctx.state !== "running") await ctx.resume().catch(() => {});
         const buffer = await ctx.decodeAudioData(bytes);
-        if (signal.aborted) return;
+        if (signal.aborted) return late ? this.say("Talk took too long. Press Talk to try again.") : undefined;
         this.sound.setBuffer(buffer);
         this.sound.play();
         this.voiced = true;
@@ -187,9 +196,11 @@ export class Talk {
         this.set("speaking");
       }
     } catch (e) {
+      if (late) return this.say("Talk took too long. Press Talk to try again.");
       if ((e as Error).name === "AbortError") return;
       this.say(`Talk didn't work: ${(e as Error).message}`);
     } finally {
+      clearTimeout(giveUp);
       this.abort = null;
     }
   }

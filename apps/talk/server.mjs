@@ -7,12 +7,14 @@
 //   2. OpenAI writes the reply as the person, from their private notes and the conversation so far
 //   3. ElevenLabs speaks it in their cloned voice (Flash v2.5)
 // Every reply is AI: the players label it "AI voice", and it never claims memories it wasn't given.
+// It's reachable from the public website (the viewer's relay adds the token for anyone), so every turn is limited: per
+// visitor and per day, one at a time, recordings of 20 s at most, replies of a few sentences (see "Limits" below).
 //   node apps/talk/server.mjs        then open http://localhost:5175 on this Mac to try it (elsewhere: ?token=<TALK_TOKEN>)
 // Needs apps/talk/.env (git-ignored): OPENAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, TALK_TOKEN
 // (and ELEVENLABS_VOICE_ID_VISHAL once his voice is cloned: until then his replies come back as words only).
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 const HERE = import.meta.dirname;
@@ -73,6 +75,64 @@ const whoOf = (url) => {
   const who = (url.searchParams.get("who") ?? "grandma").toLowerCase();
   return Object.hasOwn(PEOPLE, who) ? who : null;
 };
+
+// Limits. Every turn spends OpenAI and ElevenLabs credits, and anyone with the website's link can talk, so: at most
+// TALK_PER_VISITOR_HOUR turns an hour per visitor (their address, which the viewer's relay passes as x-forwarded-for),
+// TALK_PER_DAY for everyone, one turn at a time per visitor, recordings of TALK_MAX_SECONDS, and a reply of at most
+// MAX_REPLY_CHARS read aloud. Set any of them in apps/talk/.env; logs keep a short hash of an address, never the address.
+const setting = (k, d) => Number(process.env[k] ?? env[k] ?? d);
+const PER_VISITOR_HOUR = setting("TALK_PER_VISITOR_HOUR", 20);
+const PER_DAY = setting("TALK_PER_DAY", 300);
+const MAX_SECONDS = setting("TALK_MAX_SECONDS", 20);
+const MAX_REPLY_CHARS = 320;
+const RESTING = "Talk is resting, try again in a few minutes.";
+const turns = new Map(); // visitor -> the times of their turns in the last hour
+const busy = new Set(); // visitors with a turn in flight
+let today = { date: "", count: 0 };
+
+const visitorOf = (req) =>
+  String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() || String(req.headers["cf-connecting-ip"] ?? "").trim() || req.socket.remoteAddress || "?";
+const tagOf = (visitor) => createHash("sha256").update(visitor).digest("hex").slice(0, 8);
+const clock = () => new Date().toTimeString().slice(0, 8);
+
+// Why a turn can't start now ({ why, error, retryAfter }), or null; a turn that starts is counted.
+function admit(visitor) {
+  const now = Date.now();
+  const date = new Date().toDateString();
+  if (today.date !== date) today = { date, count: 0 };
+  if (today.count >= PER_DAY) {
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    return { why: `${PER_DAY} today`, error: "Talk is resting for today. Try again tomorrow.", retryAfter: Math.ceil((midnight - now) / 1000) };
+  }
+  const recent = (turns.get(visitor) ?? []).filter((t) => now - t < 3600e3);
+  if (recent.length >= PER_VISITOR_HOUR) {
+    turns.set(visitor, recent);
+    return { why: `${PER_VISITOR_HOUR} this hour`, error: RESTING, retryAfter: Math.ceil((recent[0] + 3600e3 - now) / 1000) };
+  }
+  if (busy.has(visitor)) return { why: "one at a time", error: "One at a time: wait for the reply, then talk again.", retryAfter: 5 };
+  turns.set(visitor, [...recent, now]);
+  today.count++;
+  busy.add(visitor);
+  return null;
+}
+
+// How long a recording is: exact for WAV (what the Quest app sends), from its size for compressed audio (a browser's
+// recorder, at most about 256 kbps, so this never cuts a real 20 s question short).
+function seconds(audio, type) {
+  if (type.includes("wav") && audio.length > 44 && audio.toString("ascii", 0, 4) === "RIFF") {
+    let byteRate = 0;
+    for (let i = 12; i + 8 <= audio.length; ) {
+      const id = audio.toString("ascii", i, i + 4);
+      const size = audio.readUInt32LE(i + 4);
+      if (id === "fmt ") byteRate = audio.readUInt32LE(i + 16);
+      if (id === "data") return byteRate ? Math.min(size, audio.length - i - 8) / byteRate : 0;
+      i += 8 + size + (size % 2);
+    }
+    return 0;
+  }
+  return audio.length / 32000;
+}
 
 const sessions = new Map(); // session id -> the last turns, so she remembers the conversation
 const replies = new Map(); // reply id -> WAV bytes, kept for a few minutes
@@ -138,7 +198,7 @@ async function speak(person, text) {
     {
       method: "POST",
       headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ text, model_id: VOICE_MODEL, language_code: person.language }),
+      body: JSON.stringify({ text: text.slice(0, MAX_REPLY_CHARS), model_id: VOICE_MODEL, language_code: person.language }),
     },
   );
   if (!r.ok) throw new Error(`voice ${r.status}: ${(await r.text()).slice(0, 200)}`);
@@ -151,7 +211,7 @@ const body = (req) =>
     let size = 0;
     req.on("data", (c) => {
       size += c.length;
-      if (size > 10 * 1024 * 1024) reject(new Error("too long: keep it under a minute"));
+      if (size > 6 * 1024 * 1024) reject(new Error("too long: keep it under 20 seconds"));
       else parts.push(c);
     });
     req.on("end", () => resolve(Buffer.concat(parts)));
@@ -181,7 +241,7 @@ const server = createServer(async (req, res) => {
   if (TOKEN && token !== TOKEN) return json(res, 401, { error: "wrong or missing token" });
 
   if (url.pathname === "/api/health")
-    return json(res, 200, { ok: true, voice: VOICE_MODEL, writer: WRITER, people: Object.fromEntries(Object.entries(PEOPLE).map(([k, p]) => [k, { voice: !!p.voice }])) });
+    return json(res, 200, { ok: true, voice: VOICE_MODEL, writer: WRITER, limits: { perVisitorHour: PER_VISITOR_HOUR, perDay: PER_DAY, maxSeconds: MAX_SECONDS, today: today.count }, people: Object.fromEntries(Object.entries(PEOPLE).map(([k, p]) => [k, { voice: !!p.voice }])) });
   const who = whoOf(url);
   if (!who) return json(res, 404, { error: "nobody by that name here" });
   const person = PEOPLE[who];
@@ -197,9 +257,27 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/api/talk" && req.method === "POST") {
     const t0 = Date.now();
     const ms = {};
+    const visitor = visitorOf(req);
+    const tag = tagOf(visitor);
+    let admitted = false;
     try {
       const session = `${who}:${(url.searchParams.get("session") ?? "default").slice(0, 64)}`;
-      const said = await transcribe(await body(req), req.headers["content-type"] ?? "audio/wav", person);
+      const type = req.headers["content-type"] ?? "audio/wav";
+      const audio = await body(req);
+      const length = seconds(audio, type);
+      if (length > MAX_SECONDS * 1.25) {
+        console.log(`[talk] ${clock()} ${who} ${tag} refused: ${length.toFixed(0)} s recording`);
+        return json(res, 413, { error: `That was too long: keep it under ${MAX_SECONDS} seconds.` });
+      }
+      if (length < 0.3) return json(res, 200, { heard: "", reply: "", english: "", audio: null, ms }); // nothing said
+      const no = admit(visitor);
+      if (no) {
+        console.log(`[talk] ${clock()} ${who} ${tag} resting: ${no.why}`);
+        res.setHeader("Retry-After", String(no.retryAfter));
+        return json(res, 429, { error: no.error, resting: true, retryAfter: no.retryAfter });
+      }
+      admitted = true;
+      const said = await transcribe(audio, type, person);
       ms.heard = Date.now() - t0;
       if (!said) return json(res, 200, { heard: "", reply: "", english: "", audio: null, ms });
       const history = sessions.get(session) ?? [];
@@ -214,11 +292,14 @@ const server = createServer(async (req, res) => {
         setTimeout(() => replies.delete(id), 10 * 60 * 1000);
       }
       sessions.set(session, [...history, { role: "user", content: said }, { role: "assistant", content: JSON.stringify({ reply, english }) }].slice(-12));
-      console.log(`[talk] ${who} ${ms.spoke} ms (heard ${ms.heard}, wrote ${ms.wrote - ms.heard}, spoke ${ms.spoke - ms.wrote})`);
+      const hour = turns.get(visitor)?.length ?? 0;
+      console.log(`[talk] ${clock()} ${who} ${tag} turn ${hour}/${PER_VISITOR_HOUR} this hour, ${today.count}/${PER_DAY} today: ${ms.spoke} ms (heard ${ms.heard}, wrote ${ms.wrote - ms.heard}, spoke ${ms.spoke - ms.wrote})`);
       return json(res, 200, { heard: said, reply, english, audio: wavBytes ? `/api/talk/audio/${id}.wav` : null, ms });
     } catch (e) {
-      console.error("[talk]", e.message);
+      console.error(`[talk] ${clock()} ${who} ${tag} failed:`, e.message);
       return json(res, 502, { error: e.message, ms });
+    } finally {
+      if (admitted) busy.delete(visitor);
     }
   }
 
@@ -229,4 +310,6 @@ const server = createServer(async (req, res) => {
   json(res, 404, { error: "not found" });
 });
 
-server.listen(PORT, "0.0.0.0", () => console.log(`Talk server on :${PORT} (${TOKEN ? "token required" : "NO TOKEN SET"})`));
+server.listen(PORT, "0.0.0.0", () =>
+  console.log(`Talk server on :${PORT} (${TOKEN ? "token required" : "NO TOKEN SET"}; ${PER_VISITOR_HOUR} turns an hour per visitor, ${PER_DAY} a day, ${MAX_SECONDS} s recordings)`),
+);

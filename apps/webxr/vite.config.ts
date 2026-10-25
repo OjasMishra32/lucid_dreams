@@ -60,7 +60,10 @@ async function relayTalk(req: any, res: any) {
     res.setHeader("Cache-Control", "no-store");
     res.end(body);
   };
-  const headers = { "x-talk-token": talkToken() };
+  // who's talking (their address, from the tunnel), so the Talk server's limits count each visitor, not this relay
+  const visitor =
+    String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() || String(req.headers["cf-connecting-ip"] ?? "").trim() || req.socket?.remoteAddress || "";
+  const headers = { "x-talk-token": talkToken(), "x-forwarded-for": visitor };
   try {
     const audio = url.pathname.match(/^\/audio\/([\w-]+)\.wav$/);
     if (audio && req.method === "GET") {

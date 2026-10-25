@@ -106,6 +106,15 @@ namespace LucidDreams
                 if (post.result != UnityWebRequest.Result.Success)
                 {
                     Error = $"{post.error} {post.downloadHandler.text}";
+                    // the server's limits (turns an hour, a day, 20 s recordings) come back as words to show
+                    string said = null;
+                    try { said = JsonUtility.FromJson<Failure>(post.downloadHandler.text)?.error; } catch (ArgumentException) { }
+                    speech?.Notice(post.responseCode switch
+                    {
+                        429 => string.IsNullOrEmpty(said) ? "Talk is resting, try again in a few minutes." : said,
+                        413 => string.IsNullOrEmpty(said) ? "That was too long: keep it under 20 seconds." : said,
+                        _ => "Talk didn't work. Try again in a moment.",
+                    });
                     Current = State.Idle;
                     yield break;
                 }
@@ -118,6 +127,7 @@ namespace LucidDreams
                 if (get.result != UnityWebRequest.Result.Success)
                 {
                     Error = get.error;
+                    speech?.Notice("Talk didn't work. Try again in a moment.");
                     Current = State.Idle;
                     yield break;
                 }
@@ -130,6 +140,12 @@ namespace LucidDreams
         class Reply
         {
             public string heard, reply, english, audio;
+        }
+
+        [Serializable]
+        class Failure
+        {
+            public string error;
         }
 
         // 16-bit PCM WAV, mixed down to mono.

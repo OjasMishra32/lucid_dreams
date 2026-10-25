@@ -107,10 +107,20 @@ namespace LucidDreams
 
             SyncVoice();
             if (Replying) ShowCaption(replyCaption, 4);
+            else if (Time.time < noticeUntil) ShowCaption(notice, 2);
             else ShowCaption(CaptionsOn ? Captions.At(cues, player.ClipTime) : null);
         }
 
-        string replyCaption;
+        string replyCaption, notice;
+        float noticeUntil;
+
+        // A short line from the app itself on the caption for a few seconds (Talk resting, too long, didn't work):
+        // shown even with captions off, since it's the only answer to a press.
+        public void Notice(string text, float seconds = 5f)
+        {
+            notice = text;
+            noticeUntil = Time.time + seconds;
+        }
 
         // Says a reply in their voice from where they stand, with its words (Vietnamese, then English) on the caption,
         // labelled as AI: generated speech is never shown as theirs (AGENTS.md rule 6).
