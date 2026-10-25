@@ -77,13 +77,19 @@ def conform(k: int, v: dict, head: int, body: int, tail: int, fps: int, work: Pa
     return out, frames
 
 
-def main(timeline: str, out_name: str) -> None:
+def main(timeline: str, out_name: str, remix: str | None = None) -> None:
+    """remix: an already rendered film whose picture is kept as it is; only the sound is mixed again."""
     tl = json.loads(Path(timeline).read_text())
     fps = int(tl.get("fps", 30))
     length = float(tl["length"])
     vids = tl["video"]
     work = ROOT / "work"
     work.mkdir(exist_ok=True)
+    graph: list[str] = []
+    args: list[str] = []
+    if remix:
+        mix_and_mux(tl, length, fps, work, graph, args, out_name, ROOT / remix)
+        return
 
     # everything in whole frames: cut points, transitions (a "cut" is a one-frame blend), each piece's head and tail
     cuts = [round(float(v["start"]) * fps) for v in vids] + [round(length * fps)]
@@ -132,11 +138,19 @@ def main(timeline: str, out_name: str) -> None:
         last = f"t{i}"
     graph.append(f"[{last}]trim=duration={length},format=yuv420p[vout]")
 
+    mix_and_mux(tl, length, fps, work, graph, args, out_name, None)
+
+
+def mix_and_mux(tl: dict, length: float, fps: int, work: Path, graph: list[str], args: list[str], out_name: str,
+                keep: Path | None) -> None:
     # sound, mixed on its own first: voices on one bus, music and room sound on another, ducked under the voices
     agraph: list[str] = []
     aargs: list[str] = []
-    voices, beds = [], []
-    for i, a in enumerate(tl.get("audio", [])):
+    voices, keys, beds = [], [], []
+    sounds = tl.get("audio", [])
+    # each voice is read twice (one copy into the mix, one to drive the ducking): splitting one copy stalls ffmpeg
+    feeds = [(a, "a") for a in sounds] + [(a, "k") for a in sounds if a.get("bus") == "voice"]
+    for i, (a, kind) in enumerate(feeds):
         aargs += ["-i", str(ROOT / a["src"])]
         ms = int(round(float(a["at"]) * 1000))
         dur = float(a["dur"])
@@ -144,24 +158,36 @@ def main(timeline: str, out_name: str) -> None:
         fades = (f",afade=t=in:st=0:d={fi}" if fi else "") + (f",afade=t=out:st={max(0, dur - fo)}:d={fo}" if fo else "")
         agraph.append(f"[{i}:a]atrim=start={a.get('in', 0)}:duration={dur},asetpts=PTS-STARTPTS,"
                       f"aformat=sample_rates=48000:channel_layouts=stereo,volume={a.get('gain', 0)}dB{fades},"
-                      f"adelay={ms}|{ms},apad=whole_dur={length}[a{i}]")
-        (voices if a.get("bus") == "voice" else beds).append(f"[a{i}]")
+                      f"adelay={ms}|{ms},apad=whole_dur={length}[{kind}{i}]")
+        if kind == "k":
+            keys.append(f"[k{i}]")
+        else:
+            (voices if a.get("bus") == "voice" else beds).append(f"[a{i}]")
     silence = f"anullsrc=r=48000:cl=stereo:d={length}"
     if not voices:
-        agraph.append(f"{silence}[vs]")
-        voices = ["[vs]"]
+        agraph += [f"{silence}[vs]", f"{silence}[ks]"]
+        voices, keys = ["[vs]"], ["[ks]"]
     if not beds:
         agraph.append(f"{silence}[bs]")
         beds = ["[bs]"]
-    agraph.append(f"{''.join(voices)}amix=inputs={len(voices)}:normalize=0,asplit=2[voice][key]")
-    agraph.append(f"{''.join(beds)}amix=inputs={len(beds)}:normalize=0[bed]")
-    agraph.append("[bed][key]sidechaincompress=threshold=0.02:ratio=10:attack=40:release=600:makeup=1[ducked]")
-    agraph.append(f"[voice][ducked]amix=inputs=2:normalize=0,atrim=duration={length}[mix]")
-    afile = work / "audio-graph.txt"
-    afile.write_text(";\n".join(agraph))
+    # in three passes (voices; the music ducked under them; the two blended): in one graph ffmpeg's scheduler stalls
+    # and ends the stream at the first voice
+    feeds_graph = list(agraph)
+    def run(lines: list[str], label: str, out: Path) -> None:
+        used = ";".join(lines)
+        sinks = [f"{lb}anullsink" for lb in voices + keys + beds if used.count(lb) == 1]
+        (work / "pass.txt").write_text(";\n".join(lines + sinks))
+        subprocess.run(["ffmpeg", "-v", "error", "-y", *aargs, "-filter_complex_script", str(work / "pass.txt"),
+                        "-map", label, "-t", str(length), "-c:a", "pcm_s24le", str(out)], check=True)
+    vwav, dwav = work / "voices.wav", work / "ducked.wav"
+    run(feeds_graph + [f"{''.join(voices)}amix=inputs={len(voices)}:normalize=0[out]"], "[out]", vwav)
+    run(feeds_graph + [f"{''.join(keys)}amix=inputs={len(keys)}:normalize=0[key]",
+                       f"{''.join(beds)}amix=inputs={len(beds)}:normalize=0[bed]",
+                       "[bed][key]sidechaincompress=threshold=0.02:ratio=10:attack=40:release=600:makeup=1[out]"], "[out]", dwav)
     mix = work / "mix.wav"
-    subprocess.run(["ffmpeg", "-v", "error", "-y", *aargs, "-filter_complex_script", str(afile), "-map", "[mix]",
-                    "-c:a", "pcm_s24le", str(mix)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(vwav), "-i", str(dwav), "-filter_complex",
+                    f"[0:a][1:a]amix=inputs=2:normalize=0,atrim=duration={length}[m]", "-map", "[m]", "-c:a", "pcm_s24le",
+                    str(mix)], check=True)
     # one fixed gain for the whole film (quiet stays quiet), measured to -16 LUFS, a limiter only on the peaks
     r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(mix), "-af", "ebur128", "-f", "null", "-"],
                        capture_output=True, text=True)
@@ -171,6 +197,12 @@ def main(timeline: str, out_name: str) -> None:
     print(f"  mix {lufs:.1f} LUFS, gain {gain:+.1f} dB")
 
     out = ROOT / out_name
+    if keep:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(keep), "-i", str(mix), "-map", "0:v", "-map", "1:a",
+                        "-c:v", "copy", "-af", f"volume={gain:.2f}dB,alimiter=limit=0.89:level=false", "-t", str(length),
+                        "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart", str(out)], check=True)
+        print(out, f"{probe_dur(out):.2f} s")
+        return
     gfile = work / "graph.txt"
     gfile.write_text(";\n".join(graph))
     cmd = ["ffmpeg", "-v", "error", "-y", *args, "-i", str(mix), "-filter_complex_script", str(gfile),
@@ -181,9 +213,11 @@ def main(timeline: str, out_name: str) -> None:
     print(out, f"{probe_dur(out):.2f} s")
 
 
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     out = "film.mp4"
     if "--out" in args:
         out = args[args.index("--out") + 1]
-    main(args[0], out)
+    main(args[0], out, args[args.index("--remix") + 1] if "--remix" in args else None)

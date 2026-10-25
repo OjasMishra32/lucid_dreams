@@ -134,11 +134,11 @@ shot("motion/end.mp4", bar(58), "dip", 0.8)
 # ---- sound: no room hiss; the music low under the voices (room for the voiceover); one gain, never squashed ------
 M, I, VOC = "music/lucid-dreams.mp3", "music/stems/no_vocals.mp3", "music/stems/vocals.mp3"
 sound(I, O, 22.5, inp=0.0, gain=-15, fadein=3.0)                                                   # the guitar, alone
-sound(M, O + 22.5, bar(10) + 0.4 - (O + 22.5), inp=22.5, gain=-9, fadeout=0.8)                    # the hook
-sound(I, bar(10) - 0.4, bar(48) - bar(10) + 0.4, inp=bar(10) - 0.4 - O, gain=-13, fadein=0.8)     # under the voiceover
-sound(I, bar(48), bar(58) - bar(48), inp=bar(48) - O, gain=-14, fadeout=0.8)                      # the quiet section
+sound(M, O + 22.5, bar(10) + 0.4 - (O + 22.5), inp=22.5, gain=-12, fadeout=0.8)                   # the hook
+sound(I, bar(10) - 0.4, bar(48) - bar(10) + 0.4, inp=bar(10) - 0.4 - O, gain=-18, fadein=0.8)     # under the voiceover
+sound(I, bar(48), bar(58) - bar(48), inp=bar(48) - O, gain=-16, fadeout=0.8)                      # the quiet section
 sound(VOC, bar(53) - 0.48, 6.1, inp=22.52, gain=-12, fadein=0.2, fadeout=1.2)                     # the hook, once more
-sound(M, bar(58), LENGTH - bar(58), inp=228.71, gain=-11, fadein=0.6, fadeout=2.5)                # the song's own end
+sound(M, bar(58), LENGTH - bar(58), inp=228.71, gain=-7, fadein=0.6, fadeout=2.5)                 # the song's own end
 sound("quest/grandma-1.mp4", bar(3.25), 5.1, inp=8.5, gain=9, bus="voice")                         # Ian
 sound("quest/grandma-1.mp4", bar(5), 4.2, inp=18.95, gain=7, bus="voice")                          # Grandma
 sound("selects/vishal-ask-reply.mp4", bar(48), 8.6, gain=2, bus="voice")                           # you, then Vishal
