@@ -21,9 +21,10 @@ export const SCREEN_EYE_M = 1.2;
 export const SCREEN_FLOOR_M = 0.2;
 /** The least lift of the centre above the horizon, degrees. */
 export const SCREEN_LIFT_DEG = 4;
-/** Corner radius and the soft shadow round it, metres. */
+/** Corner radius, the shadow round it that dims the arena near the picture, and its thin light rim, metres. */
 export const SCREEN_RADIUS_M = 0.22;
-export const SCREEN_HALO_M = 0.45;
+export const SCREEN_HALO_M = 2.4;
+export const SCREEN_RIM_M = 0.015;
 /** The screen dissolves into the projected picture over the ease's last this many show seconds (slowing into F). */
 export const SCREEN_EASE_S = 0.6;
 /** ...and back in over F's projected picture after the hand-back, seconds. */
@@ -75,27 +76,40 @@ const VERT = /* glsl */ `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 
-// the live region's raw sRGB bytes straight through (as proxies.ts draws the picture at light 1), rounded corners with
-// a pixel of antialiasing, a soft shadow round it; premultiplied
+// uPart 1, the picture: the live region's raw sRGB bytes straight through (as proxies.ts draws the picture at light 1),
+// rounded corners with a pixel of antialiasing. uPart 0, round it: a thin light rim and a wide soft shadow that dims the
+// arena near the picture (drawn under the hands and the caption). Premultiplied
 const FRAG = /* glsl */ `
-  uniform sampler2D uTex; uniform vec2 uHalf; uniform float uRadius; uniform float uHalo; uniform float uOpacity;
+  uniform sampler2D uTex; uniform vec2 uHalf; uniform float uRadius; uniform float uHalo; uniform float uRim;
+  uniform float uOpacity; uniform float uPart;
   varying vec2 vP;
   float rounded(vec2 p, vec2 h, float r) { vec2 q = abs(p) - h + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
   void main() {
     float d = rounded(vP, uHalf, uRadius);
     float aa = max(fwidth(d), 1e-4);
     float inside = 1.0 - smoothstep(-aa, aa, d);
-    vec2 uv = clamp(vP / (2.0 * uHalf) + 0.5, 0.0, 1.0);
-    vec3 col = texture2D(uTex, uv).rgb;
-    float halo = 0.6 * (1.0 - smoothstep(0.0, uHalo, max(d, 0.0))) * (1.0 - inside);
-    float a = (inside + halo) * uOpacity;
+    if (uPart > 0.5) {
+      vec2 uv = clamp(vP / (2.0 * uHalf) + 0.5, 0.0, 1.0);
+      vec3 col = texture2D(uTex, uv).rgb;
+      float a = inside * uOpacity;
+      if (a <= 0.002) discard;
+      gl_FragColor = vec4(col * a, a);
+      return;
+    }
+    float out_ = max(d, 0.0);
+    float shade = 1.0 - smoothstep(0.0, uHalo, out_);
+    float halo = 0.82 * shade * shade * (1.0 - inside);
+    float w = max(uRim, 1.5 * aa);
+    float rim = 0.32 * (1.0 - smoothstep(w, w + aa, out_)) * (1.0 - inside);
+    float a = max(halo, rim) * uOpacity;
     if (a <= 0.002) discard;
-    gl_FragColor = vec4(col * inside * uOpacity, a);
+    gl_FragColor = vec4(vec3(0.86) * rim * uOpacity, a);
   }`;
 
 /** The cinema screen: one mesh in court space (add it to the court world group). */
 export class CinemaScreen {
   readonly mesh: THREE.Mesh;
+  private readonly halo: THREE.Mesh;
   readonly pose: ScreenPose;
   private readonly uOpacity = { value: 1 };
   private level = 1;
@@ -107,30 +121,38 @@ export class CinemaScreen {
     this.pose = screenPose([seat.floor[0], SCREEN_EYE_M, seat.floor[2]], seat.forward, lh / lw);
     const { width: w, height: h } = this.pose;
     const m = SCREEN_HALO_M;
-    const g = new THREE.PlaneGeometry(w + 2 * m, h + 2 * m);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTex: { value: live },
-        uHalf: { value: new THREE.Vector2(w / 2, h / 2) },
-        uRadius: { value: SCREEN_RADIUS_M },
-        uHalo: { value: SCREEN_HALO_M },
-        uOpacity: this.uOpacity,
-      },
-      vertexShader: VERT,
-      fragmentShader: FRAG,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendSrcAlpha: THREE.OneFactor,
-      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-    });
-    this.mesh = new THREE.Mesh(g, mat);
+    const material = (part: number) =>
+      new THREE.ShaderMaterial({
+        uniforms: {
+          uTex: { value: live },
+          uHalf: { value: new THREE.Vector2(w / 2, h / 2) },
+          uRadius: { value: SCREEN_RADIUS_M },
+          uHalo: { value: SCREEN_HALO_M },
+          uRim: { value: SCREEN_RIM_M },
+          uOpacity: this.uOpacity,
+          uPart: { value: part },
+        },
+        vertexShader: VERT,
+        fragmentShader: FRAG,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneMinusSrcAlphaFactor,
+        blendSrcAlpha: THREE.OneFactor,
+        blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material(1));
     this.mesh.name = "court-screen";
     this.mesh.renderOrder = 1000; // over the arena, the plates and the 3D
     this.mesh.frustumCulled = false;
+    // the rim and shadow: a child (goes with the screen), drawn before the hands and the caption card (renderOrder 100)
+    this.halo = new THREE.Mesh(new THREE.PlaneGeometry(w + 2 * m, h + 2 * m), material(0));
+    this.halo.name = "court-screen-halo";
+    this.halo.renderOrder = 95;
+    this.halo.frustumCulled = false;
+    this.mesh.add(this.halo);
     const { centre, right, up, normal } = this.pose;
     this.mesh.matrixAutoUpdate = false;
     this.mesh.matrix.makeBasis(new THREE.Vector3(...right), new THREE.Vector3(...up), new THREE.Vector3(...normal)).setPosition(...centre);
@@ -160,7 +182,9 @@ export class CinemaScreen {
   }
 
   dispose(): void {
-    this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
+    for (const o of [this.mesh, this.halo]) {
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    }
   }
 }
