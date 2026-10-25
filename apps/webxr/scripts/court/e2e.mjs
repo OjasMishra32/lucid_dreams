@@ -6,6 +6,12 @@
 //   node apps/webxr/scripts/court/e2e.mjs [--only smoke,layers,...|all] [--timing] [--bundle <folder with court.json>]
 //        [--query show=small] [--out <dir>] [--timeout <s per scenario, 240>] [--keep] (the console log in the report)
 //        [--force] (run a scenario even while a module it needs isn't BUILT: to try a scenario against the stubs)
+//        [--throttle [net=1000,cpu=4]] (the scenario page only: a fresh cold context, the cache off, the network at
+//        net KB/s down (up a quarter of it, 120 ms latency) and the CPU cpu x slower; the cold load is timed and the
+//        loading bar sampled every 2 s into the report's coldLoad and a COLD LOAD line; the ready wait allows ~400 s
+//        and --timeout defaults to 1800 s)
+//        [--video] (record the scenario page, 1280x720, as <out>/<scenario>.webm; the fullpath scenario's stills also
+//        go into one contact sheet, contact-fullpath.png, through ffmpeg when it is on PATH)
 // --bundle defaults to the stand-in (scripts/court/out/standin, `node apps/webxr/scripts/court/standin.mjs`); a real
 // bundle must live outside the repo (serve.mjs refuses it otherwise). One PASS/FAIL/SKIP line per check, a JSON report
 // per scenario in scripts/court/out/e2e/ (with any saved frames as PNG). Exit 0 when every check that ran passed,
@@ -14,8 +20,8 @@
 // Scenarios are files, one per check family, each owned by one stream: scripts/court/scenarios/<name>.mjs exports
 // `needs` (court.ts module names that must be BUILT, window.__court.modules; until then the scenario is a SKIP) and a
 // default async function(ctx). The runner is the integrator's; add or change a scenario only in its own file.
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -32,8 +38,30 @@ const STANDIN = join(HERE, "out", "standin");
 const BUNDLE = resolve(opt("--bundle", STANDIN));
 const IS_STANDIN = !args.includes("--bundle");
 const QUERY = opt("--query", "");
-/** No scenario runs longer than this (a stuck page must fail, not hang the runner). */
-const SCENARIO_S = Number(opt("--timeout", 240));
+/**
+ * --throttle [net=<KB/s down>,up=<KB/s>,cpu=<x slower>,latency=<ms>]: real-Quest conditions for the scenario page.
+ * Defaults: ~1 MB/s down, a quarter of it up, 120 ms, CPU 4x. null when the flag is absent.
+ */
+const THROTTLE = (() => {
+  const at = args.indexOf("--throttle");
+  if (at < 0) return null;
+  const next = args[at + 1];
+  const t = { net: 1000, up: 250, latency: 120, cpu: 4 };
+  if (next && !next.startsWith("--")) {
+    for (const part of next.split(",")) {
+      const [k, v] = part.split("=");
+      if (!(k in t) || !Number.isFinite(Number(v))) throw new Error(`--throttle: expected net=<KB/s>,up=<KB/s>,latency=<ms>,cpu=<x>, got "${part}"`);
+      t[k] = Number(v);
+      if (k === "net" && !next.includes("up=")) t.up = t.net / 4;
+    }
+  }
+  return t;
+})();
+const VIDEO = args.includes("--video");
+/** The cold load may take this long to be ready (s): the unthrottled wait is 60. */
+const READY_S = THROTTLE ? 400 : 60;
+/** No scenario runs longer than this (a stuck page must fail, not hang the runner); a throttled page runs 4x slower. */
+const SCENARIO_S = Number(opt("--timeout", THROTTLE ? 1800 : 240));
 const SCENARIO_DIR = join(HERE, "scenarios");
 
 /** Thrown by ctx.skip(): the scenario can't run here (not a failure). */
@@ -166,6 +194,68 @@ function makeContext(page, check, report, bundleJson) {
   };
 }
 
+/**
+ * The throttled cold load: the cache off, the network and the CPU slowed (Chrome DevTools protocol, this page only),
+ * then goto and the wait for window.__court.ready, timed. The loading bar (court.ts: #court-load's <i> width and
+ * #court-load-text) is sampled every 2 s, and the bytes that came over the wire are summed from the protocol's events.
+ * Written into report.coldLoad and one COLD LOAD line.
+ */
+async function coldLoad(context, page, url, report) {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Network.enable");
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: THROTTLE.latency, downloadThroughput: THROTTLE.net * 1000, uploadThroughput: THROTTLE.up * 1000 });
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: THROTTLE.cpu });
+  const urls = new Map();
+  let bytes = 0;
+  let bundleBytes = 0;
+  cdp.on("Network.requestWillBeSent", (e) => urls.set(e.requestId, e.request.url));
+  cdp.on("Network.loadingFinished", (e) => {
+    bytes += e.encodedDataLength;
+    if ((urls.get(e.requestId) ?? "").includes("/bundle/")) bundleBytes += e.encodedDataLength;
+  });
+  const progress = [];
+  const t0 = Date.now();
+  const sample = async () => {
+    try {
+      const s = await page.evaluate(() => ({
+        pct: parseFloat(document.querySelector("#court-load > i")?.style.width ?? "") || 0,
+        text: document.querySelector("#court-load-text")?.textContent ?? "",
+        status: document.querySelector("#court-status")?.textContent ?? "",
+      }));
+      progress.push({ s: Number(((Date.now() - t0) / 1000).toFixed(1)), ...s });
+    } catch {
+      // mid-navigation: no page to read yet
+    }
+  };
+  const timer = setInterval(sample, 2000);
+  try {
+    await page.goto(url, { waitUntil: "commit", timeout: READY_S * 1000 });
+    await page.waitForFunction(() => window.__court && (window.__court.ready || window.__court.error), null, { timeout: READY_S * 1000, polling: 250 });
+  } finally {
+    clearInterval(timer);
+  }
+  const ms = Date.now() - t0;
+  await sample();
+  report.coldLoad = { ms, bytes, bundleBytes, throttle: { ...THROTTLE }, progress };
+  const mb = (n) => (n / 1e6).toFixed(1);
+  const last = progress.at(-1);
+  console.log(`COLD LOAD ${report.scenario}: ready in ${(ms / 1000).toFixed(1)} s over ${THROTTLE.net} KB/s down, ${THROTTLE.latency} ms, cpu x${THROTTLE.cpu}; ${mb(bytes)} MB on the wire (${mb(bundleBytes)} MB of it the bundle); bar sampled ${progress.length} times every 2 s, last ${last?.pct ?? "-"}% ${last?.text ?? ""}`);
+}
+
+/** The scenario's stills as one contact sheet (ffmpeg, when it is on PATH): <out>/contact-<name>.png, 6 across. */
+function contactSheet(name) {
+  const stills = readdirSync(OUT).filter((f) => f.startsWith(`${name}-`) && f.endsWith(".png")).sort();
+  if (!stills.length) return;
+  const list = join(OUT, ".contact.txt");
+  writeFileSync(list, stills.map((f) => `file '${join(OUT, f)}'\nduration 1`).join("\n"));
+  const sheet = join(OUT, `contact-${name}.png`);
+  const rows = Math.ceil(stills.length / 6);
+  const r = spawnSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list, "-vf", `scale=640:-1,tile=6x${rows}:padding=6:margin=6:color=gray`, "-frames:v", "1", sheet], { encoding: "utf8" });
+  rmSync(list, { force: true });
+  console.log(r.status === 0 ? `CONTACT SHEET ${name}: ${sheet} (${stills.length} stills)` : `CONTACT SHEET ${name}: not made (${(r.stderr || r.error?.message || "ffmpeg failed").split("\n")[0]})`);
+}
+
 /** The page every scenario opens: the court in IWER, probed, the bundle from serve.mjs, plus --query. */
 function pageUrl(port) {
   const q = new URLSearchParams({ mode: "court", emulate: "", probe: TIMING ? "timing" : "capture", bundle: "/bundle/" });
@@ -207,7 +297,13 @@ async function main() {
     }
     for (const name of only) {
       const scenario = scenarios[name];
-      const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      // --throttle / --video: a fresh context of its own (no cache, no service worker from the warm-up), the only
+      // page the throttle and the recording touch; otherwise the page is as it always was
+      const context =
+        THROTTLE || VIDEO
+          ? await browser.newContext({ viewport: { width: 1280, height: 720 }, ...(VIDEO ? { recordVideo: { dir: join(OUT, ".video"), size: { width: 1280, height: 720 } } } : {}) })
+          : null;
+      const page = context ? await context.newPage() : await browser.newPage({ viewport: { width: 1280, height: 720 } });
       const errors = [];
       const warnings = [];
       const consoleLog = [];
@@ -237,8 +333,11 @@ async function main() {
       const url = pageUrl(port);
       let skip = null;
       try {
-        await page.goto(url, { waitUntil: "load" });
-        await page.waitForFunction(() => window.__court && (window.__court.ready || window.__court.error), null, { timeout: 60000, polling: 200 });
+        if (THROTTLE) await coldLoad(context, page, url, report);
+        else {
+          await page.goto(url, { waitUntil: "load" });
+          await page.waitForFunction(() => window.__court && (window.__court.ready || window.__court.error), null, { timeout: READY_S * 1000, polling: 200 });
+        }
         const loadError = await page.evaluate(() => window.__court.error);
         if (loadError) throw new Error(`the page could not load the bundle: ${loadError}`);
         report.modules = await page.evaluate(() => window.__court.modules);
@@ -280,7 +379,19 @@ async function main() {
       Object.assign(report, { url, checks, errors, warnings, saved, ...(args.includes("--keep") ? { console: consoleLog } : {}) });
       writeFileSync(join(OUT, `${name}${TIMING ? "-timing" : ""}.json`), JSON.stringify(report, null, 2));
       failed += checks.filter((c) => !c.ok).length;
+      const recording = VIDEO ? page.video() : null;
       await page.close();
+      if (recording) {
+        // saveAs waits for the page to close; the file is then the scenario's own
+        const webm = join(OUT, `${name}${TIMING ? "-timing" : ""}.webm`);
+        await recording.saveAs(webm).then(
+          () => console.log(`VIDEO ${name}: ${webm}`),
+          (e) => console.log(`VIDEO ${name}: not saved (${String(e?.message ?? e).split("\n")[0]})`),
+        );
+        await context.close();
+        rmSync(join(OUT, ".video"), { recursive: true, force: true });
+        if (name === "fullpath") contactSheet(name);
+      } else await context?.close();
     }
   } finally {
     await browser?.close();
