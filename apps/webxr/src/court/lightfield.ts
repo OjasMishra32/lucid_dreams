@@ -87,6 +87,8 @@ export const ARRIVAL_S = 3.8;
 export const POOL_START_S = 0.8;
 /** A pool point whose level changes by the whole 0 -> 1 takes this long (a smaller change proportionally less). */
 export const POOL_RAMP_S = LEVEL_S;
+/** The house lights' spill on the floor, a share of the crowd's light (world.ts HOUSE_FLOOR; the even floor's level). */
+export const HOUSE_SPILL = 0.55;
 /** The pool's starts spread over this, nearest the pair first (so the darker set's farthest points land by F+5). */
 export const POOL_SPREAD_S = 0.4;
 /** The stands rise to `stands` over F+3..F+5. */
@@ -217,6 +219,7 @@ uniform vec4 uLightGrow;  // seconds into the growth; ramp s for a whole change;
 uniform vec4 uLightView;  // unused; the arena's opacity: stands, floor (See my room, the edge); unused
 uniform vec4 uLightFilmed;  // the dolly seat's floor point (court x, z); FILMED_NEAR, FILMED_FAR
 uniform vec4 uLightCamera; // the broadcast camera's fixed centre (court x, y, z)
+uniform float uLightEven;  // after the hand-off: the floor's share lit evenly by the arena (0 the pool, 1 the house spill)
 uniform mat4 uLightCourtFromWorld;
 float lightRamp(float u, float a) {
   u = clamp(u, 0.0, 1.0);
@@ -266,6 +269,13 @@ float lightFloor(vec2 xz, float reach) {
 }
 float lightCrowd() { return pow(uLightLevel.y * uLightLevel.w, 2.4); }
 float lightHouse() { return lightCrowd(); }
+// the floor lit evenly by the arena once the hand-off is done (uLightEven): each point's level eases to the house
+// lights' spill, in display level so the ramp keeps P44; the pool (the spotlight cone toward the pair) is gone
+float lightEvenFloor(float lit) {
+  if (uLightEven <= 0.0) return lit;
+  float house = ${Math.pow(HOUSE_SPILL, 1 / 2.4).toFixed(5)} * uLightLevel.y * uLightLevel.w;
+  return pow(mix(pow(lit, 1.0 / 2.4), house, uLightEven), 2.4);
+}
 float lightPair() { return pow(uLightLevel.z * uLightLevel.w, 2.4); }
 float lightAt(vec2 foot) { return lightFloor(foot, 1.0); }
 // 1 where the floor's footage is shown from this eye, 0 where the clean floor is: the seat's view, not the walk's
@@ -289,7 +299,7 @@ float lightSharp(vec3 p, float f, float texel) {
 }
 // the multiplier for a footage, floor or stands fragment at a court-space position (part: PART.*)
 float courtLight(vec3 worldPos, float part) {
-  if (part < 0.5) return lightFloor(worldPos.xz, 1.0);
+  if (part < 0.5) return lightEvenFloor(lightFloor(worldPos.xz, 1.0));
   if (part < 2.5) return lightCrowd();
   return lightAt(worldPos.xz);
 }
@@ -373,6 +383,7 @@ export class LightField {
   /** How far up the arrival's curve the lights are, 0-1 (arrivalLevel's s). */
   private arrivalS = 1;
   private grow = -1e3; // seconds into the pool's growth (negative: not started)
+  private evenT = 0; // seconds into the floor's ease to the arena's even light (even())
   /** The ease's own t when it ended, so "handoff" carries the floor dim on (0: no ease seen, the dims start at F). */
   private easeAtF = 0;
   /** An ease that began with the pool open waits this long (the pool gathering) before the floor dims. */
@@ -429,6 +440,7 @@ export class LightField {
       uLightView: { value: new Vec4(1, 1, 1, 0) },
       uLightFilmed: { value: new Vec4(0, 0, FILMED_NEAR, FILMED_FAR) },
       uLightCamera: { value: new Vec4(court.camera.centre[0], court.camera.centre[1], court.camera.centre[2], 0) },
+      uLightEven: { value: 0 },
     };
     this.select(opts);
     if (bundle) this.fitFrames(bundle.frames);
@@ -552,6 +564,7 @@ export class LightField {
     }
     this.beat = beat;
     this.t = t;
+    if (b === "dark" || b === "arrival" || b === "watch") this.evenT = 0; // set outright: the pool's floor, as filmed
     // every change from where it began at LEVEL_S per unit of level (P44), never shorter than `min`
     const toward = (a: number, z: number, u: number, min = 0) => {
       const d = changeS(a, z, min);
@@ -601,6 +614,27 @@ export class LightField {
       }
     }
     this.push();
+  }
+
+  /**
+   * Once a frame after the hand-off: the floor eases (on) to an even light from the arena, the house lights' spill,
+   * dropping the pool's cone toward the pair, or back (off: the walk back, so the resume's floor is the pool's again);
+   * the pool's full change at LEVEL_S per unit of level (P44). The splats keep their own light.
+   */
+  even(dt: number, on: boolean): void {
+    const d = this.evenS();
+    this.evenT = Math.min(d, Math.max(0, Math.min(this.evenT, d) + (on ? dt : -dt)));
+    this.push();
+  }
+
+  /** How long the even floor takes to come in (or go): the pool's level 1 to the house spill's, at LEVEL_S a unit. */
+  evenS(): number {
+    return changeS(1, perceived(HOUSE_SPILL) * this.crowdLevel * this.arrival, 1);
+  }
+
+  /** The even floor's share now, 0-1 (GLSL uLightEven). */
+  get evenLevel(): number {
+    return this.uniforms.uLightEven.value as number;
   }
 
   /** Once a frame: the world group (court -> room), whose inverse takes room points back to court space. */
@@ -742,6 +776,7 @@ export class LightField {
     (this.uniforms.uLightLevel.value as Vec4).set(this.floorOut, this.crowdLevel, this.config.pair, this.arrival);
     (this.uniforms.uLightGrow.value as Vec4).x = this.grow;
     (this.uniforms.uLightGrow.value as Vec4).w = this.config.floor;
+    this.uniforms.uLightEven.value = this.evenT > 0 ? ramp(this.evenT / this.evenS()) : 0;
     const s = this.levels;
     s.crowd = this.crowd();
     s.stands = s.crowd;

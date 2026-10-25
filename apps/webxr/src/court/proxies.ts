@@ -429,7 +429,7 @@ const CAMERA_GLSL = /* glsl */ `
 const footageGlsl = (light: string) => /* glsl */ `
   ${light}
   uniform float uOpacity; uniform float uMask; uniform float uFeather; uniform float uWipe; uniform float uDim; uniform float uReality;
-  uniform float uCinema; uniform float uDimAlpha; uniform float uSharpFloor; uniform float uPlateScale;
+  uniform float uCinema; uniform float uDimAlpha; uniform float uSharpFloor; uniform float uPlateScale; uniform float uFootage;
   vec3 decodeSrgb(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
   vec3 encodeSrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
   vec3 relight(vec3 c, float k) { return abs(k - 1.0) < 1e-6 ? c : encodeSrgb(decodeSrgb(c) * k); }
@@ -494,7 +494,9 @@ const plateFrag = (light: string) => /* glsl */ `
     // sees it (lightSharp): by the seat its bottom rows smear into streaks. The same weight on both layers: the
     // hand-off's blend is unchanged
     float sharp = uKind == 0 ? mix(1.0, lightSharp(vec3(vCourt.x, 0.0, vCourt.z), uCamK.x * uPlateScale, 0.0), uSharpFloor) : 1.0;
-    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0) * mix(1.0, crowdDim(), crowd * uDimAlpha) * sharp;
+    // the Screen view's dissolve: the projected picture comes in with it (footage(level)), whole by F, the same on
+    // both layers
+    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0) * mix(1.0, crowdDim(), crowd * uDimAlpha) * sharp * uFootage;
     float a = uLayer == 0 ? uOpacity * edge : uOpacity >= 1.0 ? 0.0 : edge * (1.0 - uOpacity) / max(1.0 - uOpacity * edge, 1e-4);
     gl_FragColor = vec4(col * a, a);
   }`;
@@ -608,7 +610,7 @@ const farFrag = (light: string) => /* glsl */ `
     // the floor: from near the seat only, and there only where camera F saw it about as sharply as this eye sees it
     // (its grazing smear reads as streaks); the stands fade off the camera ray (P30)
     float k = floorKind ? lightFilmedFloor(vCourt) * lightSharp(vCourt, uFarFocal, 0.0) : stands ? crowdDim() : 1.0;
-    gl_FragColor = vec4(col, t.a * k * room);
+    gl_FragColor = vec4(col, t.a * k * room * uFootage);
   }`;
 
 /** A person card's grid: vertices across and down its box. */
@@ -746,6 +748,8 @@ export class Proxies {
   private surroundOn: boolean;
   /** The footage drawn on the 3D at all (screen.ts: off while the Screen view's cinema screen plays the watch). */
   private footageOn = true;
+  /** How much of it (footage(level)): the plates and the far image at this alpha. */
+  private footageLevel = 1;
   /** The show frame last projected (-1 none). */
   private projected = -1;
   private readonly cameraF: PinholeCamera;
@@ -781,6 +785,7 @@ export class Proxies {
       uDimAlpha: { value: 0 },
       uSharpFloor: { value: 0 },
       uPlateScale: { value: (court.video.regions?.plate[2] ?? court.camera.width) / court.camera.width },
+      uFootage: { value: 1 },
     };
     this.measured = new Promise((done) => (this.measure = done));
     this.hasSurround = !!court.surround;
@@ -982,14 +987,24 @@ export class Proxies {
   }
 
   /**
-   * The footage on the 3D (the plates on both layers, the cards, the far image) shown or not; the cinema mask's shell
-   * stays (it dims the arena). The Screen view hides it while its screen plays the watch (screen.ts).
+   * The footage on the 3D (the plates on both layers, the cards, the far image) at `level` 0-1 (0: hidden); the cinema
+   * mask's shell stays (it dims the arena). The Screen view hides it while its screen plays the watch (screen.ts) and
+   * brings the plates and the far image in with its dissolve, so no floor wedge pops on in front of the seat (1 by F:
+   * pixel-exact). The cards keep their own fade (the video layer's opacity).
    */
-  footage(on: boolean): void {
-    if (on === this.footageOn) return;
-    this.footageOn = on;
+  footage(level: number): void {
+    const l = Math.min(1, Math.max(0, level));
+    this.shared.uFootage.value = l;
+    this.footageLevel = l;
+    if (l > 0 === this.footageOn) return;
+    this.footageOn = l > 0;
     this.applySurround();
     this.updateVisibility();
+  }
+
+  /** The footage's level on the 3D as last set (footage()). */
+  get footageShown(): number {
+    return this.footageLevel;
   }
 
   /** The Reality check: tint the inpainted plate behind the players and the filled holes. */
