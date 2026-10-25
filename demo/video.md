@@ -17,53 +17,67 @@ Drop everything in `~/Downloads/lucid-video/` on Ojasva's Mac: `quest/` (headset
 screen recordings), `voice/` (voiceover takes), `music/` (the track). Name files loosely (`chess-1.mp4`); more takes
 are better, Claude picks.
 
-## The timeline
+## Second by second
 
-Music: one bittersweet piano piece that grows (Act 1), lifts into a light beat (Act 2), thins out under the
-graphics (Act 3) and comes back to the first theme for the ending (Act 4). Grandma's voice and Vishal's reply play
-over a ducked bed.
+The film has one story and one argument. The story: Ian hasn't been home in four years, and his grandma is in his
+room. The argument: that is now possible from one phone video, here is everything else it does, and here is exactly
+how the machine does it. Emotion at the start and end, wonder in the middle, depth after. The voiceover is Ojasva,
+calm and close; Ian's lines are his own words. Files in `motion/` are the rendered graphics; everything else is
+footage from the checklist below.
 
-### Act 1: Ian (0:00 to 0:32)
+**Sound arc:** a solo piano (0:00), one sustained low note under the title (0:35), a light pulse joins for the
+gameplay (0:37 to 1:19), the pulse drops out and soft synth pads carry the graphics (1:21 to 2:28), the opening
+piano returns alone for the ending (2:30). Real sound always sits on top: grandma's voice, the chess clock, the
+tennis ball, Vishal's answer.
 
-| # | Time | Picture | Sound | On screen |
+### Act 1: four years (0:00 to 0:36)
+
+| Time | Picture | Voice | Sound | On screen |
 | --- | --- | --- | --- | --- |
-| 1 | 0:00-0:05 | Black, then Ian's phone in his hand at night: scrolling his camera roll to an old video of his grandma | Piano starts. Ian (voice): his line, e.g. "I haven't been home in four years." | |
-| 2 | 0:05-0:09 | The phone video plays: his grandma talking, small on the screen | Her real voice, quiet, from the phone | |
-| 3 | 0:09-0:13 | Ian puts on the Quest (phone b-roll, side view) | Piano | |
-| 4 | 0:13-0:21 | Headset view: his room, and his grandma is there, life size. Hold on her. | Piano swells | |
-| 5 | 0:21-0:28 | Ian asks her something in Vietnamese (Talk). She answers. | Her AI voice | Her words + English line + "AI voice" |
-| 6 | 0:28-0:30 | Phone b-roll: Ian's face under the headset, his reaction | Silence for a beat | |
-| 7 | 0:30-0:32 | Cut to black | | "Lucid Dreams" |
+| 0:00-0:03 | Black | | Grandma's real voice from her old video, Vietnamese, quiet, no music | |
+| 0:03-0:08 | Ian's phone in his hand in a dark room, her old video playing on it, the screen lighting his face | | Her voice continues; first piano notes | |
+| 0:08-0:12 | Close on Ian's face, the phone glow; his thumb pauses the video | **Ian:** "I haven't been home in four years." (his words) | Piano | |
+| 0:12-0:16 | Ian puts the phone down and puts the Quest on (side b-roll) | | Piano, a breath of room tone | |
+| 0:16-0:24 | Headset view: his room, lamp light. She is standing there, life size. Hold. | | Piano rises slowly | |
+| 0:24-0:31 | Headset view: Ian presses Talk, asks her something in Vietnamese; she answers | **Ian**, then **grandma (AI voice)** | Music ducks under the voices | her words, the English line under it, "AI voice" |
+| 0:31-0:34 | Side b-roll: Ian's face under the headset as she answers | | One held piano chord | |
+| 0:34-0:36 | Cut to black, then `motion/title.mp4` | | Low note under the title | "Lucid Dreams" |
 
-### Act 2: what it does (0:32 to 1:12)
+### Act 2: anyone, from any video (0:36 to 1:20)
 
-| # | Time | Picture | Sound | On screen |
+| Time | Picture | Voice | Sound | On screen |
 | --- | --- | --- | --- | --- |
-| 8 | 0:32-0:37 | iPhone screen recording: pick a video from the camera roll on the site's Make one, type a sentence ("teach me this dance") | VO: "Give it any video and one sentence." | |
-| 9 | 0:37-0:49 | Learn: the dancer in the room at full size, Lesson step card, "your turn", follow-along targets on your head and wrists; a golf swing with the club in your hands; a guitar chord | VO: "They show up in your room, life size. Every move slows down, then it's your turn." | step titles |
-| 10 | 0:49-1:03 | Play: Magnus shakes your hand, you pinch a piece, he reaches and hits the clock. Federer at the net, handshake, your serve, a rally. You pass to LeBron, he catches and shoots. | VO: "Play chess against a legend. Rally with one. Pass and he takes the shot." | "Stockfish at Magnus Carlsen's peak rating. Not affiliated." / "Roger Federer's likeness. AI opponent, not affiliated." / "Demo footage. Not affiliated." |
-| 11 | 1:03-1:12 | Talk: Vishal in your room, you ask him something, he answers out loud | His AI voice | "AI voice" + caption |
+| 0:36-0:41 | iPhone screen recording: the camera roll, picking the dance clip on Make one, typing "teach me this dance" | "Lucid Dreams turns any video into a person, standing in your room." | Pulse comes in | |
+| 0:41-0:46 | Headset, wide: the dancer at full size on the floor; you step to the side and she's solid from there too | "Real size. Real motion. Walk all the way around them." | | |
+| 0:46-0:52 | Lesson on: the step card, a step slowed down, "your turn", the glowing follow-along targets on your wrists | "Ask it to teach you, and every move slows down and waits for you." | | step title |
+| 0:52-0:56 | Two fast cuts: golf (you hit off the tee), guitar (your strum) | | Ball strike, a strum | |
+| 0:56-1:03 | Chess: Magnus offers his hand, you shake; you move a piece by pinch; he reaches, moves, hits the clock | "Sit across the board from a legend." | The clock's click | "Stockfish at Magnus Carlsen's peak rating. Not affiliated." |
+| 1:03-1:09 | Tennis: Federer's handshake at the net, your toss and serve, a rally | "Rally with one." | Ball off the strings | "Roger Federer's likeness. AI opponent, not affiliated." |
+| 1:09-1:13 | Basketball: you pass, LeBron catches and shoots | "Pass, and he takes the shot." | Swish | "Demo footage. Not affiliated." |
+| 1:13-1:20 | Talk: Vishal in your room; you ask "What's up, Vishal?", he answers out loud | "Or just talk. Vishal gave it sixteen seconds of video." | His answer over a ducked bed | caption, "AI voice" |
 
-### Act 3: how it works (1:12 to 2:22), motion graphics from real data
+### Act 3: how it works (1:20 to 2:30)
 
-| # | Time | Picture | VO |
-| --- | --- | --- | --- |
-| 12 | 1:12-1:22 | One phone clip of the dancer; 4DAnyone's 48 real cameras fly in around her in three rings | "One camera only sees one side of you. 4DAnyone, released this August, turns one video into 48." |
-| 13 | 1:22-1:34 | 12 B200s light up, the frame counter runs to 121, the loss falls, 290,000 Gaussians pull together into her | "On UF's supercomputer, twelve GPUs fit 290,000 Gaussians to every frame." |
-| 14 | 1:34-1:41 | The Reality check sweeps across her: what the real camera never saw turns blue, "54% seen" | "Whatever the camera never saw turns blue. We never pass it off as real." |
-| 15 | 1:41-1:53 | Vishal: his 14 frames fly into a rigged body (55 joints), the face lands, he blinks | "For people who move on their own, LHM++ builds a body from photos, and UIKA gives it a face." |
-| 16 | 1:53-2:07 | The Quest 3S assembles, its eyes beam out; the overdraw heat map drops from 115 to 82 to 34 million pixels | "Then it has to run on a headset. One person is 115 million pixels per eye, so we budget every splat." |
-| 17 | 2:07-2:16 | Talk: mic, Whisper, the reply, his voice, a 3.1 s bar filling in three parts | "It hears you, answers as them, in their own voice. About three seconds." |
-| 18 | 2:16-2:22 | Numbers, one at a time: Aug 2026 · 48 views · 290k Gaussians · 26-32 dB · 3.1 s | music only |
-
-### Act 4: back to Ian (2:22 to 3:00)
-
-| # | Time | Picture | Sound | On screen |
+| Time | Picture | Voice | Sound | On screen |
 | --- | --- | --- | --- | --- |
-| 19 | 2:22-2:30 | Fast wide shots: everyone standing in real rooms | Music returns to the first theme | |
-| 20 | 2:30-2:47 | Ian and his grandma again: she says something warm, he answers, he sits with her | Her AI voice, then Ian | captions + "AI voice" |
-| 21 | 2:47-2:53 | Ian lifts the headset off, sits for a second | Piano | |
-| 22 | 2:53-3:00 | End card | Piano resolves | "Lucid Dreams. Anyone from any video, standing in your room." getluciddreams.vercel.app · team names · "AI voices are labeled. Public figures are likenesses, not affiliated." |
+| 1:20-1:22 | Black | "Here's the hard part." | The pulse stops; a pad comes in | |
+| 1:22-1:32 | `motion/cameras.mp4`: her phone video, then 4DAnyone's 48 real cameras landing around her | "A camera only sees one side of you. 4DAnyone, published at SIGGRAPH Asia this August, turns one video into forty-eight views, all the way around." | Soft whoosh per ring | in the graphic |
+| 1:32-1:44 | `motion/fit.mp4`: twelve B200s working, the frame counter to 121, 290,000 Gaussians pulling together into her | "On UF's HiPerGator, twelve B200 GPUs fit two hundred ninety thousand 3D Gaussians to every frame." | | in the graphic |
+| 1:44-1:51 | `motion/reality.mp4`: the Reality check sweeps her blue | "Anything the camera never saw, we paint blue. Nothing imagined gets passed off as real." | | in the graphic |
+| 1:51-2:03 | `motion/avatar.mp4`: Vishal's 14 frames fly into a rigged body, his face lands | "From a handful of frames, LHM++ builds a body we can move, and UIKA gives it his face." | | in the graphic |
+| 2:03-2:12 | `motion/headset.mp4`, first part: the Quest 3S assembling, its eyes beaming out, the dancer appearing | "Then it all has to run on a headset." | Parts clicking together | |
+| 2:12-2:18 | `motion/headset.mp4`, the heat map: 115 to 82 to 34 million | "One person is a hundred and fifteen million pixels per eye, every frame. So we budget every splat." | | in the graphic |
+| 2:18-2:25 | `motion/talk.mp4`: his voice, then hears you, answers as him, in his voice, 3.1 s | "When you talk, it listens, answers as them, and speaks in their voice. About three seconds." | | in the graphic |
+| 2:25-2:30 | `motion/numbers.mp4` (first three): Aug 2026, 48, 290,000 | | Pad swells, then drops away | in the graphic |
+
+### Act 4: home (2:30 to 3:00)
+
+| Time | Picture | Voice | Sound | On screen |
+| --- | --- | --- | --- | --- |
+| 2:30-2:34 | Four wide b-roll cuts, one second each: the dancer, Magnus, Federer, Vishal, each life size in a real room | | Opening piano returns, alone | |
+| 2:34-2:48 | Ian and his grandma again: she says something warm, he answers; the side b-roll of him sitting with her | **Grandma (AI voice)**, then **Ian** | Piano under the voices | her words, English line, "AI voice" |
+| 2:48-2:53 | Ian lifts the headset off. The chair across from him is empty. He sits a second. | | One last chord, held | |
+| 2:53-3:00 | `motion/end.mp4` | | Piano resolves, silence at 3:00 | "Lucid Dreams. Anyone from any video, standing in your room." · getluciddreams.vercel.app · team · "AI voices are labeled. Public figures are likenesses, not affiliated." |
 
 ## What to film (checklist)
 
@@ -123,22 +137,30 @@ recordings to `~/Downloads/lucid-video/quest/` (OpenMTP over USB), named loosely
 - Music playing in the room, other people's faces without their OK, private screens
 - Grandma without Ian in the room saying yes to the take
 
-## Voiceover
+## Voiceover (record list)
 
-Record in a quiet room on the iPhone (Voice Memos), 15 cm from the mouth, three takes of each line, calm and close:
-the music does the emotion.
+Quiet room, iPhone Voice Memos 15 cm from your mouth, 3 takes of each line, calm and close, slower than feels
+natural. Save to `~/Downloads/lucid-video/voice/`.
 
-- "Give it any video and one sentence."
-- "They show up in your room, life size. Every move slows down, then it's your turn."
-- "Play chess against a legend. Rally with one. Pass and he takes the shot."
-- "One camera only sees one side of you. 4DAnyone, released this August, turns one video into 48."
-- "On UF's supercomputer, twelve GPUs fit 290,000 Gaussians to every frame."
-- "Whatever the camera never saw turns blue. We never pass it off as real."
-- "For people who move on their own, LHM++ builds a body from photos, and UIKA gives it a face."
-- "Then it has to run on a headset. One person is 115 million pixels per eye, so we budget every splat."
-- "It hears you, answers as them, in their own voice. About three seconds."
+1. "Lucid Dreams turns any video into a person, standing in your room."
+2. "Real size. Real motion. Walk all the way around them."
+3. "Ask it to teach you, and every move slows down and waits for you."
+4. "Sit across the board from a legend."
+5. "Rally with one."
+6. "Pass, and he takes the shot."
+7. "Or just talk. Vishal gave it sixteen seconds of video."
+8. "Here's the hard part."
+9. "A camera only sees one side of you. 4DAnyone, published at SIGGRAPH Asia this August, turns one video into
+   forty-eight views, all the way around."
+10. "On UF's HiPerGator, twelve B200 GPUs fit two hundred ninety thousand 3D Gaussians to every frame."
+11. "Anything the camera never saw, we paint blue. Nothing imagined gets passed off as real."
+12. "From a handful of frames, LHM++ builds a body we can move, and UIKA gives it his face."
+13. "Then it all has to run on a headset."
+14. "One person is a hundred and fifteen million pixels per eye, every frame. So we budget every splat."
+15. "When you talk, it listens, answers as them, and speaks in their voice. About three seconds."
 
-Ian: his own opening line, and anything he wants to say to her or about her. Nothing scripted for him.
+Ian, in his own words: the opening line about how long he's been away, what he asks her, and what he says to her at
+the end. Nothing scripted for him; if a line isn't true for him, it isn't in the film.
 
 ## Music
 
