@@ -1,8 +1,10 @@
 // The sound (2, 3.2, 3.3, 3.5): room tone (never dead silence), the crowd bed as >= 4 HRTF sources at the stands (each
 // the bed from its own offset, placed in the arena, none head-locked: P31), the arrival's swell, the time stop (a
-// low-pass 18 kHz -> 700 Hz and a ~14 dB duck to a hush, never silence, room tone kept: P20), the rush back on play
+// low-pass 18 kHz -> 350 Hz and a 20 dB duck to near-silence, never silence, room tone kept: P20), the rush back on play
 // (0.6 s), See my room's murmur (-18 dB, low-passed), the swell one-shot on the make (and softly at Step in), and
-// events at 3D positions when Vishal approves CC0 sounds. No voices ever (P19): only the bundle's files are played.
+// events at 3D positions when Vishal approves CC0 sounds. No voices ever (P19): only the bundle's files are played,
+// plus the moments, synthesized here from seeded noise and sine (no files): the step-in whoosh, the reverse swell into
+// F and its sub thump, the riser from the sit into the resume, and the make's roar with its second wave.
 // Stream F (`sound`) builds it. Pure Web Audio and type-only imports, so sound.test.ts renders it in an
 // OfflineAudioContext (it takes the context and the file loader as options).
 import type { ClockState } from "./clock";
@@ -16,22 +18,41 @@ export const BUILT = true;
 export const ARRIVAL_FROM_DB = -18;
 /** The time stop (P20): the low-pass runs from open to this cutoff and the crowd ducks by this much (never silence). */
 export const STOP_OPEN_HZ = 18000;
-export const STOP_HUSH_HZ = 700;
-export const STOP_DUCK_DB = -14;
+export const STOP_HUSH_HZ = 350;
+export const STOP_DUCK_DB = -20;
 /** The rush back on play (3.5): the filter opens and the crowd returns over this long. */
 export const RUSH_S = 0.6;
 /** See my room (3.6): the crowd is this far down, low-passed to this cutoff. */
 export const ROOM_DUCK_DB = -18;
 export const ROOM_HZ = 500;
-/** Room tone, dBFS RMS before the master's MASTER_DB lift (so -45 at the output): always there, so the hold before the arrival is never dead silence. */
+/** Room tone, dBFS RMS before the master's MASTER_DB: always there, so the hold before the arrival is never dead silence. */
 export const ROOM_TONE_DB = -50;
 /** On top of 1/sqrt(N) per source, so the summed bed sits at the file's own loudness (-23 LUFS) at the seat (HRTF and distance take the rest; sound.test.ts measures it). */
 export const MIX_TRIM_DB = 5.5;
-/** The whole mix up from the bed's -23 LUFS to about -18 LUFS (bed true peak -7.5 dBTP -> -2.5); the limiter catches the make's stack. */
-export const MASTER_DB = 5;
-/** The step-in's whoosh: a band-passed noise riser, this long, peaking this loud (dBFS) into the ease. */
-export const WHOOSH_S = 1.4;
-export const WHOOSH_DB = -22;
+/**
+ * The whole mix, so the steady crowd measures about -18 LUFS at the seat (the bundle's bed through the six HRTF stand
+ * sources, rendered in Chrome and measured with ffmpeg loudnorm; the limiter's own makeup gain is in that number).
+ */
+export const MASTER_DB = -4;
+/** On top of each one-shot's own gainDb (court.json): the make's swell, its second wave and the roar stay under -1 dBTP together. */
+export const ONE_SHOT_TRIM_DB = -4;
+/** The step-in's whoosh: band-passed noise swept up and back (low-passed: air, not hiss), panned across, this long and loud (dBFS before the master). */
+export const WHOOSH_S = 1.5;
+export const WHOOSH_DB = -19;
+/** The reverse swell into F: noise opening up with the hush's p (p^3), cut at F; its peak (dBFS before the master). */
+export const REVERSE_DB = -22;
+/** The thump at F: a sine falling 95 -> 42 Hz with its octave (for small speakers) and a low noise body; its peak. */
+export const THUMP_DB = -10;
+/** The riser from the sit into the resume: climbs over the hand-back (handoff.ts HANDBACK_END, 1.8 s), holds, gives way to the rush. */
+export const RISER_S = 1.8;
+export const RISER_DB = -24;
+/** A riser the resume never comes for (See my room left mid-freeze) fades out this long after it starts. */
+const RISER_CAP_S = 4;
+/** The make's roar: decorrelated noise per stand source, this far over the bed's loudness; the second wave follows this much later. */
+export const ROAR_DB = -3;
+export const SECOND_WAVE_S = 0.9;
+/** The band-passed roar noise's own level (dBFS RMS) before its gain: white noise through the roar's band. */
+const ROAR_NOISE_DB = -16;
 
 /** Seconds of smoothing on every per-frame parameter write (no zipper noise, no clicks). */
 const SMOOTH_S = 0.03;
@@ -82,6 +103,8 @@ export interface SoundOptions {
   context?: Ctx;
   /** Fetch and decode one bundle path (default: `fetch(bundle.file(path))` and `decodeAudioData`). */
   decode?: (path: string, context: Ctx) => Promise<AudioBuffer>;
+  /** The synthesized moments (whoosh, reverse swell and thump, riser, roar and second wave); false: the crowd bus alone (default true). */
+  moments?: boolean;
 }
 
 /** What the e2e's graph check reads (P31). */
@@ -109,7 +132,12 @@ export class Sound {
   private roomLP!: BiquadFilterNode;
   private roomGain!: GainNode;
   private master!: GainNode;
-  private whooshBuf?: AudioBuffer;
+  /** Seeded white noise every moment draws from (3 s, looped, each from its own offset). */
+  private noise!: AudioBuffer;
+  /** The reverse swell into F while the hush builds. */
+  private rev: { src: AudioBufferSourceNode; band: BiquadFilterNode; gain: GainNode } | null = null;
+  /** The riser from the sit, until the resume's rush takes over. */
+  private riser: { src: AudioBufferSourceNode; cut: GainNode } | null = null;
   private loaded = false;
   private wantStart = false;
   private started = false;
@@ -170,12 +198,20 @@ export class Sound {
     this.to(this.crowd.gain, dbToGain(MIX_TRIM_DB) / Math.sqrt(this.bedNodes.length) * arrivalGain(p));
   }
 
-  /** The time stop: 0 = the crowd open, 1 = low-passed to ~700 Hz and 14 dB down (a hush, not silence). */
+  /** The time stop: 0 = the crowd open, 1 = low-passed to ~350 Hz and 20 dB down (near-silence over room tone); landing on 1 is F (the thump). */
   timeStop(p: number): void {
-    if (!this.loaded || this.ctx.currentTime < this.rushEnd || Math.abs(p - this.stopP) < 1e-4) return;
+    if (!this.loaded || this.ctx.currentTime < this.rushEnd) return;
+    if (Math.abs(p - this.stopP) < 1e-4 && !(p >= 1 && this.stopP < 1)) return; // landing exactly on F always counts
+    const was = this.stopP;
     this.stopP = p;
     this.to(this.stopLP.frequency, stopHz(p));
     this.to(this.stopGain.gain, dbToGain(stopDb(p)));
+    if (!this.moments) return;
+    if (p >= 1 && was < 1) {
+      this.cutReverse();
+      this.thump();
+    } else if (p < 1 && p > 0) this.reverse(p);
+    else if (p <= 0) this.cutReverse();
   }
 
   /** Play: the filter opens and the crowd rushes back over `seconds` (0.6), from wherever the stop is. */
@@ -194,12 +230,22 @@ export class Sound {
     }
     this.rushEnd = now + 0.001 + seconds;
     this.stopP = 0;
+    this.cutReverse();
+    if (this.riser) {
+      // the riser gives way to the crowd's rush
+      this.riser.cut.gain.setTargetAtTime(0, now + 0.05, 0.09);
+      this.riser.src.stop(now + 1);
+      this.riser = null;
+    }
   }
 
   /** See my room: 0 = the arena, 1 = the room's murmur (the crowd 18 dB down and low-passed). */
   room(p: number): void {
     if (!this.loaded || Math.abs(p - this.roomP) < 1e-4) return;
+    const was = this.roomP;
     this.roomP = p;
+    // the sit after Back to my seat: out of the room while time is still stopped, the hand-back's riser starts
+    if (this.moments && was >= 0.999 && p < was && this.stopP >= 0.999 && !this.riser) this.rise();
     const e = smootherstep(p);
     this.to(this.roomLP.frequency, logLerp(STOP_OPEN_HZ, ROOM_HZ, e));
     this.to(this.roomGain.gain, dbToGain(lerp(0, ROOM_DUCK_DB, e)));
@@ -208,19 +254,25 @@ export class Sound {
   /** A one-shot from court.json audio.oneShots by its cue: the swell, spread over the stand sources. */
   oneShot(id: "make" | "stepIn"): void {
     if (!this.started || !this.arrived) return;
-    if (id === "stepIn") this.whoosh();
+    if (this.moments && id === "stepIn") this.whoosh();
+    if (this.moments && id === "make") this.roar();
     for (const shot of this.bundle.court.audio.oneShots) {
       if (shot.at !== id) continue;
       const buffer = this.buffers.get(shot.file)!;
-      this.panners.forEach((panner, i) => {
-        const node = this.ctx.createBufferSource();
-        const gain = this.ctx.createGain();
-        node.buffer = buffer;
-        gain.gain.value = dbToGain(shot.gainDb);
-        node.connect(gain).connect(panner);
-        node.start(this.ctx.currentTime + i * STAGGER_S);
-        node.onended = () => gain.disconnect();
-      });
+      const wave = (delay: number, db: number, rate: number, order: PannerNode[]) =>
+        order.forEach((panner, i) => {
+          const node = this.ctx.createBufferSource();
+          const gain = this.ctx.createGain();
+          node.buffer = buffer;
+          node.playbackRate.value = rate;
+          gain.gain.value = dbToGain(db);
+          node.connect(gain).connect(panner);
+          node.start(this.ctx.currentTime + delay + i * STAGGER_S);
+          node.onended = () => gain.disconnect();
+        });
+      wave(0, shot.gainDb + ONE_SHOT_TRIM_DB, 1, this.panners);
+      // the make's second wave: the swell again a beat later, a little lower and slower, round the stands the other way
+      if (this.moments && id === "make") wave(SECOND_WAVE_S, shot.gainDb + ONE_SHOT_TRIM_DB - 5, 0.96, [...this.panners].reverse());
     }
   }
 
@@ -275,10 +327,10 @@ export class Sound {
     this.master.gain.value = dbToGain(MASTER_DB);
     // a fast, hard-kneed limiter before the output so the make's stacked swell never clips
     const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -1.5; // above the lifted bed's -2.5 dBTP: idle on the steady mix
+    limiter.threshold.value = -3; // far above the steady mix (about -7 dBTP): it only ever touches the make
     limiter.knee.value = 0;
     limiter.ratio.value = 20;
-    limiter.attack.value = 0.002;
+    limiter.attack.value = 0; // its 6 ms look-ahead still catches the onset
     limiter.release.value = 0.15;
     this.master.connect(limiter).connect(ctx.destination);
     // crowd -> time stop -> room murmur -> master
@@ -298,6 +350,7 @@ export class Sound {
     });
     this.sources = this.panners.length;
     this.roomTone();
+    this.noise = this.whiteNoise(3, 777);
   }
 
   private lowpass(hz: number): BiquadFilterNode {
@@ -322,35 +375,174 @@ export class Sound {
     return p;
   }
 
-  /** The step-in's riser: noise through a band-pass sweeping 250 Hz -> 3.5 kHz, swelling then falling away (no file). */
+  // ---------------- the moments ----------------
+
+  private get moments(): boolean {
+    return this.options.moments !== false;
+  }
+
+  private whiteNoise(seconds: number, seed: number): AudioBuffer {
+    const length = Math.round(seconds * this.ctx.sampleRate);
+    const data = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      data[i] = (seed / 2 ** 32) * 2 - 1;
+    }
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    buffer.copyToChannel(data, 0);
+    return buffer;
+  }
+
+  /** The shared noise, looped, from `offset` seconds in (each layer its own, so layers don't correlate). */
+  private noiseSource(offset: number, when = this.ctx.currentTime): AudioBufferSourceNode {
+    const node = this.ctx.createBufferSource();
+    node.buffer = this.noise;
+    node.loop = true;
+    node.start(when, offset % this.noise.duration);
+    return node;
+  }
+
+  private bandpass(hz: number, q: number): BiquadFilterNode {
+    const f = this.ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.frequency.value = hz;
+    f.Q.value = q;
+    return f;
+  }
+
+  /** A gain whose value runs `shape` (0 at both ends: no clicks) times `peak` from `when` over `seconds`. */
+  private envelope(when: number, seconds: number, peak: number, shape: (u: number) => number): GainNode {
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    gain.gain.setValueCurveAtTime(Float32Array.from({ length: 256 }, (_, i) => peak * shape(i / 255)), when, seconds);
+    return gain;
+  }
+
+  /** Step in: air swept 180 Hz -> 1.4 kHz and back down, panned left to right, low-passed at 2.4 kHz so it never hisses. */
   private whoosh(): void {
     const ctx = this.ctx;
-    if (!this.whooshBuf) {
-      const length = Math.round(WHOOSH_S * ctx.sampleRate);
-      const data = new Float32Array(length);
-      let seed = 777;
-      for (let i = 0; i < length; i++) {
-        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-        data[i] = (seed / 2 ** 32) * 2 - 1;
-      }
-      this.whooshBuf = ctx.createBuffer(1, length, ctx.sampleRate);
-      this.whooshBuf.copyToChannel(data, 0);
-    }
     const now = ctx.currentTime;
-    const node = ctx.createBufferSource();
-    const band = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
-    node.buffer = this.whooshBuf;
-    band.type = "bandpass";
-    band.Q.value = 1.2;
+    const src = this.noiseSource(0.4);
+    const band = this.bandpass(180, 0.9);
+    band.frequency.setValueAtTime(180, now);
+    band.frequency.exponentialRampToValueAtTime(1400, now + WHOOSH_S * 0.62);
+    band.frequency.exponentialRampToValueAtTime(450, now + WHOOSH_S);
+    const pan = ctx.createStereoPanner();
+    pan.pan.setValueAtTime(-0.55, now);
+    pan.pan.linearRampToValueAtTime(0.55, now + WHOOSH_S);
+    const gain = this.envelope(now, WHOOSH_S, dbToGain(WHOOSH_DB), (u) => (u < 0.62 ? smootherstep(u / 0.62) ** 1.6 : smootherstep((1 - u) / 0.38)));
+    src.connect(band).connect(this.lowpass(2400)).connect(gain).connect(pan).connect(this.master);
+    src.stop(now + WHOOSH_S + 0.05);
+    src.onended = () => pan.disconnect();
+  }
+
+  /** The hush building into F: noise opening 300 Hz -> 2.2 kHz and rising as p^3 (most of it in the ease's last third). */
+  private reverse(p: number): void {
+    if (!this.started || !this.arrived) return;
+    if (!this.rev) {
+      const src = this.noiseSource(1.3);
+      const band = this.bandpass(300, 1.1);
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(band).connect(this.lowpass(3000)).connect(gain).connect(this.master);
+      this.rev = { src, band, gain };
+    }
+    this.to(this.rev.band.frequency, logLerp(300, 2200, p));
+    this.to(this.rev.gain.gain, dbToGain(REVERSE_DB) * p ** 3);
+  }
+
+  /** F: the reverse swell stops short (a 20 ms fall, never a click). */
+  private cutReverse(): void {
+    if (!this.rev) return;
+    const now = this.ctx.currentTime;
+    const { src, gain } = this.rev;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setTargetAtTime(0, now, 0.02);
+    src.stop(now + 0.4);
+    src.onended = () => gain.disconnect();
+    this.rev = null;
+  }
+
+  /** F lands: a sub thump (95 -> 42 Hz, its octave for small speakers, a low-passed noise body), then the hush. */
+  private thump(): void {
+    if (!this.started || !this.arrived) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const peak = dbToGain(THUMP_DB);
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0, now);
+    out.gain.linearRampToValueAtTime(peak, now + 0.012);
+    out.gain.setTargetAtTime(0, now + 0.012, 0.28);
+    out.connect(this.master);
+    for (const [from, to, level] of [[95, 42, 1], [190, 84, 0.35]] as const) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.frequency.setValueAtTime(from, now);
+      osc.frequency.exponentialRampToValueAtTime(to, now + 0.45);
+      g.gain.value = level;
+      osc.connect(g).connect(out);
+      osc.start(now);
+      osc.stop(now + 2.5); // 2.5 s is 9 time constants: silent by then
+      osc.onended = () => {
+        g.disconnect();
+        out.disconnect();
+      };
+    }
+    const body = this.noiseSource(2.1);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(0, now);
+    bodyGain.gain.linearRampToValueAtTime(0.5 * peak, now + 0.006);
+    bodyGain.gain.setTargetAtTime(0, now + 0.006, 0.05);
+    body.connect(this.lowpass(380)).connect(bodyGain).connect(this.master);
+    body.stop(now + 0.6);
+    body.onended = () => bodyGain.disconnect();
+  }
+
+  /** The sit after Back to my seat: noise climbing 250 Hz -> 2.4 kHz over the hand-back, held until the rush (release). */
+  private rise(): void {
+    if (!this.started || !this.arrived) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const src = this.noiseSource(0.9);
+    const band = this.bandpass(250, 1.4);
     band.frequency.setValueAtTime(250, now);
-    band.frequency.exponentialRampToValueAtTime(3500, now + WHOOSH_S * 0.8);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(dbToGain(WHOOSH_DB), now + WHOOSH_S * 0.7);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + WHOOSH_S);
-    node.connect(band).connect(gain).connect(this.master);
-    node.onended = () => gain.disconnect();
-    node.start(now);
+    band.frequency.exponentialRampToValueAtTime(2400, now + RISER_S);
+    const climb = ctx.createGain();
+    climb.gain.value = 0;
+    climb.gain.setValueCurveAtTime(Float32Array.from({ length: 128 }, (_, i) => dbToGain(RISER_DB) * (i / 127) ** 2.2), now, RISER_S);
+    const cut = ctx.createGain();
+    cut.gain.setTargetAtTime(0, now + RISER_CAP_S, 0.3); // no resume came: let it go
+    src.connect(band).connect(this.lowpass(3500)).connect(climb).connect(cut).connect(this.master);
+    src.stop(now + RISER_CAP_S + 2.5);
+    src.onended = () => cut.disconnect();
+    this.riser = { src, cut };
+  }
+
+  /** The make: the crowd erupts, a decorrelated roar at every stand source (each its own wobble), a second wave a beat later. */
+  private roar(): void {
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const seconds = SECOND_WAVE_S + 3.4;
+    const bump = (t: number, fall: number) => (t <= 0 ? 0 : t < 0.15 ? smootherstep(t / 0.15) : Math.max(0, 1 - (t - 0.15) / fall) ** 2);
+    const peak = dbToGain(this.bundle.court.audio.lufs + ROAR_DB - ROAR_NOISE_DB);
+    this.panners.forEach((panner, i) => {
+      const when = now + i * STAGGER_S;
+      const src = this.noiseSource(0.53 * i + 0.2, when);
+      const band = this.bandpass(750, 0.6);
+      const wobble = ctx.createGain();
+      wobble.gain.value = 0.75;
+      const lfo = ctx.createOscillator();
+      const depth = ctx.createGain();
+      lfo.frequency.value = 2.1 + 0.55 * i;
+      depth.gain.value = 0.25;
+      lfo.connect(depth).connect(wobble.gain);
+      const env = this.envelope(when, seconds, peak, (u) => Math.min(1, bump(u * seconds, 1.5) + 0.95 * bump(u * seconds - SECOND_WAVE_S, 3.2)));
+      src.connect(band).connect(this.lowpass(4000)).connect(wobble).connect(env).connect(panner);
+      lfo.start(when);
+      lfo.stop(when + seconds + 0.05);
+      src.stop(when + seconds + 0.05);
+      src.onended = () => env.disconnect();
+    });
   }
 
   /** Looped brown-ish noise at ROOM_TONE_DB with a crossfaded seam: the floor under everything. */
