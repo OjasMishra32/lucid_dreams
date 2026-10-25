@@ -16,6 +16,7 @@ import * as THREE from "three";
 import { splitAnnexB, spsCodec, type AccessUnit } from "./annexb";
 import type { CourtBundle, Region, ShowSegments } from "./format";
 import { loads } from "./loading";
+import { maxAniso } from "../xr/quality";
 
 /** True once stream D has built this module. */
 export const BUILT = true;
@@ -313,7 +314,7 @@ export class ShowVideo {
     t.flipY = false;
     t.generateMipmaps = false;
     t.minFilter = t.magFilter = THREE.NearestFilter;
-    const aniso = Math.min(8, renderer?.capabilities?.getMaxAnisotropy() ?? 1);
+    const aniso = maxAniso(renderer);
     const target = ([, , w, h]: Region, anisotropy: number) => {
       const rt = new THREE.WebGLRenderTarget(w, h, {
         generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, colorSpace: THREE.NoColorSpace,

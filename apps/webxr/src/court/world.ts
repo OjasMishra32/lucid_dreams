@@ -28,6 +28,7 @@ import { frameFeather, type Proxies } from "./proxies";
 import { TONE_DEFAULT, floorTones } from "./floortone";
 import { EDGE_FADE } from "./seatmath";
 import type { Head } from "./types";
+import { maxAniso } from "../xr/quality";
 
 /** True once stream E has built this module. */
 export const BUILT = true;
@@ -500,7 +501,7 @@ export class CourtWorld {
       loader.loadAsync(this.bundle.file(c.floorSeen)).catch(() => null),
     ]);
     for (const t of [floorMap, seenMap]) if (t) this.textures.push(t);
-    const aniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    const aniso = maxAniso(this.renderer);
     if (floorMap) {
       floorMap.colorSpace = THREE.SRGBColorSpace;
       floorMap.anisotropy = aniso;
@@ -765,7 +766,7 @@ export class CourtWorld {
     const atlas = crowd ? await new THREE.TextureLoader().loadAsync(this.bundle.file(crowd.atlas)).catch(() => null) : null;
     if (atlas) {
       atlas.colorSpace = THREE.SRGBColorSpace;
-      atlas.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      atlas.anisotropy = maxAniso(this.renderer);
       atlas.minFilter = THREE.LinearMipmapLinearFilter;
       atlas.generateMipmaps = true;
       this.textures.push(atlas);

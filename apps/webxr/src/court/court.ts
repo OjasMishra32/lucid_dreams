@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { handSides } from "../xr/menu";
-import { XR_QUALITY } from "../xr/quality";
+import { SPLAT_QUALITY, XR_QUALITY } from "../xr/quality";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
@@ -111,7 +111,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 200);
   camera.position.set(0, 1.15, 0);
-  const spark = new SparkRenderer({ renderer });
+  const spark = new SparkRenderer({ renderer, ...SPLAT_QUALITY });
   scene.add(spark);
   /** Everything in court space; its transform is Seat.world (court -> room), written only by Seat. */
   const world = new THREE.Group();
