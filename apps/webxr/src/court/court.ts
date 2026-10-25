@@ -30,6 +30,7 @@ import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
 import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
+import { RESET_OUT_S, ResetFade, ResetVeil, StepPulse } from "./transitions";
 import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
@@ -224,6 +225,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // the view: the cinema screen for the watch (default), or ?view=courtside, the footage projected into the arena (V1.2)
   const screen = viewMode(params.get("view")) === "screen" ? new CinemaScreen(bundle, video.regions.live, seat.spot) : null;
   if (screen) world.add(screen.mesh);
+  // Reset's fade through black and Step into the court's rim pulse (transitions.ts); the veil lives in room space
+  const resetFade = new ResetFade();
+  const resetVeil = new ResetVeil();
+  scene.add(resetVeil.mesh);
+  const stepPulse = new StepPulse();
   /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
   const screenWatch = (level: number) => {
     if (!screen) return;
@@ -336,6 +342,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const stepIn = () => {
     clock.press();
     sound.oneShot("stepIn");
+    stepPulse.start(); // the screen's rim brightens as the press registers
   };
   on("step", () => {
     if (phase !== "watching") return;
@@ -383,16 +390,19 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     screenWatch(1);
     clock.restart();
   };
-  // Replay, on the menu in every phase after the arrival (3.6): the watch from pass 1
+  // Replay, on the menu in every phase after the arrival (3.6): the watch from pass 1, never a cut (transitions.ts):
+  // from the 3D the view fades to black and the show restarts there; at the screen (the seat and the arena stay put)
+  // it restarts at once and the screen rises. transitions() below runs it; the clock holds until the view is back
   on("replay", () => {
-    if (setup || phase === "arrival") return;
-    restart();
-    go("watching");
+    if (setup || phase === "arrival" || resetFade.active) return;
+    const atScreen = phase === "watching" || phase === "resume" || phase === "ended";
+    resetFade.start(atScreen ? 0 : RESET_OUT_S);
   });
   // Change seat (the presenter, between judges): back to the setup page, the show stopped on its first frame and the
   // world on its anchor until the next Seat here, which takes a new seat and waits for the next hand-over (seat.arrival)
   on("changeSeat", () => {
     if (setup) return;
+    resetFade.cancel();
     restart();
     feed(court.video.segments.pass1[0]);
     screenAside(0);
@@ -469,7 +479,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "watching":
       case "easing":
       case "resume": {
-        if (!(inRoom && phase !== "resume")) clockState = clock.update(dt); // the clock holds in the room (3.6)
+        // the clock holds in the room (3.6), and on pass 1's first frame while a Reset brings the view back
+        if (!(inRoom && phase !== "resume") && !resetFade.holding) clockState = clock.update(dt);
         const s = clock.state;
         // ?solo: nobody to press Step into the court, so the show takes it by itself early in pass 2 (once a pass; a
         // press of the judge's own already took it)
@@ -582,6 +593,20 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     }
   };
 
+  // Reset and Step into the court's transitions, after the machine's step so they have the last word on the veil and
+  // the screen: the restart on the frame the view is black (or at once from the screen), the veil round the head, the
+  // screen's rise after a Reset at it, the rim's pulse. The way back in waits at black while the restart's seat.restore
+  // fade-jump runs (seat.ts, JUMP_S), so the view comes back once, on the seat
+  const transitions = (dt: number) => {
+    if (resetFade.update(resetFade.holding && seat.veil > 0 ? 0 : dt)) {
+      restart();
+      go("watching");
+    }
+    resetVeil.set(resetFade.veil, head.room);
+    if (screen && resetFade.atOnce && resetFade.holding) screen.opacity = Math.min(screen.opacity, resetFade.rise);
+    screen?.glow(stepPulse.level(dt));
+  };
+
   // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again
   // only when the bounds or the world's placement change
   let sentBounds: unknown = undefined;
@@ -642,6 +667,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     }
     courtWorld.update(head);
     step(dt);
+    transitions(dt);
     stats?.gpu.begin(phase);
     renderer.render(scene, camera);
     stats?.gpu.end();
