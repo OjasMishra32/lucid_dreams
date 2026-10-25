@@ -38,3 +38,5 @@ apps/webxr/dist/
 # Court Side's bundle (290 MB, from Vishal); its hand models stay in git
 /apps/webxr/public/court/*
 !/apps/webxr/public/court/hands/
+# Court Side's players and stills for the film and the site's card (from the broadcast: never in git)
+/apps/web/public/media/court/

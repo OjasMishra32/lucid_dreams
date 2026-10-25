@@ -32,6 +32,9 @@ export const SCENES: SceneDef[] = [
   { key: "chess-carlsen", group: "play", ids: ["magnus-carlsen-uika-360"], title: "Chess with Magnus", said: "Play chess with me.", what: "Real-size table on your floor. He shakes your hand and moves his own pieces.", open: "mode=chess&strength=carlsen", image: "/media/world-chess-magnus.jpg", label: "Stockfish at Carlsen's peak rating. Not affiliated." },
   { key: "chess-fischer", group: "play", ids: ["bobby-fischer-uika"], title: "Chess with Bobby Fischer", said: "Play chess with me.", what: "His real openings, at his 1972 strength.", open: "mode=chess&strength=fischer", image: "/media/world-chess-bobby.jpg", label: "Stockfish at Fischer's peak rating. Not affiliated." },
   { key: "tennis", group: "play", ids: ["roger-federer-uika"], title: "Tennis with Federer", said: "Play a set with me.", what: "Full-size grass court. Flat, slice and kick serves.", open: "mode=tennis", image: "/media/world-tennis.jpg", label: "His likeness. AI opponent, not affiliated." },
+  // Vishal's Court Side: no dream bundle (its own, under the room's /court/); its card is our render of the freeze, which
+  // like the bundle comes from the broadcast and stays out of git, so the card shows only where the still is
+  { key: "court", group: "relive", ids: [], title: "Court Side", said: "Let me stand in this play.", what: "A real NBA play at full size around you. Stop it and walk between the players.", open: "mode=court", image: "/media/court/world-court.jpg", label: "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players." },
   { key: "replay", group: "relive", ids: ["jump-shot-hq"], title: "Jump shot", said: "Let me walk around it.", what: "Freeze it mid-air and walk around it.", open: "dream=jump-shot-hq", credit: "Pexels" },
   { key: "grandma", group: "talk", ids: ["ian-grandma"], title: "Grandma", said: "I just want to sit with her.", what: "Ian's grandmother, from a family video. She answers in Vietnamese, in her own voice.", open: "dream=ian-grandma" },
   { key: "vishal", group: "talk", ids: ["vishal-lhm", "vishal-head", "vishal"], title: "Vishal", said: "Hang out with me.", what: "Ask him anything. He answers in his own cloned voice.", open: "dream=vishal-lhm" },
@@ -56,6 +59,11 @@ export function scenes(): SceneCard[] {
   const ready = new Map(listReady().map((d) => [d.id, d]));
   const out: SceneCard[] = [];
   for (const s of SCENES) {
+    if (!s.ids.length) {
+      if (s.image && existsSync(join(process.cwd(), "public", s.image)))
+        out.push({ key: s.key, group: s.group, title: s.title, said: s.said, what: s.what, open: s.open, label: s.label ?? null, credit: s.credit ?? null, video: null, poster: null, image: s.image });
+      continue;
+    }
     let d: Dream | null = null;
     for (const id of s.ids) {
       d = ready.get(id) ?? (s.image ? readDream(id) : null);

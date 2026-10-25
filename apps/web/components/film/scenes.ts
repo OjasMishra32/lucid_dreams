@@ -3,6 +3,7 @@
 // time t. Every number on screen is a measured one. 1920 x 1080.
 import meta from "@/components/tech/overdraw.json";
 import type { RigCamera } from "@/lib/three/story";
+import type { CourtPlayer } from "@/lib/three/court";
 
 export const W = 1920;
 export const H = 1080;
@@ -474,6 +475,51 @@ const bobby = legend("bobby", "/dreams/bobby-fischer-uika/avatar/avatar.ply", "B
 const magnus = legend("magnus", "/dreams/magnus-carlsen-uika-360/avatar/avatar.ply", "Magnus Carlsen",
   ["from 14 public photos,", "2015 to 2017"], "197,285 Gaussians · 55 joints");
 
+// Court Side (Vishal's ?mode=court): the bundle's two freeze.ply files, copied to public/media/court/ (from the
+// broadcast, so never in git), in the court's own space; yaw 0 is the broadcast camera's side
+const COURT_PLAYERS: CourtPlayer[] = [
+  { splats: "/media/court/luka.ply", shadow: { image: "/media/court/luka-shadow.png", rect: [4.244, 0.868, 6.432, 2.838] } },
+  { splats: "/media/court/gobert.ply", shadow: { image: "/media/court/gobert-shadow.png", rect: [6.298, -0.189, 8.764, 2.039] } },
+];
+const BROADCAST: [number, number, number] = [-16.5605, 0.7575, 2.7798];
+const COURT_LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.";
+
+const court: Scene = {
+  key: "court",
+  dur: 9,
+  gl: { x: 760, y: 0, w: 1160, h: 1080 },
+  async mount(host, s) {
+    const { mountCourt } = await import("@/lib/three/court");
+    return mountCourt(host, COURT_PLAYERS, BROADCAST, {
+      reveal: () => ramp(s.t, 0.5, 2.8),
+      yaw: () => lerp(-0.35, 0.65, s.t / 9),
+      failed: () => {},
+    });
+  },
+  preroll: { t: 0, seconds: 1, waitMs: 1500 },
+  draw(g, t) {
+    rise(g, "Court Side", 120, 300, ramp(t, 0.3, 1.1), { size: 84, track: -2 });
+    ["One real NBA play,", "rebuilt at real size."].forEach((l, i) =>
+      rise(g, l, 124, 372 + i * 48, ramp(t, 0.9 + i * 0.25, 1.7 + i * 0.25), { size: 34, weight: 500, color: INK2 }));
+    rise(g, "Freeze it mid-air.", 120, 600, ramp(t, 3.0, 3.8), { size: 44 });
+    rise(g, "Walk around it.", 120, 668, ramp(t, 4.6, 5.4), { size: 44 });
+    rise(g, "425,000 Gaussians · 2 players", 120, 780, ramp(t, 6.0, 6.8), { size: 30, weight: 600, color: INK3 });
+    text(g, COURT_LABEL, 120, 990, { size: 26, weight: 500, color: INK3, alpha: ramp(t, 0.3, 1.1) });
+  },
+};
+
+/** The same freeze full frame, turning slowly with no type: an insert for the cut, and the website card's still. */
+const courtOrbit: Scene = {
+  key: "court-orbit",
+  dur: 8,
+  async mount(host, s) {
+    const { mountCourt } = await import("@/lib/three/court");
+    return mountCourt(host, COURT_PLAYERS, BROADCAST, { reveal: () => 1, yaw: () => lerp(-1.1, 1.1, s.t / 8), failed: () => {} });
+  },
+  preroll: { t: 0, seconds: 1, waitMs: 1500 },
+  draw() {},
+};
+
 // the frame-budget heat map: black, deep blue, the site's blue, light blue, white
 const STOPS: [number, [number, number, number]][] = [
   [0, [6, 8, 14]],
@@ -684,4 +730,4 @@ const end: Scene = {
   },
 };
 
-export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy];
+export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy, court, courtOrbit];
