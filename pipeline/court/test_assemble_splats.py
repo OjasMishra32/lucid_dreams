@@ -39,6 +39,28 @@ def sh1_colour(s: sp.Splats, d) -> np.ndarray:
     return C0 * s.dc + C1 * (-y * r[:, :, 0] + z * r[:, :, 1] - x * r[:, :, 2])
 
 
+class SpzShips(unittest.TestCase):
+    def test_spz_round_trip_is_close_to_the_ply(self):
+        """write_spz / read_splats: SPZ v2 with SH degree 1 (positions to 1/4096 m, the rest 8-bit), read back as Splats in
+        the PLY's own layout (dc, channel-major rest)."""
+        rng = np.random.default_rng(11)
+        s = splats_of(person(rng, n=800, foot=(6.0, -2.0)), rng)
+        with tempfile.TemporaryDirectory() as d:
+            n_bytes = sp.write_spz(Path(d) / "a.spz", s)
+            t = sp.read_splats(Path(d) / "a.spz")
+            sp.write_ply(Path(d) / "a.ply", s)
+            self.assertLess(n_bytes, (Path(d) / "a.ply").stat().st_size / 3)
+            self.assertEqual(sp.read_splats(Path(d) / "a.ply").names, s.names)
+        self.assertEqual(len(t), len(s))
+        np.testing.assert_allclose(t.pos, s.pos, atol=1 / 4096)
+        np.testing.assert_allclose(t.scales, s.scales, atol=1 / 16)
+        np.testing.assert_allclose(t.alpha, s.alpha, atol=1 / 255)
+        np.testing.assert_allclose(t.rgb, s.rgb, atol=1 / 255 + 1e-6)
+        np.testing.assert_allclose(t.rest, np.clip(s.rest, -1, 127 / 128), atol=1 / 128)
+        dots = np.abs(np.sum(sp.normalise(t.quats) * sp.normalise(s.quats), 1))
+        self.assertGreater(float(dots.min()), 0.99)
+
+
 class Ply(unittest.TestCase):
     def test_round_trip_keeps_every_property(self):
         rng = np.random.default_rng(1)

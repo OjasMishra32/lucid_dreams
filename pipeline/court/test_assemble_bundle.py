@@ -594,6 +594,214 @@ class Bundle(unittest.TestCase):
             self.assertEqual(len(c["psnr"]["orbit"]), 8)
             self.assertTrue(all(x > 10 for x in [c["psnr"]["seat"], *c["psnr"]["orbit"]]), c["psnr"])
 
+    def test_each_body_has_its_own_cap_and_keeps_its_head_whole(self):
+        """caps {id: n} cut each pair body to its own budget; with protect "head" the top eighth of the body as camera F
+        sees it is kept whole before the rest is ranked."""
+        code, out = self.assemble_with("caps", caps={"a": 7000}, protect="head", capPsnr=True)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        c = asm["players"]["a"]["cap"]
+        self.assertEqual(c["kept"], 7000)
+        self.assertGreater(c["protected"]["count"], 100)
+        self.assertIn("top eighth", c["protected"]["by"])
+        self.assertIsNone(asm["players"]["b"]["cap"])  # no cap of its own, no pair cap: whole
+        self.assertEqual(len(sp.read_ply(out / "players/a/freeze.ply")), 7000)
+
+    def test_a_body_is_carved_against_its_own_views(self):
+        """players[].carve: the Gaussians that land on the background in two or more of the body's own generated views
+        go (a spike the fit grew where camera F can't see it), in freeze.ply and reality.ply alike; what camera F sees
+        stays even when the imagined views disagree; what it cost at F is measured."""
+        import cv2
+
+        from test_assemble_v1 import ring_view
+
+        S = json.loads((STANDIN / "court.json").read_text())
+        body = sp.read_ply(STANDIN / S["freeze"]["players"][0]["splats"])
+        P = body.pos.astype(float)
+        top = P[np.argmax(P[:, 1])]
+        head = np.median(P[P[:, 1] > top[1] - 0.2], 0)
+        ray = head - A.standin_camera_f(S, STANDIN).C  # camera F's ray in the PLY's own space (placing turns it so)
+        ray /= np.linalg.norm(ray)
+        side = np.cross(ray, [0.0, 1.0, 0.0])
+        side /= np.linalg.norm(side)
+        # a hand out to the side, facing F (a dense opaque patch): F sees it, the imagined views don't have it; and a
+        # spike straight out of its back, along F's ray: F can't see that
+        hand = head - [0.0, 0.5, 0.0] + 0.5 * side
+        g = np.arange(-3, 4) * 0.02
+        lump = np.array([hand + a * side + b * np.array([0.0, 1.0, 0.0]) for a in g for b in g])
+        spike = hand + np.linspace(0.1, 0.3, 30)[:, None] * ray
+        extra = np.concatenate([lump, spike])
+        n = len(extra)
+        scales = np.concatenate([np.full((len(lump), 3), -4.6), np.full((len(spike), 3), -5.0)]).astype(np.float32)
+        add = sp.Splats.new(extra.astype(np.float32), np.tile([1, 0, 0, 0], (n, 1)).astype(np.float32), scales,
+                            np.full(n, 8.0, np.float32), np.zeros((n, 3), np.float32), np.zeros((n, body.rest.shape[1]), np.float32))
+        sp.write_ply(self.tmp / "spiked.ply", sp.Splats(np.concatenate([body.table, add.table[list(body.table.dtype.names)]])))
+        centre = np.median(P, 0)
+        views = self.tmp / "carve-views"
+        views.mkdir(exist_ok=True)
+        cams = []
+        for k, yaw in enumerate((0, 90, 180, 270)):
+            v = ring_view(P - [centre[0], 0, centre[2]], yaw)
+            c2w = v["camera_to_world"].copy()
+            c2w[:3, 3] += [centre[0], 0, centre[2]]
+            cv2.imwrite(str(views / f"{k:02d}.png"), (v["image"][..., ::-1] * 255).astype(np.uint8))
+            cams.append({"camera_to_world": c2w.tolist(), "K": v["K"].tolist(), "image_width": 360, "image_height": 640, "video": f"{k:02d}.png"})
+        (views / "cameras.json").write_text(json.dumps({"cameras": cams}))
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "splats": str(self.tmp / "spiked.ply"), "carve": {"views": str(views), "frame": 0}}, cfg["players"][1]]
+        code, out = self.assemble_with("carved", players=players)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        cv = asm["players"]["a"]["carve"]
+        self.assertGreaterEqual(cv["removed"], 0.75 * len(spike))  # its root is in the views' soft edge or seen past the hand
+        self.assertLess(cv["removed"], len(spike) + 0.01 * len(body))
+        self.assertGreaterEqual(cv["keptForF"], len(lump))
+        self.assertEqual(cv["views"], ["00", "01", "02", "03"])
+        self.assertGreater(cv["psnrAtF"], 40)
+        fz = sp.read_ply(out / "players/a/freeze.ply")
+        self.assertEqual(len(fz), len(sp.read_ply(out / "players/a/reality.ply")))
+        self.assertEqual(len(fz), len(body) + n - cv["removed"])
+
+    def test_footref_anchors_a_bodys_depth_along_camera_fs_rays(self):
+        """players[].anchor "footRef": the placed body slides along camera F's rays (a scale about F: no pixel at F
+        moves) until its soles meet the reference's; the lift that costs is reported, and over 1.5 cm it isn't done."""
+        court = json.loads((self.out / "court.json").read_text())
+        frames = json.loads((self.out / court["video"]["frames"]).read_text())
+        camF = A.frame_camera(court["camera"], frames, court["video"])
+        foot = np.array([5.6, 0.0, 0.6])
+        ray = (foot - camF.C) / np.linalg.norm(foot - camF.C)
+        near = foot - 0.2 * ray
+        cfg = json.loads((self.tmp / "assemble.json").read_text())
+        players = [{**cfg["players"][0], "footRef": {"source": "C", "xz": [[near[0], near[2]]]}, "anchor": "footRef"}, cfg["players"][1]]
+        code, out = self.assemble_with("anchored", players=players)
+        self.assertEqual(code, 0)
+        asm = json.loads((out / "assembly.json").read_text())
+        an = asm["players"]["a"]["placement"]["anchor"]
+        self.assertTrue(an["applied"], an)
+        np.testing.assert_allclose(asm["players"]["a"]["contact"], [near[0], near[2]], atol=0.03)
+        self.assertAlmostEqual(an["movedM"], 0.2 * np.linalg.norm(ray[[0, 2]]), delta=0.03)
+        self.assertLess(asm["players"]["a"]["footError"]["m"], 0.03)
+        far = foot - 3.0 * ray  # 3 m along the ray: the soles would leave the floor
+        players[0]["footRef"] = {"source": "C", "xz": [[far[0], far[2]]]}
+        code, out = self.assemble_with("anchor-refused", players=players)
+        self.assertEqual(code, 0)
+        an = json.loads((out / "assembly.json").read_text())["players"]["a"]["placement"]["anchor"]
+        self.assertFalse(an["applied"])
+        self.assertGreater(abs(an["liftM"]), 0.015)
+
+    def test_the_extras_share_one_budget_by_what_a_judge_sees(self):
+        """capExtras: one budget for every extra, split by significance from the views a judge has of them (camera F, the
+        seat, the walking spots); each keeps at least capExtrasFloor; if the floors don't fit, the least visible go."""
+        code, out = self.assemble_with("extras-cap", capExtras=4000, capExtrasFloor=1500)
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        asm = json.loads((out / "assembly.json").read_text())
+        counts = {o["id"]: len(sp.read_ply(out / o["file"])) for o in court["freeze"]["others"]}
+        self.assertEqual(sum(counts.values()), 4000)
+        self.assertTrue(all(c >= 1500 for c in counts.values()), counts)
+        self.assertEqual(asm["extras"]["budget"]["total"], 4000)
+        code, out = self.assemble_with("extras-cap-tight", capExtras=2500, capExtrasFloor=1500)
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        self.assertEqual(len(court["freeze"]["others"]), 1)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(len(asm["extras"]["budget"]["leftOut"]), 1)
+        self.assertTrue(any("left out" in n for n in asm["notes"]), asm["notes"])
+
+    def test_an_extras_height_is_held_to_its_measured_freeze_height(self):
+        """P12 for an extra in a stance: its model's top against extra.json's height_freeze.measured_m (3% either side
+        of that range) instead of the standing height; the foot of record and any other foot it lists are noted."""
+        ex = self.tmp / "extras-hf"
+        shutil.copytree(self.tmp / "extras", ex)
+        m = json.loads((ex / "x-one" / "extra.json").read_text())
+        m["height_m"] = 2.3  # standing: the crouched model is shorter
+        m["foot"] = {**m["foot"], "from": "two-camera fit", "xz_other_ankles": [9.2, -3.6]}
+        (ex / "x-one" / "extra.json").write_text(json.dumps(m))
+        code, out = self.assemble_with("extras-hf", extras=str(ex))
+        self.assertEqual(code, 0)
+        errs, _, _ = A.validate(out, A.WEBXR)
+        self.assertTrue(any(e.startswith("x-one:") and "P12" in e for e in errs), errs)
+        m["height_freeze"] = {"placed_m": 2.0, "measured_m": [1.95, 2.05], "how": "a mask's head top over the foot"}
+        (ex / "x-one" / "extra.json").write_text(json.dumps(m))
+        code, out = self.assemble_with("extras-hf2", extras=str(ex))
+        errs, _, info = A.validate(out, A.WEBXR)
+        self.assertFalse(any(e.startswith("x-one:") for e in errs), errs)
+        self.assertTrue(any("x-one" in x and "freeze height" in x for x in info), info)
+        notes = json.loads((out / "assembly.json").read_text())["notes"]
+        self.assertTrue(any("x-one" in n and "xz_other_ankles" in n and "0.63 m" in n for n in notes), notes)
+
+    def test_a_real_bundle_never_shows_a_stand_in_extra(self):
+        """Extras without a placed real body get no 3D figure in a bundle whose pair is real; a stand-in extra in such a
+        bundle fails --validate."""
+        bad = self.copy_bad("standin-extra")
+        asm = json.loads((bad / "assembly.json").read_text())
+        asm["pieces"]["player:a"]["source"] = "real"
+        asm["pieces"]["extra:x-one"]["source"] = "stand-in"
+        (bad / "assembly.json").write_text(json.dumps(asm))
+        errs, _, _ = A.validate(bad, A.WEBXR)
+        self.assertTrue(any("x-one" in e and "stand-in" in e for e in errs), errs)
+        w = A.Writer(self.tmp / "w-extras")
+        S = json.loads((STANDIN / "court.json").read_text())
+        out = A.others_piece(w, {"extras": str(self.tmp / "nothing-here")}, STANDIN, S, [[0, 0, 0]], A.standin_camera_f(S, STANDIN), real_pair=True)
+        self.assertEqual(out, [])
+
+    def test_the_clean_plate_comes_from_the_config(self):
+        """plates.freezeClean: the layers' clean plate of frame F becomes video.freezeClean (the size of freeze.png);
+        its replaced-pixel map is recorded."""
+        import cv2
+
+        court = json.loads((self.out / "court.json").read_text())
+        fz = cv2.imread(str(self.out / court["video"]["freeze"]))
+        clean = np.full_like(fz, 90)
+        cv2.imwrite(str(self.tmp / "clean.png"), clean)
+        alpha = np.zeros(fz.shape[:2], np.uint8)
+        alpha[: fz.shape[0] // 4] = 255
+        cv2.imwrite(str(self.tmp / "clean-alpha.png"), alpha)
+        code, out = self.assemble_with("clean", plates={"freezeClean": str(self.tmp / "clean.png"), "freezeCleanAlpha": str(self.tmp / "clean-alpha.png")})
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        np.testing.assert_array_equal(cv2.imread(str(out / court["video"]["freezeClean"])), clean)
+        piece = json.loads((out / "assembly.json").read_text())["pieces"]["show:freezeClean"]
+        self.assertEqual(piece["source"], "real")
+        self.assertAlmostEqual(piece["replaced"], 0.25, delta=0.01)
+        errs, _, _ = A.validate(out, A.WEBXR)
+        self.assertEqual(errs, [])
+
+    def test_the_roar_is_set_over_the_bed(self):
+        """audio.swellOverBedDb: the make's one-shot plays that many dB (integrated loudness) over the bed; the step-in
+        echo stays 12 dB under it."""
+        code, out = self.assemble_with("roar", audio={"loop": str(self.tmp / "loop.wav"), "swellOverBedDb": 7.5})
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        shots = {s["at"]: s for s in court["audio"]["oneShots"]}
+        swell = au.loudness(out / shots["make"]["file"])["I"]
+        bed = au.loudness(out / court["audio"]["bed"])["I"]
+        self.assertAlmostEqual(swell + shots["make"]["gainDb"] - bed, 7.5, delta=0.3)
+        self.assertAlmostEqual(shots["stepIn"]["gainDb"], shots["make"]["gainDb"] - 12, delta=0.01)
+        piece = json.loads((out / "assembly.json").read_text())["pieces"]["audio"]
+        self.assertAlmostEqual(piece["swellOverBedDb"], 7.5, delta=0.3)
+
+    def test_the_bodies_ship_as_spz(self):
+        """splatFormat "spz": every body and its reality copy ship as SPZ (SH degree 1), what Spark loads at about a
+        quarter of the bytes, once each pair body's render at F from the SPZ is within 40 dB of its PLY's; the PLYs go."""
+        code, out = self.assemble_with("spz", splatFormat="spz")
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        asm = json.loads((out / "assembly.json").read_text())
+        bodies = court["freeze"]["players"] + [o for o in court["freeze"]["others"] if o.get("kind") != "relief"]
+        for b in bodies:
+            for k in ("splats", "reality", "file"):
+                if k in b:
+                    self.assertTrue(b[k].endswith(".spz"), b[k])
+                    self.assertTrue((out / b[k]).is_file())
+        self.assertFalse(list(out.rglob("freeze.ply")))
+        for p in court["freeze"]["players"]:
+            rep = asm["pieces"][f"player:{p['id']}"]["spz"]
+            self.assertGreaterEqual(rep["psnrAtF"], 40)
+            self.assertLess(rep["bytes"], rep["plyBytes"] / 3)
+        errs, _, _ = A.validate(out, A.WEBXR)
+        self.assertEqual(errs, [])
+
     def test_a_coarse_proxy_fails_p8s_sampling(self):
         """P8 needs the pair's proxies sampled at about half a centimetre at the silhouettes: a 5 cm grid fails."""
         court = json.loads((self.out / "court.json").read_text())

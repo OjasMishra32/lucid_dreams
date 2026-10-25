@@ -180,7 +180,34 @@ def write_ply(path, s: Splats) -> None:
         f.write(t.astype(t.dtype.newbyteorder("<")).tobytes())
 
 
-# ---------------------------------------------------------------- SPZ (the export's colours)
+# ---------------------------------------------------------------- SPZ (the export's colours, and what ships)
+
+def _lucid():
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # pipeline/: lucid.gaussians reads and writes SPZ v2
+    from lucid import gaussians as lg
+
+    return lg
+
+
+def write_spz(path, s: Splats) -> int:
+    """The Gaussians as SPZ v2 with their SH degree (positions to 1/4096 m, scales, rotations, colour and SH 8-bit):
+    what Spark loads, about a quarter of the PLY with SH degree 1. Returns its size in bytes."""
+    lg = _lucid()
+    n, k = len(s), s.rest.shape[1] // 3
+    g = lg.Gaussians(s.pos, s.scales, s.quats, s.opacity, s.dc.reshape(n, 1, 3), s.rest.reshape(n, 3, k).transpose(0, 2, 1))
+    return lg.write_spz(Path(path), g)
+
+
+def read_splats(path) -> Splats:
+    """A PLY or an SPZ (by its suffix) as Splats, in the PLY's layout."""
+    if Path(path).suffix.lower() != ".spz":
+        return read_ply(path)
+    g = _lucid().read_spz(Path(path))
+    n = g.count
+    return Splats.new(g.means, g.quats, g.scales, g.opacities, g.sh0[:, 0], g.shN.transpose(0, 2, 1).reshape(n, -1))
+
 
 def read_spz_colours(path) -> tuple[np.ndarray, np.ndarray, int]:
     """(positions [N, 3] float, colours [N, 3] uint8, fractional bits) of an SPZ v2/v3 file. Colours sit right after
