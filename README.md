@@ -1,126 +1,143 @@
 # Lucid Dreams
 
-> Anyone from any video, standing in your room.
+Turn a video or a few photos of anyone into a photoreal, life-size 3D person standing in your room, in a Meta Quest 3S.
 
-**Give it any photo or video, and one sentence of what you want to do with that person. They're in your room doing it
-with you.** A guitar teacher's clip and "teach me this strum" becomes a lesson. A grandparent's photo and "I just want to
-sit with her" becomes a quiet companion. A shooter's clip and "teach me this jump shot" puts them on your floor with the
-ball and a hoop. Lucid Dreams turns one ordinary video into a photoreal, life-size 3D person in Meta Quest 3S
-passthrough (and in any WebXR browser), moving exactly like the footage, and lets you walk around them, slow them down
-and learn from them.
+![Playing chess against Bobby Fischer and Magnus Carlsen, side by side](docs/media/chess.jpg)
+
+**Website:** [getluciddreams.vercel.app](https://getluciddreams.vercel.app)
+**Headset:** open [getluciddreams.vercel.app/xr](https://getluciddreams.vercel.app/xr/) in the Quest browser
 
 Built in 48 hours at Gator Hack V (UF AI Days 2026). MIT licensed.
 
-## Five moments
+## What you can do
 
-| | Moment | The sentence | What happens |
-| --- | --- | --- | --- |
-| 1 | **Piano lesson, side by side** | "sit next to me and teach me this piece" | A piano teacher sits at your right, plays each phrase slowly, then waits for your turn. |
-| 2 | **A jump shot in your driveway** | "teach me this jump shot" | The shooter on your floor with the real ball and a regulation hoop; each step slowed, then your turn. |
-| 3 | **Chess with the legends** | "play chess with me" | Fischer or Carlsen sits across a real-size board and moves their own pieces. They are always labelled as the engine at their peak rating, never the real person. |
-| 4 | **Someone you've lost** | "I just want to sit with her" | A family member from a home video or photo, with their own voice from where they sit and their words as captions. Only with the family's written consent. |
-| 5 | **You, perfected** | "show me doing it" | Your own photo becomes an avatar that performs someone else's move. |
+You give it a clip or a few photos, plus one sentence about what you want to do with that person.
 
-Sources and licenses for every person shown are in [demo/credits.md](demo/credits.md).
+<p>
+  <img src="docs/media/guitar.jpg" width="49%" alt="A guitar teacher rebuilt from a video, sitting next to you, timing your strums">
+  <img src="docs/media/golf.jpg" width="49%" alt="A golfer rebuilt from a video, swinging in the room">
+</p>
+
+**Learn.** A guitar video turns into a teacher sitting next to you who times every strum. Golf, dance, tai chi and a
+jump shot work the same way. Lesson mode slows each step down, repeats it and then waits for your turn, and Follow along
+puts glowing targets where your head and wrists should be, taken from the clip's own body joints.
+
+**Play.** Play chess against Bobby Fischer and Magnus Carlsen at a real table. They think, reach over, move their own
+pieces, press the clock and shake your hand before the game. You can also play a full tennis match against a Roger
+Federer likeness with real ball physics and scoring, or shoot around with LeBron: hit your shot, pass him the ball,
+and he catches it and shoots with his real release. In Court Side you stand inside a real NBA play rebuilt in 3D,
+freeze it mid-air and walk around the players. Public figures are always labelled on screen ("Stockfish at Fischer's
+peak rating. Not affiliated.") and never speak.
+
+![Talking with Vishal in his own cloned voice](docs/media/talk.jpg)
+
+**Talk.** Vishal, built from a short phone video of him turning around, answers out loud in his own cloned voice. Ian's
+grandma answers in Vietnamese with English captions. Both agreed to this, and every reply is labelled AI voice. From the
+end of your question to the start of the answer takes 3.1 s (median of 11 tries).
+
+**Reality check.** One tap turns everything the camera never saw blue and tells you how much of the person was really
+seen.
 
 ## How it works
 
-```text
- a video or photo + one sentence
-        │
-        ▼
- web app (upload, 5-second window, consent) ──► Gemini writes the plan: experience.json
-        │
-        ▼
- HiPerGator (12 GPUs per person)
-   1. check the clip: one person, head to toe, still camera
-   2. 4DAnyone: one video ──► 24-48 synchronized views all the way around, with cameras
-   3. 4D Gaussian reconstruction, frame by frame (each frame warm-started from the last)
-   4. export a dream bundle: Gaussian frames, "seen vs imagined" frames, props, voice, captions
-        │
-        ├──► photo? DiGS-Avatar ──► fine-tuned on 4DAnyone's views ──► a rigged person that can do any move
-        ▼
- Meta Quest 3S (Unity) or any WebXR browser: life size on your real floor, in passthrough
-```
+<p>
+  <img src="docs/media/cameras.jpg" width="49%" alt="4DAnyone's 48 generated views around the dancer">
+  <img src="docs/media/fit.jpg" width="49%" alt="Twelve GPUs fitting Gaussians frame by frame">
+  <img src="docs/media/gaussians.jpg" width="49%" alt="The dancer drawn as Gaussians">
+  <img src="docs/media/reality.jpg" width="49%" alt="Reality check: what the camera never saw, in blue">
+</p>
 
-1. **Ask.** The [web app](apps/web) takes a clip or photo and your sentence, checks the clip in the browser (one
-   person, whole body), and lets you pick the five seconds that matter. Gemini watches the move and writes the plan,
-   `experience.json`: the steps of a lesson, where the person stands, the place around them.
-2. **See all the way round.** [4DAnyone](https://github.com/ant-research/4DAnyone) turns one casual video into
-   consistent 360-degree multi-view video, so a single phone clip becomes enough to rebuild a whole person.
-3. **Rebuild in 3D.** Our pipeline ([`pipeline/`](pipeline)) reconstructs a 3D Gaussian person per frame with
-   [gsplat](https://github.com/nerfstudio-project/gsplat), warm-starting each frame from the one before.
-4. **Bundle it.** Each dream exports at real size, feet on the floor: full-quality PLY frames and compact SPZ frames,
-   reality frames that tint whatever the camera never saw blue, the ball's real path and a hoop, the isolated voice
-   and its captions.
-5. **Stand them in your room.** The [Quest app](apps/quest) and the [WebXR viewer](apps/webxr) play the bundle life
-   size on your real floor. You use bare hands: pinch to pause, grab to move them, push fingertip buttons, and your
-   real hands stay in front of them. Lessons slow each step and wait for your turn, captions float in front of them,
-   and a 360-degree place (concert hall, court, gym, ring) can replace your room.
+1. The browser checks the clip with MediaPipe pose (one person, head to toe) and picks the best five seconds.
+2. [4DAnyone](https://github.com/ant-research/4DAnyone) turns that one video into 48 synchronized views of the person,
+   three rings of 16 cameras, 121 frames at 25 fps, with every camera's pose.
+3. On UF's HiPerGator, 12 NVIDIA B200s fit 3D Gaussians to every frame with [gsplat](https://github.com/nerfstudio-project/gsplat).
+   The first frame takes 7,000 Adam steps; each later frame starts from the one before and takes 1,500, about a
+   minute. A frame ends up with around 290,000 Gaussians. The real video frame joins as one more camera, but only where
+   it agrees with the generated views.
+4. Each frame is exported as SPZ (about 10x smaller than PLY) along with a Reality check copy, the 22 body joints from
+   GVHMR and the real ball's path, tracked in 3D.
+5. The headset app is WebXR ([three.js](https://github.com/mrdoob/three.js) and [Spark](https://github.com/sparkjsdev/spark))
+   running in the Quest browser with hand tracking only. It keeps the 160,000 Gaussians per frame that matter most,
+   renders at 70% resolution, and shrinks splats and skips faint ones when frames run late.
 
-**Avatars** ([`avatars/`](avatars)): one photo becomes a photoreal, rigged Gaussian person with
-[DiGS-Avatar](https://github.com/KLMAV-CUC/DiGS-Avatar). We fine-tune it on 4DAnyone's generated views of a video, so
-a single clip becomes a person who can perform any motion. Both players skin it on the GPU every frame.
+People who have to move freely (the chess players, Federer, Vishal) are avatars instead of replays. LHM++ builds a
+rigged SMPL-X body from 8 to 16 photos, or from the sharpest frames of a phone video, and UIKA builds the head from a
+set of photos. We render UIKA's head from 91 views and fit new, opaque Gaussians to those renders on the body's own
+head, then add blinks and a 20-second idle. The browser poses them live with dual-quaternion skinning.
 
-### Why it's new
+Your sentence and the clip become a plan, `experience.json`: the steps of a lesson, their speed and where the person
+stands. Gemma 4 writes it locally through Ollama (branch [`atina/gemma-planner`](https://github.com/OjasMishra32/lucid_dreams/tree/atina/gemma-planner)), and
+Gemini does the same on the bridge when it has a key. The plans in the live library were written by hand.
 
-The core of Lucid Dreams did not exist a year ago. **4DAnyone** (Ant Research, SIGGRAPH Asia 2026) was released in
-August 2026, and **DiGS-Avatar** (ECCV 2026) in June 2026. Our research contribution is the combination: fine-tuning a
-one-photo avatar on 4DAnyone's generated views, so one video yields a person who can do anything, with fidelity
-measured before and after.
+## Fresh off the frontier
 
-## Measured, not claimed
+The models at the core of Lucid Dreams came out in the last twelve months.
 
-| | Result |
-| --- | --- |
-| Held-out views, real clips (two Pexels jump shots) | **PSNR 26-28 dB, SSIM 0.96-0.97** |
-| Held-out views, synthetic test person | PSNR 32.5 dB, SSIM 0.98 |
-| Size of a replay | about **285,000 Gaussians per frame**, 121 frames (about 5 s at 25 fps) |
-| Reconstruction speed | about 62 s per frame warm-started (4 min cold) on one NVIDIA B200 or RTX PRO 6000; 12 GPUs per person |
-| First avatars from licensed photos | Bobby Fischer 1.87 m (38% of him seen in the photo), Magnus Carlsen 1.87 m (34% seen) |
-| Quest avatar skinning vs the reference | positions within 0.001 mm of `avatars/lucid_avatars/skinning.py` |
+| Model | Public since | What it does here |
+| --- | --- | --- |
+| [4DAnyone](https://github.com/ant-research/4DAnyone) (Ant Research, SIGGRAPH Asia 2026) | Aug 2026 | One casual video becomes 48 consistent views all the way around a person, so a phone clip is enough to rebuild them in 3D |
+| LHM++ | Mar 2026 | A rigged, animatable Gaussian body from a few photos |
+| UIKA (CVPR 2026) | Jun 2026 | A head from a collection of photos |
 
-Every dream reports how much of the person the camera really saw. LPIPS, the avatar fine-tune before/after table and
-frame rate on the Quest 3S are being measured and will be added here when verified.
+Before 4DAnyone, rebuilding a moving person in 3D took a ring of synchronized cameras.
 
-## Honesty, consent and fidelity
+## Measured
 
-The camera never sees every side of a person. **Reality check** shows exactly what was imagined: it tints every
-Gaussian the source never saw blue and says what share was really seen. We never present generated detail as
-recorded.
+Each replay against 4DAnyone's generated views (every 8th of the 48 cameras, median over the frames). The fit trained
+on these views, so they are not held out. Spill is the share of the render's opacity that lands outside the person,
+which is where ghosts and floaters show up.
 
-Photoreal likenesses and voices are used only with permission for the planned use. Raw media, model weights and
-written consent stay out of this public repository. Public figures appear for the demo only, from real footage or
-freely licensed photos: they are always labelled, never given a cloned voice or words written for them, and never
-presented as endorsing anything. Tips in a lesson are read by the device's voice, never the person's.
+| Replay | PSNR | SSIM | Spill | Seen by the real camera |
+| --- | --- | --- | --- | --- |
+| Dance | 31.9 dB | 0.982 | 0.002 | 49% |
+| Tai chi | 29.6 dB | 0.973 | 0.003 | 54% |
+| Jump shot | 26.7 dB | 0.967 | 0.004 | 48% |
+| Golf | 26.3 dB | 0.963 | 0.004 | 47% |
+| LeBron | 26.0 dB | 0.971 | 0.033 | 43% |
+| Guitar | 22.0 dB | 0.96 | not measured | 59% |
+
+- Likeness to their own photos (InsightFace ArcFace cosine, front view): Magnus 0.67, Bobby Fischer 0.53.
+- Splatting cost for the jump shot at 1.8 m: 116 million shaded pixels per eye per frame with every Gaussian, 82
+  million with the headset's 160,000, and 34 million at the lowest quality step.
+- Talk: 3.1 s from question to answer (1.5 s to hear, 1.0 s to write, 0.5 s to speak), median of 11 tries.
+
+## Honesty and consent
+
+A camera never sees every side of a person, so part of every replay is generated. Reality check shows exactly which
+part, and we never present generated detail as recorded.
+
+Likenesses and voices of private people are used only with their permission: Vishal agreed to his avatar and cloned
+voice, and Ian's family agreed to his grandma being shown and heard. AI replies are always labelled and never invent
+memories, and none of her media is in this repository. Public figures come from their real footage or freely licensed
+photos, are credited in [demo/credits.md](demo/credits.md), are labelled on screen, never speak, and are never shown
+as endorsing anything.
 
 ## Run it
 
-Each app has its own README with details.
+Each app has its own README.
 
-**Web app and bridge** ([apps/web](apps/web)), port 5170:
+**Website and job bridge** ([apps/web](apps/web)), port 5170:
 
 ```bash
 npm --prefix apps/web install
-npm --prefix apps/web run dev            # mock jobs and the sample dream; open http://<this Mac>:5170
-npm --prefix apps/web run demo           # real HiPerGator jobs (Ojasva's Mac); Gemini needs GEMINI_API_KEY in apps/web/.env.local
+npm --prefix apps/web run dev       # mock jobs and the sample dream
+npm --prefix apps/web run demo      # real HiPerGator jobs through pipeline/runner
 ```
 
-**WebXR viewer** ([apps/webxr](apps/webxr)), port 5180, in the Quest browser or on a laptop:
+**Headset app** ([apps/webxr](apps/webxr)), port 5180, for the Quest browser or a laptop:
 
 ```bash
 npm --prefix apps/webxr install
-npm --prefix apps/webxr run dev          # https://<this Mac's IP>:5180 (self-signed certificate) for the Quest browser
+npm --prefix apps/webxr run dev     # https://<this computer's IP>:5180 (self-signed certificate)
 ```
 
-**Quest app** ([apps/quest](apps/quest)): Unity 6000.6 with Android Build Support. Open `apps/quest`, run
-**Lucid Dreams > Set Up Project**, then **Build And Run** with the Quest plugged in. Point it at the bridge once:
+**Talk server** ([apps/talk](apps/talk)): `node apps/talk/server.mjs`, with the OpenAI and ElevenLabs keys in
+`apps/talk/.env`.
 
-```bash
-adb shell "echo http://<mac-ip>:5170 > /sdcard/Android/data/com.luciddreams.quest/files/bridge.txt"
-```
+**Native Quest app** ([apps/quest](apps/quest)): Unity 6000.6 with Android Build Support. Open `apps/quest`, run
+**Lucid Dreams > Set Up Project**, then **Build And Run** with the Quest plugged in.
 
-**Pipeline** ([pipeline](pipeline)): GPU jobs run on UF's HiPerGator. From the Mac that holds the connection:
+**Pipeline** ([pipeline](pipeline)): GPU jobs run on HiPerGator, driven from a Mac with the connection:
 
 ```bash
 python3 pipeline/runner/lucid_runner.py submit clip.mp4 --name "Jump shot"
@@ -131,48 +148,42 @@ python3 pipeline/runner/lucid_runner.py fetch <id>
 **Tests:**
 
 ```bash
-PYTHONPATH=pipeline python3 -m unittest discover -s pipeline/tests -v     # captions, restoration, props export (needs numpy)
-cd avatars && uv run pytest                                               # motion, skinning, bundles, idle, ball path
+PYTHONPATH=pipeline python3 -m unittest discover -s pipeline/tests
+cd avatars && uv run pytest
+npm --prefix apps/web test
 ```
 
-The Quest app has headless checks (`HandsCheck`, `PlaybackCheck`) that drive the real scene with simulated hands; see
-[apps/quest/README.md](apps/quest/README.md). A tiny synthetic dream in [`samples/synthetic-test`](samples/synthetic-test)
-lets every player run without a GPU. The caption and old-footage restoration tools are documented in
-[demo/README.md](demo/README.md).
+A small synthetic dream in [samples/synthetic-test](samples/synthetic-test) lets every player run without a GPU.
 
 ## Repository
 
 ```text
-AGENTS.md      the plan, the shared contracts (dream bundle, job API, experience, props) and the build log
-team/          one brief per person
-apps/web/      the website (home, library, make a dream) and the job bridge (Next.js), Gemini plan
-apps/webxr/    WebXR viewer and chess (three.js + Spark)
-apps/quest/    Quest 3S app (Unity, OpenXR, Unity Gaussians)
-pipeline/      reconstruction, export, captions, restoration (Python), HiPerGator jobs, the Mac runner
-avatars/       DiGS-Avatar fitting, fine-tuning, motion, skinning
-demo/          showcase, credits, consent process, Devpost and video drafts
-samples/       a tiny synthetic dream bundle for development
+apps/web/      the website, Make a dream, and the job bridge (Next.js)
+apps/webxr/    the headset app: replays, lessons, chess, tennis, Court Side, Talk (three.js + Spark)
+apps/talk/     the Talk server (speech in, reply, cloned voice out)
+apps/quest/    a native Quest 3S app (Unity, OpenXR)
+pipeline/      reconstruction, export, ball tracking, joints, captions (Python), HiPerGator jobs, the Mac runner
+avatars/       LHM++ and UIKA avatars, cleanup, blinks, skinning, hands
+demo/          credits, consent, Devpost text, the demo film's scripts
+docs/          plans and notes, README images
+team/          one brief per teammate
+AGENTS.md      the shared contracts (dream bundle, job API, experience, props) and the build log
 ```
 
 ## Credits
 
-Lucid Dreams stands on recent research and open source: [4DAnyone](https://github.com/ant-research/4DAnyone),
-[DiGS-Avatar](https://github.com/KLMAV-CUC/DiGS-Avatar), [gsplat](https://github.com/nerfstudio-project/gsplat),
-[Spark](https://github.com/sparkjsdev/spark), [three.js](https://github.com/mrdoob/three.js),
-[Unity Gaussians](https://github.com/ninjamode/Unity-VR-Gaussian-Splatting) (after Aras Pranckevičius's
-[UnityGaussianSplatting](https://github.com/aras-p/UnityGaussianSplatting)), [GVHMR](https://github.com/zju3dv/GVHMR),
-[NLF](https://github.com/isarandi/nlf), [SMPL-X](https://smpl-x.is.tue.mpg.de/), DINOv3, BiRefNet, rembg,
-[whisper.cpp](https://github.com/ggml-org/whisper.cpp), Demucs, Real-ESRGAN, [Stockfish](https://github.com/official-stockfish/Stockfish),
-Gemini, and CC0 places and objects from [Poly Haven](https://polyhaven.com). Every source, person, model and library,
-with its link and license (including the non-commercial and copyleft terms some carry), is in
-**[demo/credits.md](demo/credits.md)**.
+Built on [4DAnyone](https://github.com/ant-research/4DAnyone), LHM++, UIKA, [gsplat](https://github.com/nerfstudio-project/gsplat),
+[Spark](https://github.com/sparkjsdev/spark), [three.js](https://github.com/mrdoob/three.js), [GVHMR](https://github.com/zju3dv/GVHMR),
+[SMPL-X](https://smpl-x.is.tue.mpg.de/), MediaPipe, DDColor, Demucs, [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
+[Stockfish](https://github.com/official-stockfish/Stockfish), Gemma, Gemini, Whisper and ElevenLabs. Every person,
+clip, photo, model and library, with its link and license (including the non-commercial and copyleft terms some carry),
+is in [demo/credits.md](demo/credits.md).
 
 ## Team
 
-Ojasva (pipeline and HiPerGator), Vishal (avatars), Ian (Quest app), Raami (web app, bridge and Gemini), Atina (story,
-consent, captions, restoration and the in-headset design).
+Ojasva, Vishal, Ian and Atina.
 
 ## License
 
-[MIT](LICENSE) for everything we wrote. Third-party models, code and media keep their own licenses and terms, listed
-in [demo/credits.md](demo/credits.md).
+[MIT](LICENSE) for everything we wrote. Third-party models, code and media keep their own licenses, listed in
+[demo/credits.md](demo/credits.md).

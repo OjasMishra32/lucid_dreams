@@ -1,4 +1,4 @@
-// Renders one line of on-screen type as a transparent PNG for the rough cut (cut.py): SF Pro, white, a soft shadow so
+// Renders one line of on-screen type as a transparent PNG for the film (cut2.py): SF Pro, white, a soft shadow so
 // it reads over footage.
 //   swift demo/film/text.swift "AI voice" 34 out.png [#rrggbb] [medium|semibold]
 import AppKit

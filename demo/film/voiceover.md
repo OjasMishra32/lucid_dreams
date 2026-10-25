@@ -1,44 +1,39 @@
-# Voiceover (Ojasva), timed to film v4
+# Voiceover (Ojasva), timed to film v4c
 
-Record last, over the finished cut: a quiet room, phone about 20 cm away, your normal voice (not an announcer), a
-little slower than feels natural. One file per line (`vo-00.m4a`, `vo-01.m4a` ...) into `~/Downloads/lucid-video/voice/`,
-and I place each on its mark. Nothing is spoken over Ian, his grandma, Vishal, the hook or your golf hit.
+Start each line at its time and finish before the next one or the next silent stretch. Nothing is spoken over Ian,
+his grandma, Vishal, your golf swing, the chess games or the pass.
 
-What it covers, in order: Ian's story, what Lucid Dreams is, how it works (and the hard part), the hackathon's theme
-("fresh off the frontier"), Gemma, learning, chess with the legends, playing, Court Side, talking, the headset, why it
-matters, open source.
+| At | On screen | Line |
+| --- | --- | --- |
+| 0:00.8 | Black, then Ian's phone | This is Ian. He hasn't been home since he moved here from Vietnam, and that was four years ago. |
+| 0:08.6 | The headset going on | So we brought his grandma to him. |
+| 0:11 - 0:31 | Ian and his grandma | *(silent)* |
+| 0:31.2 | The Quest 3S assembling | We call it Lucid Dreams. You upload a video of someone, even a photo, and they're in your room. |
+| 0:37.7 | Its eyes beaming out to her | It runs in the browser on a Quest 3S. |
+| 0:40.4 | 48 cameras land around her | A phone only sees one side of a person, so 4DAnyone generates forty-eight views all the way around them. |
+| 0:46.4 | The fit, twelve GPUs | Then we fit about three hundred thousand Gaussians to every frame on twelve GPUs. |
+| 0:50.7 | The Gaussians, her skeleton | Each one's a tiny blob of color, and she's made entirely of them. |
+| 0:54.6 | The Reality check, blue | Anything the camera never actually saw shows up in blue. |
+| 0:57.7 | "Fresh off the frontier." | The main models we use didn't exist a year ago, which is honestly crazy. |
+| 1:02.6 | Gemma writing the lesson | You say what you want to learn, and Gemma 4 writes the lesson locally. |
+| 1:08.0 | Guitar video warping in | This guitar video turned into a teacher sitting next to me who times every strum. |
+| 1:13.3 | Your strumming, "On beat" | There's no controllers, it's just tracking my hands. |
+| 1:16.7 | Golf video warping in | Same thing with golf. |
+| 1:18 - 1:23 | Your swing and the hit | *(silent)* |
+| 1:23.3 | Bobby and Magnus turning | I learned chess from Bobby Fischer's games, and he died back in 2008. |
+| 1:27.6 | Your moves against both | Now I get to play him and Magnus, both built from a handful of photos. |
+| 1:32 - 1:40 | Both games | *(silent)* |
+| 1:41.2 | Federer's photos warping in | I can play tennis against Federer, and the ball physics and the scoring all work like a real match. |
+| 1:51.9 | LeBron warping in, the drill, your shot | With LeBron I hit my shot, then pass it to him, and he hits his. |
+| 1:56.7 - 2:00 | Your pass, his catch and make | *(silent)* |
+| 2:00.5 | The real NBA play, then the court | This is a real NBA play we rebuilt in 3D, so you can pause it mid-air and walk around the players. |
+| 2:13.3 | Vishal's video warping in | You can also just talk to someone. That's Vishal, in his own cloned voice, and he said yes to it. |
+| 2:20 - 2:29 | You ask Vishal; he answers | *(silent)* |
+| 2:29.0 | The heat map | It all runs on the headset, drawing just the Gaussians that matter. |
+| 2:32.8 | Ian's grandma, then Bobby | Mostly we built it for people who are far away, or gone. |
+| 2:36 - 2:43 | Headsets coming off | *(silent)* |
+| 2:44.2 | Everyone, side by side | You can learn from anyone, play anyone, or just spend time with someone you miss, and it's all open source. |
+| 2:52.5 | End card | It's live at getluciddreams.vercel.app if you want to try it. |
 
-| # | At | Picture | Line |
-| --- | --- | --- | --- |
-| 0 | 0:00.8 | Black, then Ian's phone | This is Ian. He hasn't been home in four years, since he moved here from Vietnam. |
-| 0b | 0:08.6 | The headset going on | So we brought her to him. |
-| | 0:11 - 0:31 | Ian and his grandmother | *(nothing: their voices, the captions)* |
-| 1 | 0:31.2 | The Quest 3S assembling | This is Lucid Dreams. Give it any video or photo of a person, and they stand in your room, life size. |
-| 2 | 0:37.7 | Its eyes beaming out to her | On a Quest 3S, right in the browser. |
-| 3 | 0:40.4 | 48 cameras land around her | The hard part: a phone sees one side. 4DAnyone imagines the rest, from forty-eight angles. |
-| 4 | 0:46.4 | The fit, twelve GPUs | Twelve GPUs fit two hundred ninety thousand Gaussians to every frame. |
-| 5 | 0:50.7 | The Gaussians, their centres, her skeleton | Each one, a tiny blur of colour. Together, a person. |
-| 6 | 0:54.6 | The Reality check, blue | Whatever the camera never saw, we mark in blue. |
-| 7 | 0:57.7 | "Fresh off the frontier." | Every model at its core came out this year. That's what made this possible now. |
-| 8 | 1:02.6 | Gemma writing the lesson | Say what you want in one sentence. Gemma 4, running locally, writes the lesson. |
-| 9 | 1:08.0 | The guitar video warping into the room | A guitar video becomes a teacher next to you, timing every strum. |
-| 10 | 1:13.3 | Your strumming, "On beat" | No controllers. Just your hands. |
-| 11 | 1:16.7 | The golf video warping into the room | Swing with a pro. |
-| | 1:18 - 1:23 | Your swing, the hit, "Through the ball" | *(nothing: the club)* |
-| 12 | 1:23.3 | Bobby and Magnus, rebuilt, side by side | I learned chess from Bobby Fischer's games. He died in 2008. |
-| 13 | 1:27.6 | Your moves against both | Now I play him, and Magnus, each rebuilt from a few photos. |
-| | 1:32 - 1:40 | Both games | *(nothing: let them play)* |
-| 14 | 1:41.2 | Federer's photos warping into the court | Rally with Federer, with real ball physics and every rule of tennis. |
-| 15 | 1:51.9 | LeBron's video warping into the room, you dribbling beside him, your shot | Run drills with LeBron. Hit your shot, then pass, and he takes his. |
-| | 1:56.7 - 2:00 | Your pass; he catches, shoots, scores | *(nothing: the ball)* |
-| 16 | 2:00.5 | The real play, then the court | Or step inside a real NBA play, and walk around it, frozen in time. |
-| 17 | 2:13.3 | Vishal's video warping into the hall | And talk with someone, in their own voice, with their permission. |
-| | 2:20 - 2:29 | You ask Vishal; he answers | *(nothing: the conversation)* |
-| 18 | 2:29.0 | The heat map | It runs on a headset, drawing only the Gaussians that matter. |
-| 19 | 2:32.8 | Ian's grandmother, then Bobby | For the ones far away. And the ones who are gone. |
-| | 2:36 - 2:43 | Headsets coming off | *(nothing)* |
-| 20 | 2:44.2 | Everyone we made, side by side | Learn from anyone. Play anyone. Be with anyone. All of it, open source. |
-| 21 | 2:52.5 | End card | Try it. It's live. |
-
-About 270 words. On screen, every public figure is labelled ("Not affiliated") and every AI voice says so; the
-voiceover never speaks for them.
+On screen, every public figure is labelled ("Not affiliated") and every AI voice says so; the voiceover never speaks
+for them.
