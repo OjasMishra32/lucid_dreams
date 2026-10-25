@@ -35,3 +35,6 @@ apps/webxr/dist/
 !samples/**
 
 # raw site media before it's re-encoded for the web (big files stay out of git)
+# Court Side's bundle (290 MB, from Vishal); its hand models stay in git
+/apps/webxr/public/court/*
+!/apps/webxr/public/court/hands/

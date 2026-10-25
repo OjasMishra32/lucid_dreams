@@ -39,7 +39,12 @@ import { BUILT as VRHANDS_BUILT, VrHands } from "./vrhands";
 import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
 /** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves a real bundle at /bundle/. */
-const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : "/bundle/";
+// Under a base (the website's /xr/), the bundle sits in the build's public/court/ (rebuild-stable.sh copies it in).
+const DEFAULT_BUNDLE = import.meta.env.DEV
+  ? "/scripts/court/out/standin/"
+  : import.meta.env.BASE_URL === "/"
+    ? "/bundle/"
+    : `${import.meta.env.BASE_URL}court/`;
 /** The arrival's lights-up, once seat.arrival says the judge is in (3.2): the light field's own rise from black, long
  * enough to stay under 1 grey level a frame on white (P44), so the watch starts at full light. */
 const LIGHTS_UP_S = ARRIVAL_S;
@@ -782,7 +787,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
 
   // production (served by serve.mjs): the Service Worker keeps the page and the bundle for a cable-off reload (P37);
   // it takes over after this load, so it's handed the files this load already fetched
-  if (!import.meta.env.DEV && "serviceWorker" in navigator)
+  // under a base the website serves it, which has no worker (and one at its root would take the whole site over)
+  if (!import.meta.env.DEV && import.meta.env.BASE_URL === "/" && "serviceWorker" in navigator)
     navigator.serviceWorker
       .register("/court-sw.js")
       .then(() => navigator.serviceWorker.ready)
