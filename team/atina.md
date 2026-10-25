@@ -4,39 +4,57 @@ You own what the judges see and read, and the footage everything is built from. 
 judgment and writing, not heavy AI use, so it fits a small Codex plan: use Codex for the README and Devpost polish,
 not for long coding sessions. Read `AGENTS.md` first.
 
-## NOW (Sun 12:30 AM): four product jobs, no video (item 1 changed: Gemma, not Gemini)
+## NOW (Sun 1:30 AM): all yours, no video (Ojasva is doing the video), in this order
 
-1. **Gemma, for the MLH prize.** The MLH prize at this hackathon is **Best Use of Gemma** (Google's open model), not
-   Gemini, and nothing in Lucid Dreams runs on Gemma yet. Make the lesson-plan writer run on it:
-   - Make a free key at aistudio.google.com and hand it to Ojasva in person or by AirDrop, never in git or a chat. He
-     adds it as `GEMINI_API_KEY` to `apps/web/.env.local` and restarts the site. The same API serves Gemma: list the
-     models (`GET https://generativelanguage.googleapis.com/v1beta/models?key=...`) and use the newest `gemma-...-it`.
-   - The writer is `apps/web/lib/bridge/gemini.ts` (`experience.json` from the intent and the clip; never run, since
-     there was no key). It sends video and a system instruction, which Gemma doesn't take: send 6-8 frames from the
-     clip's window (an avatar's photo for avatars) plus the name and the sentence, put the rules in the prompt, and
-     read the JSON out of the reply. `clean()` keeps enforcing the rules. Keep it switchable by env (`GEMINI_MODEL`).
-   - Run the 40-sentence intent check on Gemma (`GEMINI_API_KEY=... npm --prefix apps/web test`) and note the score.
-     Then let it write plans for the library's dreams and compare them with the hand-written ones: keep the better
-     one per dream, with `"source"` saying who wrote it.
-   - Try Make one at the bottom of https://getluciddreams.vercel.app with a short clip of yourself (head to toe,
-     phone still, 5+ s) and a sentence; time it from upload to ready and check Gemma's plan fits the sentence. If it
-     fails at submit, HiPerGator's login on Ojasva's Mac has lapsed: Vishal logs in again.
-   - The prize rules say: **name the Gemma model in the README.** Add a short "Gemma" line to the root README.md with
-     the exact model id and what it writes (Ian is rewriting the README: put yours in, tell him, keep it).
-   - Results in `docs/gemma-qa.md` and a Status log line. Once it works, tell Ojasva: he ticks "Best Use of Gemma
-     (MLH)" on the Devpost and adds one line about it.
-2. **Real-phone check of the website** (iPhone Safari, plus Android if anyone has one) at
-   https://getluciddreams.vercel.app, top to bottom: the opening dancer, the Quest 3S, the scene tabs and their
-   videos, How it works (Vishal's six steps), the Technology chapters (drag each one) and Make one. Safari broke
-   every preview video tonight until a 10:15 PM fix, so make sure every video plays. Issues with screenshots, worst
-   first, in `docs/web-qa.md`.
-3. **Your branch** `atina/demo-readiness-accessibility` (the bundle validator and caption presets) never reached
-   main: rebase it, run `pipeline/` tests, run the validator over every dream in `dreams/` on Ojasva's Mac, put its
-   report in `docs/bundle-check.md`, and open a PR (or ask Ojasva to merge).
-4. **Judge Q&A** (`demo/judges.md`) is from Friday: it still says DiGS-Avatar and has `[verified value]` blanks.
-   Rewrite it from what's true now (AGENTS.md Status log; numbers from team/ian.md's SUBMISSION table): how a dream
-   is made, LHM++ and UIKA for avatars, Talk and its 3.1 s, real vs imagined, why public figures, what runs where,
-   and how long a dream takes (your timing from 1a). Short answers someone can say out loud.
+1. **Gemma, for the MLH "Best Use of Gemma" prize.** The prize is Gemma (Google's open model), not Gemini, and
+   nothing in Lucid Dreams runs on Gemma yet. Run it on **your own laptop** with Ollama (not on Ojasva's Mac):
+   - Install Ollama (ollama.com) and pull Gemma 4 with image input: `ollama pull gemma4:e4b` (about 7 GB; use
+     `gemma4:12b` if your laptop has 24 GB of memory or more). Check it answers: `ollama run gemma4:e4b "hi"`.
+   - Give the lesson-plan writer a Gemma path in `apps/web/lib/bridge/gemini.ts`: when `GEMMA_MODEL` is set (e.g.
+     `gemma4:e4b`), call Ollama's `POST ${OLLAMA_URL:-http://127.0.0.1:11434}/api/chat` with `stream: false`,
+     `format` = the file's existing `SCHEMA` (Ollama's structured output), the `SYSTEM` rules as the system message,
+     and the user text plus 6-8 JPEG frames (base64 `images`) cut with ffmpeg evenly across the clip window (an
+     avatar's photo for avatars). Say each frame's time in the text so steps land on real moments. Parse the JSON,
+     run `clean()`, and record `model` as the Gemma tag. In `lib/bridge/experience.ts` let plans run when
+     `GEMINI_API_KEY` or `GEMMA_MODEL` is set (keep the realism check and Watch me try on Gemini only), and let
+     `scripts/check-intents.ts` run with `GEMMA_MODEL` too.
+   - Run the 40-sentence intent check on Gemma: `GEMMA_MODEL=gemma4:e4b npm --prefix apps/web run test:intents`.
+     Note the score and the misses.
+   - Write Gemma plans for the public replays (dance-01, golf-01, taichi-01, guitar-01, jump-shot-hq, lebron-shot):
+     their `preview.mp4` and `dream.json` are on the public link (`https://getluciddreams.vercel.app/dreams/<id>/...`).
+     Save them as `demo/gemma-plans/<id>.json` and compare each with the hand-written plan (same URL,
+     `experience.json`). Tell Ojasva which ones are better; his Claude puts those in the library with `"source"`
+     saying Gemma wrote them.
+   - **The prize rules say: name the Gemma model in the README.** Add a short Gemma line to the root README.md (the
+     exact model, Gemma 4 E4B via Ollama, and what it writes). Ian is rewriting the README: tell him, keep the line.
+   - Results in `docs/gemma-qa.md` (setup, score, plan comparison) and a Status log line. Then Ojasva ticks "Best Use
+     of Gemma (MLH)" on the Devpost.
+   - Optional, only if the rest is done: Gemma live for Make one, by pointing the bridge's `OLLAMA_URL` at your
+     laptop through a Cloudflare tunnel (ask Ojasva first).
+2. **Finals slides and speaker notes** (Monday 10:15 AM, top 10 present live on stage). About 7 slides: the
+   problem, the one sentence, what it does (learn, play, talk), how a video becomes a person, why the tech is new
+   (4DAnyone Aug 2026, LHM++, UIKA), measured numbers, honesty and consent (Reality check, AI voice, legends
+   labelled), team. Real images only: `apps/web/public/media/` has them. Numbers and wording: `demo/devpost.md`.
+   Speaker notes in plain spoken sentences. Link or PDF in `demo/`.
+3. **Live run of show** in `demo/live.md`: who says what, timed to the slot, the links in order, and what to do
+   when something breaks (the laptop at /kiosk, a phone hotspot, a recorded clip). Plus a one-page judge handout
+   with the link https://getluciddreams.vercel.app and a QR code to it.
+4. **Judge Q&A** (`demo/judges.md`) is from Friday (DiGS-Avatar, `[verified value]` blanks). Rewrite it from what's
+   true now (`demo/devpost.md`, the AGENTS.md Status log): how a dream is made, why it's recent, what's real vs
+   imagined, why public figures, consent, what runs where, what we haven't measured yet. Short answers someone can
+   say out loud.
+5. **Consent and credits check.** `demo/consent.md` records Vishal's yes (likeness and AI voice) and Ian's grandma's
+   family's yes (shown and heard). `demo/credits.md` and `apps/web/public/media/CREDITS.md` cover everything added
+   since Friday: the Federer photos, the tennis motion clips, the Quest 3S model (OG_MATTER, CC BY 4.0), LHM++ and
+   UIKA licences, Vishal's clips.
+6. **The website on your real iPhone** (Safari) at https://getluciddreams.vercel.app, top to bottom: every video
+   plays, the 3D parts run, the Technology visuals drag, Make one opens. Issues with screenshots in `docs/web-qa.md`.
+7. **README from a fresh clone.** On your laptop: clone the repo, follow the README's run steps exactly, and fix or
+   report every step that fails (the Open Source judges will try the same).
+8. **Your branch** `atina/demo-readiness-accessibility` (bundle validator, caption presets) never reached main:
+   rebase it on main, run `pipeline/` tests, make the validator match today's contract (SPZ-only frames since Sat
+   2 AM; joints.json, props.json, experience.json, private, talk are all optional), open a PR. Ojasva's Claude runs it
+   over `dreams/` on his Mac.
 
 ## ADDED (Fri 11:40 PM): the showcase is set
 
