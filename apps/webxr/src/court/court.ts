@@ -1,0 +1,797 @@
+// Court Side (`?mode=court`): one real NBA moment at life size. renderCourt(root) loads the court bundle (`?bundle=`
+// <court.json URL or folder>, else the stand-in in dev and /bundle/ from serve.mjs; `?show=small` / `?hz=90` pick a
+// pre-built stream), builds every module, runs the immersive-ar session drawn opaque (required local-floor; optional
+// anchors, hand-tracking, bounded-floor; requested here rather than through SparkXr, which ends a session on
+// `visible-blurred` and would break the headset-off hand-over, P38), and drives the phase machine once per XR frame:
+//   setup (until Seat here) -> arrival (black and room tone until the hand-over, the session not visible and then
+//   visible again, and the seated head still 1 s: seat.arrival; then 2.5 s of lights-up) -> watching (pass 1, pass 2; Step into the court arms or takes an ease) -> easing
+//   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer or standing up: the walking
+//   anchoring; Next view) -> returning (through the room to the chair, re-seat, handback(t)) -> resume (through the
+//   make) -> ended (Replay).
+// See my room works in every phase; the edge fade runs every frame; every button, key and probe action is queued to
+// the next frame, right after its head pose is read. A throw inside the frame is logged once and the loop keeps going
+// (a stopped loop freezes the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e
+// harness (probe.ts). Owned by the integrator only: streams export their pieces and the integrator wires them here.
+import * as THREE from "three";
+import { SparkRenderer } from "@sparkjsdev/spark";
+import { handSides } from "../xr/menu";
+import { COURT_QUALITY, SPLAT_QUALITY } from "../xr/quality";
+import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
+import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
+import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
+import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
+import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
+import { expectedFiles, loads, megabytes } from "./loading";
+import { Opening } from "./opening";
+import { Probe, viewOf } from "./probe";
+import { judgeRate, wantRate, type XrRate } from "./rate";
+import { BUILT as PROXIES_BUILT, Proxies, layerVisibility } from "./proxies";
+import { CinemaScreen, SCREEN_EASE_S, SCREEN_FADE_S, viewMode } from "./screen";
+import { BUILT as SEAT_BUILT, PersistentLock, Seat } from "./seat";
+import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
+import { BUILT as SOUND_BUILT, Sound } from "./sound";
+import { FrameStats } from "./stats";
+import { RESET_OUT_S, ResetFade, ResetVeil, StepGlow } from "./transitions";
+import type { Head, Phase } from "./types";
+import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
+import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
+import { BUILT as VRHANDS_BUILT, VrHands } from "./vrhands";
+import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
+
+/** The stand-in during development (scripts/court/standin.mjs writes it); a build looks in <repo>/dreams/court-side/,
+ * which vite.config.ts's dreams middleware serves under the build's base (the site's /xr/dreams/court-side/). serve.mjs
+ * serves a real bundle at /bundle/ (its --defaults link names it with ?bundle=, which always wins). */
+const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : `${import.meta.env.BASE_URL}dreams/court-side/`;
+/** The arrival's lights-up, once seat.arrival says the judge is in (3.2): the light field's own rise from black, long
+ * enough to stay under 1 grey level a frame on white (P44), so the watch starts at full light. */
+const LIGHTS_UP_S = ARRIVAL_S;
+/** See my room fades out over 0.6 s and back over 0.8 s (P34). */
+const ROOM_OUT_S = 0.6;
+const ROOM_BACK_S = 0.8;
+/** A head rise this big mid-fade finishes the video fade within 0.3 s (P10): in 0.25 s from the frame that sees it,
+ * which leaves the frame or two before the rise is seen inside the bar. */
+const RISE_FINISH = 0.1;
+const RISE_FADE_S = 0.25;
+/** ?solo: the show steps into the court by itself this many show frames into pass 2 (after the e2e's own press at +24,
+ * well ahead of the first ease's window), so a judge alone, or the laptop without a palm menu, still reaches F. */
+const AUTO_STEP_FRAMES = 48;
+/** The Screen view: once the 3D has the court, the footage floor gives way to clean wood over this long (seconds). */
+const CLEAN_FLOOR_S = 1;
+
+export async function renderCourt(root: HTMLElement): Promise<void> {
+  document.title = "Court Side · Lucid Dreams";
+  root.innerHTML = `
+    <div class="stage" id="court-stage"></div>
+    <div class="topbar"><div></div>
+      <div class="title"><div>Court Side</div><div class="subtitle" id="court-status">Loading the court</div></div><div></div></div>
+    <div class="controls"><div class="court-load" id="court-load"><i></i></div><span class="court-load-text" id="court-load-text"></span><button class="cta" id="court-enter" disabled>Enter</button></div>`;
+  const status = root.querySelector<HTMLElement>("#court-status")!;
+  const enterButton = root.querySelector<HTMLButtonElement>("#court-enter")!;
+  // the loading page's bar (loading.ts): the big files' bytes, so a slow link shows it moving (~200 MB over a tunnel)
+  const loadBar = root.querySelector<HTMLElement>("#court-load")!;
+  const loadText = root.querySelector<HTMLElement>("#court-load-text")!;
+  // dev only: the loading page posts its progress to serve.mjs --dev's headset sink every 2 s (boot-<id>.jsonl), so a
+  // headset stuck on it can be read from the Mac (its browser has no console to look at). Never from an automated
+  // browser (the e2e's server keeps no records, and its console must stay clean)
+  const bootId = `boot-${Date.now().toString(36)}`;
+  const bootReport = (what: string) => {
+    if (!import.meta.env.DEV || navigator.webdriver) return;
+    const body = JSON.stringify({ session: bootId, kind: "boot", what, t: Number((performance.now() / 1000).toFixed(1)), ua: navigator.userAgent, status: status.textContent, load: loads.snapshot() });
+    void fetch("/__court/headset", { method: "POST", headers: { "Content-Type": "application/json" }, body }).catch(() => {});
+  };
+  // WebXR and WebCodecs need a secure page (https, or localhost): over plain http the show could never start, so say so
+  // here instead of loading (serve.mjs sends a tunnel's http:// visits back out as https)
+  if (!isSecureContext) {
+    status.textContent = `Open this over https:// (the headset needs it): https://${location.host}${location.pathname}${location.search}`;
+    bootReport("insecure");
+    return;
+  }
+  let loadTicks = 0;
+  const showLoad = () => {
+    const s = loads.snapshot();
+    (loadBar.firstElementChild as HTMLElement).style.width = `${s.total ? ((100 * s.loaded) / s.total).toFixed(1) : 0}%`;
+    loadText.textContent = s.total ? megabytes(s) : "";
+    if (s.files && s.done === s.files && status.textContent === "Loading the court") status.textContent = "Setting up the court";
+    if (loadTicks++ % 8 === 0) bootReport("loading");
+  };
+  const loadTimer = setInterval(showLoad, 250);
+  const loadFailed = (msg: string) => {
+    clearInterval(loadTimer);
+    showLoad();
+    status.textContent = `Could not load the court: ${msg}`;
+    bootReport("error");
+  };
+  const params = new URLSearchParams(location.search);
+  // solo (one person, alone with the headset): a build defaults to it, as a link to the site carries no flags; ?solo=0
+  // turns it off. In development only ?solo turns it on, so the e2e's other scenarios keep their hand-over
+  const solo = params.has("solo") ? params.get("solo") !== "0" : !import.meta.env.DEV;
+
+  // ---------------- three + Spark (antialias off: MSAA + Spark hangs the Quest; no tone mapping: one grade) ----------------
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.xr.enabled = true;
+  root.querySelector("#court-stage")!.appendChild(renderer.domElement);
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 200);
+  camera.position.set(0, 1.15, 0);
+  const spark = new SparkRenderer({ renderer, ...SPLAT_QUALITY });
+  scene.add(spark);
+  /** Everything in court space; its transform is Seat.world (court -> room), written only by Seat. */
+  const world = new THREE.Group();
+  world.name = "court-world";
+  scene.add(world);
+  addEventListener("resize", () => {
+    if (renderer.xr.isPresenting) return;
+    renderer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+  });
+
+  const modules = {
+    clock: CLOCK_BUILT, video: VIDEO_BUILT, proxies: PROXIES_BUILT, world: WORLD_BUILT, light: LIGHT_BUILT, freeze: FREEZE_BUILT,
+    handoff: HANDOFF_BUILT, seatmath: SEATMATH_BUILT, seat: SEAT_BUILT, sound: SOUND_BUILT, vrhands: VRHANDS_BUILT, ui: UI_BUILT,
+  };
+  let stats: FrameStats | null = null; // made once the bundle says the display rate
+  // the machine's state, declared before the probe so its snapshot can read it
+  let phase: Phase = "arrival";
+  let setup = true; // until Seat here
+  let lightsUp = -1;
+  let titleT = 0; // the opening title's clock (opening.ts): from Seat here with ?solo, from the lights-up otherwise
+  let tF = 0; // seconds from F (the hand-off's clock)
+  let tLight = 0; // seconds from F in real time: the light's, which a rushed fade never rushes (handoff's lightT, P44)
+  let fed = -1; // the show frame this display frame handed the video and the proxies (-1 none)
+  let tBack = 0; // seconds from the sit (the hand-back's clock)
+  let tScreen = -1; // the Screen view: seconds into the screen's dissolve back in after the hand-back; -1 none
+  let tClean = 0; // the Screen view: seconds since the 3D took the court (the footage floor's fade to clean wood)
+  let inRoom = false;
+  let roomP = 0;
+  let reality = false;
+  let clockState: ClockState | null = null;
+  let videoRef: ShowVideo | null = null;
+  let lightRef: LightField | null = null;
+  let clockRef: Clock | null = null;
+  let ballsRef: (() => Record<string, boolean>) | null = null;
+  // the headset's display rate (rate.ts): what the session runs at and offers, what court.ts asked for, the verdict
+  const xr: XrRate = { rate: null, supported: [], requested: null, showHz: 0, verdict: "unknown" };
+  // every button, key and probe action waits for the top of the next XR frame (anchors need the XRFrame; one order)
+  const queue: (() => void)[] = [];
+  const actions = new Map<UiAction, () => void>();
+  // the e2e harness, dev only (scripts/court/e2e.mjs runs through serve.mjs --dev)
+  const probe = import.meta.env.DEV && params.has("probe") && params.get("probe") !== "headset" // ?probe=headset: real time, headset.ts
+    ? new Probe(params.get("probe"), {
+        snapshot: () => ({
+          phase, setup, still: Number((seat.arrival.waited ?? -1).toFixed(3)), lightsUp: Number(lightsUp.toFixed(3)), tF: Number(tF.toFixed(3)), inRoom, roomP, reality,
+          world: { position: [...seat.world.position], yaw: seat.world.yaw }, head: { room: [...head.room], court: [...head.court] },
+          // what the e2e's wiring scenario reads: the seat's anchor and session, the dt it was handed, the hands' light
+          wiring: { lock: seatLock instanceof PersistentLock ? "persistent" : "other", seatXr: seatLock.xr === renderer.xr, seatDt, hands: handsLevel },
+          clock: clockState ?? { frame: -1, segment: "pass1", ease: null, speed: 0, nextEase: null, nextJump: null, armed: false, pass: 0, segmentFrame: 0 },
+          onScreen: videoRef?.stats.onScreen ?? -1,
+          fed, lightBeat: lightRef?.beat ?? "", lightT: Number((lightRef?.t ?? 0).toFixed(4)), mask: videoRef?.maskLevel ?? -1,
+          xr: { ...xr, supported: [...xr.supported] }, xrHz: xr.rate ?? xr.showHz, clockHz: clockRef?.outputHz() ?? 0,
+          balls: ballsRef?.() ?? {},
+        }),
+        seatHere: () => actions.get("seatHere")?.(),
+        press: (action) => actions.get(action)?.(),
+        modules,
+        stats: () => stats,
+        view: () => {
+          if (!renderer.xr.isPresenting) return null;
+          const xrCamera = renderer.xr.getCamera();
+          return viewOf(xrCamera.cameras[0] ?? xrCamera, world, gl.drawingBufferWidth, gl.drawingBufferHeight);
+        },
+      })
+    : null;
+
+  // ---------------- the bundle (and the pre-built stream: ?show=small, ?hz=90) ----------------
+  const bundleUrl = params.get("bundle") ?? DEFAULT_BUNDLE;
+  const fallback: StreamFallback | null = params.get("hz") === "90" ? "hz90" : params.get("show") === "small" ? "small" : null;
+  let bundle: CourtBundle;
+  try {
+    bundle = await loadCourt(bundleUrl, { fallback });
+  } catch (e) {
+    const msg = (e as Error).message;
+    loadFailed(`no court bundle at ${bundleUrl} (${msg})`);
+    if (probe) probe.api.error = msg;
+    console.error(`Court Side: ${msg}${import.meta.env.DEV ? "\n(make the stand-in: node apps/webxr/scripts/court/standin.mjs)" : ""}`);
+    return;
+  }
+  const { court, frames } = bundle;
+  // the loading bar's total from the start (loading.ts): every big file this page will wait for (the Reality check's
+  // splats where they are waited for), sized by a HEAD before any of them streams in, so the bar never runs backwards
+  void loads.expect(expectedFiles(bundle, { reality: !!probe || params.has("splats"), element: params.get("video") === "element" }));
+  const hz = court.video.displayHz;
+  xr.showHz = hz;
+  if (params.has("stats") || params.get("probe") === "timing" || params.get("probe") === "headset") stats = new FrameStats(gl, hz);
+  // ?stats on the headset: remote devtools reads __courtStats.report() and __courtStats.xr (the display rate)
+  if (stats) (window as unknown as { __courtStats?: FrameStats }).__courtStats = stats;
+
+  // ---------------- the modules ----------------
+  const clock = new Clock(court, frames);
+  clockRef = clock;
+  clockState = clock.state;
+  const light = new LightField(court);
+  lightRef = light;
+  const video = new ShowVideo(renderer, bundle, { element: params.get("video") === "element" });
+  videoRef = video;
+  const proxies = new Proxies(renderer, bundle, video, light);
+  const courtWorld = new CourtWorld(renderer, scene, world, bundle, light, proxies);
+  const freeze = new Freeze(world, bundle, spark, light);
+  const sound = new Sound(bundle);
+  const hands = [renderer.xr.getHand(0), renderer.xr.getHand(1)];
+  hands.forEach((h) => scene.add(h));
+  const sideOf = handSides(hands);
+  const vrHands = new VrHands(hands, scene);
+  const ui = new Ui(scene, hands, sideOf, bundle);
+  const seatLock = new PersistentLock(renderer, world); // persistent anchors, and the session's bounded-floor for Seat
+  const seat = new Seat(court, frames, world, seatLock, params.has("seat") ? Number(params.get("seat")) : undefined);
+  world.add(proxies.group);
+  // the view: the cinema screen for the watch (default), or ?view=courtside, the footage projected into the arena (V1.2)
+  const screen = viewMode(params.get("view")) === "screen" ? new CinemaScreen(bundle, video.regions.live, seat.spot) : null;
+  if (screen) world.add(screen.mesh);
+  // Reset's fade through black and Step into the court's glow round the screen (transitions.ts); the veil lives in room space
+  const resetFade = new ResetFade();
+  const resetVeil = new ResetVeil();
+  scene.add(resetVeil.mesh);
+  const stepGlow = new StepGlow();
+  // the opening title, where the screen will be, in the arrival (opening.ts)
+  const opening = new Opening(bundle, seat.spot);
+  world.add(opening.group);
+  /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
+  const screenWatch = (level: number) => {
+    if (!screen) return;
+    screen.opacity = level;
+    proxies.footage(0);
+    courtWorld.filmed(0);
+    light.evenAt(1); // the floor lit evenly by the arena: no spotlight while the screen plays
+  };
+  /**
+   * The Screen view off the watch: the footage on the 3D (the Courtside path) coming in as the screen goes, the screen
+   * at `level`, and the footage floor at `floor`: up as the screen goes by default (F: all of it, pixel-exact).
+   */
+  const screenAside = (level: number, floor = 1 - level, even = level) => {
+    if (!screen) return;
+    screen.opacity = level;
+    proxies.footage(1 - level);
+    courtWorld.filmed(floor);
+    light.evenAt(even); // the floor's light: even while the screen is up, the pool only under the projected picture at F
+  };
+  /** The footage floor once the 3D has the court: clean wood over CLEAN_FLOOR_S from the open. */
+  const cleanFloor = () => 1 - smooth(tClean / CLEAN_FLOOR_S);
+  // the setup page (before Seat here) is the arena as the projection shows it; the screen comes up with the arrival
+  screenAside(0);
+  const smooth = (u: number) => {
+    const x = Math.min(1, Math.max(0, u));
+    return x * x * x * (x * (6 * x - 15) + 10);
+  };
+  const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
+  // what draws a ball this frame (the e2e's ball scenario): the ball's card on the video layer, the 3D's own sphere,
+  // the holder's splats (freeze.ballInBody); and the holder's card, which the ball's goes with
+  const drawn = (o: THREE.Object3D | undefined): boolean => {
+    for (let x: THREE.Object3D | null | undefined = o; x; x = x.parent) if (!x.visible) return false;
+    return !!o;
+  };
+  const holder = court.freeze.ballInBody ?? court.freeze.ball.erase[0]?.player ?? court.freeze.players[0]?.id ?? "";
+  ballsRef = () => {
+    const on = video.stats.onScreen;
+    const here = on >= 0 ? bundle.cards[on]?.cards ?? [] : [];
+    const cardsUp = layerVisibility(video.opacity, video.maskLevel).cards;
+    const ballCardHere = here.some((c) => c.kind === "ball");
+    return {
+      ballCardHere, card: cardsUp && ballCardHere, holderCard: cardsUp && here.some((c) => c.id === holder),
+      sphere: drawn(scene.getObjectByName("court-ball")),
+      body: !!court.freeze.ballInBody && drawn(scene.getObjectByName(`court-freeze-${court.freeze.ballInBody}`)),
+    };
+  };
+  // the textures follow the clock's frame every display frame from the watch on, the freeze included (stream D): a held
+  // F still goes up once it decodes, and See my room's jump to F can't leave an earlier frame on the video or proxies
+  const feed = (frame: number) => {
+    video.show(frame);
+    proxies.project(frame);
+    fed = frame;
+  };
+  // ?probe=headset (dev only, never built in): the real headset's telemetry, posted to serve.mjs --dev every 2 s (headset.ts)
+  const headset = import.meta.env.DEV && params.get("probe") === "headset"
+    ? new (await import("./headset")).HeadsetTelemetry({
+        bundle, phase: () => phase, inRoom: () => inRoom, clock: () => clockState, onScreen: () => video.stats.onScreen, video: () => video.stats,
+        splats: () => spark.activeSplats, xr: () => xr, session: () => renderer.xr.getSession(), stats: () => stats?.report() ?? null,
+      })
+    : null;
+  headset?.start();
+  try {
+    await Promise.all([video.load(), proxies.load(), courtWorld.load(), freeze.load(), sound.load()]);
+    // the e2e and the ?splats sweep see every splat at once (the Reality check's come after the page is ready otherwise)
+    if (probe || params.has("splats")) await freeze.allLoaded();
+  } catch (e) {
+    loadFailed((e as Error)?.message ?? String(e));
+    throw e;
+  }
+  clearInterval(loadTimer);
+  showLoad();
+  loadBar.hidden = true;
+  loadText.hidden = true;
+  void freeze.allLoaded(); // the Reality check's splats, behind everything the show needs
+  // ?splats=<n> (dev only): at most n splats per body, the most important first, to find the frame budget live (splatcap.ts)
+  if (import.meta.env.DEV && params.has("splats"))
+    await import("./splatcap").then((m) => console.info("Court Side ?splats:", m.capSplats(scene, Number(params.get("splats"))))).catch((e: unknown) => console.error("Court Side ?splats:", e));
+
+  // ---------------- the machine ----------------
+  const head: Head = { room: [0, 1.15, 0], court: [0, 1.15, 0], yaw: 0, quaternion: [0, 0, 0, 1] };
+  const lastHead = new THREE.Vector3();
+  const headPos = new THREE.Vector3();
+  const headQ = new THREE.Quaternion();
+  const euler = new THREE.Euler();
+  let seatedEyeY = 1.15;
+  let rushed = false; // the head rose mid-fade: the fade finishes within RISE_FADE_S
+  let rushRate = 1; // then the hand-off's seconds per real second, latched at the rise (a straight line to the fade's end)
+  let restored = false; // Back to my seat: the chair reached and the world re-seated
+  let handsLevel = 0; // the light the drawn hands were last given
+  let seatDt = 0; // the dt seat.update was last handed
+  const flags = () => ({ inRoom, reality, setup, nextView: seat.hasNextView() });
+  const go = (next: Phase) => {
+    phase = next;
+    ui.setPhase(phase, flags());
+  };
+  const on = (action: UiAction, fn: () => void) => {
+    const queued = () => queue.push(fn);
+    actions.set(action, queued);
+    ui.on(action, queued);
+  };
+  on("look", () => ui.cycleLook());
+  on("seatHere", () => {
+    seat.place(head, head.yaw);
+    // ?solo: one person tests alone, so there is no hand-over to wait for (the seated, still head still gates it)
+    if (solo) seat.arrival.handedOver = true;
+    seatedEyeY = head.room[1];
+    setup = false;
+    lightsUp = -1; // seat.place re-arms seat.arrival: dark until the next hand-over
+    titleT = 0;
+    light.set("dark", 0);
+    go("arrival");
+  });
+  const stepIn = () => {
+    clock.press();
+    sound.oneShot("stepIn");
+    stepGlow.start(); // the screen's rim flares and a ring of light goes out as the press registers
+  };
+  on("step", () => {
+    if (phase !== "watching") return;
+    stepIn();
+  });
+  on("closer", () => {
+    if (phase !== "open" && phase !== "walking") return;
+    seat.closer();
+    go("walking");
+  });
+  on("nextView", () => {
+    if (phase === "walking") seat.nextView();
+  });
+  on("back", () => {
+    if (phase !== "open" && phase !== "walking") return;
+    inRoom = true; // back to the chair always goes through the room (3.5)
+    restored = false;
+    tBack = 0;
+    go("returning");
+  });
+  on("reality", () => {
+    reality = !reality;
+    courtWorld.reality(reality);
+    proxies.reality(reality);
+    freeze.reality(reality);
+    ui.setPhase(phase, flags());
+  });
+  // the show from the top (Replay, Change seat): back to the dolly seat if the world is open, the picture back over the
+  // 3D, the hush lifted, the clocks and the light at the start of the watch
+  const restart = () => {
+    if (phase === "open" || phase === "walking" || phase === "returning") seat.restore();
+    video.opacity = 1;
+    video.mask(0); // the watch's edge (1 is lifted)
+    video.wipe(0);
+    freeze.reveal(0);
+    courtWorld.open(0);
+    light.set("watch", 0);
+    sound.release();
+    tF = 0;
+    tLight = 0;
+    tBack = 0;
+    rushed = false;
+    restored = false;
+    tScreen = -1;
+    screenWatch(1);
+    stepGlow.stop();
+    clock.restart();
+  };
+  // Replay, on the menu in every phase after the arrival (3.6): the watch from pass 1, never a cut (transitions.ts):
+  // from the 3D the view fades to black and the show restarts there; at the screen (the seat and the arena stay put)
+  // it restarts at once and the screen rises. transitions() below runs it; the clock holds until the view is back
+  on("replay", () => {
+    if (setup || phase === "arrival" || resetFade.active) return;
+    const atScreen = phase === "watching" || phase === "resume" || phase === "ended";
+    resetFade.start(atScreen ? 0 : RESET_OUT_S);
+  });
+  // Change seat (the presenter, between judges): back to the setup page, the show stopped on its first frame and the
+  // world on its anchor until the next Seat here, which takes a new seat and waits for the next hand-over (seat.arrival)
+  on("changeSeat", () => {
+    if (setup) return;
+    resetFade.cancel();
+    restart();
+    feed(court.video.segments.pass1[0]);
+    screenAside(0);
+    setup = true;
+    lightsUp = -1;
+    go("arrival");
+  });
+  // See my room, per phase (3.6): arrival replays the lights-up on the way back; watching holds the clock and restarts
+  // pass 1 on the way back; mid-ease or mid-hand-off jumps to F and finishes the hand-off under the fade
+  const toggleRoom = () => {
+    if (phase === "returning" && !restored) return; // the walk back to the chair stays in the room until the sit
+    inRoom = !inRoom;
+    if (!inRoom && phase === "arrival" && lightsUp >= 0) lightsUp = 0;
+    if (!inRoom && phase === "watching") clock.restart();
+    if (inRoom && (phase === "easing" || phase === "handoff")) {
+      clock.jumpToFreeze();
+      sound.timeStop(1); // landed on F: the full hush (it lifts only on the resume)
+      tF = HANDOFF_END;
+      tLight = HANDOFF_END;
+      handoff(tF, parts);
+      tClean = 0;
+      go("open");
+    }
+    ui.setPhase(phase, flags());
+  };
+  on("room", toggleRoom);
+  ui.onToggleRoom = () => queue.push(toggleRoom);
+  // the laptop has no palm menu: Space or Enter on the page is the show's next step, Step into the court in the watch
+  // and Back to my seat in the 3D; R is Reset (Replay: the show from the top). A focused button keeps its own keys.
+  window.addEventListener("keydown", (e) => {
+    const key = e.code === "Space" || e.key === "Enter" ? "next" : e.key === "r" || e.key === "R" ? "reset" : null;
+    if (!key || e.repeat || e.metaKey || e.ctrlKey || (e.target as HTMLElement | null)?.closest?.("button, input, textarea, select, a")) return;
+    const next = key === "reset" ? actions.get("replay") : phase === "watching" ? actions.get("step") : phase === "open" || phase === "walking" ? actions.get("back") : undefined;
+    if (!next) return;
+    e.preventDefault();
+    next();
+  });
+
+  const step = (dt: number) => {
+    fed = -1;
+    // See my room, in every phase
+    roomP = Math.min(1, Math.max(0, roomP + (inRoom ? dt / ROOM_OUT_S : -dt / ROOM_BACK_S)));
+    courtWorld.room(roomP);
+    screen?.room(roomP);
+    sound.room(roomP);
+    vrHands.fade(roomP);
+    opening.hide(); // drawn only in the arrival (below)
+    courtWorld.edge(seat.boundsDistance(head));
+    // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
+    const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
+    handsLevel = arrive * light.at(head.court[0], head.court[2], PART.person);
+    vrHands.light(handsLevel);
+    if (setup) return;
+    switch (phase) {
+      case "arrival": {
+        // the hand-over, then a seated head still for 1 s (seat.arrival, P27, P38)
+        if (lightsUp < 0) {
+          // with ?solo the opening title plays on the dark screen first (opening.ts EARLY_STAGE_S): the lights wait for it
+          if (seat.arrival.update(dt, head.room) && opening.ready(titleT, solo)) lightsUp = 0;
+        } else lightsUp += dt;
+        const p = Math.max(0, Math.min(1, lightsUp / LIGHTS_UP_S));
+        light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
+        sound.arrive(p);
+        // the lit footage region rises out of black on pass 1's first frame (3.2), so the watch starts on a frame shown
+        const first = court.video.segments.pass1[0];
+        feed(first);
+        video.wipe(1 - p);
+        screenWatch(p);
+        if (lightsUp >= 0 || solo) titleT += dt;
+        opening.update(titleT, lightsUp, solo, roomP);
+        if (lightsUp >= LIGHTS_UP_S) {
+          light.set("watch", 0);
+          video.wipe(0);
+          go("watching");
+        }
+        break;
+      }
+      case "watching":
+      case "easing":
+      case "resume": {
+        // the clock holds in the room (3.6), and on pass 1's first frame while a Reset brings the view back
+        if (!(inRoom && phase !== "resume") && !resetFade.holding) clockState = clock.update(dt);
+        const s = clock.state;
+        // ?solo: nobody to press Step into the court, so the show takes it by itself early in pass 2 (once a pass; a
+        // press of the judge's own already took it)
+        if (solo && phase === "watching" && !inRoom && s.segment === "pass2" && s.frame >= court.video.segments.pass2[0] + AUTO_STEP_FRAMES && !clock.pressed) stepIn();
+        feed(s.frame);
+        screenWatch(1);
+        // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)
+        courtWorld.frame(video.stats.onScreen >= 0 ? video.stats.onScreen : s.frame);
+        video.prime(s.nextJump);
+        const hush = 1 - s.speed / court.video.pass2Speed; // 0 at pass 2's speed, 1 frozen
+        if (phase === "watching" && s.segment === "ease") go("easing");
+        if (phase === "easing") {
+          const ease = s.ease !== null ? court.video.segments.eases[s.ease] : null;
+          tF = ease ? -(ease.frames[1] - s.frame) / hz : 0; // seconds to F
+          light.set("ease", ease ? ease.seconds + tF : 0);
+          sound.timeStop(Math.max(0, Math.min(1, hush)));
+          if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
+          // the Screen view: over the ease's last SCREEN_EASE_S (show seconds, slowing into F) the screen dissolves
+          // into the same picture projected into the arena, so F lands on the Courtside path, pixel-exact from the seat
+          // the projected picture fades up from the dissolve's start instead of popping on at full under the screen,
+          // and is whole before the splats come up (no 3D seen before F)
+          if (screen && tF >= -SCREEN_EASE_S) {
+            screenAside(1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S));
+            if (tF < BEATS.splatsUp[0]) video.opacity = smooth((tF + SCREEN_EASE_S) / Math.max(1e-3, SCREEN_EASE_S + BEATS.splatsUp[0]));
+          }
+        }
+        if (phase === "easing" && s.segment === "freeze") {
+          tF = 0;
+          tLight = 0;
+          rushed = false;
+          go("handoff");
+        }
+        if (phase === "resume") {
+          light.set("resume", tBack);
+          tBack += dt;
+          if (s.segment === "ended") go("ended");
+        }
+        break;
+      }
+      case "handoff": {
+        feed(clock.state.frame);
+        screenAside(0);
+        const [, fadeEnd] = BEATS.videoFades;
+        // rushed: whatever is left of the fade plays out in RISE_FADE_S, at the rate latched at the rise (P10); the
+        // light keeps the unrushed time
+        if (!rushed && head.room[1] - seatedEyeY > RISE_FINISH && tF < fadeEnd) {
+          rushed = true;
+          rushRate = (fadeEnd - tF) / RISE_FADE_S;
+        }
+        tF += rushed && tF < fadeEnd ? Math.max(dt, rushRate * dt) : dt;
+        tLight += dt;
+        handoff(tF, parts, tLight);
+        if (tF >= HANDOFF_END) {
+          tClean = 0;
+          go("open");
+        }
+        break;
+      }
+      case "open":
+      case "walking":
+        feed(clock.state.frame);
+        tClean += dt;
+        screenAside(0, cleanFloor(), 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
+        freeze.update(head, dt);
+        // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
+        if (tLight < HANDOFF_END) {
+          tLight = Math.min(HANDOFF_END, tLight + dt);
+          light.set("handoff", tLight);
+        }
+        // once the hand-off's light has landed the arena lights the floor evenly: the pool's cone toward the pair fades
+        light.even(dt, tLight >= HANDOFF_END);
+        break;
+      case "returning": {
+        feed(clock.state.frame);
+        freeze.update(head, dt);
+        if (!restored && seat.seated(head)) {
+          seat.restore(); // the chair back at the dolly seat, behind the room
+          restored = true;
+          inRoom = false;
+          tBack = BACK_BEATS.videoReturns[0];
+          tScreen = -1;
+          ui.setPhase(phase, flags());
+        }
+        light.even(dt, false); // the floor's pool back for the resume
+        if (restored) {
+          tBack += dt;
+          handback(Math.min(tBack, HANDBACK_END), parts);
+          // the Screen view: F's projected picture back, then the screen dissolves in over it before the make
+          if (tBack >= HANDBACK_END && screen && tScreen < SCREEN_FADE_S) {
+            tScreen = Math.max(0, tScreen) + dt;
+            screenAside(smooth(tScreen / SCREEN_FADE_S));
+          } else if (tBack >= HANDBACK_END) {
+            tScreen = -1;
+            clock.resume();
+            tBack = 0;
+            go("resume");
+          } else screenAside(0, video.opacity, 1 - video.opacity); // the footage floor and its light come back with the picture over it
+        } else {
+          light.set("return", tBack);
+          tClean += dt;
+          screenAside(0, cleanFloor(), 1 - cleanFloor());
+        }
+        break;
+      }
+      case "ended":
+        break;
+    }
+    sound.update(head, clock.state, seat.world); // the crowd turns with the court; the hush lifts only on the resume (sound.ts)
+    // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4)
+    if (head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
+      seat.closer();
+      go("walking");
+    }
+  };
+
+  // Reset and Step into the court's transitions, after the machine's step so they have the last word on the veil and
+  // the screen: the restart on the frame the view is black (or at once from the screen), the veil round the head, the
+  // screen's rise after a Reset at it, the glow round the screen. The way back in waits at black while the restart's
+  // seat.restore fade-jump runs (seat.ts, JUMP_S), so the view comes back once, on the seat
+  const transitions = (dt: number) => {
+    if (resetFade.update(resetFade.holding && seat.veil > 0 ? 0 : dt)) {
+      restart();
+      go("watching");
+    }
+    resetVeil.set(resetFade.veil, head.room);
+    if (screen && resetFade.atOnce && resetFade.holding) screen.opacity = Math.min(screen.opacity, resetFade.rise);
+    // the glow charges through the ease, to full where the screen starts to dissolve into the court (SCREEN_EASE_S before
+    // F, on tF's show seconds); from the hand-off on the screen is gone, and so is the glow
+    if (phase !== "watching" && phase !== "easing") stepGlow.stop();
+    const ease = phase === "easing" && clock.state.ease !== null ? court.video.segments.eases[clock.state.ease] : null;
+    const charge = ease ? (tF + ease.seconds) / Math.max(1e-3, ease.seconds - SCREEN_EASE_S) : null;
+    const { glow, wave } = stepGlow.update(dt, charge);
+    screen?.glow(glow, wave);
+  };
+
+  // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again
+  // only when the bounds or the world's placement change
+  let sentBounds: unknown = undefined;
+  const sentPose = [NaN, NaN, NaN, NaN];
+  const syncBounds = () => {
+    const b = seat.bounds;
+    const [x, y, z] = seat.world.position;
+    if (b === sentBounds && x === sentPose[0] && y === sentPose[1] && z === sentPose[2] && seat.world.yaw === sentPose[3]) return;
+    sentBounds = b;
+    sentPose.splice(0, 4, x, y, z, seat.world.yaw);
+    freeze.bounds(b ? b.map(([bx, bz]) => {
+      const c = toCourt(seat.world, [bx, 0, bz]);
+      return [c[0], c[2]] as [number, number];
+    }) : null);
+  };
+
+  // ---------------- the frame loop ----------------
+  const loopErrors = new Set<string>();
+  const logOnce = (e: unknown) => {
+    const msg = String(e);
+    if (loopErrors.has(msg)) return;
+    loopErrors.add(msg);
+    probe?.api.errors.push(msg);
+    console.error("Court Side frame:", e);
+  };
+  let lastTime = -1;
+  let frameStart = 0;
+  const onFrame = (time: number) => {
+    // probed, every XR frame is one period of the headset's rate (the session's, else the show's), as on a headset;
+    // ?probe=realtime keeps the wall clock (probe.dt null) so the e2e sees what a slow headset sees
+    const dt = probe?.dt(xr.rate ?? hz) ?? (lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000));
+    const interval = lastTime < 0 ? 0 : time - lastTime;
+    lastTime = time;
+    const eye = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+    lastHead.copy(headPos);
+    eye.getWorldPosition(headPos);
+    eye.getWorldQuaternion(headQ);
+    euler.setFromQuaternion(headQ, "YXZ");
+    head.room = [headPos.x, headPos.y, headPos.z];
+    head.court = toCourt(seat.world, head.room);
+    head.yaw = euler.y;
+    head.quaternion = [headQ.x, headQ.y, headQ.z, headQ.w];
+    // the queued actions, with this frame's head (Seat here takes it); one action's throw never costs the frame its
+    // step (the fades and the clock keep their display-frame timing)
+    for (const fn of queue.splice(0)) {
+      try {
+        fn();
+      } catch (e) {
+        logOnce(e);
+      }
+    }
+    if (renderer.xr.isPresenting) {
+      seatDt = dt; // the frame's own dt (the e2e reads what Seat was handed)
+      seat.update(seatDt, head); // the only writer of the world group (seat.ts), with the fade-jump veil
+      syncBounds();
+      vrHands.update();
+      ui.update(head, time, dt);
+    }
+    courtWorld.update(head);
+    step(dt);
+    transitions(dt);
+    stats?.gpu.begin(phase);
+    renderer.render(scene, camera);
+    stats?.gpu.end();
+    stats?.frame(phase, interval, performance.now() - frameStart);
+    headset?.frame(interval);
+  };
+  renderer.setAnimationLoop((time) => {
+    if (probe && !probe.run()) return; // the capture's lockstep: only the frames it steps (probe.ts)
+    frameStart = performance.now();
+    try {
+      onFrame(time);
+    } catch (e) {
+      logOnce(e);
+    } finally {
+      // even after a throw, so the e2e sees the frame (and the error) instead of waiting for it
+      if (renderer.xr.isPresenting) probe?.afterRender(gl, performance.now() - frameStart);
+    }
+  });
+
+  // ---------------- the session ----------------
+  const xrSystem = navigator.xr;
+  const supported = xrSystem ? await xrSystem.isSessionSupported("immersive-ar").catch(() => false) : false;
+  enterButton.disabled = !supported;
+  status.textContent = supported ? court.title : "This browser has no immersive AR";
+  bootReport("ready");
+  if (probe) probe.api.ready = supported;
+  let session: XRSession | null = null;
+  // the show's own display rate when the headset offers it (rate.ts): the clock shows one show frame per XR frame only
+  // there. A headset that can't run it takes the 90 Hz bake when the bundle has one (a reload on the setup page);
+  // otherwise the clock's cadence keeps the show's time, and the console and ?stats say so
+  const hz90 = fallback === "hz90" ? null : court.video.fallbacks?.hz90?.displayHz ?? null;
+  // at the session's start (after the request) and on every frameratechange: the clock's cadence takes the session's
+  // rate at once (clock.ts setOutputHz), so the show keeps real time through any change
+  const judge = (s: XRSession) => {
+    xr.rate = s.frameRate ?? null;
+    xr.verdict = judgeRate(hz, xr.rate, xr.supported, hz90);
+    clock.setOutputHz(xr.rate);
+    if (stats) stats.xr = { ...xr, supported: [...xr.supported] };
+    if (xr.verdict === "mismatch") console.warn(`Court Side: the headset runs at ${xr.rate} Hz, the show is baked for ${hz} Hz (offered: ${xr.supported.join(", ") || "none"}): the clock's cadence holds some show frames for two XR frames`);
+  };
+  const matchRate = async (s: XRSession) => {
+    xr.supported = s.supportedFrameRates ? Array.from(s.supportedFrameRates) : [];
+    const want = wantRate(hz, xr.supported);
+    if (want !== null && s.frameRate !== want && typeof s.updateTargetFrameRate === "function") {
+      xr.requested = want;
+      await s.updateTargetFrameRate(want).catch((e: unknown) => console.warn(`Court Side: the headset would not run at ${want} Hz:`, e));
+    }
+    judge(s);
+    if (xr.verdict === "hz90" && setup) {
+      status.textContent = `This headset can't run ${hz} Hz: loading the 90 Hz show`;
+      const url = new URL(location.href);
+      url.searchParams.set("hz", "90");
+      await s.end().catch(() => {});
+      location.replace(url);
+    }
+  };
+  const enter = async () => {
+    if (!xrSystem || session) return;
+    renderer.xr.setReferenceSpaceType("local-floor");
+    renderer.xr.setFramebufferScaleFactor(COURT_QUALITY.res);
+    renderer.xr.setFoveation(COURT_QUALITY.fov);
+    const s = await xrSystem.requestSession("immersive-ar", {
+      requiredFeatures: ["local-floor"],
+      optionalFeatures: ["anchors", "hand-tracking", "bounded-floor"],
+    });
+    session = s;
+    // the session is kept through `visible-blurred` and `hidden` (headset off, the system menu): only its end ends it
+    s.addEventListener("visibilitychange", () => seat.arrival.visibility(s.visibilityState)); // the hand-over (P27, P38)
+    s.addEventListener("frameratechange", () => judge(s));
+    s.addEventListener("end", () => {
+      session = null;
+      status.textContent = court.title;
+    });
+    await renderer.xr.setSession(s);
+    await matchRate(s);
+    scene.background = null;
+    lastTime = -1;
+    if (setup) go("arrival"); // a re-entry after Seat here keeps the phase, the anchor and the seat (9)
+    // ?solo: take the seat where the head is once tracking settles, instead of waiting for a Seat here press
+    if (setup && solo) setTimeout(() => actions.get("seatHere")?.(), 1500);
+    status.textContent = "In the headset";
+  };
+  enterButton.addEventListener("click", () => {
+    sound.start(); // inside the tap: the audio context may start
+    enter().catch((e: unknown) => {
+      status.textContent = `Could not enter: ${String(e)}`;
+      console.error("Court Side session:", e);
+    });
+  });
+
+  // production (served by serve.mjs): the Service Worker keeps the page and the bundle for a cable-off reload (P37);
+  // it takes over after this load, so it's handed the files this load already fetched
+  // The site's build (LUCID_BASE=/xr/) has no worker to register: only serve.mjs serves one, at its root
+  if (!import.meta.env.DEV && import.meta.env.BASE_URL === "/" && "serviceWorker" in navigator)
+    navigator.serviceWorker
+      .register("/court-sw.js")
+      .then(() => navigator.serviceWorker.ready)
+      .then((reg) => reg.active?.postMessage({ type: "cache", urls: [location.href, ...performance.getEntriesByType("resource").map((e) => e.name)] }))
+      .catch(() => {}); // served without serve.mjs (vite preview): no worker, no cable-off reload
+}

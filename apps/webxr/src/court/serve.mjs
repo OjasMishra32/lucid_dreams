@@ -1,0 +1,215 @@
+// The Court Side demo server (3.1, P36): the page and the court bundle, on 127.0.0.1 only (the Quest reaches it over USB
+// with `adb reverse tcp:<port> tcp:<port>`), never through a tunnel, except for a short headset test with --token (a
+// quick tunnel then shows a stranger only 404s). Plain JS so tsc and the vite build leave it alone.
+// Owned by the integrator.
+//   npm --prefix apps/webxr run build
+//   node apps/webxr/src/court/serve.mjs --bundle <bundle folder, outside the repo> [--port 5185] [--dist apps/webxr/dist]
+//   node apps/webxr/src/court/serve.mjs --dev --bundle <folder> [--standin] [--port 0] [--headset-dir <folder>]
+//   either, plus --token <openssl rand -hex 16>: every request needs the cookie that /?k=<token> sets (token-gate.mjs);
+//                       anything else is a 404 with no body; --defaults "bundle=/bundle/&solo" makes that redirect add
+//                       what a short link leaves out
+// Serves:  /            the build (index.html; open /?mode=court&bundle=/bundle/), or with --dev apps/webxr's vite dev
+//                       server as middleware (plain http, HMR on this port; the only way to get IWER's ?emulate, which
+//                       loads in dev only: the e2e runs through this)
+//          /bundle/...  the bundle folder (court.json beside it); CORS only for pages on localhost / 127.0.0.1, so the
+//                       dev page and the e2e runner can read a real bundle without vite ever serving it
+//          /court-sw.js the Service Worker (sw.js), scoped to /
+//          POST /__court/headset (--dev only): `?probe=headset`'s records and the loading page's (boot-<id>),
+//                       appended to --headset-dir (else $COURT_DATA/qa/headset)/<session>.jsonl (headset-sink.mjs)
+// Refuses: any Host but 127.0.0.1 or localhost (DNS rebinding); a bundle inside any checkout of the repo, worktrees
+// included (vite and the tunnel serve apps/webxr/ and dreams/; only the synthetic stand-in may be served from there,
+// with --standin); and any path (symlinks included) that leaves its folder. `--port 0` takes a free port; the first
+// line printed names it.
+import { execFileSync } from "node:child_process";
+import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
+import { createServer } from "node:http";
+import { dirname, extname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { HEADSET_PATH, headsetDir, headsetSink } from "./headset-sink.mjs";
+import { goodToken, tokenGate } from "./token-gate.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WEBXR = resolve(HERE, "../..");
+const REPO = resolve(WEBXR, "../..");
+const args = process.argv.slice(2);
+const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
+const expand = (p) => (p.startsWith("~/") ? join(process.env.HOME ?? "", p.slice(2)) : p);
+
+const DEV = args.includes("--dev");
+const bundleArg = opt("--bundle", null);
+if (!bundleArg) {
+  console.error("usage: node apps/webxr/src/court/serve.mjs [--dev] --bundle <folder with court.json> [--standin] [--port 5185] [--dist <vite build>] [--token <t>] [--defaults <query>]");
+  process.exit(2);
+}
+const bundlePath = resolve(expand(bundleArg));
+if (!existsSync(join(bundlePath, "court.json"))) {
+  console.error(`no court.json in ${bundlePath}`);
+  process.exit(2);
+}
+// realpath(3) (`.native`): the on-disk spelling, so a path typed in other capitals on a case-insensitive disk can't slip
+// past the checks below
+const real = realpathSync.native;
+const BUNDLE = real(bundlePath);
+const DIST_ARG = resolve(expand(opt("--dist", join(WEBXR, "dist"))));
+const PORT = Number(opt("--port", 5185)); // 5180 is vite, 5190 apps/site; 0 = any free port
+const SW = join(HERE, "sw.js");
+// every checkout of this repo: this one, the main one and every worktree (vite dev in any of them serves its folder on
+// the LAN, and the tunnel the main one's)
+const checkouts = [real(REPO)];
+try {
+  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: HERE, encoding: "utf8" }).trim();
+  checkouts.push(real(dirname(common)));
+  const list = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: HERE, encoding: "utf8" });
+  for (const line of list.split("\n")) if (line.startsWith("worktree ") && existsSync(line.slice(9))) checkouts.push(real(line.slice(9)));
+} catch {
+  // not a git checkout: this folder's repo is the only one
+}
+const within = (dir, root) => dir === root || dir.startsWith(root + sep);
+// --standin admits exactly the synthetic stand-in (standin.mjs's folder), nothing else inside a checkout
+const STANDIN = join(WEBXR, "scripts", "court", "out", "standin");
+const standin = args.includes("--standin") && existsSync(STANDIN) && BUNDLE === real(STANDIN);
+if (args.includes("--standin") && !standin) {
+  console.error(`refusing --standin for ${BUNDLE}: it admits only the stand-in at ${STANDIN}`);
+  process.exit(2);
+}
+if (!standin && checkouts.some((root) => within(BUNDLE, root) || within(root, BUNDLE))) {
+  console.error(`refusing ${BUNDLE}: it is inside a checkout that vite and the tunnel serve; keep the court bundle outside the repo (P36). The synthetic stand-in may pass --standin.`);
+  process.exit(2);
+}
+if (!DEV && !existsSync(join(DIST_ARG, "index.html"))) {
+  console.error(`no build in ${DIST_ARG}: run npm --prefix apps/webxr run build first`);
+  process.exit(2);
+}
+const DIST = DEV ? null : real(DIST_ARG);
+const HEADSET_DIR = DEV ? headsetDir(opt("--headset-dir", null)) : null;
+const TOKEN = opt("--token", null);
+if (args.includes("--token") && !goodToken(TOKEN)) {
+  console.error("--token needs at least 16 letters, digits, - or _: use $(openssl rand -hex 16)");
+  process.exit(2);
+}
+const gate = TOKEN ? tokenGate(TOKEN) : null;
+// --defaults "<query>": what the /?k= redirect adds when the link leaves it out, so a short link typed on the headset
+// gets the real bundle and its flags (e.g. --defaults "bundle=/bundle/&solo"); what the link names itself wins
+const DEFAULTS = new URLSearchParams(opt("--defaults", ""));
+const withDefaults = (location) => {
+  const url = new URL(location, "http://127.0.0.1");
+  for (const [k, v] of DEFAULTS) if (!url.searchParams.has(k)) url.searchParams.set(k, v);
+  return `${url.pathname}${url.search}`;
+};
+
+const TYPES = {
+  ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
+  ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml",
+  ".wasm": "application/wasm", ".m4a": "audio/mp4", ".mp4": "video/mp4", ".h264": "video/h264", ".glb": "model/gltf-binary",
+  ".ply": "application/octet-stream", ".spz": "application/octet-stream",
+};
+// a tunnel link typed as http:// (the headset's keyboard): WebXR and WebCodecs need a secure page, so a page visit goes
+// back out as https on the same host, which only the page knows (cloudflared hands this server 127.0.0.1). The token's
+// first visit too, before its cookie is set: the https visit sets it. The page never carries the token.
+const overHttp = (req) => req.headers["x-forwarded-proto"] === "http" || /"scheme":"http"/.test(String(req.headers["cf-visitor"] ?? ""));
+const UPGRADE = '<!doctype html><meta charset="utf-8"><title>Court Side</title><script>location.replace("https://" + location.host + location.pathname + location.search)</script>';
+let LOCAL_HOST = null; // set once listening (the real port, when --port 0)
+const LOCAL_ORIGIN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+
+/** The real file a URL path names inside root (a real path), or null if it, or a symlink on the way, leaves root. */
+function inside(root, urlPath) {
+  try {
+    const file = real(resolve(root, "." + urlPath));
+    return within(file, root) && statSync(file).isFile() ? file : null;
+  } catch {
+    return null; // missing, or unreadable
+  }
+}
+
+const server = createServer();
+let vite = null;
+if (DEV) {
+  process.env.LUCID_HTTP = "1"; // vite.config.ts: no self-signed certificate, this server is plain http
+  const { createServer: createVite } = await import("vite");
+  // HMR's socket rides on this server (same host and port; vite checks the Host and its token on the upgrade itself)
+  // its own dependency cache per checkout (git-ignored): worktrees share node_modules through a symlink, and two vites
+  // re-optimizing one node_modules/.vite answer each other's pages with 504 "Outdated Optimize Dep"
+  const cacheDir = join(WEBXR, "scripts", "court", "out", "vite-deps");
+  vite = await createVite({ root: WEBXR, configFile: join(WEBXR, "vite.config.ts"), appType: "spa", logLevel: "warn", cacheDir, server: { middlewareMode: true, ws: { server } } });
+}
+
+server.on("request", (req, res) => {
+  const deny = (code) => {
+    res.statusCode = code;
+    res.end();
+  };
+  if (!LOCAL_HOST?.test(req.headers.host ?? "")) return deny(403);
+  const shut = gate?.(req);
+  if (shut?.status !== 404 && req.method === "GET" && (req.url ?? "/").split("?")[0] === "/" && overHttp(req)) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.end(UPGRADE);
+  }
+  if (shut) {
+    if (shut.cookie) res.setHeader("Set-Cookie", shut.cookie);
+    if (shut.location) res.setHeader("Location", withDefaults(shut.location));
+    return deny(shut.status);
+  }
+  if (DEV && req.method === "POST" && (req.url ?? "").split("?")[0] === HEADSET_PATH) return headsetSink(req, res, HEADSET_DIR);
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") return deny(405);
+  let path;
+  try {
+    path = decodeURIComponent(new URL(req.url ?? "/", "http://127.0.0.1").pathname);
+  } catch {
+    return deny(400);
+  }
+  let file = null;
+  if (path === "/court-sw.js") {
+    file = SW;
+    res.setHeader("Service-Worker-Allowed", "/");
+  } else if (path.startsWith("/bundle/")) {
+    file = inside(BUNDLE, path.slice("/bundle".length));
+    const origin = req.headers.origin;
+    if (origin && LOCAL_ORIGIN.test(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
+    if (req.method === "OPTIONS") return deny(204);
+  } else if (vite) return vite.middlewares(req, res, () => deny(404));
+  else file = inside(DIST, path === "/" ? "/index.html" : path);
+  if (!file) return deny(404);
+  let st;
+  try {
+    st = statSync(file);
+  } catch {
+    return deny(404); // replaced by a re-sync between the lookup and now
+  }
+  // no-cache with validators: a reload asks, and an unchanged file is a bodiless 304 instead of its bytes again (the
+  // show stream and the splats are ~200 MB, minutes over a tunnel)
+  const modified = st.mtime.toUTCString();
+  const etag = `W/"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Last-Modified", modified);
+  res.setHeader("ETag", etag);
+  const match = req.headers["if-none-match"];
+  if (match !== undefined ? match.split(",").some((t) => t.trim() === etag) : req.headers["if-modified-since"] === modified) {
+    res.statusCode = 304;
+    return res.end();
+  }
+  res.setHeader("Content-Type", TYPES[extname(file)] ?? "application/octet-stream");
+  res.setHeader("Content-Length", String(st.size));
+  if (req.method === "HEAD") return res.end();
+  createReadStream(file)
+    .on("error", () => res.destroy())
+    .pipe(res);
+});
+
+server.listen(PORT, "127.0.0.1", () => {
+  const port = server.address().port;
+  LOCAL_HOST = new RegExp(`^(127\\.0\\.0\\.1|localhost)(:${port})?$`);
+  console.log(`Court Side on http://127.0.0.1:${port}/?${TOKEN ? `k=${TOKEN}&` : ""}mode=court&bundle=/bundle/${DEV ? "&emulate" : ""} (bundle ${BUNDLE}${DEV ? ", vite dev" : ""})`);
+  if (TOKEN) console.log("token gate on: every request needs the cookie that ?k=<token> sets; anything else gets 404");
+  console.log(`Quest over USB: adb reverse tcp:${port} tcp:${port}, then open that URL in the Quest browser`);
+  if (DEV) console.log(HEADSET_DIR ? `?probe=headset records -> ${HEADSET_DIR}` : "?probe=headset records: none kept (pass --headset-dir or set COURT_DATA)");
+});
+const stop = () => {
+  server.close();
+  void (vite ? vite.close() : Promise.resolve()).finally(() => process.exit(0));
+};
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);

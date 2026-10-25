@@ -98,6 +98,23 @@ export function handOccluder(hand: THREE.Object3D, scene: THREE.Scene): () => vo
   };
 }
 
+/**
+ * A mode's own look for its buttons (Court Side's glass), opt-in: the button paints itself with it, and eases its hover
+ * and press as a tint of the material (no repaint for either). Without one, the default pill below, unchanged. The push
+ * area is the default pill's either way.
+ */
+export interface ButtonLook {
+  /** The canvas, px, and the plane it's drawn on, metres (room for a soft shadow around the face). */
+  canvas: readonly [number, number];
+  plane: readonly [number, number];
+  /** Paint the face for its label and state onto the cleared canvas. */
+  paint(g: CanvasRenderingContext2D, label: string, on: boolean): void;
+  /** The tint at full hover and at the press's flash (1 = none), and how fast it eases, per second. */
+  hover: number;
+  press: number;
+  rate: number;
+}
+
 /** A soft, glassy button floating over the table. Pressed by pushing an index fingertip through it. */
 export class XrButton {
   mesh: THREE.Mesh;
@@ -108,17 +125,21 @@ export class XrButton {
   private armed = [false, false]; // per hand: the tip has been in front of the button since it last pressed
   private on = false;
   private local = new THREE.Vector3();
+  /** With a look: the eased hover and press (0-1) and when they were last stepped. */
+  private glow = { hover: 0, press: 0, at: -1 };
   constructor(
     public id: string,
     private label: string,
     private onPress: () => void,
+    private look?: ButtonLook,
   ) {
-    this.canvas.width = 512;
-    this.canvas.height = 160;
+    this.canvas.width = look?.canvas[0] ?? 512;
+    this.canvas.height = look?.canvas[1] ?? 160;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tex.anisotropy = 8; // stays sharp seen at an angle (a palm menu always is)
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.028), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false }));
+    const [w, h] = look?.plane ?? [0.09, 0.028];
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false }));
     this.draw(false);
   }
   setLabel(label: string) {
@@ -133,6 +154,12 @@ export class XrButton {
   private hover = false;
   private draw(pressed: boolean) {
     const c = this.canvas.getContext("2d")!;
+    if (this.look) {
+      c.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.look.paint(c, this.label, this.on);
+      this.tex.needsUpdate = true;
+      return;
+    }
     c.clearRect(0, 0, 512, 160);
     c.fillStyle = pressed || this.on ? "rgba(0,113,227,0.95)" : this.hover ? "rgba(99,99,102,0.92)" : "rgba(44,44,46,0.82)";
     c.beginPath();
@@ -170,10 +197,16 @@ export class XrButton {
         this.armed[h] = false;
         this.cooldownUntil = now + 200; // a fresh push from in front is needed anyway; this only stops a bounce
         this.pressedUntil = now + 180;
-        this.draw(true);
+        if (!this.look) this.draw(true);
         this.onPress();
       }
     });
+    if (this.look) {
+      this.hover = hover;
+      if (this.pressedUntil && now > this.pressedUntil) this.pressedUntil = 0;
+      this.glowStep(now, hover, this.pressedUntil > 0);
+      return;
+    }
     if (hover !== this.hover) {
       this.hover = hover;
       if (!this.pressedUntil) this.draw(false);
@@ -182,5 +215,18 @@ export class XrButton {
       this.pressedUntil = 0;
       this.draw(false);
     }
+  }
+
+  /** With a look, once a frame: hover and press eased toward these (ease-out, a frame's step capped) and drawn as the tint. */
+  protected glowStep(now: number, hover: boolean, pressed: boolean) {
+    const look = this.look;
+    if (!look) return;
+    const g = this.glow;
+    const k = 1 - Math.exp(-look.rate * Math.min(0.05, g.at < 0 ? 0 : (now - g.at) / 1000));
+    g.at = now;
+    g.hover += ((hover ? 1 : 0) - g.hover) * k;
+    g.press += ((pressed ? 1 : 0) - g.press) * (pressed ? 1 - (1 - k) ** 3 : k); // in fast, out slow
+    const tint = 1 + (look.hover - 1) * g.hover + (look.press - 1) * g.press;
+    (this.mesh.material as THREE.MeshBasicMaterial).color.setScalar(tint);
   }
 }

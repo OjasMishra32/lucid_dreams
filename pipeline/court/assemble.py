@@ -1,0 +1,2229 @@
+"""Court Side assembly: the private real data -> the private court bundle (court.json + every file it names), as
+apps/webxr/src/court/format.ts defines it. Every piece comes from the real data when it has landed and from the
+synthetic stand-in otherwise, labelled as such (assembly.json beside court.json, and --report), so the bundle always
+loads end to end and real pieces drop in without code changes.
+
+    python3 -I pipeline/court/assemble.py --config <private assemble.json> [--out <bundle dir>] [--standin <dir>]
+    python3 -I pipeline/court/assemble.py --config <...> --validate [--strict]   # check an assembled bundle
+    python3 -I pipeline/court/assemble.py --config <...> --report                # provenance, placement, splat budget
+
+The bundle is written beside --out and swapped in whole (the previous one is kept as <out>.prev). It must live outside
+every checkout (serve.mjs refuses one inside): the private data folder's bundle/court-side, named by the config's
+`out` (or --out).
+
+Config (private, never in git: every number about the footage lives there). Every key is optional; a missing piece
+is the stand-in's.
+  title, caption, credit
+  source      {freezeSource, sourceFps, captureFps, slow}: the source clip's timing (camera A)
+  calib       calibration JSON (calib_A.json layout: C, image_size, frames[{source_frame, R (camera-from-world), f}],
+              summary.click_reproj_px): camera.centre, every show frame's camera, camera F
+  show        a folder laid out as the bundle's video/ (show.h264, frames.json, cards.json, freeze.png, ...) plus
+              video.json = the court.json `video` block (paths relative to the bundle) and optionally
+              {"camera": {sourceFps, captureFps, slow, centre}} for the clip it was baked from
+  court       {floor, floorSeen, hardwood}: the top-down floor from the footage
+  players     [{id, name, splats (PLY, y up, feet on y = 0: the export's bundle space), reality (export's
+              .reality.spz), spz (the plain .spz, optional), place ("feet" | "camera"), foot ([x, z] or a list of
+              them: the calibrated soles), camera (the source camera: {centre} in the PLY's space, or a recon
+              source-camera JSON + placement for "camera"), metrics {heldOutPsnr}, footRef {source, xz} (a depth-true
+              camera's soles), anchor "footRef" (slide along F's rays onto them), carve true (against the run's own
+              views), protect "head" or joints [[x, y, z], ...] (kept whole by a cut), lod}]
+  caps        {id: n}: each pair body's own budget (--cap id=n); capPair: one for both
+  capExtras   one budget for all the extras (--cap-extras), capExtrasFloor the fewest each keeps
+  plates      {freezeClean, freezeCleanAlpha}: the layers' clean plate of frame F (+ its replaced-pixel map)
+  ball        {centre: [x, y, z]} | {pixel: [u, v] in F's source pixels, depthFrom: <player id>}
+  extras      folder of <id>/extra.json manifests ({id, name, kind, file, reality, pose, foot, height, shadow?,
+              reflection?}, paths relative to the manifest)
+  stands      {proxy: [...], cards: [{id, image, quad}]} (court.json's freeze.stands with local image paths)
+  audio       {loop: wav, swell: [t0, t1] (found in the loop when absent), search: [a, b], lufs, swellOverBedDb}
+  seat        {distance, distanceRange, clear}
+  clips       the folder of the clips' run folders (<id>/court-run.json: the still camera each clip was cut with)
+  cameras     {C: calibration JSON of camera C}: where extras posed from C were seen from
+  surround    {canvas, cams, mosaic, cover, crowd: {tiles, pxPerM}, ...}: the pan's mosaic as camera F's far picture and tiles of
+              its crowd (court.json `surround`; assemble_surround.py documents the keys, and adds one to a finished bundle)
+  light       overrides of the light field's levels
+  metrics     {seatPsnr: {...}}: measured elsewhere (handoff_check.py), copied in
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import math
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+for _k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_k, "2")  # a shared Mac: two threads (run it under nice -n 10); heavy work goes to HiPerGator
+import numpy as np  # noqa: E402
+
+import assemble_audio as au  # noqa: E402
+import assemble_carve as cv  # noqa: E402
+import assemble_colour as col  # noqa: E402
+import assemble_geom as geo  # noqa: E402
+import assemble_splats as sp  # noqa: E402
+import assemble_surround as sr  # noqa: E402
+
+REPO = HERE.parents[1]
+WEBXR = REPO / "apps" / "webxr"
+DEFAULT_STANDIN = WEBXR / "scripts" / "court" / "out" / "standin"
+
+LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players."
+BALL_RADIUS = 0.1195  # a 23.9 cm ball
+# the rulebook court (NBA): 94 x 50 ft; the ring's centre 5.25 ft in from the baseline at 10 ft; the board's face
+# 4 ft in, 6 x 3.5 ft, its bottom 6 in under the ring
+LENGTH, WIDTH = 28.65, 15.24
+RIM = [12.725, 3.05, 0.0]
+BOARD_X, BOARD_HALF, BOARD_Y = 13.106, 0.915, (2.90, 3.97)
+LIGHT = {"crowd": 0.45, "floor": 0.30, "pair": 1.0, "stands": 0.6, "penumbra": 1.5, "alternative": {"crowd": 0.16, "floor": 0.14}}
+SEAT = {"distance": 5.0, "distanceRange": [4, 7], "clear": 1.0}
+SPLAT_BUDGET = 500_000  # visible at the worst pose until the Quest says more (plan 8)
+BALL_IN_BODY_MIN = 100  # solid splats within 1.15 ball radii of the ball's centre: the holder's splats hold the ball
+PROXY_CELL_M = 0.005  # P8 (stream D): the pair's splat-depth proxies sampled at about half a centimetre
+ANCHOR_LIFT_M = 0.015  # footRef's depth anchor: at most this far off the floor for the soles (they ride F's rays)
+EXTRAS_FLOOR = 8000  # the fewest Gaussians an extra keeps under the extras' shared budget
+EXTRAS_FOCAL = 1000.0  # px per radian for the extras' judge views: what they score is how big they look
+PATH_EXT = re.compile(r"\.(h264|json|png|jpg|jpeg|webp|ply|glb|bin|m4a|mp4|wav|spz)$", re.I)
+
+
+def expand(p) -> Path:
+    return Path(os.path.expanduser(str(p)))
+
+
+def rnd(v, d=4):
+    return [round(float(x), d) for x in v]
+
+
+# the images under the show that the assembly can stand in for while the bake hasn't made them
+PLATE_KEYS = ("freezeClean", "standsMask", "inpaintMask")
+# every field format.ts declares as a bundle path (a string under one of these keys, anywhere in court.json)
+PATH_KEYS = {"floor", "floorSeen", "file", "frames", "cards", "freeze", "freezeClean", "standsMask", "inpaintMask", "element",
+             "splats", "reality", "proxy", "image", "bed", "alpha", "atlas"}
+
+
+def declared_paths(o, key: str | None = None) -> list[str]:
+    """Every bundle-relative file path in a court.json block: the string values of format.ts's path fields."""
+    out = []
+    if isinstance(o, dict):
+        for k, v in o.items():
+            out += declared_paths(v, k)
+    elif isinstance(o, list):
+        for v in o:
+            out += declared_paths(v, key)
+    elif isinstance(o, str) and key in PATH_KEYS:
+        out.append(o)
+    return out
+
+
+bundle_paths = declared_paths
+
+
+def _norm(p) -> str:
+    """A path as the file system sees it: symlinks resolved, and case-folded on macOS (its disks ignore case)."""
+    r = os.path.realpath(os.path.expanduser(str(p)))
+    return r.casefold() if sys.platform == "darwin" else r
+
+
+def checkouts() -> list[Path]:
+    """This repo's main checkout and every worktree of it."""
+    p = subprocess.run(["git", "-C", str(REPO), "worktree", "list", "--porcelain"], capture_output=True, text=True)
+    roots = [Path(ln[len("worktree "):]) for ln in p.stdout.splitlines() if ln.startswith("worktree ")]
+    return roots or [REPO]
+
+
+def is_bundle(p: Path) -> bool:
+    """A bundle this tool assembled: its assembly.json is there with its provenance."""
+    try:
+        a = json.loads((p / "assembly.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(a, dict) and "assembledAt" in a and "pieces" in a
+
+
+def rotate_into(out: Path, new: Path) -> Path | None:
+    """Swap the freshly written `new` in as `out`; the bundle that was there is renamed <out>.prev-<UTC time> (never
+    deleted). Refuses an `out` that isn't a bundle this tool made, and a .prev name that is taken."""
+    prev = None
+    if out.exists() or out.is_symlink():
+        if out.is_symlink() or not out.is_dir() or not is_bundle(out):
+            raise ValueError(f"{out} exists and isn't a bundle assemble.py made: refusing to move it")
+        prev = out.parent / f"{out.name}.prev-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+        if prev.exists() or prev.is_symlink():
+            raise ValueError(f"{prev} already exists: refusing to overwrite it")
+        guard_out(prev)
+        out.rename(prev)
+    new.rename(out)
+    return prev
+
+
+def guard_out(out: Path) -> None:
+    """The bundle never goes inside a checkout (Vite and the tunnel serve them, and git would see it: P36), nor holds
+    one; refused before anything is written."""
+    o = _norm(out)
+    for root in checkouts():
+        r = _norm(root)
+        if o == r or o.startswith(r + os.sep) or r.startswith(o + os.sep):
+            raise ValueError(f"refusing to write the bundle at {out}: it is inside (or holds) the checkout {root} (P36)")
+
+
+def safe_rel(rel) -> str:
+    """A bundle path as format.ts allows it: relative, no "..", no backslash, no scheme, no home; else ValueError."""
+    if not isinstance(rel, str) or not rel.strip():
+        raise ValueError(f"not a bundle path: {rel!r}")
+    if rel.startswith(("/", "~")) or "\\" in rel or "://" in rel or ":" in rel.split("/")[0] or ".." in rel.split("/"):
+        raise ValueError(f"{rel!r}: a bundle path must be relative and stay inside the bundle")
+    return rel
+
+
+def inside(path, root) -> bool:
+    p, r = _norm(path), _norm(root)
+    return p == r or p.startswith(r + os.sep)
+
+
+class Writer:
+    """Collects the bundle's files in a fresh folder (made by this run) and records where each piece came from. Every
+    destination stays inside that folder; a source handed over by another stream must sit inside that stream's folder
+    and must not be a symlink."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.pieces: dict[str, dict] = {}
+        self.notes: list[str] = []
+        self.deferred: list[str] = []  # show images to make once camera F is known
+        self.diag: dict = {}  # more for assembly.json (the extras' budget)
+
+    def piece(self, name: str, real: bool, detail: str, **extra) -> None:
+        self.pieces[name] = {"source": "real" if real else "stand-in", "detail": detail, **extra}
+
+    def path(self, rel: str) -> Path:
+        p = self.root / safe_rel(rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not inside(p.parent, self.root) or p.is_symlink():
+            raise ValueError(f"{rel!r} would land outside the bundle being written")
+        return p
+
+    def copy(self, src: Path, rel: str, within: Path | None = None) -> str:
+        src = Path(src)
+        if within is not None and (src.is_symlink() or not inside(src, within)):
+            raise ValueError(f"{src}: not a plain file inside {within}")
+        dst = self.path(rel)
+        shutil.copyfile(src, dst, follow_symlinks=False)
+        shutil.copystat(src, dst, follow_symlinks=False)  # its own time, so a show found in the bundle is settled
+        return rel
+
+    def json(self, rel: str, obj, indent=None) -> str:
+        self.path(rel).write_text(json.dumps(obj, indent=indent, ensure_ascii=False))
+        return rel
+
+
+# ---------------------------------------------------------------- the pieces
+
+def show_dir(cfg: dict) -> tuple[Path | None, str]:
+    """The real show's folder (holding video.json) and whose cameras its frames use: "show" (the ones it was baked
+    with, the default when its frames.json carries q and f) or "calib" (re-read from the calibration). Without a
+    `show` in the config, a video.json the bake wrote into the current bundle's own video/ counts (it is copied
+    into the new bundle before the old one is moved aside)."""
+    show = cfg.get("show")
+    if not show:
+        here = expand(cfg["out"]) / "video" if cfg.get("out") else None
+        return (here, "show") if here is not None and (here / "video.json").exists() else (None, "calib")
+    d = expand(show["dir"] if isinstance(show, dict) else show)
+    return (d if (d / "video.json").exists() else None), (show.get("cameras", "show") if isinstance(show, dict) else "show")
+
+
+def staged(d: Path, rel: str) -> Path:
+    """A show file named "video/..." in the bundle: <d>/video/... in a staging folder, <d>/... in a video folder."""
+    p = d / rel
+    return p if p.exists() or p.is_symlink() else d / rel.split("/", 1)[-1]
+
+
+class ShowRejected(ValueError):
+    """A staged show that can't be taken as it is (unsafe path, incomplete, or changed while it was copied)."""
+
+
+OWN_PLATES = {"freezeClean": "video/freeze-clean.png", "standsMask": "video/stands-mask.png"}
+
+
+def take_show(w: Writer, d: Path, manifest: dict) -> tuple[dict, list]:
+    """Copy a staged show into the bundle whole, or raise ShowRejected (and copy nothing that stays): every path it
+    names inside the bundle, every source a plain file inside its folder, all of them there and settled, and none
+    changed between before and after the copy (a producer replacing a file mid-copy would mix two bakes)."""
+    video = json.loads(json.dumps(manifest["video"] if "video" in manifest else manifest))
+    try:
+        for rel in bundle_paths(video):
+            safe_rel(rel)
+    except ValueError as e:
+        raise ShowRejected(str(e)) from None
+    # the plates the assembly made last time (carried in video.json) are not the bake's: make them again
+    for k in manifest.get("assembledPlates", []):
+        video.pop(k, None)
+    for k, rel in OWN_PLATES.items():  # format.ts needs these two: name them even if the bake doesn't yet
+        video.setdefault(k, rel)
+    ours = set(manifest.get("assembledPlates", []))
+    w.deferred = [k for k in OWN_PLATES if k in ours or not staged(d, video[k]).is_file()]
+    if isinstance(video.get("inpaintMask"), str) and not staged(d, video["inpaintMask"]).is_file():
+        del video["inpaintMask"]
+    names = [rel for rel in dict.fromkeys(bundle_paths(video)) if not any(video.get(k) == rel for k in w.deferred)]
+    srcs = {rel: staged(d, rel) for rel in names}
+    bad = [rel for rel, p in srcs.items() if p.is_symlink() or not inside(p, d)]
+    if bad:
+        raise ShowRejected(f"not plain files inside {d}: {', '.join(bad)}")
+    missing = [rel for rel, p in srcs.items() if not p.is_file() or p.stat().st_size == 0]
+    if missing:
+        raise ShowRejected(f"isn't complete yet (missing {', '.join(missing)})")
+    now = dt.datetime.now().timestamp()
+    fresh = [rel for rel, p in srcs.items() if now - p.stat().st_mtime < 60]
+    if fresh:
+        raise ShowRejected(f"is still being written ({', '.join(fresh)})")
+    stat = lambda p: (p.stat().st_size, p.stat().st_mtime_ns)  # noqa: E731
+    before = {rel: stat(p) for rel, p in srcs.items()} | {"video.json": stat(d / "video.json")}
+    copied = []
+    try:
+        for rel, p in srcs.items():
+            w.copy(p, rel, within=d)
+            copied.append(rel)
+        after = {rel: stat(p) for rel, p in srcs.items()} | {"video.json": stat(d / "video.json")}
+        changed = [rel for rel in before if before[rel] != after[rel]]
+        if changed:
+            raise ShowRejected(f"changed while it was copied ({', '.join(changed)})")
+    except BaseException:
+        for rel in copied:  # files this run copied: gone again
+            (w.root / rel).unlink(missing_ok=True)
+        raise
+    frames = json.loads((w.root / video["frames"]).read_text())
+    # carried into the bundle, so a show found there is found again next time (with the plates that were ours)
+    w.json("video/video.json", {**manifest, "video": {k: v for k, v in video.items() if k not in w.deferred},
+                                "assembledPlates": list(w.deferred)}, indent=1)
+    return video, frames
+
+
+def vs_calib(frames: list, calib: geo.CalibTrack) -> dict:
+    """How far a show's own cameras are from the calibration's at the same source frames (those inside its range):
+    the largest rotation in degrees and where, and the largest relative focal difference."""
+    worst, at, focal, n = 0.0, None, 0.0, 0
+    for fr in frames:
+        if not calib.has(fr["src"]):
+            continue
+        q, f = calib.at(fr["src"])
+        d = geo.quat_angle_deg(fr["q"], q)
+        if d > worst:
+            worst, at = d, fr["src"]
+        focal = max(focal, abs(fr["f"] / f - 1))
+        n += 1
+    return {"frames": n, "maxDeg": round(worst, 6), "maxDegAt": at, "maxFocal": round(focal, 6)}
+
+
+def spans_text(spans: list) -> str:
+    return ", ".join(f"{a}" if a == b else f"{a}-{b}" for a, b in spans)
+
+
+def show_piece(w: Writer, cfg: dict, standin: Path, S: dict, calib: geo.CalibTrack | None):
+    """The video block, its frames.json (each show frame's own camera) and the rest of video/; the timing of the clip
+    the frames count in. Returns (video block, frames, timing {sourceFps, captureFps, slow, centre?})."""
+    d, cams = show_dir(cfg)
+    real = False
+    span = None  # the show's source frames in the calibration's clock
+    if d is not None:
+        manifest = json.loads((d / "video.json").read_text())
+        try:
+            video, frames = take_show(w, d, manifest)
+            timing = manifest.get("camera", {})
+            real = True
+            w.piece("show", True, str(d))
+            if cams == "show" and not all("q" in fr and "f" in fr for fr in frames):
+                cams = "calib"
+        except ShowRejected as e:
+            w.notes.append(f"the staged show at {d} {e}: the stand-in's is used")
+            w.deferred = []
+    if not real:
+        video = json.loads(json.dumps(S["video"]))
+        for rel in bundle_paths(video):
+            w.copy(standin / rel, rel, within=standin)
+        frames = json.loads((standin / video["frames"]).read_text())
+        timing = {k: S["camera"][k] for k in ("sourceFps", "captureFps", "slow")}
+        w.piece("show", False, "stand-in show stream, frames, cards and freeze images (synthetic players)")
+    if real and cams == "show":
+        if "centre" not in timing:
+            raise ValueError(f"{d / 'video.json'}: camera.centre is needed with the show's own cameras (the centre it was baked with)")
+        if calib is not None and np.linalg.norm(np.subtract(timing["centre"], calib.C)) > 0.01:
+            w.notes.append(f"the show's cameras have centre {timing['centre']}, the calibration {rnd(calib.C, 3)}: the show's are used")
+        w.piece("cameras", True, "the show's own per-frame cameras (the ones it was baked with)")
+        if calib is not None:
+            vs = w.pieces["cameras"]["vsCalib"] = vs_calib(frames, calib)
+            if vs["maxDeg"] > 0.05 or vs["maxFocal"] > 0.005:
+                w.notes.append(f"cameras: the show's differ from the calibration by up to {vs['maxDeg']} deg (source frame "
+                               f"{vs['maxDegAt']}) and {vs['maxFocal'] * 100:.2f}% in focal: one of the two is not the camera truth")
+            span = (min(fr["src"] for fr in frames), max(fr["src"] for fr in frames))
+    elif calib is not None:
+        # the show's clock -> the calibrated clip's source frames: the same moment F, the same real time
+        src_cfg = cfg.get("source", {})
+        f_show = video["freezeSource"]
+        f_real = f_show if real else src_cfg.get("freezeSource", f_show)
+        rate_show = timing.get("sourceFps", 1) * timing.get("slow", 1)
+        rate_real = rate_show if real else src_cfg.get("sourceFps", rate_show) * src_cfg.get("slow", 1)
+        k = rate_real / rate_show
+
+        def recamera(frs: list) -> None:
+            for fr in frs:
+                q, f = calib.at(f_real + (fr["src"] - f_show) * k)
+                fr["q"], fr["f"] = rnd(q, 9), round(float(f), 4)
+
+        recamera(frames)
+        span = tuple(f_real + (x - f_show) * k for x in (min(fr["src"] for fr in frames), max(fr["src"] for fr in frames)))
+        hz90 = (video.get("fallbacks") or {}).get("hz90")
+        if hz90 and hz90.get("frames"):
+            other = json.loads((w.root / hz90["frames"]).read_text())
+            recamera(other)
+            w.json(hz90["frames"], other)
+        timing = {**timing, "centre": rnd(calib.C)}
+        w.piece("cameras", True, f"every show frame's camera from the calibration ({calib.clamped} frames outside its "
+                f"range {calib.range} held at its ends)", clamped=calib.clamped)
+        if calib.clamped:
+            w.pieces["cameras"]["source"] = "partial"
+    else:
+        w.piece("cameras", False, "the stand-in show's own cameras")
+    flags = calib.flagged(*span) if calib is not None and span is not None else {}
+    if flags:
+        w.pieces["cameras"]["calibFlags"] = flags
+        w.notes.append(f"cameras: the calibration flags source frames inside the show's ({span[0]:g}-{span[1]:g}): "
+                       + "; ".join(f"{k} {spans_text(v)}" for k, v in flags.items()))
+    w.json(video["frames"], frames)
+    return video, frames, timing
+
+
+def camera_block(cfg: dict, S: dict, timing: dict, calib: geo.CalibTrack | None, real_show: bool) -> dict:
+    """The source camera: the centre the frames' cameras go with, the calibrated image, and the timing of the clip the
+    show's frames count in (the stand-in show keeps its own clock; a real show's manifest, else the config's `source`)."""
+    if calib is None and not real_show:
+        return dict(S["camera"])
+    t = {**cfg.get("source", {}), **timing} if real_show else timing
+    missing = [k for k in ("sourceFps", "captureFps", "slow", "centre") if k not in t]
+    if missing:
+        raise ValueError(f"the show's clip is missing {missing} (video.json's camera, or the config's source and calib)")
+    W, H = calib.size if calib is not None else (S["camera"]["width"], S["camera"]["height"])
+    return {"centre": rnd(t["centre"]), "width": W, "height": H, "cx": (W - 1) / 2, "cy": (H - 1) / 2, "k1": 0,
+            "sourceFps": t["sourceFps"], "captureFps": t["captureFps"], "slow": t["slow"]}
+
+
+def floor_from_mosaic(img: np.ndarray, count: np.ndarray, hole: np.ndarray | None, canvas: dict, res: float = 0.02):
+    """The whole court from above (FloorRect [-L/2, -W/2, L/2, W/2]: columns along +x, rows along +z, `res` m per
+    pixel) out of a still camera's people-free pan mosaic (RGB; `count` > 0 where a frame filled it, `hole` where it
+    was inpainted): (floor RGB uint8, seen bool, hardwood sRGB 0-1 = the median of the seen floor). Unseen floor is the
+    hardwood colour; the canvas camera is a pinhole, x_cam = R (X - C), its K in the mosaic's pixels."""
+    import cv2
+
+    K, Rcw, C = np.asarray(canvas["K"], float), np.asarray(canvas["R"], float), np.asarray(canvas["C"], float)
+    nx, nz = int(round(LENGTH / res)), int(round(WIDTH / res))
+    x = (np.arange(nx) + 0.5) * res - LENGTH / 2
+    z = (np.arange(nz) + 0.5) * res - WIDTH / 2
+    X, Z = np.meshgrid(x, z)
+    P = np.stack([X, np.zeros_like(X), Z], -1).reshape(-1, 3)
+    c = (P - C) @ Rcw.T
+    front = c[:, 2] > 0.1
+    zc = np.where(front, c[:, 2], 1.0)
+    u = (K[0, 0] * c[:, 0] / zc + K[0, 2]).reshape(nz, nx).astype(np.float32)
+    v = (K[1, 1] * c[:, 1] / zc + K[1, 2]).reshape(nz, nx).astype(np.float32)
+    H, W = img.shape[:2]
+    inside = front.reshape(nz, nx) & (u >= 0) & (u <= W - 1) & (v >= 0) & (v <= H - 1)
+    rgb = cv2.remap(np.ascontiguousarray(img), u, v, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    ui, vi = np.clip(np.round(u), 0, W - 1).astype(int), np.clip(np.round(v), 0, H - 1).astype(int)
+    seen = inside & (count[vi, ui] > 0)
+    if hole is not None:
+        seen &= hole[vi, ui] == 0
+    hardwood = (np.median(rgb[seen], 0) / 255.0) if seen.any() else np.array([0.71, 0.52, 0.33])
+    floor = np.where(seen[..., None], rgb, np.round(hardwood * 255)).astype(np.uint8)
+    return floor, seen, [round(float(h), 3) for h in hardwood]
+
+
+def stands_mask(cam: geo.Cam, width: int, height: int, margin: float = 0.5) -> np.ndarray:
+    """White where camera F's ray doesn't land on the court floor (within `margin` of its lines): the stands, the
+    crowd, the baseline rows and the arena above; black on the floor (players stand on it, so they stay black)."""
+    c = cam.scaled(width)
+    u, v = np.meshgrid(np.arange(width, dtype=float), np.arange(height, dtype=float))
+    d = c.rays(u.ravel(), v.ravel())
+    t = np.where(d[:, 1] < -1e-9, -c.C[1] / np.where(d[:, 1] < -1e-9, d[:, 1], -1.0), np.inf)
+    X = c.C + np.where(np.isfinite(t), t, 0.0)[:, None] * d
+    floor = np.isfinite(t) & (np.abs(X[:, 0]) <= LENGTH / 2 + margin) & (np.abs(X[:, 2]) <= WIDTH / 2 + margin)
+    return np.where(floor, 0, 255).astype(np.uint8).reshape(height, width)
+
+
+def fill_plates(w: Writer, video: dict, camF: geo.Cam) -> None:
+    """The show images the bake hasn't made yet, so the bundle stays whole: the clean plate is frame F itself (the
+    players not yet painted out), the stands mask comes from camera F and the court."""
+    import cv2
+
+    if not w.deferred:
+        return
+    fz = cv2.imread(str(w.root / video["freeze"]), cv2.IMREAD_UNCHANGED)
+    H, W = fz.shape[:2]
+    for k in w.deferred:
+        if k == "freezeClean":
+            w.copy(w.root / video["freeze"], video[k])
+            w.piece("show:freezeClean", False, "frame F itself: the clean plate isn't baked yet (the players are still in it)")
+        elif k == "standsMask":
+            sp.write_png(w.path(video[k]), stands_mask(camF, W, H))
+            w.piece("show:standsMask", False, "from camera F and the court: everything off the floor (the bake's mask isn't made yet)")
+
+
+SPZ_MIN_PSNR = 40.0  # a pair body ships as SPZ only if its render at F from the SPZ is this close to the PLY's
+
+
+def spz_piece(w: Writer, players: list, others: list, camF: geo.Cam) -> bool:
+    """splatFormat "spz": every body and its reality copy written as SPZ v2 with SH degree 1 (assemble_splats.write_spz)
+    and named in court.json in place of the PLYs, which go. Only when each pair body's render at F from the SPZ is
+    within SPZ_MIN_PSNR of its PLY's (the hand-off); otherwise everything stays PLY. Returns whether it switched."""
+    bodies = [(f"player:{p['id']}", p, ("splats", "reality")) for p in players]
+    bodies += [(f"extra:{o['id']}", o, ("file", "reality")) for o in others if str(o.get("file", "")).endswith(".ply")]
+    reps, worst = {}, 99.0
+    for name, ent, keys in bodies:
+        rep = {"bytes": 0, "plyBytes": 0}
+        for k in keys:
+            ply = w.root / ent[k]
+            rep["plyBytes"] += ply.stat().st_size
+            rep["bytes"] += sp.write_spz(w.path(str(Path(ent[k]).with_suffix(".spz"))), sp.read_ply(ply))
+        if name.startswith("player:"):
+            s = sp.read_ply(w.root / ent[keys[0]])
+            rep["psnrAtF"] = render_psnr(s, sp.read_splats(w.root / Path(ent[keys[0]]).with_suffix(".spz")), at_f_crop(s, camF, width=camF.w))
+            worst = min(worst, rep["psnrAtF"])
+        reps[name] = (ent, keys, rep)
+    if worst < SPZ_MIN_PSNR:
+        for name, (ent, keys, rep) in reps.items():
+            for k in keys:
+                (w.root / Path(ent[k]).with_suffix(".spz")).unlink()
+        w.notes.append(f"spz: a pair body's render at F from SPZ is {worst} dB from its PLY's (under {SPZ_MIN_PSNR}): the bodies ship as PLY")
+        return False
+    for name, (ent, keys, rep) in reps.items():
+        for k in keys:
+            (w.root / ent[k]).unlink()
+            ent[k] = str(Path(ent[k]).with_suffix(".spz"))
+        w.pieces.setdefault(name, {"source": "real", "detail": ""})["spz"] = rep
+    total = sum(r["bytes"] for _, _, r in reps.values()), sum(r["plyBytes"] for _, _, r in reps.values())
+    w.notes.append(f"spz: the bodies ship as SPZ (SH degree 1), {total[0] / 1e6:.1f} MB for {total[1] / 1e6:.1f} MB of PLY; the pair's "
+                   f"render at F from them is >= {worst} dB from the PLYs'")
+    return True
+
+
+def plates_piece(w: Writer, cfg: dict, video: dict) -> None:
+    """plates.freezeClean: the layers' clean plate of frame F (the people built in 3D painted out) as video.freezeClean,
+    whatever the show carried; plates.freezeCleanAlpha (255 = replaced) is measured and recorded, not shipped (no
+    format field holds it: inpaintMask is only what the pan never saw)."""
+    import cv2
+
+    pl = cfg.get("plates") or {}
+    if not pl.get("freezeClean"):
+        return
+    src = expand(pl["freezeClean"])
+    video.setdefault("freezeClean", OWN_PLATES["freezeClean"])
+    w.copy(src, video["freezeClean"])
+    w.deferred = [k for k in w.deferred if k != "freezeClean"]
+    carried = w.root / "video" / "video.json"
+    if carried.exists():  # a show found in this bundle next time must not take this plate for the bake's own
+        man = json.loads(carried.read_text())
+        man["assembledPlates"] = sorted(set(man.get("assembledPlates", [])) | {"freezeClean"})
+        man.get("video", {}).pop("freezeClean", None)
+        carried.write_text(json.dumps(man, indent=1))
+    extra = {}
+    if pl.get("freezeCleanAlpha"):
+        a = cv2.imread(str(expand(pl["freezeCleanAlpha"])), cv2.IMREAD_GRAYSCALE)
+        extra = {"alpha": str(expand(pl["freezeCleanAlpha"])), "replaced": round(float(np.mean(a > 127)), 4)}
+    w.piece("show:freezeClean", True, f"{src}: the clean plate of frame F (the people built in 3D painted out)", **extra)
+
+
+def court_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
+    c = cfg.get("court") or {}
+    block = {"length": LENGTH, "width": WIDTH, "rim": RIM,
+             "backboard": [[BOARD_X, BOARD_Y[0], -BOARD_HALF], [BOARD_X, BOARD_Y[0], BOARD_HALF],
+                           [BOARD_X, BOARD_Y[1], BOARD_HALF], [BOARD_X, BOARD_Y[1], -BOARD_HALF]]}
+    m = c.get("mosaic") or {}
+    if m.get("image") and expand(m["image"]).exists():
+        import cv2
+
+        img = cv2.cvtColor(cv2.imread(str(expand(m["image"])), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        count = cv2.imread(str(expand(m["count"])), cv2.IMREAD_UNCHANGED) if m.get("count") else np.ones(img.shape[:2], np.uint16)
+        hole = cv2.imread(str(expand(m["hole"])), cv2.IMREAD_UNCHANGED) if m.get("hole") else None
+        canvas = json.loads(expand(m["camera"]).read_text())
+        floor, seen, hardwood = floor_from_mosaic(img, count, hole, canvas, m.get("res", 0.02))
+        cv2.imwrite(str(w.path("court/floor.jpg")), cv2.cvtColor(floor, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 90])
+        sp.write_png(w.path("court/floor-seen.png"), (seen * 255).astype(np.uint8))
+        block.update({"floor": "court/floor.jpg", "floorSeen": "court/floor-seen.png", "hardwood": c.get("hardwood", hardwood)})
+        w.piece("floor", True, f"top-down from the pan mosaic ({100 * seen.mean():.1f}% of the court seen), hardwood {hardwood}")
+    elif c.get("floor") and expand(c["floor"]).exists():
+        block["floor"] = w.copy(expand(c["floor"]), "court/floor" + expand(c["floor"]).suffix)
+        block["floorSeen"] = w.copy(expand(c["floorSeen"]), "court/floor-seen.png")
+        block["hardwood"] = c["hardwood"]
+        w.piece("floor", True, str(expand(c["floor"]).parent))
+    else:
+        block["floor"] = w.copy(standin / S["court"]["floor"], S["court"]["floor"])
+        block["floorSeen"] = w.copy(standin / S["court"]["floorSeen"], S["court"]["floorSeen"])
+        block["hardwood"] = c.get("hardwood", S["court"]["hardwood"])
+        w.piece("floor", False, "stand-in top-down floor and floor-seen mask")
+    return block
+
+
+def frame_camera(court_cam: dict, frames: list, video: dict) -> geo.Cam:
+    """Camera F in source pixels: the camera of the last frame of the first ease (every ease ends on it)."""
+    fr = frames[video["segments"]["eases"][0]["frames"][1]]
+    c = court_cam
+    return geo.Cam(np.asarray(c["centre"], float), geo.quat_to_matrix(fr["q"]), float(fr["f"]), c["cx"], c["cy"], c["width"], c["height"])
+
+
+def standin_camera_f(S: dict, standin: Path) -> geo.Cam:
+    frames = json.loads((standin / S["video"]["frames"]).read_text())
+    return frame_camera(S["camera"], frames, S["video"])
+
+
+def resolve_run(slot: dict, clips: Path | None = None) -> dict:
+    """A player slot filled in from a fetched freeze run (court-job.sbatch's results): {"run": dir, "variant":
+    "raw-default-r1", "cap": "300k"} names recon-<variant>-<cap>/ (frames/<K>.ply in the recon's own world,
+    source-camera-<K:06d>.json = the A frame's solved camera there, and the recon's report: P42's iou, focal,
+    focalHeld; the real frame's PSNR), bundle-<variant>-<cap>/ (the export: frames/000000.ply in its bundle space with
+    dream.json's placement, .spz, .reality.spz in the same Gaussian order), and recon-metrics-<variant>/ for the
+    held-out PSNR against the generated views. court-run.json (the still camera the clip was cut with) comes from
+    `clips`/<run id>/. Keys already in the slot win."""
+    if not slot.get("run"):
+        return slot
+    run = expand(slot["run"])
+    v, cap = slot.get("variant"), slot.get("cap")
+    if not (v and cap):
+        found = sorted(d.name[len("recon-"):] for d in run.glob("recon-*") if d.is_dir() and not d.name.startswith("recon-metrics-"))
+        if len(found) != 1:
+            raise ValueError(f"{run}: name the player's variant and cap (recons here: {found or 'none'})")
+        v, cap = re.fullmatch(r"(.+)-(\d+k)", found[0]).groups()
+    b, r = run / f"bundle-{v}-{cap}", run / f"recon-{v}-{cap}"
+    out = dict(slot)
+    cams = sorted(p for p in r.glob("source-camera-*.json") if re.fullmatch(r"source-camera-\d{6}\.json", p.name))
+    if cams:
+        out.setdefault("sourceCamera", str(cams[0]))
+    k = re.search(r"(\d{6})", cams[0].name).group(1) if cams else None
+    if "splats" not in slot:
+        if k and (r / "frames" / f"{k}.ply").exists():
+            out["splats"], out["splatsSpace"] = str(r / "frames" / f"{k}.ply"), "recon"
+        else:
+            out["splats"], out["splatsSpace"] = str(b / "frames" / "000000.ply"), "bundle"
+    out.setdefault("reality", str(b / "frames" / "000000.reality.spz"))
+    out.setdefault("spz", str(b / "frames" / "000000.spz"))
+    out.setdefault("dream", str(b / "dream.json"))
+    if slot.get("carve") is True:  # against the run's own ring views at its frame K (the PLY under recon-*/frames/)
+        if not (k and out.get("splatsSpace") == "recon"):
+            raise ValueError(f"{run}: carve needs the recon's own PLY (recon-{v}-{cap}/frames/<K>.ply), in its views' space")
+        out["carve"] = {"views": str(run / "views"), "frame": int(k)}
+    if clips is not None and "courtRun" not in slot:
+        out["courtRun"] = str(clips / run.name / "court-run.json")
+
+    def report(d: Path) -> tuple[dict, dict]:
+        files = sorted(d.glob("recon-*.json"))
+        rep = json.loads(files[0].read_text()) if files else {}
+        return (rep.get("frames") or [{}])[0], rep.get("source") or {}
+
+    fr, src = report(r)
+    held = report(run / f"recon-metrics-{v}")[0].get("psnr")
+    out["run_report"] = {"variant": v, "cap": cap, "iou": src.get("iou"), "focal": src.get("focal"), "focalHeld": src.get("focalHeld"),
+                         "sourcePsnr": fr.get("sourcePsnr"), "facePsnr": fr.get("facePsnr"), "gaussians": fr.get("gaussians"),
+                         "heldOutPsnr": held,
+                         "p42": json.loads((r / "p42.json").read_text()) if (r / "p42.json").exists() else None}
+    out["metrics"] = {**(slot.get("metrics") or {}), **({"heldOutPsnr": held} if held is not None else {})}
+    return out
+
+
+def recon_cameras(slot: dict) -> tuple[geo.Cam, geo.Cam]:
+    """(the run's solved source camera in the PLY's own space, the court camera it was cut from): recon's
+    source-camera-<K>.json (the recon's world, OpenCV camera_to_world, K for source-4k.mkv's crop), taken into the
+    export's bundle space with dream.json's `placement` (x' = rot x + t) when the PLY is the export's
+    (splatsSpace "bundle"), and court-run.json's still camera (court space, camera-from-world R, K with the crop's
+    own principal point)."""
+    c = json.loads(expand(slot["sourceCamera"]).read_text())
+    run = json.loads(expand(slot["courtRun"]).read_text())
+    rot, t = np.eye(3), np.zeros(3)
+    if slot.get("splatsSpace", "bundle") == "bundle":
+        pl = json.loads(expand(slot["dream"]).read_text())["placement"]
+        rot, t = np.asarray(pl["rot"], float), np.asarray(pl["t"], float)
+    c2w = np.asarray(c["camera_to_world"], float)
+    K = np.asarray(c["K"], float)
+    W, H = int(c["image_width"]), int(c["image_height"])
+    src = geo.Cam(rot @ c2w[:3, 3] + t, rot @ c2w[:3, :3], float(K[0, 0]), float(K[0, 2]), float(K[1, 2]), W, H)
+    st = run["still"]
+    Ks = np.asarray(st["K"], float)
+    dst = geo.Cam(np.asarray(st["C"], float), np.asarray(st["R"], float).T, float(Ks[0, 0]), float(Ks[0, 2]), float(Ks[1, 2]), W, H)
+    return src, dst
+
+
+def still_camera(run: dict) -> geo.Cam:
+    """court-run.json's still camera over its own crop (court space; camera-from-world R; K with the crop's principal
+    point), the size of the crop."""
+    st, Ks = run["still"], np.asarray(run["still"]["K"], float)
+    return geo.Cam(np.asarray(st["C"], float), np.asarray(st["R"], float).T, float(Ks[0, 0]), float(Ks[0, 2]), float(Ks[1, 2]),
+                   int(run["crop"][2]), int(run["crop"][3]))
+
+
+def look_from(C, target, f: float, w: int, h: int) -> geo.Cam:
+    """A level camera at C looking at target (OpenCV axes, no roll)."""
+    fwd = np.asarray(target, float) - np.asarray(C, float)
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, geo.UP)
+    right /= np.linalg.norm(right)
+    return geo.Cam(np.asarray(C, float), np.stack([right, np.cross(fwd, right), fwd], 1), f, (w - 1) / 2, (h - 1) / 2, w, h)
+
+
+def seat_floor(camF: geo.Cam, pair_centre, distance: float) -> np.ndarray:
+    """The seat's floor point as seatmath.ts's seatPoint finds it: on camera F's floor ray, `distance` from the pair."""
+    d = np.array([camF.axis[0], 0.0, camF.axis[2]])
+    d /= np.linalg.norm(d)
+    o = np.array([camF.C[0] - pair_centre[0], 0.0, camF.C[2] - pair_centre[2]])
+    b = float(o @ d)
+    disc = b * b - (float(o @ o) - distance * distance)
+    if disc < 0:
+        raise ValueError(f"camera F's ray passes more than {distance} m from the pair's centre")
+    return np.array([camF.C[0], 0.0, camF.C[2]]) + (-b - math.sqrt(disc)) * d
+
+
+def body_centre(s: sp.Splats) -> np.ndarray:
+    P = s.pos[s.alpha > 0.3].astype(float)
+    return np.array([np.median(P[:, 0]), 0.5 * float(np.percentile(P[:, 1], 99)), np.median(P[:, 2])])
+
+
+def judge_views(s: sp.Splats, camF: geo.Cam, distance: float, w: int = 384, h: int = 512) -> list:
+    """The views a judge can take of one body (for its cut): camera F's own (the picture), the seat in front of it (on
+    F's floor ray, `distance` short of the body, eye 1.2 m up) and 16 round it at standing eye height (3 m out, 1.6 m
+    up, between cap_cost's eight)."""
+    c = body_centre(s)
+    d = np.array([camF.axis[0], 0.0, camF.axis[2]])
+    d /= np.linalg.norm(d)
+    seat = np.array([c[0], 1.2, c[2]]) - distance * d
+    ring = [c + [3 * math.cos((k + 0.5) * math.pi / 8), 1.6 - c[1], 3 * math.sin((k + 0.5) * math.pi / 8)] for k in range(16)]
+    return [camF.scaled(960)] + [look_from(C, c, h * float(np.linalg.norm(c - C)) / 2.6, w, h) for C in [seat, *ring]]
+
+
+def render_psnr(a: sp.Splats, b: sp.Splats, cam: geo.Cam) -> float:
+    """PSNR of b's render against a's (sp.render, each alone over black) over the pixels either covers."""
+    (ra, aa), (rb, ab) = sp.render(a, cam), sp.render(b, cam)
+    roi = (aa > 0.02) | (ab > 0.02)
+    mse = float(np.mean((ra[roi] - rb[roi]) ** 2)) if roi.any() else 0.0
+    return round(10 * math.log10(1 / mse), 2) if mse > 0 else 99.0
+
+
+def at_f_crop(s: sp.Splats, camF: geo.Cam, width: int = 1920, pad: int = 12) -> geo.Cam:
+    """Camera F at `width` pixels across, cropped to a body's solid Gaussians."""
+    c = camF.scaled(width)
+    u, v, _ = c.project(s.pos[s.alpha > 0.5].astype(float))
+    x0, y0 = int(u.min()) - pad, int(v.min()) - pad
+    return geo.Cam(c.C, c.R, c.f, c.cx - x0, c.cy - y0, int(u.max()) + pad - x0, int(v.max()) + pad - y0)
+
+
+def cap_cost(whole: sp.Splats, kept: sp.Splats, camF: geo.Cam, pair_centre, distance: float, w: int = 384, h: int = 512) -> dict:
+    """What a pair body's cut costs: the PSNR of the cut body's render against the whole one's (sp.render, each alone
+    over black, over the pixels either covers), from the seat (eye 1.2 m up over seat_floor, looking at the body) and
+    from 8 views round the body (3 m out, 1.4 m up)."""
+    c = body_centre(whole)
+
+    def psnr(C) -> float:
+        return render_psnr(whole, kept, look_from(C, c, h * float(np.linalg.norm(c - C)) / 2.6, w, h))
+
+    seat = seat_floor(camF, pair_centre, distance) + [0.0, 1.2, 0.0]
+    ring = [c + [3 * math.cos(k * math.pi / 4), 1.4 - c[1], 3 * math.sin(k * math.pi / 4)] for k in range(8)]
+    return {"seat": psnr(seat), "orbit": [psnr(C) for C in ring]}
+
+
+def head_box(P, cam: geo.Cam, extent=None) -> np.ndarray:
+    """The points whose image in `cam` lies in the box over the top eighth of the body's height there (a head is about
+    an eighth of a standing body): the head box when no joints were fitted. The body's top, bottom and the box's sides
+    come from `extent` (default P itself: give the solid points, so floaters above or beside it stay out)."""
+    u, v, _ = cam.project(np.asarray(P, float))
+    ue, ve, _ = cam.project(np.asarray(P if extent is None else extent, float))
+    top, bottom = float(ve.min()), float(ve.max())
+    low = top + (bottom - top) / 8
+    band = ve <= low
+    return (v >= top) & (v <= low) & (u >= float(ue[band].min())) & (u <= float(ue[band].max()))
+
+
+def head_protect(P, cam: geo.Cam, extent) -> tuple[np.ndarray, str]:
+    """Without fitted joints: the head box seen from `cam` (with a raised arm, that's the hand) and everything within
+    25 cm of the head capsule's centre (body_capsules: the top of the body's own column, which keeps most of a raised
+    arm out; the joint rule's 15 cm plus room for where the capsule puts the head)."""
+    head = next(c for c in sp.body_capsules(extent) if c["part"] == "head")
+    return head_box(P, cam, extent) | near_joints(P, [head["a"]], 0.25), \
+        "the head box (the top eighth of the body as camera F sees it) and 25 cm round the head capsule (no fitted joints)"
+
+
+def near_joints(P, joints, radius: float = 0.15) -> np.ndarray:
+    """The points within `radius` of any joint."""
+    P = np.asarray(P, float)
+    near = np.zeros(len(P), bool)
+    for j in np.asarray(joints, float).reshape(-1, 3):
+        near |= np.linalg.norm(P - j, axis=1) <= radius
+    return near
+
+
+def protected_top(score: np.ndarray, protect: np.ndarray, n: int) -> np.ndarray:
+    """A cut to n that keeps every protected Gaussian first, then the highest scores among the rest."""
+    k = int(protect.sum())
+    if k > n:
+        raise ValueError(f"{k} protected Gaussians don't fit a cut to {n}")
+    rest = np.where(protect, -np.inf, score)
+    return protect | sp.keep_top(rest, n - k) & ~protect if n > k else protect.copy()
+
+
+def split_extras(scores: dict, total: int, floor: int) -> tuple[dict, list]:
+    """One budget shared by the extras: the most visible first (the sum of their Gaussians' significance), each kept
+    one getting its best `floor` Gaussians (all it has if fewer); extras whose floor no longer fits are left out; the
+    budget left goes to the best of what the kept ones have left, wherever it is. Returns ({id: keep mask}, left out)."""
+    order = sorted(scores, key=lambda i: -float(np.sum(scores[i])))
+    keep, dropped, used = {}, [], 0
+    for i in order:
+        need = min(floor, len(scores[i]))
+        if used + need > total:
+            dropped.append(i)
+            continue
+        keep[i] = sp.keep_top(scores[i], need)
+        used += need
+    left = total - used
+    if left > 0 and keep:
+        ids = list(keep)
+        pool = np.concatenate([np.where(keep[i], -np.inf, scores[i]) for i in ids])
+        take = sp.keep_top(pool, left) & np.isfinite(pool)
+        at = 0
+        for i in ids:
+            keep[i] |= take[at:at + len(scores[i])]
+            at += len(scores[i])
+    return keep, dropped
+
+
+def depth_anchor(sim: geo.Similarity, P, C, ref_xz) -> tuple[geo.Similarity, dict]:
+    """Move a placed body along camera C's rays (a scale about C: every pixel C sees stays where it was) until its
+    soles' centre is as near as it can get to `ref_xz` (a depth-true reference: a steep camera's or GVHMR's feet).
+    Returns the new similarity and what it did: scale, movedM (toward C, along the rays), liftM (where the soles end up,
+    y: they ride the ray up or down), acrossM (what is left of the reference off the rays, which a scale can't fix)."""
+    C = np.asarray(C, float)
+    Q = sim.apply(P)
+    d = sp.contact_points_xz(Q) - C[[0, 2]]
+    if float(d @ d) < 1e-6:
+        raise ValueError("depth_anchor: the soles are under the camera: its rays can't move them")
+    f = np.asarray(ref_xz, float) - C[[0, 2]]
+    k = float(d @ f / (d @ d))
+    out = geo.Similarity(k * sim.s, sim.M, k * sim.t + (1 - k) * C)
+    lift = float(np.percentile(out.apply(P)[:, 1], 0.5))
+    return out, {"scale": round(k, 6), "movedM": round((1 - k) * float(np.linalg.norm(d)), 3), "liftM": round(lift, 4),
+                 "acrossM": round(float(np.linalg.norm(f - k * d)), 3)}
+
+
+CARVE_MAX_SOLID = 0.05  # a carve that would take more of a body's solid Gaussians than this is a broken view, not a spike
+CARVE_F_MAX = 0.5  # a Gaussian adding at least this much to camera F's picture (alpha x footprint x transmittance, px at
+# full size) stays whatever the generated views say: F is the real picture, the views are imagined
+
+
+def carve_off(s: sp.Splats, carve: dict) -> tuple[np.ndarray, dict]:
+    """In how many of a body's own generated views each Gaussian lands on the background: carve {"views": the run's
+    views/ folder, "frame": K, "minViews": 2} (assemble_carve.py). The PLY must be in the views' space (the recon's own
+    world). A view with next to no person in it (a failed or black frame) is left out."""
+    views = cv.run_views(expand(carve["views"]), int(carve["frame"]))
+    skipped = [v["name"] for v in views if v["mask"].mean() < 0.01]
+    views = [v for v in views if v["name"] not in skipped]
+    if len(views) < 2:
+        raise ValueError(f"carve: {carve['views']} has {len(views)} usable view(s) at frame {carve['frame']}; two or more are needed")
+    return cv.off_body(s.pos, views), {"views": [v["name"] for v in views], "skipped": skipped, "minViews": int(carve.get("minViews", 2)),
+                                       "by": "Gaussian centres on the background (the studio grey round the person) in that many of the "
+                                             f"recon's own views at K, unless they add {CARVE_F_MAX} px or more to camera F's picture"}
+
+
+def carve_keep(whole: sp.Splats, cand: np.ndarray, camF: geo.Cam, info: dict) -> np.ndarray:
+    """The carve's verdict on a placed body: the candidates go unless camera F sees them (CARVE_F_MAX); more than
+    CARVE_MAX_SOLID of the solid Gaussians going stops the assembly. Fills in what went and what F's view lost."""
+    crop = at_f_crop(whole, camF, width=camF.w)
+    atF = sp.render(whole, crop, contrib=True)[2]
+    go = cand & (atF < CARVE_F_MAX)
+    solid = whole.alpha > 0.5
+    frac = float((go & solid).sum() / max(1, solid.sum()))
+    if frac > CARVE_MAX_SOLID:
+        raise ValueError(f"carve: {frac:.1%} of the solid Gaussians would go (over {CARVE_MAX_SOLID:.0%}): the views don't match this "
+                         "PLY (wrong frame, space or masks)")
+    info.update({"candidates": int(cand.sum()), "keptForF": int((cand & ~go).sum()), "removed": int(go.sum()), "solidRemoved": int((go & solid).sum()),
+                 "psnrAtF": render_psnr(whole, whole.subset(~go), crop)})
+    return ~go
+
+
+def place_player(w: Writer, slot: dict, i: int, standin: Path, S: dict, camF: geo.Cam, camF_standin: geo.Cam) -> dict:
+    """One main player: their Gaussians placed in court space, the reality copy, the splat-depth proxy from camera F,
+    capsules, bounds, floor maps. Returns the court.json entry plus private diagnostics under "_"."""
+    pid = slot.get("id") or S["freeze"]["players"][i]["id"]
+    real = bool(slot.get("splats")) and expand(slot["splats"]).exists()
+    if real:
+        s = sp.read_ply(expand(slot["splats"]))
+        cam_pos = np.array([0.0, 1.0, -25.0])  # the export turns the source camera onto -z
+        name = slot.get("name", pid)
+    else:
+        sp_in = S["freeze"]["players"][i]
+        s = sp.read_ply(standin / sp_in["splats"])
+        cam_pos = camF_standin.C
+        name = f"{slot.get('name', sp_in['name'])} (stand-in body)"
+    feet = slot.get("foot")
+    feet = np.asarray(feet, float).reshape(-1, 2) if feet is not None else None
+    # depth along the source camera's rays is only as good as a camera that sees it: the source camera's own ground
+    # clicks are not (it looks a couple of degrees down: a pixel of sole row is centimetres of depth), so footError
+    # and vsFeet use a steep camera's or GVHMR's feet (footRef) or nothing
+    ref = slot.get("footRef")
+    ref_src = ref.get("source") if ref else None
+    ref = np.asarray(ref["xz"], float).reshape(-1, 2) if ref else None
+    if real:
+        seen = seen_of(s, expand(slot["reality"]) if slot.get("reality") else None, expand(slot["spz"]) if slot.get("spz") else None, w, pid,
+                       same_space=slot.get("splatsSpace", "bundle") == "bundle")
+    else:
+        seen = seen_of(s, standin / S["freeze"]["players"][i]["reality"], None)
+    carve = None
+    if slot.get("carve"):
+        # before placement, so a spike below the soles can't set the floor
+        if not (real and isinstance(slot["carve"], dict)):
+            raise ValueError(f"{pid}: carve needs the player's own recon PLY and its run's views (players[].run with carve: true)")
+        off, carve = carve_off(s, slot["carve"])
+        cand = off >= carve["minViews"]
+    P = sp.solid(s if carve is None else s.subset(~cand))  # what the views never had doesn't set the floor or the scale
+    need = ("sourceCamera", "courtRun") + (("dream",) if slot.get("splatsSpace", "bundle") == "bundle" else ())
+    has_cams = real and all(slot.get(k) and expand(slot[k]).exists() for k in need)
+    if has_cams:
+        src_cam, dst_cam = recon_cameras(slot)
+        cam_pos = src_cam.C
+        # the clip was cut from the calibration's camera F: say so if the bundle's camera F isn't that camera
+        drift = (geo.rot_angle_deg(dst_cam.R, camF.R), float(np.linalg.norm(dst_cam.C - camF.C)), dst_cam.f / camF.f - 1)
+        if drift[0] > 0.01 or drift[1] > 0.01 or abs(drift[2]) > 1e-4:
+            w.notes.append(f"{pid}: the clip's still camera differs from the bundle's camera F by {drift[0]:.3f} deg, "
+                           f"{drift[1]:.3f} m, focal {100 * drift[2]:+.3f}%")
+    if slot.get("place", "camera" if has_cams else "feet") == "camera":
+        if not has_cams:
+            raise ValueError(f"{pid}: place 'camera' needs sourceCamera, dream and courtRun")
+        sim, info = geo.place_by_camera(P, src_cam, dst_cam)
+        if ref is not None:
+            info["vsFeet"] = round(float(np.linalg.norm(sp.contact_points_xz(sim.apply(P)) - ref.mean(0))), 3)
+    else:
+        if feet is None:
+            # no calibrated soles: keep the stand-in's own spot (its feet in the stand-in court)
+            feet = sp.solid(s)[:, [0, 2]][sp.solid(s)[:, 1] < 0.05].mean(0, keepdims=True)
+            w.notes.append(f"{pid}: no calibrated foot point; kept where the stand-in stood")
+        sim, info = geo.place_by_feet(P, cam_pos, feet.mean(0), camF.C)
+    if slot.get("anchor") == "footRef":
+        # depth from a camera that sees it: slide along F's rays (no pixel at F moves) to the reference's soles, unless
+        # that lifts or sinks them past ANCHOR_LIFT_M (F looks only a little down: a small slide is a big lift)
+        if ref is None:
+            raise ValueError(f"{pid}: anchor footRef needs the player's footRef")
+        moved, an = depth_anchor(sim, P, camF.C, ref.mean(0))
+        an["applied"] = abs(an["liftM"]) <= ANCHOR_LIFT_M
+        an["against"] = ref_src
+        if an["applied"]:
+            sim = moved
+            info["scale"] = info.get("scale", 1.0) * an["scale"]
+        else:
+            w.notes.append(f"{pid}: footRef ({ref_src}) not used for depth: meeting it would put the soles {an['liftM'] * 100:+.1f} cm off "
+                           f"the floor (over {ANCHOR_LIFT_M * 100:.1f} cm), sliding {an['movedM']:+.2f} m along camera F's rays")
+        info["anchor"] = an
+    base = f"players/{pid}"
+    if carve is not None:
+        # placed: what camera F sees stays, the rest of what the views never had goes
+        keep = carve_keep(s.transformed(sim), cand, camF, carve)
+        s, seen = s.subset(keep), seen[keep]
+        w.notes.append(f"{pid}: carved {carve['removed']} Gaussians ({carve['solidRemoved']} solid) off the body in >= {carve['minViews']} of its "
+                       f"own views ({', '.join(carve['views'])}), {carve['keptForF']} more kept because camera F sees them; "
+                       f"F's view of it changes by PSNR {carve['psnrAtF']} dB")
+    cut = None
+    cap = slot.get("capBody") or slot.get("capPair")
+    if cap and len(s) > int(cap):
+        # the body's budget (plan 8): keep the Gaussians that matter most in some view a judge can take (global
+        # significance over F, the seat and 16 views round the body), the reality copy alike; the head (and hands,
+        # with fitted joints) first, whole
+        whole = s.transformed(sim)
+        score = sp.significance(whole, judge_views(whole, camF, float(slot.get("seatDistance") or SEAT["distance"])))
+        protect, by = None, None
+        if slot.get("joints"):
+            protect, by = near_joints(whole.pos, slot["joints"], 0.15), "within 15 cm of the fitted head and hand joints"
+        elif slot.get("protect") == "head":
+            protect, by = head_protect(whole.pos, camF, sp.solid(whole))
+        keep = protected_top(score, protect, int(cap)) if protect is not None else sp.keep_top(score, int(cap))
+        cut = {"from": len(s), "kept": int(keep.sum()), "by": "max over F, the seat and 16 views round the body of alpha x footprint x transmittance"}
+        if protect is not None:
+            cut["protected"] = {"by": by, "count": int(protect.sum())}
+        if slot.get("capPsnr"):
+            cut["_whole"], cut["_kept"] = whole, whole.subset(keep)
+        s, seen = s.subset(keep), seen[keep]
+    b = body_files(w, base, s, sim, seen, camF)
+    Pp, rect = b["P"], b["rect"]
+    contact = sp.contact_points_xz(Pp)
+    entry = {
+        "id": pid, "name": name, "splats": f"{base}/freeze.ply", "reality": f"{base}/reality.ply", "proxy": f"{base}/proxy.glb",
+        "bounds": sp.bounds(Pp), "seenFraction": round(float(seen.mean()), 3),
+        "capsules": [{k: c[k] for k in ("a", "b", "r")} for c in sp.body_capsules(Pp)],
+        "shadow": {"image": f"{base}/shadow.png", "rect": rect}, "reflection": {"image": f"{base}/reflection.png", "rect": rect},
+        "_": {"sim": sim, "contact": contact, "count": b["count"], "proxy": b["proxy"], "cap": cut, "carve": carve,
+              "placement": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in info.items()},
+              "height": round(float(np.percentile(Pp[:, 1], 99.5)), 3)},
+    }
+    if slot.get("lod"):
+        entry["lod"] = True  # load with Spark's level of detail (SplatMesh lod: true): the uncut body, budgeted by LoD
+    if slot.get("run_report"):
+        rr = dict(slot["run_report"])
+        if slot.get("courtRun") and expand(slot["courtRun"]).exists():
+            rr["FOCAL"] = json.loads(expand(slot["courtRun"]).read_text()).get("FOCAL")
+        entry["_"]["run"] = rr
+    if ref is not None:
+        entry["_"]["footError"] = {"m": round(float(np.linalg.norm(contact - ref.mean(0))), 3), "against": ref_src}
+    else:
+        entry["_"]["placement"]["depthNote"] = ("no footError: the source camera's ground clicks can't see depth (a pixel of sole "
+                                                "row is centimetres along its ray); give a steep camera's or GVHMR's feet as footRef")
+    w.piece(f"player:{pid}", real, str(expand(slot["splats"])) if real else f"stand-in body '{S['freeze']['players'][i]['id']}' re-placed at the calibrated feet")
+    return entry
+
+
+def mask_centroid(path: Path, source_width: int):
+    """The centroid of a binary mask (white = it) in source pixels (the mask may be at another width: pixel centres
+    scale as u' = (u + 0.5) s - 0.5); None when the mask is empty."""
+    import cv2
+
+    m = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if m is None:
+        raise ValueError(f"{path}: not an image")
+    ys, xs = np.nonzero(m > 127)
+    if not len(xs):
+        return None
+    s = source_width / m.shape[1]
+    return (float(xs.mean()) + 0.5) * s - 0.5, (float(ys.mean()) + 0.5) * s - 0.5
+
+
+def ball_piece(w: Writer, cfg: dict, S: dict, players: list, camF: geo.Cam, splats_by_id: dict, k1F: float = 0.0) -> dict:
+    """The ball at F (plan 2: placed by hand, a 23.9 cm sphere; F's ball pixels are projected onto it at runtime and
+    its unseen side is Reality-marked there). From the config: its centre, or F's ball pixel (`pixel` in the bundle's
+    undistorted source pixels, or `pixelRaw` in the raw frame, undone with camera F's k1) on F's ray at the holder's
+    depth: their nearest Gaussians on that ray, or while their body is the stand-in's, the vertical plane through
+    their soles facing the camera."""
+    b = cfg.get("ball") or {}
+    first = players[0]["id"]
+    erase = [{"player": p["id"], "radius": 0.15} for p in players[:1]]
+    if b.get("centre"):
+        w.piece("ball", True, "config centre")
+        return {"centre": rnd(b["centre"]), "radius": BALL_RADIUS, "erase": erase}
+    px = b.get("pixel")
+    raw = b.get("pixelRaw")
+    if b.get("mask") and expand(b["mask"]).exists():
+        raw = mask_centroid(expand(b["mask"]), camF.w) or raw  # the SAM mask's centroid at F, in the raw frame
+    if raw:
+        b = {**b, "pixelRaw": raw}
+    if b.get("pixelRaw"):
+        import assemble_stands as stx
+
+        xn, yn = stx.undistort(np.array([(b["pixelRaw"][0] - camF.cx) / camF.f]), np.array([(b["pixelRaw"][1] - camF.cy) / camF.f]), k1F)
+        px = [camF.cx + camF.f * float(xn[0]), camF.cy + camF.f * float(yn[0])]
+    holder = b.get("depthFrom")
+    if px and holder in splats_by_id:
+        ray = camF.rays(np.array([px[0]]), np.array([px[1]]))[0]
+        P = splats_by_id[holder]
+        t = (P - camF.C) @ ray
+        off = np.linalg.norm((P - camF.C) - np.outer(t, ray), axis=1)
+        # what the ray itself meets: the narrowest tube round it with enough points (a hand or hip beside the ray, in
+        # a ball-wide tube, would pull the ball forward of its own surface)
+        near = next((t[off < r] for r in (0.25 * BALL_RADIUS, 0.5 * BALL_RADIUS, BALL_RADIUS) if (off < r).sum() >= 10), t[off < BALL_RADIUS])
+        real_body = w.pieces.get(f"player:{holder}", {}).get("source") == "real"
+        if len(near) >= 10:
+            centre = camF.C + (np.percentile(near, 10) + BALL_RADIUS) * ray
+            how = f"F's ball pixel at {holder}'s depth there"
+        elif not real_body:
+            p = next(pl for pl in players if pl["id"] == holder)
+            foot = np.array([p["_"]["contact"][0], 0.0, p["_"]["contact"][1]])
+            n = np.array([ray[0], 0.0, ray[2]])
+            centre = camF.C + float((foot - camF.C) @ n / (ray @ n)) * ray
+            how = f"F's ball pixel at the depth of {holder}'s soles (the body is still the stand-in's)"
+        else:
+            raise ValueError(f"ball: fewer than 10 of {holder}'s Gaussians lie on the ball's ray; check the ball pixel")
+        w.piece("ball", True, how, pixel=rnd(px, 2))
+        n = int((np.linalg.norm(P - centre, axis=1) < 1.15 * BALL_RADIUS).sum())
+        if real_body and n >= BALL_IN_BODY_MIN:
+            # the holder's own splats hold the real ball (the freeze's one 3D ball): nothing of theirs is erased round
+            # it, and the runtime keeps the ball card off through the freeze
+            w.pieces["ball"]["inBody"] = {"player": holder, "solidSplats": n}
+            return {"centre": rnd(centre), "radius": BALL_RADIUS, "erase": [], "ballInBody": holder, "_ballInBodyCount": n}
+        return {"centre": rnd(centre), "radius": BALL_RADIUS, "erase": [{"player": holder, "radius": 0.15}]}
+    # the stand-in ball, carried with the first player's placement (it sits in their hand)
+    sim = players[0]["_"]["sim"]
+    w.piece("ball", False, f"stand-in ball carried with {first}'s placement")
+    return {"centre": rnd(sim.apply(np.asarray(S["freeze"]["ball"]["centre"], float))), "radius": BALL_RADIUS, "erase": erase}
+
+
+def read_extra(m: Path) -> dict | None:
+    """One extras manifest, normalised; None while its model hasn't landed (`file` empty or missing) or when it is left
+    out (kind "out"). The extras stream's layout: pose {camera: "C..."}, foot {xz: [x, z]}, height_m, files relative
+    to the manifest, "space": "court" for a model it already placed in court metres, reality "all" (nothing seen as
+    drawn: all tinted) or the export's .reality.spz in the model's Gaussian order."""
+    e = json.loads(m.read_text())
+    loc = lambda p: None if not p else (expand(p) if str(p).startswith(("~", "/")) else m.parent / p)  # noqa: E731
+    f = loc(e.get("file"))
+    if e.get("kind") == "out" or f is None or not f.exists():
+        return None
+    pose = e.get("pose")
+    cam = pose.get("camera", "A") if isinstance(pose, dict) else (pose or "A")
+    foot = e.get("foot")
+    xz = foot["xz"] if isinstance(foot, dict) else [foot[0], foot[2]]
+    calib = (foot.get("calibration") if isinstance(foot, dict) else None) or e.get("calibration")
+    reality = "all" if e.get("reality") == "all" else loc(e.get("reality"))
+    hf = e.get("height_freeze") if isinstance(e.get("height_freeze"), dict) else None
+    return {"id": e["id"], "name": e.get("name"), "kind": e.get("kind", "splats"), "file": f, "reality": reality,
+            "spz": loc(e.get("spz")), "pose": "C" if str(cam).upper().startswith("C") else "A", "foot": [float(xz[0]), 0.0, float(xz[1])],
+            "height": float(e.get("height", e.get("height_m", 0)) or 0), "space": e.get("space", "bundle"),
+            "cameraCentre": e.get("cameraCentre"), "calibration": calib, "shadow": e.get("shadow"), "reflection": e.get("reflection"), "dir": m.parent,
+            "heightFreeze": hf if hf and hf.get("measured_m") else None, "significance": loc(e.get("significance")),
+            "footFrom": foot.get("from") if isinstance(foot, dict) else None,
+            "footOther": {k: v for k, v in foot.items() if k.startswith("xz_")} if isinstance(foot, dict) else {}}
+
+
+def extra_views(s: sp.Splats, eyes: list, f: float = EXTRAS_FOCAL) -> list:
+    """Views a judge has of an extra: from each eye (camera F, the seat, the walking spots) looking at its middle, all at
+    one angular resolution, so a far or small extra scores less than a near one."""
+    c = body_centre(s)
+    cams = []
+    for e in eyes:
+        d = float(np.linalg.norm(c - np.asarray(e, float)))
+        n = int(np.clip(2 * math.ceil(f * 1.3 / d) + 8, 32, 1024))
+        cams.append(look_from(e, c, f, n, n))
+    return cams
+
+
+def extra_camera(e: dict, cfg: dict, camF: geo.Cam) -> np.ndarray:
+    """The centre of the camera that gave an extra's pose (the export turned that camera onto -z)."""
+    if e["cameraCentre"]:
+        return np.asarray(e["cameraCentre"], float)
+    if e["pose"] == "C":
+        c = (cfg.get("cameras") or {}).get("C")
+        if c:
+            return np.asarray(json.loads(expand(c).read_text())["C"], float)
+        raise ValueError(f"extra {e['id']}: posed from camera C, but neither its cameraCentre nor the config's cameras.C is given")
+    return camF.C
+
+
+def body_files(w: Writer, base: str, s: sp.Splats, sim: geo.Similarity, seen: np.ndarray, camF: geo.Cam | None = None) -> dict:
+    """A body placed in court space: freeze.ply, reality.ply, proxy.glb (camera F's depth mesh, when camF is given),
+    shadow.png and reflection.png under `base`. Returns the placed points and the floor rect."""
+    placed = s.transformed(sim)
+    keep = placed.alpha > 0.5
+    keep = keep if keep.sum() > 100 else np.ones(len(placed), bool)
+    P = placed.pos[keep]
+    sp.write_ply(w.path(f"{base}/freeze.ply"), placed)
+    sp.write_ply(w.path(f"{base}/reality.ply"), sp.reality(placed, seen))
+    proxy = None
+    if camF is not None:
+        data, proxy = sp.proxy_glb(placed, camF, name=f"{Path(base).name}-proxy")
+        w.path(f"{base}/proxy.glb").write_bytes(data)
+    rect = sp.floor_rect(P)
+    shadow, refl = sp.floor_maps(P, placed.alpha[keep], placed.rgb[keep], rect)
+    sp.write_png(w.path(f"{base}/shadow.png"), shadow)
+    sp.write_png(w.path(f"{base}/reflection.png"), refl)
+    return {"P": P, "rect": rect, "count": len(placed), "seen": float(seen.mean()), "proxy": proxy}
+
+
+def seen_of(s: sp.Splats, reality, spz: Path | None, w: Writer | None = None, who: str = "", same_space: bool = True) -> np.ndarray:
+    """What the cameras saw: from the export's .reality.spz, or a reality PLY in the same order (unchanged colour =
+    seen). Without either everything counts as seen, and the assembly notes it (rule 6: never pass invention off as
+    real, so the Reality check of such a body is incomplete until its reality file lands)."""
+    if reality == "all":  # no camera saw it as it is drawn: all of it is tinted
+        return np.zeros(len(s), bool)
+    if reality is not None and reality.exists():
+        if reality.suffix == ".spz":
+            return sp.seen_from_spz(s, reality, spz if spz and spz.exists() else None, check_positions=same_space)
+        r = sp.read_ply(reality)
+        if len(r) == len(s):
+            return np.all(np.isclose(r.dc, s.dc), 1)
+    if w is not None:
+        w.notes.append(f"{who}: no reality file in its order ({reality}): nothing is marked imagined on it")
+    return np.ones(len(s), bool)
+
+
+def others_piece(w: Writer, cfg: dict, standin: Path, S: dict, spots: list, camF: geo.Cam, real_pair: bool = False, eyes: list | None = None) -> list:
+    """The extras: each landed model placed on its foot (P12 holds it to its foot and height), under one shared budget
+    when capExtras is set (split by what a judge sees of them from `eyes`). With no extras landed, the stand-in's
+    stand where it put them, unless the pair is real: an extra without a placed real body gets no figure."""
+    d = expand(cfg["extras"]) if cfg.get("extras") else None
+    manifests = sorted(d.glob("*/extra.json")) if d and d.exists() else []
+    landed, planned, dropped = [], [], []
+    for m in manifests:
+        e = read_extra(m)
+        if e is None:
+            if json.loads(m.read_text()).get("kind") != "out":
+                planned.append(m.parent.name)
+            continue
+        if e["kind"] != "relief":
+            if e["file"].is_symlink() or not inside(e["file"], e["dir"]):
+                raise ValueError(f"extra {e['id']}: {e['file']} is not a plain file inside {e['dir']}")
+            s = sp.read_ply(e["file"])
+            if e["space"] == "court":
+                sim = geo.Similarity(1.0, np.eye(3), np.zeros(3))
+            else:
+                sim, _ = geo.place_by_feet(sp.solid(s), [0.0, 1.0, -25.0], e["foot"][::2], extra_camera(e, cfg, camF))
+            e["_s"], e["_sim"], e["_seen"] = s, sim, seen_of(s, e["reality"], e["spz"], w, f"extra {e['id']}", same_space=False)
+        landed.append(e)
+    if cfg.get("capExtras"):
+        total, floor = int(cfg["capExtras"]), int(cfg.get("capExtrasFloor") or EXTRAS_FLOOR)
+        bodies = [e for e in landed if "_s" in e]
+        eyes = eyes or [camF.C]
+        scores, by = {}, {}
+        for e in bodies:
+            sig = e["significance"]
+            own = np.load(sig) if sig is not None and sig.exists() else None
+            if own is not None and own.shape == (len(e["_s"]),):
+                # the extras stream's own: each Gaussian's view contribution from the seat and spots, in the model's order
+                scores[e["id"]], by[e["id"]] = own.astype(float), f"extra.json significance ({sig.name})"
+            else:
+                placed = e["_s"].transformed(e["_sim"])
+                scores[e["id"]], by[e["id"]] = sp.significance(placed, extra_views(placed, eyes)), "the assembly's judge views"
+                if own is not None:
+                    w.notes.append(f"extra {e['id']}: its significance file has {own.shape} for {len(e['_s'])} Gaussians: ranked by the assembly's own views")
+        keep, dropped = split_extras(scores, total, floor)
+        for e in bodies:
+            if e["id"] in keep:
+                k = keep[e["id"]]
+                e["_cap"] = {"from": len(e["_s"]), "kept": int(k.sum())}
+                e["_s"], e["_seen"] = e["_s"].subset(k), e["_seen"][k]
+        landed = [e for e in landed if e["id"] not in dropped]
+        w.diag["extras"] = {"budget": {"total": total, "floor": floor, "split": {i: int(k.sum()) for i, k in keep.items()}, "leftOut": dropped,
+                                       "rankedBy": by,
+                                       "by": "max over camera F, the seat and the walking spots (one angular resolution) of alpha x footprint "
+                                             "x transmittance; the most visible extras first, each its floor, then the best of the rest"}}
+        if dropped:
+            w.notes.append(f"extras left out: {', '.join(dropped)}: the extras' {total} budget fits {len(keep)} at the {floor} floor; the most visible stay")
+    out = []
+    for e in landed:
+        base = f"others/{e['id']}"
+        ent = {"id": e["id"], "kind": e["kind"], "pose": e["pose"], "foot": rnd(e["foot"])}
+        if e["name"]:
+            ent["name"] = e["name"]
+        if e["kind"] == "relief":
+            ent["file"] = w.copy(e["file"], f"{base}/relief.glb", within=e["dir"])
+            ent["reality"] = w.copy(e["reality"], f"{base}/reality.glb", within=e["dir"])
+            for k in ("shadow", "reflection"):
+                ent[k] = {"image": w.copy(e["dir"] / e[k]["image"], f"{base}/{k}.png", within=e["dir"]), "rect": e[k]["rect"]}
+            ent["height"] = e["height"] or round(float(glb_bounds(e["file"])[1][1]), 3)
+        else:
+            b = body_files(w, base, e["_s"], e["_sim"], e["_seen"])
+            ent["file"], ent["reality"] = f"{base}/freeze.ply", f"{base}/reality.ply"
+            top = round(float(np.percentile(b["P"][:, 1], 99.5)), 3)
+            # the declared foot and listed height stay: --validate holds the model to them (P12)
+            if e["height"]:
+                ent["height"] = e["height"]
+            else:
+                ent["height"] = top
+                w.notes.append(f"extra {e['id']}: no listed height; court.json carries the model's own ({top:.2f} m)")
+            ent["shadow"] = {"image": f"{base}/shadow.png", "rect": b["rect"]}
+            ent["reflection"] = {"image": f"{base}/reflection.png", "rect": b["rect"]}
+        chest = np.array([ent["foot"][0], 0.6 * ent["height"], ent["foot"][2]])
+        ent["maxRayAngle"] = round(max(geo.angle_deg(chest - camF.C, chest - np.array([q[0], 1.6, q[2]])) for q in spots), 2)
+        out.append(ent)
+        more = {k: v for k, v in (("heightFreeze", e["heightFreeze"]), ("cap", e.get("_cap"))) if v}
+        w.piece(f"extra:{e['id']}", True, str(e["file"]), **more)
+        for k, xz in e["footOther"].items():
+            gap = float(np.hypot(xz[0] - e["foot"][0], xz[1] - e["foot"][2]))
+            w.notes.append(f"extra {e['id']}: its foot of record is {[e['foot'][0], e['foot'][2]]} ({e['footFrom'] or 'extra.json foot.xz'}); "
+                           f"its {k} {xz} is {gap:.2f} m away and isn't used: the extras stream's fit, not that single camera's reading, places it")
+    if planned:
+        w.notes.append(f"extras not landed yet: {', '.join(planned)}")
+    if not out and dropped:
+        w.notes.append("no extras: the extras' budget left every one out")
+    elif not out and real_pair:
+        w.notes.append("no extras: none landed with a placed real body, and a real pair gets no stand-in figures beside it")
+    elif not out:
+        for o in S["freeze"]["others"]:
+            ent = json.loads(json.dumps(o))
+            for rel in bundle_paths(ent):
+                w.copy(standin / rel, rel, within=standin)
+            out.append(ent)
+            w.piece(f"extra:{o['id']}", False, "stand-in extra where the stand-in put it")
+    return out
+
+
+def make_stands(cfg: dict) -> dict:
+    """Triangulate the stands from the config's frame pairs (stands.triangulate: {"a": {calib, frames}, "b": {calib,
+    frames}, "pairs": [[a_frame, b_frame], ...]}, frames = a folder of <frame:06d>.png the calibration was solved on)
+    and write the proxy planes to stands.proxyFile. Slow (SIFT on 4K frames), so it is its own step."""
+    import cv2
+
+    import assemble_stands as stx
+
+    t = cfg["stands"]["triangulate"]
+    calibs = {k: json.loads(expand(t[k]["calib"]).read_text()) for k in ("a", "b")}
+
+    def calcam(k: str, n: int) -> stx.CalCam:
+        c = calibs[k]
+        fr = next(f for f in c["frames"] if f["source_frame"] == n)
+        W, H = c["image_size"]
+        return stx.CalCam(geo.Cam(np.asarray(c["C"], float), np.asarray(fr["R"], float).T, float(fr["f"]), (W - 1) / 2, (H - 1) / 2, W, H), float(fr.get("k1", 0.0)))
+
+    pts, per_pair = [], []
+    for a, b in t["pairs"]:
+        ia = cv2.imread(str(expand(t["a"]["frames"]) / f"{a:06d}.png"))
+        ib = cv2.imread(str(expand(t["b"]["frames"]) / f"{b:06d}.png"))
+        X, err = stx.triangulate_frames(ia, calcam("a", a), ib, calcam("b", b), max_err=t.get("maxErrPx", 3.0))
+        pts.append(X)
+        per_pair.append({"pair": [a, b], "points": int(len(X)), "medianErrPx": round(float(np.median(err)), 2) if len(err) else None})
+    X = np.concatenate(pts) if pts else np.zeros((0, 3))
+    planes, rep = stx.stands_planes(X)
+    out = {"proxy": planes, "report": {**rep, "pairs": per_pair}}
+    path = expand(cfg["stands"]["proxyFile"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, indent=1))
+    return out
+
+
+def stands_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
+    """The stands proxy measured from two cameras (stands.proxyFile, made by --make-stands) and the depth cards in
+    the config; without a measured proxy, the stand-in's proxy and card."""
+    st = cfg.get("stands") or {}
+    pf = expand(st["proxyFile"]) if st.get("proxyFile") else None
+    if pf is not None and pf.exists():
+        made = json.loads(pf.read_text())
+        block = {"proxy": made["proxy"], "cards": []}
+        for c in st.get("cards", []):
+            block["cards"].append({"id": c["id"], "image": w.copy(expand(c["image"]), f"stands/{c['id']}.png"), "quad": c["quad"]})
+        rep = made.get("report", {})
+        up = rep.get("upper", {})
+        if rep.get("guessed"):
+            w.piece("stands", False, f"stands planes guessed: only {rep.get('front', {}).get('n')} triangulated points with enough parallax")
+        else:
+            w.piece("stands", True, f"front plane at x = {rep.get('front', {}).get('x')} m from {rep.get('points')} triangulated points; "
+                    f"upper plane {'fitted' if up.get('fit') else 'guessed 1.5 m behind (no points that high)'}")
+        if not block["cards"]:
+            w.notes.append("stands: no depth cards yet (front row, photographers, ref): they need the clean plate and its people mattes")
+        return block
+    block = json.loads(json.dumps(S["freeze"]["stands"]))
+    for rel in bundle_paths(block):
+        w.copy(standin / rel, rel, within=standin)
+    w.piece("stands", False, "stand-in stands proxy and front-row card")
+    return block
+
+
+def crowd_sources(n: int, loop_s: float) -> list[dict]:
+    """>= 4 HRTF sources in the stands (P31): behind the play's basket and along both sidelines, each playing the bed
+    from its own offset so no two are in step."""
+    at = [[LENGTH / 2 + 2.0, 4.0, -7.0], [LENGTH / 2 + 2.0, 4.5, 0.0], [LENGTH / 2 + 2.0, 4.0, 7.0],
+          [6.0, 4.0, WIDTH / 2 + 2.0], [6.0, 4.0, -WIDTH / 2 - 2.0], [-4.0, 4.5, WIDTH / 2 + 2.0], [-4.0, 4.5, -WIDTH / 2 - 2.0]][:n]
+    return [{"at": a, "offsetS": round(i * loop_s / len(at), 2)} for i, a in enumerate(at)]
+
+
+def audio_piece(w: Writer, cfg: dict, standin: Path, S: dict) -> dict:
+    a = cfg.get("audio") or {}
+    if a.get("loop") and expand(a["loop"]).exists():
+        x, sr = au.read_wav(expand(a["loop"]))
+        if a.get("swell"):
+            t0, t1, db = a["swell"][0], a["swell"][1], None
+        else:
+            t0, t1, db = au.find_swell(x.mean(1), sr, tuple(a["search"]) if a.get("search") else None)
+        info = au.make_audio(x, sr, (t0, t1), w.path("audio"), lufs=a.get("lufs", -23.0))
+        info["swellAboveDb"] = None if db is None else round(db, 2)
+        gain = info["swellGainDb"]
+        if a.get("swellOverBedDb") is not None:
+            # the roar: the make's swell that many dB (integrated loudness) over the bed it rises out of
+            sw = au.loudness(w.root / "audio" / "swell.m4a")
+            gain = round(info["bedLufs"] + float(a["swellOverBedDb"]) - sw["I"], 2)
+            info.update({"swellLufs": sw["I"], "swellOverBedDb": round(sw["I"] + gain - info["bedLufs"], 2), "swellPeakAtGainDbtp": round(sw["TP"] + gain, 2)})
+            w.notes.append(f"audio: the make's swell plays {info['swellOverBedDb']:+.1f} dB over the bed (gain {gain:+.2f} dB, peak "
+                           f"{info['swellPeakAtGainDbtp']:+.1f} dBTP before the room); the bed isn't ducked under it: format.ts's oneShots "
+                           "carry file, at and gainDb only, and sound.ts ducks only for the time stop")
+        w.piece("audio", True, f"{expand(a['loop']).name}: swell {t0:.2f}-{t1:.2f} s cut out and made a one-shot", **info)
+        return {"bed": "audio/bed.m4a", "lufs": round(info["bedLufs"], 1), "sources": crowd_sources(6, info["bedSeconds"]),
+                "oneShots": [{"file": "audio/swell.m4a", "at": "make", "gainDb": gain},
+                             {"file": "audio/swell.m4a", "at": "stepIn", "gainDb": round(gain - 12, 2)}],
+                "events": []}
+    block = json.loads(json.dumps(S["audio"]))
+    for rel in bundle_paths(block):
+        w.copy(standin / rel, rel, within=standin)
+    w.piece("audio", False, "stand-in crowd noise")
+    return block
+
+
+def metrics_piece(cfg: dict, calib_json: dict | None, camF: geo.Cam, frames: list, players: list) -> dict:
+    rep = {"median": None, "p95": None}
+    px = ((calib_json or {}).get("summary") or {}).get("click_reproj_px")
+    if not px and (cfg.get("metrics") or {}).get("reprojFrom"):
+        # a per-frame calibration built on another solve keeps that solve's clicks: the config names it
+        px = (json.loads(expand(cfg["metrics"]["reprojFrom"]).read_text()).get("summary") or {}).get("click_reproj_px")
+    if px:
+        rep = {k: round(math.degrees(math.atan(px[k] / camF.f)), 5) for k in ("median", "p95")}
+    held = {p["id"]: (cfg_player(cfg, p["id"]).get("metrics") or {}).get("heldOutPsnr") for p in players}
+    seat = (cfg.get("metrics") or {}).get("seatPsnr", {"players": None, "background": None})
+    interp = sum(1 for f in frames if f["interp"]) / len(frames)
+    return {"reprojDeg": rep, "heldOutPsnrVsGenerated": held, "seatPsnr": seat, "interpShare": round(interp, 4)}
+
+
+def cfg_player(cfg: dict, pid: str) -> dict:
+    return next((p for p in cfg.get("players", []) if p.get("id") == pid), {})
+
+
+# ---------------------------------------------------------------- assembly
+
+def assemble(cfg: dict, standin: Path, out: Path) -> dict:
+    guard_out(out)
+    standin = standin.resolve()
+    clips = expand(cfg["clips"]) if cfg.get("clips") else None
+    cfg = {**cfg, "players": [resolve_run(p, clips) for p in cfg.get("players", [])]}
+    S = json.loads((standin / "court.json").read_text())
+    calib_json = json.loads(expand(cfg["calib"]).read_text()) if cfg.get("calib") else None
+    calib = geo.CalibTrack(calib_json) if calib_json else None
+    if (out.exists() or out.is_symlink()) and not (out.is_dir() and not out.is_symlink() and is_bundle(out)):
+        raise ValueError(f"{out} exists and isn't a bundle assemble.py made: refusing to replace it")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix=f".{out.name}.tmp-", dir=out.parent))  # new, empty, ours
+    guard_out(tmp)
+    w = Writer(tmp)
+    try:
+        video, frames, timing = show_piece(w, cfg, standin, S, calib)
+        real_show = w.pieces["show"]["source"] == "real"
+        camera = camera_block(cfg, S, timing, calib, real_show)
+        camF = frame_camera(camera, frames, video)
+        camF_standin = standin_camera_f(S, standin)
+        plates_piece(w, cfg, video)
+        fill_plates(w, video, camF)
+        court = court_piece(w, cfg, standin, S)
+        slots = cfg.get("players") or [{} for _ in S["freeze"]["players"]]
+        caps = cfg.get("caps") or {}
+        ids = [sl.get("id") or S["freeze"]["players"][i % len(S["freeze"]["players"])]["id"] for i, sl in enumerate(slots)]
+        if set(caps) - set(ids):
+            raise ValueError(f"caps for {sorted(set(caps) - set(ids))}: no such player (the pair is {ids})")
+        slots = [{**sl, "capPair": cfg.get("capPair"), "capBody": caps.get(pid), "capPsnr": cfg.get("capPsnr"),
+                  "protect": sl.get("protect", cfg.get("protect")), "seatDistance": (cfg.get("seat") or {}).get("distance")} for sl, pid in zip(slots, ids)]
+        players = [place_player(w, slot, i % len(S["freeze"]["players"]), standin, S, camF, camF_standin) for i, slot in enumerate(slots)]
+        splats_by_id = {p["id"]: sp.solid(sp.read_ply(tmp / p["splats"])) for p in players}
+        k1F = 0.0
+        if calib is not None:
+            f_real = (cfg.get("source") or {}).get("freezeSource", video["freezeSource"])
+            k1F = calib.k1[int(np.argmin(np.abs(np.asarray(calib.src) - f_real)))]
+        ball = ball_piece(w, cfg, S, players, camF, splats_by_id, k1F)
+        silhouette_piece(w, cfg, players, camF, k1F)
+        seat_cfg = {**SEAT, **(cfg.get("seat") or {})}
+        pair = np.mean([p["_"]["contact"] for p in players], 0)
+        pair_centre = [round(float(pair[0]), 3), 0.0, round(float(pair[1]), 3)]
+        seat_cfg_ = {**SEAT, **(cfg.get("seat") or {})}
+        for p in players:
+            c = p["_"].get("cap")
+            if c and "_whole" in c:
+                c["psnr"] = cap_cost(c.pop("_whole"), c.pop("_kept"), camF, pair_centre, seat_cfg_["distance"])
+        # the walking spots are the runtime's (seatmath.ts); these approximations only size the extras' maxRayAngle
+        spots = geo.viewing_spots(pair_centre, camF.C, [(p["bounds"]["min"], p["bounds"]["max"]) for p in players], seat_cfg["clear"])
+        seat = {"ray": "freeze", "distance": seat_cfg["distance"], "distanceRange": seat_cfg["distanceRange"],
+                "pairCentre": pair_centre, "clear": seat_cfg["clear"]}
+        w.piece("seat", any(w.pieces[f"player:{p['id']}"]["source"] == "real" for p in players) or bool(cfg.get("players")),
+                "Decision W: the pair's centre from the placed soles")
+        real_pair = any(w.pieces[f"player:{p['id']}"]["source"] == "real" for p in players)
+        eyes = [camF.C, seat_floor(camF, pair_centre, seat_cfg["distance"]) + [0.0, 1.2, 0.0], *[np.asarray(q, float) + [0.0, 1.6, 0.0] for q in spots]]
+        others = others_piece(w, cfg, standin, S, spots, camF, real_pair=real_pair, eyes=eyes)
+        if cfg.get("colorMatch"):
+            colour_piece(w, cfg, players, video, camF, k1F)
+            colour_extras(w, cfg, others)
+        if cfg.get("splatFormat") == "spz":
+            spz_piece(w, players, others, camF)
+        stands = stands_piece(w, cfg, standin, S)
+        audio = audio_piece(w, cfg, standin, S)
+        surround = sr.make_surround(w, cfg["surround"], camera, video, frames, stands, cfg["surround"].get("k1Show", k1F if calib is not None else None)) if cfg.get("surround") else None
+        light = {**LIGHT, **(cfg.get("light") or {})}
+        w.piece("light", True, "plan 3.3 levels (both sets)")
+        metrics = metrics_piece(cfg, calib_json, camF, frames, players)
+        meta_real = all(k in cfg for k in ("title", "caption", "credit"))
+        w.piece("text", meta_real, "config title, caption and credit" if meta_real else "stand-in text")
+        stand_in = [k for k, v in w.pieces.items() if v["source"] == "stand-in"]
+        court_json = {
+            "version": 1,
+            "title": cfg.get("title", "Court Side") + (" (hybrid: stand-in pieces)" if stand_in else ""),
+            "caption": cfg.get("caption", S["caption"]),
+            "label": LABEL,
+            "credit": cfg.get("credit", S["credit"]) + (f" Stand-in pieces: {', '.join(stand_in)}." if stand_in else ""),
+            "court": court, "camera": camera, "video": video, "light": light, "seat": seat,
+            "freeze": {"players": [{k: v for k, v in p.items() if k != "_"} for p in players],
+                       "ball": {k: v for k, v in ball.items() if k not in ("ballInBody", "_ballInBodyCount")},
+                       "others": others, "stands": stands, **({"ballInBody": ball["ballInBody"]} if ball.get("ballInBody") else {})},
+            "audio": audio, "metrics": metrics,
+            **({"surround": surround} if surround else {}),
+        }
+        if cfg.get("waivers"):
+            court_json["waivers"] = sorted(cfg["waivers"])  # a gate waived for a test build: never shippable
+        w.json("court.json", court_json, indent=1)
+        diag = {
+            "assembledAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "generator": "court-side assemble.py",
+            "standin": str(standin), "config": {k: v for k, v in cfg.items() if k in ("calib", "show", "extras")},
+            "pieces": w.pieces, "notes": w.notes,
+            "players": {p["id"]: {**{k: v for k, v in p["_"].items() if k not in ("sim", "contact")},
+                                  "similarity": p["_"]["sim"].as_json(), "contact": rnd(p["_"]["contact"], 3)} for p in players},
+            "splats": {"players": sum(p["_"]["count"] for p in players)},
+            "cameraF": {"centre": rnd(camF.C), "axis": rnd(camF.axis, 6), "f": round(camF.f, 2)},
+        }
+        if cfg.get("waivers"):
+            diag["waivers"] = dict(cfg["waivers"])
+        diag.update(w.diag)
+        w.json("assembly.json", diag, indent=1)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    prev = rotate_into(out, tmp)
+    diag["previous"] = str(prev) if prev else None
+    return diag
+
+
+# ---------------------------------------------------------------- validation
+
+def annexb_units(data: bytes) -> list[tuple[int, int]]:
+    """(nal type, offset of its payload) for every NAL unit of an Annex B stream."""
+    out, i, n = [], 0, len(data)
+    while True:
+        j = data.find(b"\x00\x00\x01", i)
+        if j < 0 or j + 3 >= n:
+            return out
+        out.append((data[j + 3] & 0x1F, j + 3))
+        i = j + 3
+
+
+def h264_info(path: Path) -> dict:
+    """The stream's codec string (from its SPS), its pictures (a slice whose first_mb_in_slice is 0 starts one: ue(v)
+    0 is a single 1 bit, the top bit of the byte after the NAL header, so a multi-slice picture counts once and an
+    AUD with nothing behind it counts nothing), which pictures are IDR, and its access units as the app splits them
+    (annexb.ts splitAnnexB: at each AUD, NAL 9): `badAus` counts units holding other than exactly one picture, and
+    pictures before the first AUD (the app drops those)."""
+    data = path.read_bytes()
+    units = annexb_units(data)
+    sps = next((o for t, o in units if t == 7), None)
+    codec = None if sps is None else "avc1.%02x%02x%02x" % (data[sps + 1], data[sps + 2], data[sps + 3])
+    frame, idr_frames, aus, pics_in_au, bad_aus, orphans = -1, [], 0, None, 0, 0
+    for t, o in units:
+        if t == 9:
+            if pics_in_au is not None and pics_in_au != 1:
+                bad_aus += 1
+            aus += 1
+            pics_in_au = 0
+        elif t in (1, 5) and o + 1 < len(data) and data[o + 1] & 0x80:
+            frame += 1
+            if t == 5:
+                idr_frames.append(frame)
+            if pics_in_au is None:
+                orphans += 1
+            else:
+                pics_in_au += 1
+    if pics_in_au is not None and pics_in_au != 1:
+        bad_aus += 1
+    return {"codec": codec, "frames": frame + 1, "idr": len(idr_frames), "idrFrames": idr_frames, "bytes": len(data),
+            "aus": aus, "badAus": bad_aus, "orphans": orphans}
+
+
+def decode_info(path: Path) -> dict:
+    """What a real decoder makes of the stream (ffprobe decodes every frame): the size of every frame, how many
+    decode, and any decoder complaints."""
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=width,height",
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+    sizes = [tuple(int(x) for x in ln.split(",")[:2]) for ln in p.stdout.split() if ln.count(",") >= 1]
+    first = sizes[0] if sizes else (None, None)
+    return {"width": first[0], "height": first[1], "decoded": len(sizes), "sizes": sorted(set(sizes)),
+            "errors": p.stderr.strip()[-300:] if p.returncode or p.stderr.strip() else ""}
+
+
+def glb_bounds(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """The box of every mesh position in a GLB, from its accessors' min/max (glTF requires them on POSITION).
+    Node transforms aren't applied, so a GLB that has any is refused: a bundle relief carries court-space vertices."""
+    data = Path(path).read_bytes()
+    if len(data) < 20 or data[:4] != b"glTF":
+        raise ValueError(f"{path}: not a GLB")
+    jlen = int.from_bytes(data[12:16], "little")
+    js = json.loads(data[20:20 + jlen])
+    if any(k in n for n in js.get("nodes", []) for k in ("matrix", "translation", "rotation", "scale")):
+        raise ValueError(f"{path}: has node transforms; bake them into the vertices (court space)")
+    los, his = [], []
+    for m in js.get("meshes", []):
+        for prim in m.get("primitives", []):
+            a = js["accessors"][prim["attributes"]["POSITION"]]
+            if "min" not in a or "max" not in a:
+                raise ValueError(f"{path}: a POSITION accessor without min/max")
+            los.append(a["min"])
+            his.append(a["max"])
+    if not los:
+        raise ValueError(f"{path}: no mesh positions")
+    return np.min(los, 0), np.max(his, 0)
+
+
+def check_stream(bundle: Path, label: str, s: dict, n_frames: int, seg: dict, errs: list, info: list) -> None:
+    """One encoded stream against what court.json says of it: codec, size, frame count (parsed and decoded) and an
+    IDR picture at every segment start."""
+    f = s["file"]
+    h, d = h264_info(bundle / f), decode_info(bundle / f)
+    info.append(f"{f} ({label}): {d['width']}x{d['height']}, {h['frames']} frames ({d['decoded']} decode), {h['idr']} IDR, "
+                f"{h['codec']}, {h['bytes'] / 1e6:.1f} MB")
+    if h["codec"] != str(s["codec"]).lower():
+        errs.append(f"{f}: its SPS says {h['codec']}, court.json says {s['codec']}")
+    if d["sizes"] != [(s["width"], s["height"])]:
+        got = ", ".join(f"{w_}x{h_}" for w_, h_ in d["sizes"]) or "nothing"
+        errs.append(f"{f}: frames decode at {got}, court.json says {s['width']}x{s['height']} for every frame")
+    if h["orphans"] or h["badAus"] or h["aus"] != h["frames"]:
+        errs.append(f"{f}: the app splits frames at each access unit delimiter (NAL 9): {h['aus']} delimiters for "
+                    f"{h['frames']} pictures, {h['orphans']} picture(s) before the first, {h['badAus']} unit(s) not holding exactly one")
+    if h["frames"] != n_frames or d["decoded"] != n_frames:
+        errs.append(f"{f}: {h['frames']} frame(s) in the stream and {d['decoded']} decode, its frames.json has {n_frames}")
+    if d["errors"]:
+        errs.append(f"{f}: the decoder complains: {d['errors']}")
+    starts = sorted({seg["pass1"][0], seg["pass2"][0], seg["resume"][0], *(e["frames"][0] for e in seg["eases"])})
+    missing = [x for x in starts if x not in set(h["idrFrames"])]
+    if missing:
+        errs.append(f"{f}: no IDR frame at segment start(s) {missing} (IDR frames at {h['idrFrames'][:12]})")
+
+
+def node_validate(bundle: Path, webxr: Path) -> list[str]:
+    """format.ts's own validators (validateCourt, validateFrames, validateCards when it exists) on the bundle."""
+    fmt = webxr / "src" / "court" / "format.ts"
+    script = (
+        "const [fmt, dir] = process.argv.slice(-2);"
+        "const fs = await import('node:fs'); const url = await import('node:url'); const path = await import('node:path');"
+        "const m = await import(url.pathToFileURL(fmt).href);"
+        "const read = (p) => JSON.parse(fs.readFileSync(path.join(dir, p), 'utf8'));"
+        "const court = read('court.json'); let errs = m.validateCourt(court);"
+        "const check = (c, tag) => { const frames = read(c.video.frames); let e = m.validateFrames(frames, c);"
+        "  if (!e.length && m.validateCards && c.video.cards) e = m.validateCards(read(c.video.cards), c, frames);"
+        "  return e.map((x) => tag + x); };"
+        "if (!errs.length) errs = check(court, '');"
+        "if (!errs.length && court.video.fallbacks && court.video.fallbacks.hz90 && m.chooseStream) errs = check(m.chooseStream(court, 'hz90'), 'hz90 ');"
+        "console.log(JSON.stringify(errs));"
+    )
+    p = subprocess.run(["node", "--experimental-transform-types", "--no-warnings", "--input-type=module", "-e", script, str(fmt), str(bundle)],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return [f"format.ts could not run: {p.stderr.strip()[-600:]}"]
+    return json.loads(p.stdout.strip().splitlines()[-1])
+
+
+LOD_PAIR_MAX = 300_000  # plan 8: a 250k/300k pair only with lod: true and a Q0 frame-time number
+
+
+def budget_verdict(total: int, pair: list) -> str:
+    """Why a bundle over SPLAT_BUDGET may still be tried: every pair body loads with LoD and none is past
+    LOD_PAIR_MAX ("lod ...": pending the headset's frame-time number), else what breaks the plan."""
+    if pair and all(lod for _, _, lod in pair) and all(n <= LOD_PAIR_MAX for _, n, _ in pair):
+        return "lod on the whole pair (" + ", ".join(f"{i} {n}" for i, n, _ in pair) + "): allowed with a Q0 frame-time number, still to come"
+    return "the pair " + ", ".join(f"{i} {n}{' lod' if lod else ''}" for i, n, lod in pair) + f" (over {SPLAT_BUDGET} needs lod: true on the pair, each <= {LOD_PAIR_MAX})"
+
+
+def validate(bundle: Path, webxr: Path, strict: bool = False) -> tuple[list[str], list[str], list[str]]:
+    """(errors, pending, info). Errors: format.ts's, missing or unreadable files, sizes and codecs that disagree with
+    court.json, coordinates that make no sense. Pending: what isn't measured or real yet."""
+    errs, pending, info = [], [], []
+    cj = bundle / "court.json"
+    if not cj.exists():
+        return [f"no court.json in {bundle}"], [], []
+    errs += [f"format.ts: {e}" for e in node_validate(bundle, webxr)]
+    court = json.loads(cj.read_text())
+    # every file named is there and readable
+    for rel in sorted(set(bundle_paths(court))):
+        p = bundle / rel
+        if rel.startswith("/") or ".." in Path(rel).parts or "://" in rel:
+            errs.append(f"{rel}: outside the bundle")
+        elif not p.is_file() or p.stat().st_size == 0:
+            errs.append(f"{rel}: missing or empty")
+    if errs:
+        return errs, pending, info
+    v = court["video"]
+    frames = json.loads((bundle / v["frames"]).read_text())
+    camF_v = frame_camera(court["camera"], frames, v)
+    check_stream(bundle, "main", v, len(frames), v["segments"], errs, info)
+    fb = v.get("fallbacks") or {}
+    if isinstance(fb.get("small"), dict):  # the same show frame for frame
+        check_stream(bundle, "small", fb["small"], len(frames), v["segments"], errs, info)
+    if isinstance(fb.get("hz90"), dict):  # its own frames and segments
+        hz = fb["hz90"]
+        check_stream(bundle, "hz90", hz, len(json.loads((bundle / hz["frames"]).read_text())), hz["segments"], errs, info)
+    import cv2
+    fz = cv2.imread(str(bundle / v["freeze"]), cv2.IMREAD_UNCHANGED)
+    cam = court["camera"]
+    if fz is None:
+        errs.append(f"{v['freeze']}: not an image")
+    else:
+        if abs(fz.shape[0] - fz.shape[1] * cam["height"] / cam["width"]) > 1:
+            errs.append(f"{v['freeze']}: {fz.shape[1]}x{fz.shape[0]} is not the source's aspect")
+        for k in ("freezeClean", "standsMask", "inpaintMask"):
+            if v.get(k):
+                im = cv2.imread(str(bundle / v[k]), cv2.IMREAD_UNCHANGED)
+                if im is None or im.shape[:2] != fz.shape[:2]:
+                    errs.append(f"{v[k]}: not the size of {v['freeze']}")
+    errs += sr.check_block(bundle, court.get("surround"), info)
+    # players
+    total, pair = 0, []
+    for p in court["freeze"]["players"]:
+        s = sp.read_splats(bundle / p["splats"])
+        r = sp.read_splats(bundle / p["reality"])
+        total += len(s)
+        pair.append((p["id"], len(s), bool(p.get("lod"))))
+        if len(r) != len(s):
+            errs.append(f"{p['reality']}: {len(r)} Gaussians, {p['splats']} has {len(s)}")
+        P = sp.solid(s)
+        lo, hi = np.percentile(P, 0.5, 0), np.percentile(P, 99.5, 0)
+        if abs(lo[1]) > 0.03:
+            errs.append(f"{p['id']}: lowest points at y = {lo[1]:.3f} m, not on the floor")
+        if not 1.5 <= hi[1] <= 3.3:
+            errs.append(f"{p['id']}: top at {hi[1]:.2f} m: not a person's height")
+        if abs(lo[0]) > LENGTH / 2 + 2 or abs(lo[2]) > WIDTH / 2 + 2:
+            errs.append(f"{p['id']}: stands off the court at ({lo[0]:.1f}, {lo[2]:.1f})")
+        pos, idx = sp.read_glb((bundle / p["proxy"]).read_bytes())
+        if not len(pos) or idx.max() >= len(pos):
+            errs.append(f"{p['proxy']}: an empty or broken mesh")
+            continue
+        tri = pos[idx.reshape(-1, 3)].astype(float)
+        # the sampling as camera F (and the seat on its ray) sees it: each edge across F's ray through the triangle;
+        # a grid cell's two sides are the two shorter of those (the third is its diagonal), and the longer side counts
+        ray = tri.mean(1) - camF_v.C
+        ray /= np.linalg.norm(ray, axis=1, keepdims=True)
+        edge = tri - np.roll(tri, 1, axis=1)
+        across = edge - np.einsum("tek,tk->te", edge, ray)[..., None] * ray[:, None, :]
+        cell = float(np.median(np.sort(np.linalg.norm(across, axis=2), axis=1)[:, 1]))
+        info.append(f"{p['proxy']}: {len(pos)} vertices, {len(idx) // 3} triangles, cells {cell * 100:.2f} cm across F's rays")
+        if cell > PROXY_CELL_M * 1.1:
+            errs.append(f"{p['proxy']}: cells {cell * 100:.2f} cm: P8 needs about {PROXY_CELL_M * 100:.1f} cm at the silhouettes")
+    bib = court["freeze"].get("ballInBody")
+    if bib:
+        holder = next((p for p in court["freeze"]["players"] if p["id"] == bib), None)
+        ball = court["freeze"]["ball"]
+        if holder is None:
+            errs.append(f"freeze.ballInBody: {bib} isn't one of the pair")
+        else:
+            s = sp.read_splats(bundle / holder["splats"])
+            n = int(((np.linalg.norm(s.pos.astype(float) - np.asarray(ball["centre"], float), axis=1) < 1.15 * ball["radius"]) & (s.alpha > 0.5)).sum())
+            info.append(f"ballInBody {bib}: {n} solid splats within 1.15 x the ball's radius of its centre")
+            if n < BALL_IN_BODY_MIN:
+                errs.append(f"freeze.ballInBody: {bib}'s splats hold no ball at the ball's centre ({n} solid splats there, want >= {BALL_IN_BODY_MIN})")
+        if any(e.get("player") == bib for e in court["freeze"]["ball"].get("erase", [])):
+            errs.append(f"freeze.ballInBody: the ball would erase {bib}'s splats round it, the very ball they hold")
+    asm_pieces = json.loads((bundle / "assembly.json").read_text()).get("pieces", {}) if (bundle / "assembly.json").exists() else {}
+    real_pair = any(asm_pieces.get(f"player:{p['id']}", {}).get("source") == "real" for p in court["freeze"]["players"])
+    for o in court["freeze"]["others"]:
+        problems = []
+        if o["file"].endswith(".glb"):
+            try:
+                lo3, hi3 = glb_bounds(bundle / o["file"])
+            except ValueError as e:
+                errs.append(f"{o['id']}: {e}")
+                continue
+            lo, top = float(lo3[1]), float(hi3[1])
+            foot_xz = (lo3[[0, 2]] + hi3[[0, 2]]) / 2  # a relief is thin: its box's middle stands on its foot
+            c = (lo3 + hi3) / 2
+        else:
+            s = sp.read_splats(bundle / o["file"])
+            total += len(s)
+            P = sp.solid(s)
+            lo, top = float(np.percentile(P[:, 1], 0.5)), float(np.percentile(P[:, 1], 99.5))
+            foot_xz = sp.contact_points_xz(P)
+            c = P.mean(0)
+        off = float(np.linalg.norm(foot_xz - [o["foot"][0], o["foot"][2]]))
+        if off > 0.3:
+            problems.append(f"its soles are {off:.2f} m from its foot point {o['foot']}")
+        if abs(lo) > 0.05:
+            problems.append(f"lowest points at y = {lo:.3f} m, not on the floor")
+        hf = asm_pieces.get(f"extra:{o['id']}", {}).get("heightFreeze")
+        if hf:
+            # in a stance at F: held to the height measured on the frame that posed it, not the standing height
+            mm = np.atleast_1d(np.asarray(hf["measured_m"], float))
+            a_, b_ = float(mm.min()), float(mm.max())
+            info.append(f"{o['id']}: {top:.3f} m tall at F, its measured freeze height {a_}-{b_} m ({hf.get('how', 'measured')})")
+            if not a_ * 0.97 <= top <= b_ * 1.03:
+                problems.append(f"{top:.2f} m tall, its measured freeze height is {a_}-{b_} m (P12: 3%)")
+        elif o.get("height") and abs(top / o["height"] - 1) > 0.03:
+            problems.append(f"{top:.2f} m tall, court.json says {o['height']} m (P12: 3%)")
+        if abs(c[0]) > LENGTH / 2 + 3 or abs(c[2]) > WIDTH / 2 + 3:
+            problems.append(f"stands off the court at ({c[0]:.1f}, {c[2]:.1f})")
+        stand_in = asm_pieces.get(f"extra:{o['id']}", {}).get("source") == "stand-in"
+        if stand_in and real_pair:
+            errs.append(f"{o['id']}: a stand-in extra in a bundle whose pair is real (an extra without a placed real body gets no figure)")
+        for pr in problems:
+            (pending if stand_in and not strict else errs).append(f"{o['id']}: {pr}" + (" (a stand-in)" if stand_in else ""))
+    info.append(f"splats: {total} in all ({len(court['freeze']['players'])} players + {len(court['freeze']['others'])} extras), budget {SPLAT_BUDGET}")
+    if total > SPLAT_BUDGET:
+        verdict = budget_verdict(total, pair)
+        (pending if verdict.startswith("lod") else errs).append(f"splats: {total} Gaussians is over the {SPLAT_BUDGET} budget (plan 8): {verdict}")
+    b = court["freeze"]["ball"]
+    near = min(geo.box_distance_xz(b["centre"], (p["bounds"]["min"], p["bounds"]["max"])) for p in court["freeze"]["players"])
+    if near > 0.5 or not 0.1 < b["centre"][1] < 3.5:
+        errs.append(f"freeze.ball.centre {b['centre']}: not with a player")
+    # the seat: F's ray passes the pair
+    eases = v["segments"]["eases"]
+    fF = frames[eases[0]["frames"][1]]
+    C = np.asarray(cam["centre"], float)
+    ax = geo.quat_to_matrix(fF["q"])[:, 2]
+    pc = np.asarray(court["seat"]["pairCentre"], float)
+    h = ax[[0, 2]] / np.linalg.norm(ax[[0, 2]])
+    d = (pc - C)[[0, 2]]
+    miss = abs(float(h[0] * d[1] - h[1] * d[0]))
+    if float(h @ d) <= 0:
+        errs.append("seat.pairCentre: it is behind camera F")
+    info.append(f"seat: camera F's ray passes {miss:.2f} m from the pair's centre (on the floor)")
+    if miss > 2.0:
+        errs.append(f"seat.pairCentre: camera F's ray passes {miss:.2f} m from it")
+    # audio
+    a = court["audio"]
+    try:
+        bed = au.loudness(bundle / a["bed"])
+        info.append(f"{a['bed']}: {bed['I']:.1f} LUFS, {bed['TP']:.1f} dBTP")
+        if abs(bed["I"] - -23) > 1 or bed["TP"] > -1:
+            errs.append(f"{a['bed']}: {bed['I']:.1f} LUFS / {bed['TP']:.1f} dBTP (P19: -23 +/- 1, <= -1 dBTP)")
+    except RuntimeError as e:
+        errs.append(str(e))
+    # what isn't real or measured yet
+    m = court["metrics"]
+    for k in ("median", "p95"):
+        if m["reprojDeg"].get(k) is None:
+            pending.append(f"metrics.reprojDeg.{k}")
+    for grp in ("heldOutPsnrVsGenerated", "seatPsnr"):
+        for k, x in m[grp].items():
+            if x is None:
+                pending.append(f"metrics.{grp}.{k}")
+    asm = bundle / "assembly.json"
+    if asm.exists():
+        A_ = json.loads(asm.read_text())
+        for pid, d in A_["players"].items():
+            rr = d.get("run")
+            if not rr:
+                if A_["pieces"].get(f"player:{pid}", {}).get("source") == "real":
+                    (errs if strict else pending).append(f"{pid} (P42): not measured: no freeze run report (focalHeld, focal, IoU) for this body")
+                continue
+            # P42: the real view really trained the freeze. geo's court_p42.py judges it beside the recon (p42.json): the
+            # focal held at the run's FOCAL, and the TRAINED render covering the real mask at K (iouFinal, the ignored
+            # pixels left out); iouSolve is only the pre-training fit's sanity check
+            p = rr.get("p42")
+            if not p:
+                errs.append(f"{pid} (P42): no p42.json beside the freeze's recon: run geo's court_p42.py on it")
+            else:
+                if not p.get("focalHeld"):
+                    errs.append(f"{pid} (P42): the recon didn't hold the calibrated focal (focalHeld {p.get('focalHeld')})")
+                if p.get("FOCAL") is None or p.get("focal") is None or abs(p["focal"] - p["FOCAL"]) > 0.5:
+                    errs.append(f"{pid} (P42): the recon's focal {p.get('focal')} isn't the run's FOCAL {p.get('FOCAL')}")
+                if (p.get("iouFinal") or 0) < 0.95:
+                    errs.append(f"{pid} (P42): the trained render's IoU with the real mask {p.get('iouFinal')} is under 0.95")
+                if not p.get("pass") and not any(e.startswith(f"{pid} (P42)") for e in errs):
+                    errs.append(f"{pid} (P42): court_p42.py says it fails ({json.dumps(p)})")
+            info.append(f"{pid}: {rr['variant']}-{rr['cap']}, real-frame PSNR {rr.get('sourcePsnr')}, face {rr.get('facePsnr')}, "
+                        f"held-out {rr.get('heldOutPsnr')}, P42 iouFinal {(p or {}).get('iouFinal')} (iouSolve {(p or {}).get('iouSolve', rr.get('iou'))}), "
+                        f"focal {(p or {}).get('focal')} vs FOCAL {(p or {}).get('FOCAL')}")
+        for k, pc_ in json.loads(asm.read_text())["pieces"].items():
+            if pc_["source"] not in ("real", "imagined"):  # imagined is by design (the crowd's bowl), not pending
+                pending.append(f"{k}: {pc_['detail']}")
+    waived = set(court.get("waivers") or [])
+    if waived:
+        why = (json.loads(asm.read_text()).get("waivers") or {}) if asm.exists() else {}
+        kept = []
+        for e in errs:
+            m = re.search(r"\((P\d+)\)", e)
+            if m and m.group(1) in waived:
+                info.append(f"WAIVED {m.group(1)} ({why.get(m.group(1), 'no reason recorded')}): {e}")
+            else:
+                kept.append(e)
+        errs = kept
+    if strict and pending:
+        errs += [f"pending: {x}" for x in pending]
+    return errs, pending, info
+
+
+def render_splats(cam: geo.Cam, bodies: list, min_alpha: float = 0.5, max_r: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """A plain look at Gaussians through a camera, to check by eye: each solid one (alpha >= min_alpha) is a flat disc
+    of its base colour at its centre's pixel, two of its largest standard deviations wide (at most max_r pixels), and
+    the nearest wins each pixel. Returns (rgb 0-1, per pixel the index into `bodies`, -1 where none)."""
+    h, w = cam.h, cam.w
+    zbuf = np.full(h * w, np.inf)
+    groups = []
+    for i, s in enumerate(bodies):
+        keep = s.alpha >= min_alpha
+        u, v, z = cam.project(s.pos[keep].astype(float))
+        ok = (z > 1e-6) & (u > -max_r) & (u < w + max_r) & (v > -max_r) & (v < h + max_r)
+        r = np.clip(np.rint(2 * cam.f * np.exp(s.scales[keep][ok].astype(float)).max(1) / z[ok]), 0, max_r).astype(int)
+        groups.append((i, np.rint(u[ok]).astype(int), np.rint(v[ok]).astype(int), z[ok], r, s.rgb[keep][ok]))
+
+    def discs():
+        for i, u, v, z, r, rgb in groups:
+            for rad in np.unique(r):
+                sel = r == rad
+                for dy in range(-rad, rad + 1):
+                    for dx in range(-rad, rad + 1):
+                        if dx * dx + dy * dy > rad * rad + rad:
+                            continue
+                        x, y = u[sel] + dx, v[sel] + dy
+                        on = (x >= 0) & (x < w) & (y >= 0) & (y < h)
+                        yield i, (y[on] * w + x[on]), z[sel][on], rgb[sel][on]
+
+    for _, pix, z, _ in discs():
+        np.minimum.at(zbuf, pix, z)
+    out = np.zeros((h * w, 3))
+    ids = np.full(h * w, -1)
+    for i, pix, z, rgb in discs():
+        win = z <= zbuf[pix]
+        out[pix[win]] = rgb[win]
+        ids[pix[win]] = i
+    return out.reshape(h, w, 3), ids.reshape(h, w)
+
+
+def undistort_image(img: np.ndarray, cam: geo.Cam, k1: float) -> np.ndarray:
+    """A raw frame (or mask) resampled onto the pinhole grid of `cam` (its size): the calibration's lens puts the
+    pinhole pixel's normalised point xn at xn (1 + k1 |xn|^2)."""
+    import cv2
+
+    if k1 == 0:
+        return img.copy()
+    u, v = np.meshgrid(np.arange(cam.w, dtype=np.float32), np.arange(cam.h, dtype=np.float32))
+    xn, yn = (u - cam.cx) / cam.f, (v - cam.cy) / cam.f
+    d = 1 + k1 * (xn * xn + yn * yn)
+    return cv2.remap(img, (cam.cx + cam.f * xn * d).astype(np.float32), (cam.cy + cam.f * yn * d).astype(np.float32),
+                     cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def silhouette_piece(w: Writer, cfg: dict, players: list, camF: geo.Cam, k1F: float, width: int = 960) -> dict:
+    """Each player's splats against their own mask by true coverage (coverage_image: 1 - prod(1 - alpha G) >= 0.5,
+    the cut and placed body that ships): at their freeze run's own crop when the config has its clip folder
+    (court-run.json's still camera, masks/<K>.png with the ball, ignore/<K>.png's pixels left out), else against
+    players[].maskF at F (the raw source frame, undistorted with F's k1). A placement check by numbers."""
+    import cv2
+
+    got = {}
+    for p in players:
+        slot = cfg_player(cfg, p["id"])
+        s = sp.read_ply(w.root / p["splats"])
+        cr = expand(slot["courtRun"]) if slot.get("courtRun") else None
+        run = json.loads(cr.read_text()) if cr is not None and cr.exists() else None
+        mask = cr.parent / "masks" / f"{int(run['K']):06d}.png" if run and "K" in run else None
+        if mask is not None and mask.exists():
+            cam = still_camera(run)
+            m = cv2.imread(str(mask), cv2.IMREAD_GRAYSCALE) >= 128
+            ig_path = cr.parent / "ignore" / mask.name
+            ig = cv2.imread(str(ig_path), cv2.IMREAD_GRAYSCALE) >= 128 if ig_path.exists() else np.zeros_like(m)
+            on = sp.coverage_image(s, cam, (0.0, 0.0, float(cam.w), float(cam.h)), cam.w, cam.h) >= 0.5
+            union = int(((on | m) & ~ig).sum())
+            iou, against = (float(((on & m) & ~ig).sum()) / union if union else 0.0), "crop"
+        elif slot.get("maskF"):
+            raw = cv2.imread(str(expand(slot["maskF"])), cv2.IMREAD_GRAYSCALE)
+            if raw is None:
+                w.notes.append(f"player {p['id']}: its mask at F ({slot['maskF']}) can't be read: no silhouette check")
+                continue
+            cam = camF.scaled(width)
+            m = cv2.resize(undistort_image(raw, camF.scaled(raw.shape[1]), k1F), (cam.w, cam.h), interpolation=cv2.INTER_AREA) >= 128
+            on = sp.coverage_image(s, cam, (0.0, 0.0, float(cam.w), float(cam.h)), cam.w, cam.h) >= 0.5
+            union = int((on | m).sum())
+            iou, against = (float((on & m).sum()) / union if union else 0.0), "maskF"
+        else:
+            continue
+        got[p["id"]] = w.pieces[f"player:{p['id']}"]["silhouetteIoU"] = round(iou, 4)
+        w.pieces[f"player:{p['id']}"]["silhouetteAgainst"] = against
+    if got:
+        w.notes.append("silhouette IoU at F, the splats' coverage vs the mask: " + ", ".join(
+            f"{k} {v} ({w.pieces[f'player:{k}']['silhouetteAgainst']})" for k, v in got.items()))
+    return got
+
+
+def picture_at_f(root: Path, video: dict) -> np.ndarray:
+    """The show's own picture at F as the viewer decodes it: the live region of the main stream's F frame (BT.709,
+    limited range), sRGB 0-1."""
+    x, y, w_, h_ = video["regions"]["live"]
+    n = video["segments"]["eases"][0]["frames"][1]
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(root / video["file"]), "-vf",
+                          f"select=eq(n\\,{n}),crop={w_}:{h_}:{x}:{y},scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24",
+                          "-frames:v", "1", "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h_, w_, 3).astype(float) / 255
+
+
+def mask_at_f(slot: dict, camF: geo.Cam, k1F: float, w_: int, h_: int) -> np.ndarray | None:
+    """A player's own mask in camera F's (undistorted) image at w_ x h_, eroded 2 px off its edge: their SAM mask at F
+    (maskF, the raw frame), else their freeze run's crop mask set into the raw frame. None without either."""
+    import cv2
+
+    raw = None
+    if slot.get("maskF"):
+        raw = cv2.imread(str(expand(slot["maskF"])), cv2.IMREAD_GRAYSCALE)
+    elif slot.get("courtRun") and expand(slot["courtRun"]).exists():
+        run = json.loads(expand(slot["courtRun"]).read_text())
+        m = cv2.imread(str(expand(slot["courtRun"]).parent / "masks" / f"{int(run['K']):06d}.png"), cv2.IMREAD_GRAYSCALE)
+        if m is not None:
+            x0, y0, cw, ch = (int(v) for v in run["crop"])
+            raw = np.zeros((camF.h, camF.w), np.uint8)
+            raw[y0:y0 + ch, x0:x0 + cw] = m[: camF.h - y0, : camF.w - x0]
+    if raw is None:
+        return None
+    m = cv2.resize(undistort_image(raw, camF.scaled(raw.shape[1]), k1F), (w_, h_), interpolation=cv2.INTER_AREA) >= 128
+    return cv2.erode(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+
+
+def colour_piece(w: Writer, cfg: dict, players: list, video: dict, camF: geo.Cam, k1F: float) -> None:
+    """--color-match for the pair: each body's render at F against the show's picture at F (colour_match); a body
+    recoloured gets its freeze.ply and its reality copy rewritten (the same Gaussians left unseen)."""
+    pic = picture_at_f(w.root, video)
+    cam = camF.scaled(pic.shape[1])
+    for p in players:
+        mask = mask_at_f(cfg_player(cfg, p["id"]), camF, k1F, pic.shape[1], pic.shape[0])
+        if mask is None:
+            w.notes.append(f"colour: {p['id']} has no mask at F: not matched")
+            continue
+        s = sp.read_ply(w.root / p["splats"])
+        fixed, rep = colour_match(s, cam, pic, mask, fit=cfg.get("colorMatch") != "measure")
+        w.pieces[f"player:{p['id']}"]["colour"] = rep
+        if fixed is not None:
+            old = sp.read_ply(w.root / p["reality"])
+            seen = (old.dc == s.dc).all(1) & (old.rest == s.rest).all(1)
+            sp.write_ply(w.path(p["splats"]), fixed)
+            sp.write_ply(w.path(p["reality"]), sp.reality(fixed, seen))
+        w.notes.append(f"colour at F, {p['id']}: " + colour_note(rep, measured_only=cfg.get("colorMatch") == "measure"))
+
+
+def colour_extras(w: Writer, cfg: dict, others: list) -> None:
+    """--color-match for the extras posed from camera C: each against C's own frame that posed it (the extra's
+    pose.frame; cameras.C's calibration, cameras.CFrames/<frame>.jpg, undistorted with that frame's k1), seen through
+    C over a crop round the extra, inside its own solid render."""
+    import cv2
+
+    cams = cfg.get("cameras") or {}
+    for o in others:
+        if o.get("pose") != "C" or not str(o.get("file", "")).endswith(".ply"):
+            continue
+        man = expand(cfg["extras"]) / o["id"] / "extra.json" if cfg.get("extras") else None
+        mj = json.loads(man.read_text()) if man is not None and man.exists() else {}
+        frame = (mj.get("pose") or {}).get("frame")
+        mask_c = safe_rel(mj["maskC"]) if mj.get("maskC") else None
+        if frame is None or not (cams.get("C") and cams.get("CFrames")):
+            w.notes.append(f"colour: extra {o['id']} has no camera C frame to match (pose.frame, cameras.C, cameras.CFrames): not matched")
+            continue
+        cal = json.loads(expand(cams["C"]).read_text())
+        fr = next((f for f in cal["frames"] if f.get("file") == f"{int(frame):06d}.jpg" or f.get("source_frame") == frame), None)
+        img = cv2.imread(str(expand(cams["CFrames"]) / f"{int(frame):06d}.jpg"), cv2.IMREAD_COLOR)
+        if fr is None or img is None:
+            w.notes.append(f"colour: extra {o['id']}: camera C's frame {frame} isn't in the calibration or the frames: not matched")
+            continue
+        W, H = (int(v) for v in cal["image_size"])
+        cam = geo.Cam(np.asarray(fr.get("C", cal["C"]), float), np.asarray(fr["R"], float).T, float(fr["f"]), (W - 1) / 2, (H - 1) / 2, W, H)
+        pic = undistort_image(img[..., ::-1], cam.scaled(img.shape[1]), float(fr.get("k1", 0.0))).astype(float) / 255
+        s = sp.read_ply(w.root / o["file"])
+        u, v, z = cam.project(s.pos[s.alpha > 0.5].astype(float))
+        u, v = u[z > 0], v[z > 0]
+        x0, y0 = max(0, int(np.floor(u.min())) - 40), max(0, int(np.floor(v.min())) - 40)
+        x1, y1 = min(W, int(np.ceil(u.max())) + 40), min(H, int(np.ceil(v.max())) + 40)
+        sub = geo.Cam(cam.C, cam.R, cam.f, cam.cx - x0, cam.cy - y0, x1 - x0, y1 - y0)
+        al = sp.render(s, sub)[1]
+        mask = al > 0.98
+        if mask_c is not None:  # the extra's own mask in C's raw frame: whoever stands in front of it is left out
+            raw = cv2.imread(str(man.parent / mask_c), cv2.IMREAD_GRAYSCALE)
+            mask &= undistort_image(raw, cam.scaled(raw.shape[1]), float(fr.get("k1", 0.0)))[y0:y1, x0:x1] >= 128
+        mask = cv2.erode(mask.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        fixed, rep = colour_match(s, sub, pic[y0:y1, x0:x1], mask, fit=mask_c is not None and cfg.get("colorMatch") != "measure")
+        w.pieces.setdefault(f"extra:{o['id']}", {"source": "real", "detail": ""})["colour"] = {**rep, "against": f"camera C frame {frame}"}
+        if fixed is not None:
+            old = sp.read_ply(w.root / o["reality"])
+            seen = (old.dc == s.dc).all(1) & (old.rest == s.rest).all(1)
+            sp.write_ply(w.path(o["file"]), fixed)
+            sp.write_ply(w.path(o["reality"]), sp.reality(fixed, seen))
+        w.notes.append(f"colour at C{frame}, extra {o['id']}: " + colour_note(rep, measured_only=mask_c is None or cfg.get("colorMatch") == "measure")
+                       + ("" if mask_c else " (measured only: no maskC of it in that frame, so anyone in front of it counts)"))
+
+
+def colour_note(rep: dict, measured_only: bool = False) -> str:
+    b, a = rep["before"]["deltaE"], (rep.get("after") or {}).get("deltaE")
+    inside = b["median"] <= COLOUR_BAR["median"] and b["p90"] <= COLOUR_BAR["p90"]
+    if not a:
+        return f"dE2000 median {b['median']} p90 {b['p90']} ({'inside the bar: left alone' if inside or not measured_only else 'past the bar'})"
+    verdict = "fit rejected, colours left as they were" if rep["fit"]["rejected"] else "fit applied"
+    return f"dE2000 median {b['median']} p90 {b['p90']}; with a linear-RGB fit {a['median']} / {a['p90']} ({verdict})"
+
+
+COLOUR_BAR = {"median": 2.0, "p90": 5.0}  # CIEDE2000 between the 3D at F and the picture it takes over from
+
+
+def colour_stats(a: np.ndarray, r: np.ndarray) -> dict:
+    """The 3D's colours `a` against the picture's `r` (N x 3 sRGB): per-channel mean and std of each, CIEDE2000."""
+    de = col.delta_e2000(col.srgb_to_lab(a), col.srgb_to_lab(r))
+    return {"pixels": len(a), "mean3D": rnd(a.mean(0), 4), "std3D": rnd(a.std(0), 4), "meanPicture": rnd(r.mean(0), 4),
+            "stdPicture": rnd(r.std(0), 4), "deltaE": {"median": round(float(np.median(de)), 3), "p90": round(float(np.percentile(de, 90)), 3)}}
+
+
+def colour_match(s: sp.Splats, cam: geo.Cam, ref: np.ndarray, mask: np.ndarray, fit: bool = True) -> tuple[sp.Splats | None, dict]:
+    """The hand-off's colour check: the splats rendered through `cam` against the picture `ref` (H x W x 3 sRGB, the
+    camera's size) over `mask` where the render is solid. Past COLOUR_BAR, a 3x3 + offset is fitted in linear RGB
+    from the base colours' render (SH degree 0: what the transform will change) to the picture, both blurred by 2 px
+    (a colour cast is broad; texture a pixel or two off isn't a colour, and fitting it would only flatten the body),
+    then applied to the splats' base colours (assemble_colour.recolour) and the full render measured again. The fit is
+    kept only when neither the median nor the p90 gets worse and the body keeps at least 85% of the picture's colour
+    spread in every channel. Returns (the recoloured splats, or None; the report)."""
+    import cv2
+
+    rgb, al = sp.render(s, cam)
+    use = mask & (al > 0.98)
+    rep = {"before": colour_stats(rgb[use], ref[use])}
+    d = rep["before"]["deltaE"]
+    if not fit or (d["median"] <= COLOUR_BAR["median"] and d["p90"] <= COLOUR_BAR["p90"]):
+        return None, rep
+    base = sp.render(s, cam, view=False)[0]
+    blur = lambda x: cv2.GaussianBlur(x.astype(np.float32), (0, 0), 2.0).astype(float)  # noqa: E731
+    M, b = col.fit_affine(col.srgb_to_linear(blur(base)[use]), col.srgb_to_linear(blur(ref)[use]))
+    fixed = col.recolour(s, M, b)
+    rgb2, _ = sp.render(fixed, cam)
+    rep["after"] = colour_stats(rgb2[use], ref[use])
+    a = rep["after"]["deltaE"]
+    # kept only if it helps and doesn't flatten the body: a fit pulled by texture that sits a pixel off shrinks the
+    # colours toward their mean (lower dE, a greyer body); a true cast keeps the picture's own spread
+    sd_pic = np.asarray(rep["after"]["stdPicture"])
+    flat = (sd_pic >= 0.02) & (np.asarray(rep["after"]["std3D"]) < 0.85 * sd_pic)  # a near-flat channel can't flatten
+    rejected = bool(a["median"] > d["median"] or a["p90"] > d["p90"] or flat.any())
+    rep["fit"] = {"M": np.round(M, 5).tolist(), "b": rnd(b, 5), "space": "linear RGB, the splats' base colours", "rejected": rejected}
+    return (None if rejected else fixed), rep
+
+
+def check_frames(bundle: Path, out_dir: Path, width: int = 768, at: list | None = None) -> list[Path]:
+    """Small JPEGs of the assembled show to look at by eye: the live region at the middle of pass 1 (the watch), the
+    middle of the first ease, its last frame (F), the make (the first show frame nearest makeSource), the first show
+    frame nearest each source frame in `at`, and freeze.png. Decoded by ffmpeg from the bundle's own stream."""
+    court = json.loads((bundle / "court.json").read_text())
+    v = court["video"]
+    seg = v["segments"]
+    e0 = seg["eases"][0]["frames"]
+    picks = {"watch": (seg["pass1"][0] + seg["pass1"][1]) // 2, "mid-ease": (e0[0] + e0[1]) // 2, "at-F": e0[1]}
+    if at or v.get("makeSource") is not None:
+        srcs = [fr["src"] for fr in json.loads((bundle / v["frames"]).read_text())]
+
+        def nearest(src: float) -> int:
+            return min(range(len(srcs)), key=lambda i: (abs(srcs[i] - src), i))
+
+        if v.get("makeSource") is not None:
+            picks["make"] = nearest(v["makeSource"])
+        for src in at or []:
+            picks[f"src{int(src):04d}"] = nearest(src)
+    x, y, rw, rh = v["regions"]["live"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    made = []
+    for name, n in picks.items():
+        dst = out_dir / f"{name}-show{n:04d}.jpg"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(bundle / v["file"]), "-vf",
+                        f"select=eq(n\\,{n}),crop={rw}:{rh}:{x}:{y},scale={width}:-2", "-frames:v", "1", "-q:v", "3", str(dst)], check=True)
+        made.append(dst)
+    dst = out_dir / "freeze-png.jpg"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(bundle / v["freeze"]), "-vf", f"scale={width}:-2", "-q:v", "3", str(dst)], check=True)
+    return made + [dst] + splats_at_f(bundle, out_dir, picks["at-F"])
+
+
+def splats_at_f(bundle: Path, out_dir: Path, n: int, width: int = 1280) -> list[Path]:
+    """The freeze's splats seen from camera F under the picture at F (freeze.png): the picture with the splats over it
+    at half strength, and the picture with each body's outline (players cyan, magenta; extras yellow; the ball
+    orange). Show frame n is F's (for the names)."""
+    import cv2
+
+    court = json.loads((bundle / "court.json").read_text())
+    v, fz = court["video"], court["freeze"]
+    frames = json.loads((bundle / v["frames"]).read_text())
+    cam = frame_camera(court["camera"], frames, v).scaled(width)
+    files = [p["splats"] for p in fz["players"]] + [o["file"] for o in fz.get("others", []) if str(o.get("file") or "").endswith((".ply", ".spz"))]
+    rgb, ids = render_splats(cam, [sp.read_splats(bundle / f) for f in files])
+    pic = cv2.resize(cv2.imread(str(bundle / v["freeze"]), cv2.IMREAD_COLOR), (cam.w, cam.h), interpolation=cv2.INTER_AREA)
+    under = pic.astype(np.float64)
+    on = ids >= 0
+    under[on] = 0.5 * under[on] + 0.5 * 255 * rgb[on][:, ::-1]
+    outline = pic.copy()
+    colours = [(255, 255, 0), (255, 0, 255)] + [(0, 255, 255)] * len(files)  # BGR
+    for i in range(len(files)):
+        m = (ids == i).astype(np.uint8)
+        edge = cv2.dilate(m - cv2.erode(m, np.ones((3, 3), np.uint8)), np.ones((2, 2), np.uint8)) > 0
+        outline[edge] = colours[i]
+    b = fz.get("ball")
+    if b:
+        u, vv, z = cam.project(np.asarray(b["centre"], float))
+        if z > 0:
+            cv2.circle(outline, (int(round(float(u))), int(round(float(vv)))), max(1, int(round(cam.f * b["radius"] / float(z)))), (0, 140, 255), 2)
+    made = []
+    for name, img in (("under", under), ("outline", outline)):
+        dst = out_dir / f"at-F-splats-{name}-show{n:04d}.jpg"
+        cv2.imwrite(str(dst), np.clip(img, 0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 88])
+        made.append(dst)
+    return made
+
+
+def report(bundle: Path) -> str:
+    asm = json.loads((bundle / "assembly.json").read_text())
+    court = json.loads((bundle / "court.json").read_text())
+    lines = [f"bundle {bundle} (assembled {asm['assembledAt']})"]
+    for k, v in asm["pieces"].items():
+        lines.append(f"  {v['source']:8} {k}: {v['detail']}")
+    for pid, d in asm["players"].items():
+        pl = d["placement"]
+        lines.append(f"  place {pid}: {pl['mode']} scale {pl.get('scale', 1):.3f}"
+                     + (f" tilt {pl['tilt_deg']:.2f} deg" if "tilt_deg" in pl else "")
+                     + (f", soles {d['footError']['m'] * 100:.1f} cm from {d['footError']['against']}'s feet" if "footError" in d else "")
+                     + f", height {d['height']:.2f} m, {d['count']} splats")
+    lines.append(f"  seat: pair centre {court['seat']['pairCentre']}, D' {court['seat']['distance']} m")
+    lines += [f"  note: {n}" for n in asm["notes"]]
+    return "\n".join(lines)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--config", required=True, help="the private assemble.json (outside the repo)")
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--standin", default=str(DEFAULT_STANDIN))
+    ap.add_argument("--webxr", default=str(WEBXR), help="the apps/webxr checkout whose format.ts validates the bundle")
+    ap.add_argument("--validate", action="store_true", help="check the assembled bundle (no assembly)")
+    ap.add_argument("--strict", action="store_true", help="with --validate: anything pending fails too")
+    ap.add_argument("--cap-pair", type=int, default=None, help="cut each pair body to this many Gaussians by contribution at F (plan 8: 200000)")
+    ap.add_argument("--cap", action="append", default=[], metavar="ID=N", help="cut that pair body to N Gaussians (its own budget; repeat per body)")
+    ap.add_argument("--cap-extras", type=int, default=None, help="one budget for all the extras together, split by what a judge sees of them")
+    ap.add_argument("--cap-extras-floor", type=int, default=None, help=f"with --cap-extras: the fewest an extra keeps (default {EXTRAS_FLOOR})")
+    ap.add_argument("--protect", choices=["head"], default=None, help="with a cap: keep the head box (the top eighth seen from F) whole first")
+    ap.add_argument("--spz", action="store_true", help="ship the bodies as SPZ (SH degree 1) when the pair's render at F holds 40 dB")
+    ap.add_argument("--color-match", nargs="?", const="fit", choices=["fit", "measure"], default=None,
+                    help="match each body's colour to the picture that posed it (dE2000; fit past the bar), or `measure` only")
+    ap.add_argument("--cap-psnr", action="store_true", help="with --cap-pair: measure the cut's cost (PSNR, seat view and an 8-view orbit)")
+    ap.add_argument("--report", action="store_true", help="print provenance and placement of the assembled bundle")
+    ap.add_argument("--make-stands", action="store_true", help="triangulate the stands proxy (stands.triangulate -> stands.proxyFile)")
+    ap.add_argument("--check-frames", default=None, help="write small JPEGs of the assembled show (watch, mid-ease, F, the make) to this folder")
+    ap.add_argument("--check-at", default="", help="with --check-frames: also these source frames, comma-separated")
+    a = ap.parse_args(argv)
+    cfg = json.loads(expand(a.config).read_text())
+    if a.cap_pair:
+        cfg = {**cfg, "capPair": a.cap_pair, "capPsnr": a.cap_psnr or cfg.get("capPsnr")}
+    if a.color_match:
+        cfg = {**cfg, "colorMatch": a.color_match}
+    if a.cap:
+        caps = {}
+        for x in a.cap:
+            pid, _, n = x.partition("=")
+            if not (pid and n.isdigit()):
+                ap.error(f"--cap {x!r}: give ID=N")
+            caps[pid] = int(n)
+        cfg = {**cfg, "caps": {**(cfg.get("caps") or {}), **caps}, "capPsnr": a.cap_psnr or cfg.get("capPsnr")}
+    if a.cap_extras:
+        cfg = {**cfg, "capExtras": a.cap_extras, **({"capExtrasFloor": a.cap_extras_floor} if a.cap_extras_floor else {})}
+    if a.protect:
+        cfg = {**cfg, "protect": a.protect}
+    if a.spz:
+        cfg = {**cfg, "splatFormat": "spz"}
+    if not (a.out or cfg.get("out")):
+        ap.error("no bundle folder: give --out or the config's `out`")
+    out = expand(a.out or cfg["out"])
+    if a.check_frames:
+        for p in check_frames(out, expand(a.check_frames), at=[float(x) for x in a.check_at.split(",") if x.strip()]):
+            print(f"FRAME {p}")
+        return 0
+    if a.make_stands:
+        made = make_stands(cfg)
+        print(f"STANDS {expand(cfg['stands']['proxyFile'])}: {json.dumps(made['report'])}")
+        return 0
+    if a.validate or a.report:
+        if a.report:
+            print(report(out))
+        if a.validate:
+            errs, pending, info = validate(out, expand(a.webxr), a.strict)
+            for x in info:
+                print(x if x.startswith("WAIVED ") else f"INFO {x}")
+            for x in pending:
+                print(f"PENDING {x}")
+            for x in errs:
+                print(f"FAIL {x}")
+            waived = sorted({x.split()[1] for x in info if x.startswith("WAIVED ")})
+            note = f", waived {', '.join(waived)}: NOT SHIPPABLE" if waived else ""
+            print(f"VALIDATE {'OK' if not errs else 'FAILED'} {out} ({len(errs)} errors, {len(pending)} pending{note})")
+            return 0 if not errs else 1
+        return 0
+    if not (expand(a.standin) / "court.json").exists():
+        print(f"no stand-in at {a.standin}: run node apps/webxr/scripts/court/standin.mjs first", file=sys.stderr)
+        return 2
+    diag = assemble(cfg, expand(a.standin), out)
+    real = sorted(k for k, v in diag["pieces"].items() if v["source"] == "real")
+    stand = sorted(k for k, v in diag["pieces"].items() if v["source"] != "real")
+    print(f"ASSEMBLED {out}\n  real: {', '.join(real) or '-'}\n  stand-in: {', '.join(stand) or '-'}")
+    for n in diag["notes"]:
+        print(f"  note: {n}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
