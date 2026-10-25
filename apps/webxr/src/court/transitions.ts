@@ -4,17 +4,26 @@
 //   fades back in over RESET_IN_S with the clock held on pass 1's first frame; then pass 1 plays. Reset at the screen
 //   (the watch, the make, the end) restarts at once, since the seat and the arena stay where they are, and the screen
 //   rises over RESET_IN_S as the arrival's does, the clock held the same way.
-//   Step into the court: the screen's rim brightens over PULSE_UP_S and settles over PULSE_DOWN_S (screen.ts glow), so
-//   the judge sees the press register; the picture's pixels never change.
-// Pure timing (ResetFade, StepPulse) plus the head-centred black veil Reset fades through.
+//   Step into the court (screen.ts glow, round the picture only: the picture's pixels never change): the press flares
+//   the screen's rim and sends a ring of light out over the arena; the rim then holds charged, breathing, while the
+//   stop is armed; through the ease it charges to full as time slows, and as the screen dissolves into the court a
+//   second ring goes out, so the picture seems to spill into the arena it becomes.
+// Pure timing (ResetFade, StepGlow) plus the head-centred black veil Reset fades through.
 import * as THREE from "three";
 
 /** Reset from the 3D: out to black, then back in (seconds). */
 export const RESET_OUT_S = 0.4;
 export const RESET_IN_S = 0.6;
-/** Step into the court's rim pulse: up, then down (seconds). */
-export const PULSE_UP_S = 0.15;
-export const PULSE_DOWN_S = 0.9;
+/** Step into the court's flare: up to full over GLOW_UP_S, then down to the charged hold GLOW_HOLD over GLOW_SETTLE_S. */
+export const GLOW_UP_S = 0.2;
+export const GLOW_SETTLE_S = 1.2;
+export const GLOW_HOLD = 0.3;
+/** The charged hold breathes: this much either way, this often (Hz), faded in over GLOW_BREATHE_IN_S once settled. */
+export const GLOW_BREATHE = 0.07;
+export const GLOW_BREATHE_HZ = 0.5;
+export const GLOW_BREATHE_IN_S = 0.8;
+/** A ring of light crosses the halo (the rim out to SCREEN_HALO_M) in this long. */
+export const WAVE_S = 1.1;
 
 /** Smoothstep (Perlin's quintic) on [0, 1], clamped: zero slope at both ends, so a fade never starts or stops on a jump. */
 export const smooth = (u: number): number => {
@@ -88,23 +97,53 @@ export class ResetFade {
   }
 }
 
-/** Step into the court's rim pulse: start() on the press; level(dt) once a frame, 0 at rest to 1 at the peak. */
-export class StepPulse {
-  private t = -1;
+/**
+ * Step into the court's glow on the screen's rim: start() on the press, stop() when the screen is gone or the show
+ * restarts; update(dt, charge) once a frame, with the ease's progress toward the screen's dissolve (0-1) while easing,
+ * else null. glow 0 is the plain rim, 1 the full flare; wave is a ring's progress across the halo (0-1), -1 none.
+ */
+export class StepGlow {
+  private t = -1; // seconds since the press; -1 off
+  private waveT = -1; // seconds since the last ring went out; -1 none
+  private dissolved = false; // the dissolve's ring has gone out
 
   start(): void {
     this.t = 0;
+    this.waveT = 0;
+    this.dissolved = false;
   }
 
-  level(dt: number): number {
-    if (this.t < 0) return 0;
+  stop(): void {
+    this.t = -1;
+    this.waveT = -1;
+    this.dissolved = false;
+  }
+
+  update(dt: number, charge: number | null): { glow: number; wave: number } {
+    if (this.t < 0) return { glow: 0, wave: -1 };
     const t = this.t;
     this.t += dt;
-    if (t >= PULSE_UP_S + PULSE_DOWN_S) {
-      this.t = -1;
-      return 0;
+    const settled = t - GLOW_UP_S - GLOW_SETTLE_S;
+    let glow = t < GLOW_UP_S ? smooth(t / GLOW_UP_S) : 1 - (1 - GLOW_HOLD) * smooth((t - GLOW_UP_S) / GLOW_SETTLE_S);
+    if (settled > 0) glow += GLOW_BREATHE * smooth(settled / GLOW_BREATHE_IN_S) * Math.sin(2 * Math.PI * GLOW_BREATHE_HZ * settled);
+    if (charge !== null) {
+      const c = Math.min(1, Math.max(0, charge));
+      glow = Math.max(glow, GLOW_HOLD + (1 - GLOW_HOLD) * smooth(c));
+      if (c >= 1 && !this.dissolved) {
+        this.dissolved = true;
+        this.waveT = 0;
+      }
     }
-    return t < PULSE_UP_S ? smooth(t / PULSE_UP_S) : 1 - smooth((t - PULSE_UP_S) / PULSE_DOWN_S);
+    let wave = -1;
+    if (this.waveT >= 0) {
+      wave = this.waveT / WAVE_S;
+      this.waveT += dt;
+      if (wave >= 1) {
+        wave = -1;
+        this.waveT = -1;
+      }
+    }
+    return { glow: Math.min(1, Math.max(0, glow)), wave };
   }
 }
 

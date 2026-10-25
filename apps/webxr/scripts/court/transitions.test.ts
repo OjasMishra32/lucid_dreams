@@ -1,10 +1,10 @@
 // transitions.ts: Reset's fade through black (the restart at full black, the clock held while the view comes back)
-// and Step into the court's rim pulse. Run: npm run test:court
+// and Step into the court's glow round the screen. Run: npm run test:court
 import "./ts-resolve.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { ResetFade, StepPulse, RESET_OUT_S, RESET_IN_S, PULSE_UP_S, PULSE_DOWN_S, smooth } = await import("../../src/court/transitions.ts");
+const { ResetFade, StepGlow, RESET_OUT_S, RESET_IN_S, GLOW_UP_S, GLOW_SETTLE_S, GLOW_HOLD, GLOW_BREATHE, WAVE_S, smooth } = await import("../../src/court/transitions.ts");
 
 const HZ = 72;
 const dt = 1 / HZ;
@@ -72,22 +72,36 @@ test("Change seat cancels a Reset: no veil, no hold", () => {
   assert.equal(fade.update(dt), false);
 });
 
-test("Step into the court's pulse: up to 1 over PULSE_UP_S, back to 0 over PULSE_DOWN_S, then rest", () => {
-  const pulse = new StepPulse();
-  assert.equal(pulse.level(dt), 0);
-  pulse.start();
-  const levels: number[] = [];
-  for (let i = 0; i < HZ * 2; i++) levels.push(pulse.level(dt));
-  const peak = Math.max(...levels);
-  assert.ok(peak > 0.99, `peak ${peak}`);
-  assert.ok(Math.abs(levels.indexOf(peak) * dt - PULSE_UP_S) <= dt, "peaks at PULSE_UP_S");
-  const end = levels.findIndex((v, i) => i > levels.indexOf(peak) && v === 0);
-  assert.ok(Math.abs(end * dt - (PULSE_UP_S + PULSE_DOWN_S)) <= 1.5 * dt, `rests at ${(end * dt).toFixed(3)} s`);
-  assert.ok(levels.slice(end).every((v) => v === 0));
-  // a second press restarts it
-  pulse.start();
-  assert.equal(pulse.level(dt), 0);
-  assert.ok(pulse.level(dt) > 0);
+test("Step into the court's glow: a flare and a ring, a breathing charged hold, full charge at the dissolve with a second ring", () => {
+  const g = new StepGlow();
+  assert.deepEqual(g.update(dt, null), { glow: 0, wave: -1 });
+  g.start();
+  const rows: { glow: number; wave: number }[] = [];
+  for (let i = 0; i < HZ * 4; i++) rows.push(g.update(dt, null));
+  const peakAt = rows.findIndex((r) => r.glow > 0.999);
+  assert.ok(Math.abs(peakAt * dt - GLOW_UP_S) <= 1.5 * dt, `flare peaks at ${(peakAt * dt).toFixed(3)} s`);
+  // the press's ring crosses the halo once, outward
+  const waves = rows.map((r) => r.wave).filter((w) => w >= 0);
+  assert.ok(Math.abs(waves.length * dt - WAVE_S) <= 1.5 * dt, `ring for ${(waves.length * dt).toFixed(3)} s`);
+  assert.ok(waves.every((w, i) => i === 0 || w > waves[i - 1]));
+  // settled: the hold breathes within GLOW_BREATHE of GLOW_HOLD, never to dark, never back to the flare
+  const held = rows.slice(Math.ceil((GLOW_UP_S + GLOW_SETTLE_S) * HZ));
+  assert.ok(held.every((r) => Math.abs(r.glow - GLOW_HOLD) <= GLOW_BREATHE + 1e-9), "breathing hold");
+  // no frame steps by more than a smoothstep's steepest frame of the flare (no pops)
+  for (let i = 1; i < rows.length; i++) assert.ok(Math.abs(rows[i].glow - rows[i - 1].glow) <= (1.875 * dt) / GLOW_UP_S + 1e-9, `frame ${i}`);
+  // the ease: the charge climbs from the hold to full, with no step as it starts
+  let last = rows.at(-1)!.glow;
+  let second = -1;
+  for (let k = 0; k <= HZ; k++) {
+    const r = g.update(dt, k / HZ);
+    assert.ok(Math.abs(r.glow - last) <= 0.05, `charge frame ${k}: ${last} -> ${r.glow}`);
+    last = r.glow;
+    if (r.wave === 0) second = k;
+  }
+  assert.equal(last, 1, "full charge at the dissolve");
+  assert.equal(second, HZ, "the dissolve's ring goes out as the charge lands");
+  g.stop();
+  assert.deepEqual(g.update(dt, 1), { glow: 0, wave: -1 });
 });
 
 test("smooth: 0 and 1 at the ends, clamped, symmetric", () => {
