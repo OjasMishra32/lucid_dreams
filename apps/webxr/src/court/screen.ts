@@ -81,7 +81,7 @@ const VERT = /* glsl */ `
 // arena near the picture (drawn under the hands and the caption). Premultiplied
 const FRAG = /* glsl */ `
   uniform sampler2D uTex; uniform vec2 uHalf; uniform float uRadius; uniform float uHalo; uniform float uRim;
-  uniform float uOpacity; uniform float uPart; uniform float uGlow;
+  uniform float uOpacity; uniform float uPart; uniform float uGlow; uniform float uWave;
   varying vec2 vP;
   float rounded(vec2 p, vec2 h, float r) { vec2 q = abs(p) - h + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
   void main() {
@@ -100,10 +100,17 @@ const FRAG = /* glsl */ `
     float shade = 1.0 - smoothstep(0.0, uHalo, out_);
     float halo = 0.82 * shade * shade * (1.0 - inside);
     float w = max(uRim, 1.5 * aa);
-    float rim = (0.32 + 0.5 * uGlow) * (1.0 - smoothstep(w, w + aa, out_)) * (1.0 - inside);
-    // Step into the court's pulse (glow): the rim brightens and a soft light spreads just past it; 0 is the plain rim
-    float lit = max(rim, uGlow * 0.4 * (1.0 - smoothstep(0.0, 0.3, out_)) * (1.0 - inside));
-    float a = max(halo, lit) * uOpacity;
+    float rim = (0.32 + 0.68 * uGlow) * (1.0 - smoothstep(w, w + aa, out_)) * (1.0 - inside);
+    // Step into the court (glow, wave; 0 and -1 are the plain rim): the rim flares, light spills past it onto the
+    // arena and lifts the shadow round the picture, and a ring of light runs out across the halo, fading as it goes
+    float spill = uGlow * 0.6 * exp(-out_ / 0.35);
+    float ring = 0.0;
+    if (uWave >= 0.0) {
+      float r = (out_ - uWave * uHalo) / 0.14;
+      ring = 0.65 * (1.0 - uWave) * (1.0 - uWave) * exp(-r * r);
+    }
+    float lit = min(1.0, max(rim, (spill + ring) * (1.0 - inside)));
+    float a = max(halo * (1.0 - 0.6 * uGlow), lit) * uOpacity;
     if (a <= 0.002) discard;
     gl_FragColor = vec4(vec3(0.86) * lit * uOpacity, a);
   }`;
@@ -115,6 +122,7 @@ export class CinemaScreen {
   readonly pose: ScreenPose;
   private readonly uOpacity = { value: 1 };
   private readonly uGlow = { value: 0 };
+  private readonly uWave = { value: -1 };
   private level = 1;
   private roomP = 0;
 
@@ -135,6 +143,7 @@ export class CinemaScreen {
           uOpacity: this.uOpacity,
           uPart: { value: part },
           uGlow: this.uGlow,
+          uWave: this.uWave,
         },
         vertexShader: VERT,
         fragmentShader: FRAG,
@@ -173,9 +182,13 @@ export class CinemaScreen {
     this.apply();
   }
 
-  /** Step into the court's pulse on the rim round the picture (0 the plain rim, 1 the peak); the picture never changes. */
-  glow(k: number): void {
+  /**
+   * Step into the court's light round the picture (transitions.ts StepGlow): `k` the rim's flare (0 the plain rim, 1
+   * full), `wave` a ring's progress out across the halo (0-1; -1 none). The picture itself never changes.
+   */
+  glow(k: number, wave = -1): void {
     this.uGlow.value = Math.min(1, Math.max(0, k));
+    this.uWave.value = wave >= 0 && wave < 1 ? wave : -1;
   }
 
   /** See my room's fade (0 the arena, 1 the room): the screen goes with the arena. */
