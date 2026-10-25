@@ -34,6 +34,8 @@ const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const OUT = resolve(opt("--out", join(HERE, "out", "e2e")));
 const TIMING = args.includes("--timing");
+/** --realtime: ?probe=realtime, the wall clock drives the show as on a headset (no lockstep; read-back only for saves). */
+const REALTIME = args.includes("--realtime");
 const STANDIN = join(HERE, "out", "standin");
 const BUNDLE = resolve(opt("--bundle", STANDIN));
 const IS_STANDIN = !args.includes("--bundle");
@@ -151,6 +153,7 @@ function makeContext(page, check, report, bundleJson) {
     check,
     report,
     timing: TIMING,
+    realtime: REALTIME,
     out: OUT,
     court: bundleJson.court,
     showFrames: bundleJson.frames,
@@ -258,7 +261,7 @@ function contactSheet(name) {
 
 /** The page every scenario opens: the court in IWER, probed, the bundle from serve.mjs, plus --query. */
 function pageUrl(port) {
-  const q = new URLSearchParams({ mode: "court", emulate: "", probe: TIMING ? "timing" : "capture", bundle: "/bundle/" });
+  const q = new URLSearchParams({ mode: "court", emulate: "", probe: TIMING ? "timing" : REALTIME ? "realtime" : "capture", bundle: "/bundle/" });
   for (const [k, v] of new URLSearchParams(QUERY)) q.set(k, v);
   return `http://127.0.0.1:${port}/?${q.toString().replace(/=(&|$)/g, "$1")}`;
 }
@@ -325,7 +328,7 @@ async function main() {
         return out;
       });
       const checks = [];
-      const report = { scenario: name, owner: scenario.owner, mode: TIMING ? "timing" : "capture", started: new Date().toISOString() };
+      const report = { scenario: name, owner: scenario.owner, mode: TIMING ? "timing" : REALTIME ? "realtime" : "capture", started: new Date().toISOString() };
       const check = (what, ok, detail) => {
         checks.push({ what, ok: !!ok, detail });
         console.log(`${ok ? "PASS" : "FAIL"} ${name}: ${what}: ${detail}`);
