@@ -472,7 +472,7 @@ export async function mountHeadset(host: HTMLElement, hooks: HeadsetHooks): Prom
     camera.updateProjectionMatrix();
     for (const m of lineMats) m.resolution.set(w, h);
   };
-  let onScreen = false;
+  let onScreen = true; // until the observer says otherwise (a hidden page, like the film's renderer, may never report)
   let snap = true;
   const io = new IntersectionObserver(
     ([e]) => {
@@ -484,6 +484,7 @@ export async function mountHeadset(host: HTMLElement, hooks: HeadsetHooks): Prom
     { rootMargin: "30% 0px" },
   );
   io.observe(host);
+  loadPerson();
 
   let shown = 1;
   let last = performance.now();

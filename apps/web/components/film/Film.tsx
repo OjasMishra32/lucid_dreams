@@ -74,6 +74,10 @@ export default function Film({ data }: { data: FilmData }) {
     const scene = SCENES.find((s) => s.key === q.get("scene")) ?? SCENES[0];
     const capture = q.has("capture");
     const fps = Number(q.get("fps")) || 60;
+    // &from=&to= renders only that slice of the scene (seconds), &name= under its own name (a long render, resumed)
+    const from = Math.max(0, Number(q.get("from")) || 0);
+    const to = Math.min(scene.dur, Number(q.get("to")) || scene.dur);
+    const name = /^[a-z0-9-]{1,40}$/.test(q.get("name") ?? "") ? q.get("name")! : scene.key;
     const box = scene.gl ?? { x: 0, y: 0, w: W, h: H };
     setGl(box);
     const clock = capture ? virtualClock() : null; // before anything reads the time
@@ -119,10 +123,10 @@ export default function Film({ data }: { data: FilmData }) {
       out.height = H;
       const og = out.getContext("2d")!;
       const post = (qs: string, body?: Blob) =>
-        fetch(`/api/film/frame?scene=${scene.key}&${qs}`, { method: "POST", body: body ?? null }).then((r) => r.json());
+        fetch(`/api/film/frame?scene=${name}&${qs}`, { method: "POST", body: body ?? null }).then((r) => r.json());
       await post("do=start");
       if (scene.preroll && scene.mount) {
-        s.t = scene.preroll.t;
+        s.t = from || scene.preroll.t;
         for (let k = 0; k < scene.preroll.seconds * fps; k++) {
           clock.advance(1000 / fps);
           if (k % 6 === 0) await sleep(10);
@@ -130,9 +134,9 @@ export default function Film({ data }: { data: FilmData }) {
         await sleep(scene.preroll.waitMs);
         clock.advance(0);
       }
-      const n = Math.round(scene.dur * fps);
+      const n = Math.round((to - from) * fps);
       for (let i = 0; i < n && !stop; i++) {
-        s.t = i / fps;
+        s.t = from + i / fps;
         if (s.video) {
           const v = s.video;
           const at = Math.min(Math.max(0, (v.duration || 0) - 0.05), s.t);

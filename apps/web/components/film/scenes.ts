@@ -4,6 +4,7 @@
 import meta from "@/components/tech/overdraw.json";
 import type { RigCamera } from "@/lib/three/story";
 import type { CourtPlayer } from "@/lib/three/court";
+import { lineup } from "./lineup";
 
 export const W = 1920;
 export const H = 1080;
@@ -162,11 +163,74 @@ function math(g: CanvasRenderingContext2D, x0: number, y: number, k: number) {
 
 // ---------------------------------------------------------------------------------------------------------------- scenes
 
+/**
+ * The wordmark, keynote style: SF Pro Display Bold in a white-to-ice gradient, revealed left to right behind a soft
+ * edge, a band of light passing across the letters as it settles, and a faint glow behind it. Drawn on its own canvas
+ * so the light only touches the letters.
+ */
+const markCanvas = typeof document === "undefined" ? null : document.createElement("canvas");
+function wordmark(g: CanvasRenderingContext2D, t: number, cx: number, cy: number, size: number, t0: number) {
+  if (!markCanvas) return;
+  const k = ramp(t, t0, t0 + 1.1);
+  if (k <= 0.001) return;
+  const c = markCanvas;
+  c.width = 1600;
+  c.height = 360;
+  const m = c.getContext("2d")!;
+  m.clearRect(0, 0, c.width, c.height);
+  m.font = `700 ${size}px ${FONT}`;
+  m.textAlign = "center";
+  m.textBaseline = "middle";
+  (m as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${-size * 0.022}px`;
+  const tw = m.measureText("Lucid Dreams").width;
+  const x0 = c.width / 2 - tw / 2;
+  const fill = m.createLinearGradient(x0, 0, x0 + tw, 0);
+  fill.addColorStop(0, "#ffffff");
+  fill.addColorStop(0.55, "#f2f6ff");
+  fill.addColorStop(1, "#a9cfff");
+  m.fillStyle = fill;
+  m.fillText("Lucid Dreams", c.width / 2, c.height / 2);
+  // the light: a narrow bright band crossing the letters once
+  const sweep = clamp((t - t0 - 0.5) / 1.3);
+  if (sweep > 0 && sweep < 1) {
+    m.globalCompositeOperation = "source-atop";
+    const sx = x0 - 200 + sweep * (tw + 400);
+    const band = m.createLinearGradient(sx - 120, 0, sx + 120, 0);
+    band.addColorStop(0, "rgba(255,255,255,0)");
+    band.addColorStop(0.5, "rgba(255,255,255,0.95)");
+    band.addColorStop(1, "rgba(255,255,255,0)");
+    m.fillStyle = band;
+    m.fillRect(0, 0, c.width, c.height);
+    m.globalCompositeOperation = "source-over";
+  }
+  // the reveal: left to right behind a soft edge
+  m.globalCompositeOperation = "destination-in";
+  const edge = x0 - 160 + smooth(k) * (tw + 320);
+  const mask = m.createLinearGradient(edge - 160, 0, edge, 0);
+  mask.addColorStop(0, "rgba(0,0,0,1)");
+  mask.addColorStop(1, "rgba(0,0,0,0)");
+  m.fillStyle = mask;
+  m.fillRect(0, 0, c.width, c.height);
+  m.globalCompositeOperation = "source-over";
+  // a faint glow behind, then the letters, settling from a touch larger
+  g.save();
+  const glow = g.createRadialGradient(cx, cy, 10, cx, cy, size * 3.4);
+  glow.addColorStop(0, `rgba(80,140,255,${0.16 * k})`);
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = glow;
+  g.fillRect(cx - size * 4, cy - size * 3, size * 8, size * 6);
+  const z = lerp(1.035, 1, smooth((t - t0) / 2.2));
+  g.translate(cx, cy);
+  g.scale(z, z);
+  g.drawImage(c, -c.width / 2, -c.height / 2);
+  g.restore();
+}
+
 const title: Scene = {
   key: "title",
   dur: 3,
   draw(g, t) {
-    rise(g, "Lucid Dreams", W / 2, 572, ramp(t, 0.25, 1.35), { size: 132, align: "center", track: -2.5 });
+    wordmark(g, t, W / 2, 540, 150, 0.15);
   },
 };
 
@@ -705,6 +769,111 @@ function sourceCard(spec: SourceSpec): Scene {
   };
 }
 
+// Gemma writing the lesson (Atina's planner, demo/gemma-plans/guitar-01.json on her branch): the sentence, the eight
+// frames it reads from the clip, then its plan as it wrote it. Its real output, word for word.
+const GEMMA_PLAN = {
+  intent: "teach me this strum pattern",
+  title: "Basic Strumming Technique",
+  steps: [
+    { at: "0.0 – 1.0 s", title: "Positioning the instrument", how: "½ speed · twice" },
+    { at: "1.0 – 2.5 s", title: "The initial strumming motion", how: "½ speed · twice" },
+    { at: "2.5 – 4.8 s", title: "Sustain the rhythm", how: "½ speed · twice" },
+  ],
+  chips: ["Beside you", "Guitar"],
+};
+
+const gemma: Scene = (() => {
+  const frames: HTMLCanvasElement[] = [];
+  return {
+    key: "gemma",
+    dur: 6,
+    async prepare() {
+      const v = await videoEl("sources/guitar-01.mp4");
+      for (let k = 0; k < 8; k++) {
+        await new Promise<void>((r) => {
+          v.onseeked = () => r();
+          v.currentTime = 6.0 + k * 0.6;
+        });
+        const c = document.createElement("canvas");
+        c.width = 320;
+        c.height = 180;
+        c.getContext("2d")!.drawImage(v, 0, 0, 320, 180);
+        frames.push(c);
+      }
+    },
+    draw(g, t) {
+      // the sentence, typed
+      const typed = GEMMA_PLAN.intent.slice(0, Math.round(clamp((t - 0.2) / 0.9) * GEMMA_PLAN.intent.length));
+      const caret = t < 1.4 && Math.floor(t * 2.4) % 2 === 0 ? "|" : "";
+      text(g, `“${typed}${typed.length === GEMMA_PLAN.intent.length ? "”" : ""}${caret}`, W / 2, 230, { size: 52, align: "center", track: -0.6, alpha: ramp(t, 0.05, 0.3) });
+
+      // the eight frames it reads, and the read passing over them
+      const fw = 150;
+      const fh = 84;
+      const gap = 10;
+      const x0 = (W - (8 * fw + 7 * gap)) / 2;
+      const scan = clamp((t - 1.7) / 0.8);
+      frames.forEach((f, k) => {
+        const a = ramp(t, 1.0 + k * 0.06, 1.35 + k * 0.06);
+        const x = x0 + k * (fw + gap);
+        g.save();
+        g.globalAlpha = a * (scan > 0 && scan < 1 && Math.abs(scan * 8 - (k + 0.5)) < 0.7 ? 1 : 0.82);
+        round(g, x, 300 + (1 - a) * 14, fw, fh, 10);
+        g.clip();
+        g.drawImage(f, x, 300 + (1 - a) * 14, fw, fh);
+        g.restore();
+      });
+      if (scan > 0 && scan < 1) {
+        const sx = x0 + scan * (8 * fw + 7 * gap);
+        const grad = g.createLinearGradient(sx - 60, 0, sx + 2, 0);
+        grad.addColorStop(0, "rgba(41,151,255,0)");
+        grad.addColorStop(1, "rgba(41,151,255,0.55)");
+        g.fillStyle = grad;
+        g.fillRect(sx - 60, 296, 62, fh + 8);
+      }
+      text(g, "Gemma 4 reads eight frames of the clip, on a laptop", W / 2, 432, { size: 24, weight: 500, color: INK3, align: "center", alpha: ramp(t, 1.6, 2.1) });
+
+      // its plan
+      const k0 = ramp(t, 2.5, 3.0);
+      if (k0 > 0.001) {
+        const cw = 980;
+        const cx = (W - cw) / 2;
+        const cy = 500 + (1 - k0) * 16;
+        g.save();
+        g.globalAlpha = k0;
+        round(g, cx, cy, cw, 400, 28);
+        g.fillStyle = "#151517";
+        g.fill();
+        g.strokeStyle = "rgba(255,255,255,0.1)";
+        g.lineWidth = 1.5;
+        g.stroke();
+        g.restore();
+        text(g, "LESSON", cx + 48, cy + 62, { size: 18, weight: 600, color: "#2997ff", track: 2, alpha: k0 });
+        text(g, GEMMA_PLAN.title, cx + 48, cy + 112, { size: 40, track: -0.5, alpha: k0 });
+        GEMMA_PLAN.steps.forEach((st, i) => {
+          const a = ramp(t, 3.1 + i * 0.35, 3.5 + i * 0.35);
+          const y = cy + 182 + i * 62;
+          text(g, st.at, cx + 48, y, { size: 22, weight: 500, color: INK3, alpha: a });
+          text(g, st.title, cx + 230, y, { size: 28, weight: 500, alpha: a });
+          text(g, st.how, cx + cw - 48, y, { size: 22, weight: 500, color: INK2, align: "right", alpha: a });
+        });
+        GEMMA_PLAN.chips.forEach((c, i) => {
+          const a = ramp(t, 4.3 + i * 0.15, 4.7 + i * 0.15);
+          const x = cx + 48 + i * 170;
+          const y = cy + 352;
+          g.save();
+          g.globalAlpha = a;
+          round(g, x, y - 26, 150, 40, 20);
+          g.fillStyle = "rgba(41,151,255,0.16)";
+          g.fill();
+          g.restore();
+          text(g, c, x + 75, y + 1, { size: 20, weight: 600, color: "#2997ff", align: "center", alpha: a });
+        });
+      }
+    },
+  };
+})();
+
 const SOURCES: Scene[] = [
   sourceCard({
     key: "source-guitar",
@@ -755,6 +924,14 @@ const SOURCES: Scene[] = [
     shots: [{ src: "selects/golf-swing.mp4", dur: 1.7 }, { src: "selects/golf-you.mp4", dur: 2.6 }, { src: "selects/golf-match.mp4", dur: 2.2 }],
   }),
   sourceCard({
+    key: "source-lebron",
+    video: { src: "sources/lebron-shot.mp4", in: 3.0 },
+    line: "One video.",
+    credit: "His training footage · demo use only",
+    shots: [{ src: "selects/lebron-dribble.mp4", dur: 3.1 }, { src: "selects/lebron-make.mp4", dur: 2.8 }],
+    label: "His likeness, from his footage. Not affiliated.",
+  }),
+  sourceCard({
     key: "source-grandma",
     video: { src: "sources/ian-grandma.mp4", in: 0 },
     line: "One family video.",
@@ -762,6 +939,74 @@ const SOURCES: Scene[] = [
     shots: [{ src: "selects/grandma-appear.mp4", dur: 2.6 }],
   }),
 ];
+
+// "Fresh off the frontier" (the hackathon's theme), answered: the last twelve months as a line drawing itself across the
+// frame, the models at the core landing on it at their release, and us at the end. Dates from AGENTS.md (the new tech).
+const FRONTIER = [
+  { at: 4.5, name: "LHM++", what: "a body from photos", when: "Mar 2026" },
+  { at: 7.5, name: "UIKA", what: "a face from photos", when: "Jun 2026" },
+  { at: 9.5, name: "4DAnyone", what: "one video, every angle", when: "Aug 2026" },
+  { at: 11.6, name: "Lucid Dreams", what: "", when: "Oct 2026", us: true },
+];
+const frontier: Scene = {
+  key: "frontier",
+  dur: 6,
+  draw(g, t) {
+    rise(g, "Fresh off the frontier.", W / 2, 250, ramp(t, 0.1, 0.8), { size: 76, align: "center", track: -1.5 });
+    rise(g, "Every model at its core came out in the last twelve months.", W / 2, 318, ramp(t, 0.5, 1.2), {
+      size: 30, weight: 500, color: INK2, align: "center" });
+    // the year: Nov 2025 -> Oct 2026, drawn left to right with a soft glow at its head
+    const x0 = 200, x1 = W - 200, y = 620;
+    const k = smooth((t - 0.6) / 2.6);
+    const xm = (m: number) => x0 + (m / 12) * (x1 - x0); // m: months from Nov 2025
+    g.save();
+    g.strokeStyle = "rgba(255,255,255,0.22)";
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(x0, y);
+    g.lineTo(lerp(x0, x1, k), y);
+    g.stroke();
+    if (k > 0 && k < 1) {
+      const hx = lerp(x0, x1, k);
+      const glow = g.createRadialGradient(hx, y, 0, hx, y, 60);
+      glow.addColorStop(0, "rgba(120,180,255,0.9)");
+      glow.addColorStop(1, "rgba(120,180,255,0)");
+      g.fillStyle = glow;
+      g.fillRect(hx - 60, y - 60, 120, 120);
+    }
+    g.restore();
+    ["Nov 2025", "Feb", "May", "Aug", "Oct 2026"].forEach((lb, i) => {
+      const m = [0, 3, 6, 9, 11.6][i];
+      text(g, lb, xm(m), y + 54, { size: 20, weight: 500, color: INK3, align: "center", alpha: ramp(t, 0.6 + (m / 12) * 2.6, 1.0 + (m / 12) * 2.6) });
+    });
+    // each model lands when the line reaches it: a dot that springs in, its name above, what it does and when below
+    FRONTIER.forEach((f, i) => {
+      const reach = 0.6 + (f.at / 12) * 2.6;
+      const a = ramp(t, reach, reach + 0.35);
+      if (a <= 0.001) return;
+      const x = xm(f.at);
+      const pop = 1 + 0.6 * Math.sin(Math.min(1, (t - reach) / 0.35) * Math.PI) * (1 - Math.min(1, (t - reach) / 0.7));
+      g.save();
+      g.globalAlpha = a;
+      g.beginPath();
+      g.arc(x, y, (f.us ? 11 : 8) * pop, 0, Math.PI * 2);
+      g.fillStyle = f.us ? BLUE : "#f5f5f7";
+      g.fill();
+      if (f.us) {
+        g.beginPath();
+        g.arc(x, y, 22 * pop, 0, Math.PI * 2);
+        g.strokeStyle = "rgba(41,151,255,0.5)";
+        g.lineWidth = 2;
+        g.stroke();
+      }
+      g.restore();
+      const up = i % 2 === 0;
+      rise(g, f.name, x, up ? y - 70 : y - 70, ramp(t, reach + 0.05, reach + 0.6), { size: f.us ? 40 : 36, align: "center", color: f.us ? BLUE : INK, track: -0.5 });
+      if (f.what) text(g, f.what, x, y - 34, { size: 22, weight: 500, color: INK2, align: "center", alpha: ramp(t, reach + 0.2, reach + 0.7) });
+      text(g, f.when, x, y + 96, { size: 22, weight: 600, color: f.us ? BLUE : INK2, align: "center", alpha: ramp(t, reach + 0.2, reach + 0.7) });
+    });
+  },
+};
 
 /** The same freeze full frame, turning slowly with no type: an insert for the cut, and the website card's still. */
 const courtOrbit: Scene = {
@@ -964,7 +1209,7 @@ const end: Scene = {
   key: "end",
   dur: 7,
   draw(g, t) {
-    rise(g, "Lucid Dreams", W / 2, 470, ramp(t, 0.3, 1.3), { size: 124, align: "center", track: -2.5 });
+    wordmark(g, t, W / 2, 428, 124, 0.3);
     rise(g, "Anyone from any video, standing in your room.", W / 2, 548, ramp(t, 1.0, 2.0), {
       size: 42,
       weight: 500,
@@ -985,4 +1230,5 @@ const end: Scene = {
   },
 };
 
-export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy, court, courtOrbit, ...SOURCES];
+export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy, court, courtOrbit, gemma, ...SOURCES,
+  lineup("lineup", 5.8, "Anyone.", "Each from one video, or a few photos."), frontier];
