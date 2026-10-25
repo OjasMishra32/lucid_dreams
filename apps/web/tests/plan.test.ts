@@ -268,6 +268,11 @@ describe("lessons", () => {
     assert.equal(unusable.mode, "watch");
     assert.equal(shouldRepairTeachPlan(requested, unusable), true);
 
+    // "break down her tennis serve" is an equally explicit request. If the
+    // model initially returns watch, it must get the one allowed model-side
+    // repair instead of silently leaving an unteachable plan.
+    assert.equal(shouldRepairTeachPlan(replay("break down her tennis serve for me"), { mode: "watch" }), true);
+
     assert.equal(shouldRepairTeachPlan(avatar("teach me this jump shot"), { mode: "companion" }), false);
     assert.equal(shouldRepairTeachPlan(replay("teach me chess"), { mode: "watch" }), false);
     assert.equal(shouldRepairTeachPlan(replay("let me watch this jump shot"), { mode: "watch" }), false);

@@ -15,7 +15,10 @@ import {
 // Models are tried in order, so a renamed or unavailable model never takes the step down.
 const MODELS = (process.env.GEMINI_MODEL ?? "gemini-3.8-flash,gemini-3.6-flash,gemini-3-flash-preview").split(",");
 const FPS = 15; // frames per second Gemini sees: enough for a jump shot's release (the default is 1)
-const TEACH_REQUEST = /\b(teach me|show me how|help me learn|break it down|coach me)\b/;
+// "Break down her tennis serve for me" is a lesson request too.  Preserve the
+// optional object between "break" and "down" without treating ordinary
+// playback requests as lessons.
+const TEACH_REQUEST = /\b(teach me|show me how|help me learn|break (?:it )?down|coach me)\b/;
 const run = promisify(execFile);
 const GEMMA_FRAME_COUNT = 8;
 const OLLAMA_URL = (process.env.OLLAMA_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");

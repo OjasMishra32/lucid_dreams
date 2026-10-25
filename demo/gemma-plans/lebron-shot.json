@@ -1,0 +1,65 @@
+{
+  "bundle": "lebron-shot",
+  "generatedAt": "2026-10-25T05:38:48.217Z",
+  "source": "Gemma 4 E4B via Ollama from the public preview",
+  "model": "gemma4:e4b",
+  "intent": "teach me this jump shot",
+  "experience": {
+    "intent": "teach me this jump shot",
+    "mode": "teach",
+    "title": "LeBron's jump shot",
+    "summary": "",
+    "place": "ahead",
+    "steps": [
+      {
+        "start": 0,
+        "end": 1,
+        "title": "Load the ball",
+        "tip": "Start with a stable stance and begin to rise.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 1,
+        "end": 2,
+        "title": "Extend the arms",
+        "tip": "Drive your elbows up as you push the ball.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 2,
+        "end": 3,
+        "title": "Reach maximum height",
+        "tip": "Keep your body aligned and reach towards the target.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 3,
+        "end": 4,
+        "title": "Release and follow through",
+        "tip": "Maintain the follow-through motion after the shot.",
+        "speed": 0.5,
+        "repeat": 2
+      }
+    ],
+    "environment": "court",
+    "objects": [
+      "basketball",
+      "hoop"
+    ],
+    "category": "sport",
+    "durationS": 4,
+    "source": "preview",
+    "model": "gemma4:e4b"
+  },
+  "comparison": {
+    "handWrittenTitle": "The jump shot, start to release",
+    "handWrittenMode": "teach",
+    "handWrittenStepCount": 3,
+    "gemmaMode": "teach",
+    "gemmaStepCount": 4,
+    "note": "Human review required before selecting a plan for the public library."
+  }
+}

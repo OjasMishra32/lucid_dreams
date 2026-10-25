@@ -1,85 +1,38 @@
-# Gemma lesson-plan QA — 2026-10-25
+# Gemma lesson-plan QA - 2026-10-25
 
 ## Scope
 
-Gemma writes only `experience.json` lesson plans from an intent and 6–8 local stills from the clip window (or one sanitized avatar photo). Realism, Watch me try, and Gemini Live remain on their existing Gemini paths. No clip is uploaded through Google Files for lesson planning, and no API key, personal footage, or family media is recorded here.
+Gemma writes `experience.json` plans from an intent and selected local stills: eight JPEG frames for a replay, or one avatar photo. Realism checking, Watch me try, and Gemini Live remain on their Gemini paths. No personal media, API key, or model weights are stored in this repository.
 
-## Implementation verified locally
+## Local setup and implementation
 
-- The planner in `apps/web/lib/bridge/gemini.ts` discovers instruction-tuned `gemma-...-it` models from the Google AI model list unless `GEMINI_MODEL` explicitly selects one for QA or deployment.
-- The local key can access `gemma-4-31b-it`, which was selected explicitly for this run.
-- A replay is sampled into eight evenly spaced JPEG frames with ffmpeg; an avatar supplies its sanitized JPEG. The model receives the intent, dream name, media description, planning rules, and a request for one JSON object in the user prompt. It receives no video upload, Gemini-style system instruction, or response schema.
-- `clean()` still owns timing, mode, placement, object, and safety validation. It never invents a missing lesson step.
-- The live runner writes an atomic checkpoint outside the repository after every case, resumes successful and judged cases, retries transient provider failures at most once with exponential backoff, and records latency and provider errors.
+- Ollama was installed on Atina's laptop and the local vision model `gemma4:e4b` was pulled outside the repository. The Ollama API was reachable at `http://127.0.0.1:11434`.
+- When `GEMMA_MODEL=gemma4:e4b` is set, `apps/web/lib/bridge/gemini.ts` sends `SYSTEM`, the user intent, and selected base64 JPEGs to `/api/chat` with `stream: false`, then parses and validates the response with `clean()`.
+- The implementation first requests the existing `SCHEMA` format. This Ollama MLX runner returned HTTP 501 for structured output, so the planner retries once with an explicit JSON-only prompt. `clean()` remains the contract and timing gate.
+- `experience.ts` enables planning when either `GEMINI_API_KEY` or `GEMMA_MODEL` is available. The 40-intent runner accepts `GEMMA_MODEL`, writes an atomic checkpoint outside the repo after every case, and retries transient provider errors at a bounded rate.
 
-## Offline checks
+## Verification
 
 | Check | Result |
 | --- | --- |
-| TypeScript typecheck | Passed |
-| Deterministic plan suite | Passed: 35 tests, including Gemma model selection, reasoning-text JSON parsing, and real local ffmpeg extraction of eight JPEG frames |
-| Existing 40-intent contract fixtures | Passed through deterministic `clean()` checks |
+| Web typecheck | Passed |
+| Production build | Passed |
+| Deterministic web tests | Passed: 79 total (35 plan, 24 feedback, 20 live) |
+| Local Gemma 40-intent evaluation | Completed: 40/40 pass after one targeted real retest |
 
-## Live evaluation: provider-blocked after five cases
+The real evaluation used sentence-only synthetic intents; it did not send private recordings or family media. Its checkpoint is outside the repository at `/private/tmp/lucid-gemma-ollama-intents.json`, and records each case's model, latency, attempts, raw-model comparison, and final contract comparison.
 
-This was a real, sentence-only request path through `writeExperience` and `gemma-4-31b-it`. No private media was sent. The endpoint and credential were confirmed by the first two successful plans. The next three cases failed at the provider after bounded retries: two returned `Internal error encountered.` and one timed out. The sequential process was stopped after the third consecutive provider failure to avoid duplicate or wasteful calls. This is not a 40-case result and does not measure the model quality of the 35 unexecuted cases.
+## Real local-Gemma result
 
-| Metric | Result |
-| --- | --- |
-| Real cases executed | 5 / 40 |
-| Passed after `clean()` | 2 |
-| Plan-contract misses | 0 |
-| Provider-blocked | 3 |
-| Unexecuted | 35 |
-| Model | `gemma-4-31b-it` |
+The original sequential evaluation completed all 40 cases with 39 contract passes and one miss. The miss was not a model-step fabrication problem: the explicit-lesson detector recognized `break it down` but not `break down her tennis serve`. That meant the permitted single model-side repair never ran.
 
-### Individual results
+| Case | Expected | Actual after `clean()` | Result |
+| --- | --- | --- | --- |
+| `teach-tennis-serve` | `teach`, `ahead`, no environment, racket | `watch` before the fix | Fixed and retested live |
 
-| Case | Expected mode | Result |
-| --- | --- | --- |
-| `teach-piano-side-by-side` | `teach` | PASS — 38233 ms, 1 attempt |
-| `teach-jump-shot` | `teach` | PASS — 22907 ms, 1 attempt |
-| `teach-strum` | `teach` | BLOCKED — Internal error encountered. (4316 ms, 2 attempts) |
-| `teach-violin` | `teach` | BLOCKED — Internal error encountered. (49970 ms, 2 attempts) |
-| `teach-salsa-step` | `teach` | BLOCKED — Gemini took too long. It tries again in a few minutes. (44452 ms, 1 attempts) |
-| `teach-squat-form` | `teach` | Not executed — provider batch stopped |
-| `teach-tennis-serve` | `teach` | Not executed — provider batch stopped |
-| `teach-omelette-flip` | `teach` | Not executed — provider batch stopped |
-| `teach-origami-crane` | `teach` | Not executed — provider batch stopped |
-| `teach-boxing-combo` | `teach` | Not executed — provider batch stopped |
-| `companion-sit-with-her` | `companion` | Not executed — provider batch stopped |
-| `companion-be-with-me` | `companion` | Not executed — provider batch stopped |
-| `companion-while-i-cook` | `companion` | Not executed — provider batch stopped |
-| `companion-miss-grandpa` | `companion` | Not executed — provider batch stopped |
-| `companion-hear-her-voice` | `companion` | Not executed — provider batch stopped |
-| `companion-birthday` | `companion` | Not executed — provider batch stopped |
-| `companion-couch` | `companion` | Not executed — provider batch stopped |
-| `companion-mountains` | `companion` | Not executed — provider batch stopped |
-| `companion-morning-coffee` | `companion` | Not executed — provider batch stopped |
-| `companion-stay-tonight` | `companion` | Not executed — provider batch stopped |
-| `watch-show-me-doing-it` | `watch` | Not executed — provider batch stopped |
-| `watch-ballet-solo` | `watch` | Not executed — provider batch stopped |
-| `watch-cello-piece` | `watch` | Not executed — provider batch stopped |
-| `watch-follow-workout` | `watch` | Not executed — provider batch stopped |
-| `watch-shadowboxing` | `watch` | Not executed — provider batch stopped |
-| `watch-piano` | `watch` | Not executed — provider batch stopped |
-| `watch-tai-chi-mountains` | `watch` | Not executed — provider batch stopped |
-| `watch-skateboard-trick` | `watch` | Not executed — provider batch stopped |
-| `watch-dance-along` | `watch` | Not executed — provider batch stopped |
-| `watch-wedding-toast` | `watch` | Not executed — provider batch stopped |
-| `play-chess` | `play` | Not executed — provider batch stopped |
-| `play-carlsen` | `play` | Not executed — provider batch stopped |
-| `play-fischer` | `play` | Not executed — provider batch stopped |
-| `play-go-easy` | `play` | Not executed — provider batch stopped |
-| `play-grandmaster` | `play` | Not executed — provider batch stopped |
-| `play-full-strength` | `play` | Not executed — provider batch stopped |
-| `play-with-dad` | `play` | Not executed — provider batch stopped |
-| `play-expert` | `play` | Not executed — provider batch stopped |
-| `play-teach-me-chess` | `play` | Not executed — provider batch stopped |
-| `play-chess-master` | `play` | Not executed — provider batch stopped |
+After expanding the detector to include `break down`, a fresh local Gemma request returned `teach`, `ahead`, `room`, a tennis ball and racket, and two timed steps. The response was accepted by `clean()` without invented steps or a changed expectation. Combined with the unaffected 39 real passes, the final real result is **40/40**. A regression test covers the detector and repair condition.
 
-## What remains
+## Remaining acceptance work
 
-- Resume the same command only when the provider is healthy; the checkpoint is `/private/tmp/lucid-gemma-intents.json`, outside the repository. It preserves the two verified passes and records the provider-blocked cases for re-evaluation after a service recovery.
-- Compare Gemma plans with hand-written plans for non-family library dreams only on Ojasva's bridge Mac; retain the better plan with its factual `source` and `model` fields.
-- A public Make one run requires a consenting, head-to-toe clip and Ojasva's bridge/HiPerGator availability. It was not attempted from this checkout.
+- The six public replay comparisons are saved in `demo/gemma-plans/README.md`. No public library plan was overwritten; Ojasva can select only the documented candidates after visual review.
+- Do not expose this local Ollama service through a tunnel until Ojasva approves its bridge integration.

@@ -1,0 +1,59 @@
+{
+  "bundle": "dance-01",
+  "generatedAt": "2026-10-25T05:35:31.973Z",
+  "source": "Gemma 4 E4B via Ollama from the public preview",
+  "model": "gemma4:e4b",
+  "intent": "teach me this routine step by step",
+  "experience": {
+    "intent": "teach me this routine step by step",
+    "mode": "teach",
+    "title": "Studio dance routine",
+    "summary": "A dynamic studio dance routine.",
+    "place": "facing",
+    "steps": [
+      {
+        "start": 0,
+        "end": 1.2,
+        "title": "Initial Reach",
+        "tip": "Extend one arm forward while maintaining a balanced stance.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 1.2,
+        "end": 2.4,
+        "title": "Dynamic Turn",
+        "tip": "Shift your weight and rotate your core into the movement.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 2.4,
+        "end": 3.6,
+        "title": "Deep Contraction",
+        "tip": "Bend your knees and lean slightly forward, keeping arms engaged.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 3.6,
+        "end": 4.8,
+        "title": "Finish and Extend",
+        "tip": "Bring your arms up, holding the final dynamic pose.",
+        "speed": 0.5,
+        "repeat": 2
+      }
+    ],
+    "durationS": 4.84,
+    "source": "preview",
+    "model": "gemma4:e4b"
+  },
+  "comparison": {
+    "handWrittenTitle": "Swing, drop, pop",
+    "handWrittenMode": "teach",
+    "handWrittenStepCount": 3,
+    "gemmaMode": "teach",
+    "gemmaStepCount": 4,
+    "note": "Human review required before selecting a plan for the public library."
+  }
+}

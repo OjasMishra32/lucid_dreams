@@ -1,0 +1,26 @@
+{
+  "bundle": "golf-01",
+  "generatedAt": "2026-10-25T05:36:02.634Z",
+  "source": "Gemma 4 E4B via Ollama from the public preview",
+  "model": "gemma4:e4b",
+  "intent": "slow down this golf swing and teach it to me step by step",
+  "experience": {
+    "intent": "slow down this golf swing and teach it to me step by step",
+    "mode": "watch",
+    "title": "Golf Swing",
+    "summary": "We will slowly break down the sequence of the golf swing, from the initial backswing to the final follow-through. Focus on maintaining proper posture and controlled movement throughout each phase.",
+    "place": "facing",
+    "environment": "room",
+    "durationS": 4.84,
+    "source": "preview",
+    "model": "gemma4:e4b"
+  },
+  "comparison": {
+    "handWrittenTitle": "A full swing, in three moves",
+    "handWrittenMode": "teach",
+    "handWrittenStepCount": 3,
+    "gemmaMode": "watch",
+    "gemmaStepCount": 0,
+    "note": "Human review required before selecting a plan for the public library."
+  }
+}

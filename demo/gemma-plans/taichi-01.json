@@ -1,0 +1,60 @@
+{
+  "bundle": "taichi-01",
+  "generatedAt": "2026-10-25T05:36:47.055Z",
+  "source": "Gemma 4 E4B via Ollama from the public preview",
+  "model": "gemma4:e4b",
+  "intent": "teach me this tai chi sequence slowly",
+  "experience": {
+    "intent": "teach me this tai chi sequence slowly",
+    "mode": "teach",
+    "title": "Tai chi form",
+    "summary": "A sequence of martial movements involving controlled arm and body positions.",
+    "place": "ahead",
+    "steps": [
+      {
+        "start": 0,
+        "end": 1,
+        "title": "Opening Form",
+        "tip": "Maintain a grounded and balanced stance.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 1,
+        "end": 2,
+        "title": "Mid-move Flow",
+        "tip": "Keep your movements fluid and continuous.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 2,
+        "end": 3,
+        "title": "Focus Shift",
+        "tip": "Bring your hands up in a gentle, controlled manner.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 3,
+        "end": 4.8,
+        "title": "Final Pose Hold",
+        "tip": "Sustain this position to focus your energy.",
+        "speed": 0.5,
+        "repeat": 2
+      }
+    ],
+    "environment": "studio",
+    "durationS": 4.84,
+    "source": "preview",
+    "model": "gemma4:e4b"
+  },
+  "comparison": {
+    "handWrittenTitle": "Root, turn, open",
+    "handWrittenMode": "teach",
+    "handWrittenStepCount": 3,
+    "gemmaMode": "teach",
+    "gemmaStepCount": 4,
+    "note": "Human review required before selecting a plan for the public library."
+  }
+}

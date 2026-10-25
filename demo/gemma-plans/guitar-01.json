@@ -1,0 +1,55 @@
+{
+  "bundle": "guitar-01",
+  "generatedAt": "2026-10-25T05:37:14.256Z",
+  "source": "Gemma 4 E4B via Ollama from the public preview",
+  "model": "gemma4:e4b",
+  "intent": "teach me this strum pattern",
+  "experience": {
+    "intent": "teach me this strum pattern",
+    "mode": "teach",
+    "title": "Basic Strumming Technique",
+    "summary": "Learn the continuous motion used for guitar playing.",
+    "place": "beside",
+    "steps": [
+      {
+        "start": 0,
+        "end": 1,
+        "title": "Positioning the instrument",
+        "tip": "Hold the guitar securely against your body.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 1,
+        "end": 2.5,
+        "title": "The initial strumming motion",
+        "tip": "Move your strumming hand in a rhythmic motion.",
+        "speed": 0.5,
+        "repeat": 2
+      },
+      {
+        "start": 2.5,
+        "end": 4.8,
+        "title": "Sustain the rhythm",
+        "tip": "Maintain a steady, continuous tempo through your playing.",
+        "speed": 0.5,
+        "repeat": 2
+      }
+    ],
+    "environment": "concert-hall",
+    "objects": [
+      "guitar"
+    ],
+    "durationS": 4.84,
+    "source": "preview",
+    "model": "gemma4:e4b"
+  },
+  "comparison": {
+    "handWrittenTitle": "Down, down-up",
+    "handWrittenMode": "teach",
+    "handWrittenStepCount": 3,
+    "gemmaMode": "teach",
+    "gemmaStepCount": 3,
+    "note": "Human review required before selecting a plan for the public library."
+  }
+}
