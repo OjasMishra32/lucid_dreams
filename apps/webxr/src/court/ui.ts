@@ -12,10 +12,12 @@
 //   [Step into the court | Back to my seat, Reality check]
 //   [Replay, See my room]              nearest the palm; this row never moves (See my room flips to "Back to the arena", stays lit)
 // and the setup page, [Seat here] over [See my room], where Seat here acts only after a 2 s hold (P32: HoldButton).
-// No gesture acts by itself and there is no other control path (P21): no keys. Stream C (`core`); tested through the
-// e2e (`window.__courtUi`, probe pages only), not node.
+// No gesture acts by itself and there is no other control path (P21): no keys. Every surface is visionOS-style glass,
+// faked (glass(): a translucent body lit from above, a rim light, a soft shadow; no blur), drawn once per change of
+// content; the motion is eased (fades, the menu's spring, the watch card's glide), never a pop. Stream C (`core`); tested
+// through the e2e (`window.__courtUi`, probe pages only), not node.
 import * as THREE from "three";
-import { XrButton, liveJoints } from "../xr/hands";
+import { XrButton, liveJoints, type ButtonLook } from "../xr/hands";
 import { HandMenu, handIndex } from "../xr/menu";
 import type { CourtBundle } from "./format";
 import type { Head, Phase } from "./types";
@@ -59,19 +61,249 @@ const OVER_PAIR = { minY: 2.4, clear: 0.25, deg: 12, scale: [0.5, 1.6] as const,
  * over `fade` s while one stands between the eye and any of its `grid` points, and back in once none does.
  */
 const BLOCK = { grow: 0.05, extra: { r: 0.2, foot: 0.3, head: 0.15 }, fade: 0.2, grid: [5, 3] as const };
-/** The caption's plane, metres (the canvas's 1024 x 384). */
+/**
+ * The caption's plane, metres, laid out in DESIGN px (its 1024 x 384) and drawn at TEXELS canvas px per design px: in
+ * front, ~48 texels a degree at the watch's 1.05 m (about twice the Quest 3S's ~20 px a degree: crisp after
+ * mipmapping); over the pair the card spans at most ~17 deg, so half as many still give ~45.
+ */
 const CAPTION_W = 0.6;
 const CAPTION_H = 0.225;
+const DESIGN = [1024, 384] as const;
+const TEXELS = { front: 1.5, pair: 0.75 } as const;
+/** The card's fades, seconds (in: ease-out; out: ease-in; out for a change of place), growing in from `from` of its size. */
+const FADE = { in: 0.35, out: 0.3, swap: 0.2, from: 0.96 };
+/** The Reality panel's fade, seconds, and how far it rises into place as it comes in, metres. */
+const REALITY_FADE = { s: 0.25, rise: 0.008 };
+/** The watch's lazy follow: once you turn 30 deg away it glides (critically damped, about `time` s) back in front, until it is within `settle` m of its place and slower than `still` m/s. */
+const FOLLOW = { time: 0.45, settle: 0.015, still: 0.03 };
+/** The palm menu draws after stream D's footage (50-90, no depth test) and the drawn hands (vrhands HANDS_ORDER 100), so neither paints over it. */
+const MENU_ORDER = 110;
+/** The menu's open and close (xr/menu.ts MenuEase): a 220 ms fade and spring in, 160 ms out. */
+const MENU_EASE = { inS: 0.22, outS: 0.16, from: 0.92 };
 
 /** A fingertip lost to tracking for this long ends a hold (blinks shorter than this don't); one seen coming out ends it at once. */
 const HOLD_GRACE_MS = 150;
 /** A holding tip stays in until it is this far back in front of the face, metres (jitter at the surface never lets go). */
 const HOLD_OUT = 0.004;
 
+// ---------------- the look: type and glass ----------------
+
+/** The system font (Roboto on the Quest, SF on a Mac): the SF feel comes from weight, size, tracking and spacing, not a download. */
+const FONT_STACK = `-apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, "Helvetica Neue", Arial, sans-serif`;
+
+/** A text style: weight, size and the smallest it may shrink to (px), line height (px), tracking (em), colour. */
+interface TextStyle {
+  weight: number;
+  px: number;
+  min: number;
+  lead: number;
+  track: number;
+  color: string;
+}
+
+function setFont(g: CanvasRenderingContext2D, s: TextStyle, px: number): void {
+  g.font = `${s.weight} ${px}px ${FONT_STACK}`;
+  // tracking in em, tighter as type grows (SF's optical sizes); a browser without letterSpacing draws it untracked
+  if ("letterSpacing" in g) g.letterSpacing = `${(s.track * px).toFixed(2)}px`;
+}
+
+/** Where to break `text` in two: after a sentence or a " · " near the middle, else at the space nearest it. */
+function halves(text: string): string[] {
+  const mid = text.length / 2;
+  let best = -1;
+  for (const sep of [". ", " · ", ": ", ", ", " "]) {
+    for (let i = text.indexOf(sep); i >= 0; i = text.indexOf(sep, i + 1)) {
+      const at = sep === " " ? i : i + sep.length - 1;
+      if (Math.abs(at - mid) < text.length * (sep === " " ? 0.5 : 0.2) && (best < 0 || Math.abs(at - mid) < Math.abs(best - mid))) best = at;
+    }
+    if (best >= 0) break;
+  }
+  return best < 0 ? [text] : [text.slice(0, best).trim(), text.slice(best).trim()];
+}
+
+/** `text` in one line as large as fits `max` (down to the style's min), else in two at the style's size (smaller if they must). */
+function wrap(g: CanvasRenderingContext2D, text: string, s: TextStyle, max: number): { lines: string[]; px: number } {
+  for (let px = s.px; px >= s.min; px--) {
+    setFont(g, s, px);
+    if (g.measureText(text).width <= max) return { lines: [text], px };
+  }
+  const two = halves(text);
+  let px = s.px;
+  for (; px > 12; px--) {
+    setFont(g, s, px);
+    if (two.every((l) => g.measureText(l).width <= max)) break;
+  }
+  return { lines: two, px };
+}
+
+/** A glass surface's recipe: its body's tint, the light from above (sheen), the rim light, the drop shadow (alpha, blur and drop in design px). */
+interface Glass {
+  tint: string;
+  sheen: number;
+  rim: number;
+  shadow: number;
+  blur: number;
+  drop: number;
+  grain?: boolean;
+}
+
+/** The glass's grain (a fixed speckle: dithers the gradients, so 8-bit displays show no bands), made once. */
+let grainPattern: CanvasPattern | null = null;
+function grain(g: CanvasRenderingContext2D): CanvasPattern | null {
+  if (!grainPattern) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const n = c.getContext("2d")!;
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 900; i++) {
+      n.fillStyle = rnd() < 0.5 ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)";
+      n.fillRect(Math.floor(rnd() * 64), Math.floor(rnd() * 64), 1, 1);
+    }
+    grainPattern = g.createPattern(c, "repeat");
+  }
+  return grainPattern;
+}
+
 /**
- * A button that acts only after a fingertip has pushed into it and stayed there HOLD_MS (Seat here, P32). A blue bar
- * fills along its bottom while held; a shorter press, a tap or a hand passing through changes nothing. It fires once
- * per hold: the tip must come out before it can fire again.
+ * visionOS glass, faked (no blur): a soft drop shadow outside the shape (cast by an opaque copy that is then cut out,
+ * so the translucent body never reads darker for it), a translucent body lit from above, an optional grain, and a
+ * hairline rim brightest along the top edge. Design px under a `px`-per-design-px transform (shadows don't scale with it).
+ */
+function glass(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, o: Glass, px: number): void {
+  g.save();
+  g.beginPath();
+  g.roundRect(x, y, w, h, r);
+  g.shadowColor = `rgba(0,0,0,${o.shadow})`;
+  g.shadowBlur = o.blur * px;
+  g.shadowOffsetY = o.drop * px;
+  g.fillStyle = "#000";
+  g.fill();
+  g.shadowColor = "rgba(0,0,0,0)";
+  g.globalCompositeOperation = "destination-out";
+  g.fill();
+  g.globalCompositeOperation = "source-over";
+  g.fillStyle = o.tint;
+  g.fill();
+  const sheen = g.createLinearGradient(0, y, 0, y + h);
+  sheen.addColorStop(0, `rgba(255,255,255,${o.sheen})`);
+  sheen.addColorStop(0.5, `rgba(255,255,255,${o.sheen * 0.3})`);
+  sheen.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = sheen;
+  g.fill();
+  const speckle = o.grain ? grain(g) : null;
+  if (speckle) {
+    g.save();
+    g.clip();
+    g.fillStyle = speckle;
+    g.fillRect(x, y, w, h);
+    g.restore();
+  }
+  const lw = 1.5;
+  g.beginPath();
+  g.roundRect(x + lw / 2, y + lw / 2, w - lw, h - lw, Math.max(0, r - lw / 2));
+  const rim = g.createLinearGradient(0, y, 0, y + h);
+  rim.addColorStop(0, `rgba(255,255,255,${o.rim})`);
+  rim.addColorStop(0.3, `rgba(255,255,255,${o.rim * 0.2})`);
+  rim.addColorStop(1, `rgba(255,255,255,${o.rim * 0.38})`);
+  g.strokeStyle = rim;
+  g.lineWidth = lw;
+  g.stroke();
+  g.restore();
+}
+
+/** An ease-out curve, used both ways: a fade in eases out and the same fade run back eases in (and a turn mid-fade never jumps). */
+const easeOut = (t: number) => 1 - (1 - t) * (1 - t);
+const smooth = (t: number) => t * t * (3 - 2 * t);
+
+// ---------------- the palm menu's buttons ----------------
+
+/** A glyph beside a button's label: drawn in a GLYPH px box from x, centred on y, in the label's colour. */
+type Glyph = (g: CanvasRenderingContext2D, x: number, y: number, color: string) => void;
+const GLYPH = 38;
+
+/** See my room's glyph: a window of four panes. */
+const windowGlyph: Glyph = (g, x, y, color) => {
+  g.save();
+  g.strokeStyle = color;
+  g.lineWidth = 4.5;
+  g.lineJoin = "round";
+  g.beginPath();
+  g.roundRect(x + 2.5, y - 16, GLYPH - 5, 32, 6);
+  g.moveTo(x + GLYPH / 2, y - 16);
+  g.lineTo(x + GLYPH / 2, y + 16);
+  g.moveTo(x + 2.5, y);
+  g.lineTo(x + GLYPH - 2.5, y);
+  g.stroke();
+  g.restore();
+};
+
+/** The button canvas (6400 px a metre) and its face: the default pill's 0.09 x 0.028 m, inside room for its shadow. */
+const BUTTON = { canvas: [704, 256] as const, plane: [0.11, 0.04] as const, face: [576, 180] as const };
+const BUTTON_TEXT: TextStyle = { weight: 600, px: 58, min: 40, lead: 0, track: -0.012, color: "rgba(255,255,255,0.96)" };
+/** Off: mid-grey glass, light enough to read over the black arena and dark enough over the lit floor or a bright room. On: white glass with a dark label (a visionOS toggle that's on). */
+const BUTTON_OFF: Glass = { tint: "rgba(66,66,72,0.74)", sheen: 0.16, rim: 0.42, shadow: 0.5, blur: 18, drop: 5 };
+const BUTTON_ON: Glass = { tint: "rgba(250,250,252,0.94)", sheen: 0, rim: 0.7, shadow: 0.5, blur: 18, drop: 5 };
+
+/** A button's label (and glyph) centred on its canvas: semibold, tracked tight, shrunk to fit, never cut off. */
+function paintLabel(g: CanvasRenderingContext2D, label: string, color: string, glyph?: Glyph): void {
+  const [cw, ch] = BUTTON.canvas;
+  const text = label.trim();
+  const room = glyph ? GLYPH + 14 : 0;
+  let px = BUTTON_TEXT.px;
+  do setFont(g, BUTTON_TEXT, px);
+  while (g.measureText(text).width > BUTTON.face[0] - 96 - room && (px -= 2) > BUTTON_TEXT.min);
+  const left = cw / 2 - (room + g.measureText(text).width) / 2;
+  g.fillStyle = color;
+  g.textAlign = "left";
+  g.textBaseline = "middle";
+  g.fillText(text, left + room, ch / 2 + 2); // a hair under the middle: the optical centre of caps and lower case
+  glyph?.(g, left, ch / 2, color);
+}
+
+/**
+ * Court Side's look for the palm menu (xr/hands.ts ButtonLook): glass capsules; hover lifts the glass, a press flashes
+ * it. `label` false paints the face alone (HoldButton draws its label on its own layer, over its fill).
+ */
+function courtLook(glyph?: Glyph, label = true): ButtonLook {
+  return {
+    canvas: BUTTON.canvas,
+    plane: BUTTON.plane,
+    hover: 2.8,
+    press: 3.6,
+    rate: 16,
+    paint(g, text, on) {
+      const [cw, ch] = BUTTON.canvas;
+      const [fw, fh] = BUTTON.face;
+      const lit = on && label;
+      glass(g, (cw - fw) / 2, (ch - fh) / 2, fw, fh, fh / 2, lit ? BUTTON_ON : BUTTON_OFF, 1);
+      if (label) paintLabel(g, text, lit ? "#1c1c1e" : BUTTON_TEXT.color, glyph);
+    },
+  };
+}
+const LOOK = courtLook();
+const HOLD_LOOK = courtLook(undefined, false);
+
+/** The hold's fill: the face's capsule fills with system blue from the left as the hold goes on (under the label), its front edge soft; it drains over `back` s when a hold ends short. The colour is written as is (sRGB). */
+const FILL = { color: new THREE.Color(0.04, 0.52, 1.0), alpha: 0.95, feather: 0.007, back: 0.22 };
+const FILL_VERT = `varying vec2 vP;
+void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const FILL_FRAG = `uniform vec3 uColor; uniform vec2 uHalf; uniform float uP; uniform float uFeather; uniform float opacity;
+varying vec2 vP;
+void main() {
+  vec2 q = abs(vP) - (uHalf - vec2(uHalf.y));
+  float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uHalf.y; // outside the capsule, metres
+  float aa = fwidth(d);
+  float inside = 1.0 - smoothstep(-aa, aa, d);
+  float front = -uHalf.x - uFeather + uP * 2.0 * (uHalf.x + uFeather); // off the left end at 0, past the right at 1
+  float filled = 1.0 - smoothstep(front - uFeather, front, vP.x);
+  gl_FragColor = vec4(uColor, inside * filled * opacity);
+}`;
+
+/**
+ * A button that acts only after a fingertip has pushed into it and stayed there HOLD_MS (Seat here, P32). The face fills
+ * with blue from the left while held, under its label (and drains over FILL.back s when let go short); a shorter press,
+ * a tap or a hand passing through changes nothing. It fires once per hold: the tip must come out before it can fire again.
  */
 export class HoldButton extends XrButton {
   /** Every hold, for the e2e: when it started and when it fired (null: let go first), in `now` ms. */
@@ -80,7 +312,14 @@ export class HoldButton extends XrButton {
   progress = 0;
   readonly holdMs: number;
   private readonly onHeld: () => void;
-  private readonly bar: THREE.Mesh;
+  private readonly fill: THREE.Mesh;
+  private readonly fillU: { uP: { value: number }; opacity: { value: number } };
+  /** The label, on its own layer over the fill (the face is glass alone). */
+  private readonly labelCanvas = document.createElement("canvas");
+  private readonly labelTex: THREE.CanvasTexture;
+  /** What the fill shows: the progress, draining back to 0 when a hold ends short. */
+  private shown = 0;
+  private lastTouch = -1;
   private holdStart: number | null = null;
   private lastIn = 0;
   private fired = false;
@@ -90,15 +329,50 @@ export class HoldButton extends XrButton {
   private readonly tip = new THREE.Vector3();
 
   constructor(id: string, label: string, onHeld: () => void, holdMs = HOLD_MS) {
-    super(id, label, () => {}); // a plain push does nothing: only the hold acts
+    super(id, label, () => {}, HOLD_LOOK); // a plain push does nothing: only the hold acts
     this.onHeld = onHeld;
     this.holdMs = holdMs;
-    const geo = new THREE.PlaneGeometry(0.076, 0.0026);
-    geo.translate(0.038, 0, 0);
-    this.bar = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x0a84ff, transparent: true, depthWrite: false }));
-    this.bar.position.set(-0.038, -0.0105, 0.0004);
-    this.bar.scale.x = 0.0001;
-    this.mesh.add(this.bar);
+    const [fw, fh] = BUTTON.face.map((v) => v / 6400);
+    const uniforms = {
+      uColor: { value: FILL.color },
+      uHalf: { value: new THREE.Vector2(fw / 2, fh / 2) },
+      uP: { value: 0 },
+      uFeather: { value: FILL.feather },
+      opacity: { value: 1 },
+    };
+    this.fillU = uniforms;
+    const material = new THREE.ShaderMaterial({ uniforms, vertexShader: FILL_VERT, fragmentShader: FILL_FRAG, transparent: true, depthWrite: false });
+    this.fill = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh), material);
+    this.fill.position.z = 0.0004;
+    this.fill.visible = false;
+    this.fill.userData.layer = 1;
+    // the menu's fade sets the material's opacity; the shader reads it from its uniform
+    this.fill.onBeforeRender = () => (uniforms.opacity.value = material.opacity * FILL.alpha);
+    this.mesh.add(this.fill);
+    [this.labelCanvas.width, this.labelCanvas.height] = BUTTON.canvas;
+    this.labelTex = new THREE.CanvasTexture(this.labelCanvas);
+    this.labelTex.colorSpace = THREE.SRGBColorSpace;
+    this.labelTex.anisotropy = 8;
+    const text = new THREE.Mesh(new THREE.PlaneGeometry(...BUTTON.plane), new THREE.MeshBasicMaterial({ map: this.labelTex, transparent: true, depthWrite: false }));
+    text.position.z = 0.0008;
+    text.userData.layer = 2;
+    this.mesh.add(text);
+    this.drawLabel(label);
+  }
+
+  override setLabel(label: string): void {
+    super.setLabel(label);
+    this.drawLabel(label);
+  }
+
+  private drawLabel(label: string): void {
+    const g = this.labelCanvas.getContext("2d")!;
+    g.clearRect(0, 0, ...BUTTON.canvas);
+    // a breath of white under the text (alpha 1/255, invisible): mipmapping mixes white, not black, into the glyphs' edges, so they don't thin
+    g.fillStyle = "rgba(255,255,255,0.004)";
+    g.fillRect(0, 0, ...BUTTON.canvas);
+    paintLabel(g, label, BUTTON_TEXT.color);
+    this.labelTex.needsUpdate = true;
   }
 
   /** Both index fingertips in world space (null when not tracked), once a frame from the menu. */
@@ -106,6 +380,7 @@ export class HoldButton extends XrButton {
     if (!this.mesh.visible) return;
     let pressing = false;
     let out = false;
+    let hover = false;
     for (let h = 0; h < fingertips.length; h++) {
       const tip = fingertips[h];
       if (!tip) continue; // lost to tracking: the hold rides out HOLD_GRACE_MS
@@ -113,6 +388,7 @@ export class HoldButton extends XrButton {
       const { x, y, z } = this.tip;
       const over = Math.abs(x) < 0.047 && Math.abs(y) < 0.016;
       const near = Math.abs(x) < 0.08 && Math.abs(y) < 0.05;
+      hover ||= over && z > -0.002 && z < 0.04;
       // as XrButton: only a tip that came from in front counts, and one well behind the menu never does
       if (near && z > 0.015 && z < 0.12) this.from[h] = true;
       else if (!near || z < -0.08) this.from[h] = false;
@@ -146,7 +422,291 @@ export class HoldButton extends XrButton {
       }
     }
     this.progress = this.holdStart === null ? 0 : Math.min(1, (now - this.holdStart) / this.holdMs);
-    this.bar.scale.x = Math.max(0.0001, this.progress);
+    const step = this.lastTouch < 0 ? 0 : Math.min(0.05, (now - this.lastTouch) / 1000);
+    this.lastTouch = now;
+    this.shown = this.progress >= this.shown ? this.progress : Math.max(this.progress, this.shown - step / FILL.back);
+    this.fillU.uP.value = this.shown;
+    this.fill.visible = this.shown > 0.001;
+    this.glowStep(now, hover || pressing, false);
+  }
+}
+
+// ---------------- the caption card ----------------
+
+/**
+ * The card: the caption, then the honesty label and the credit (each in one line, or two when that keeps it large), on
+ * glass at the foot of the canvas with room under it for its shadow, design px. Over the pair it is the same plane seen
+ * from metres away, so its type is `pair` times larger there (its own texture, swapped in while the card is faded out).
+ */
+const CARD = {
+  side: 30,
+  foot: 24,
+  pad: [26, 40, 26] as const,
+  gap: 12,
+  radius: 40,
+  pair: 1.32,
+  caption: { weight: 600, px: 38, min: 34, lead: 47, track: -0.014, color: "rgba(255,255,255,0.97)" } as TextStyle,
+  label: { weight: 500, px: 28, min: 27, lead: 35, track: -0.004, color: "rgba(255,255,255,0.82)" } as TextStyle,
+  credit: { weight: 500, px: 24, min: 22, lead: 31, track: 0, color: "rgba(255,255,255,0.66)" } as TextStyle,
+  glass: { tint: "rgba(40,40,46,0.70)", sheen: 0.12, rim: 0.4, shadow: 0.42, blur: 26, drop: 8, grain: true } as Glass,
+};
+/**
+ * The Reality panel, its own plane just above the card (its canvas DESIGN wide, `h` tall, the panel at its foot): a
+ * legend swatch of the 3D's never-seen blue (freeze.ts REALITY_BLUE), its title, then the numbers.
+ */
+const REALITY = {
+  h: 190,
+  side: 72,
+  gap: 12,
+  foot: 18,
+  pad: [18, 36, 20] as const,
+  radius: 30,
+  swatch: 20,
+  blue: "rgb(70,132,255)",
+  title: { weight: 600, px: 25, min: 20, lead: 34, track: -0.006, color: "rgba(255,255,255,0.97)" } as TextStyle,
+  body: { weight: 500, px: 22, min: 17, lead: 29, track: 0, color: "rgba(255,255,255,0.78)" } as TextStyle,
+  glass: { tint: "rgba(24,32,52,0.74)", sheen: 0.12, rim: 0.44, shadow: 0.34, blur: 20, drop: 6, grain: true } as Glass,
+};
+/** Metres per design px on the card's plane. */
+const M_PER_PX = CAPTION_H / DESIGN[1];
+/**
+ * Where the watch card's top edge sits on its plane, design px from the top (where it sat before this look): the plane
+ * moves so the edge stays there and a longer card grows downward, never up toward the players' feet (P43 judges the
+ * floor round them).
+ */
+const WATCH_TOP = 196;
+
+/** A style `k` times larger (the card over the pair). */
+const bigger = (s: TextStyle, k: number): TextStyle => ({ ...s, px: Math.round(s.px * k), min: Math.round(s.min * k), lead: Math.round(s.lead * k) });
+
+/** A canvas `h` design px tall on the card's plane, `texels` canvas px per design px: its texture and its context, cleared and under the design transform. */
+class CardCanvas {
+  readonly canvas = document.createElement("canvas");
+  readonly tex: THREE.CanvasTexture;
+  readonly g: CanvasRenderingContext2D;
+  /** The panel's top edge, design px from the canvas top, once drawn. */
+  top = 0;
+
+  constructor(
+    readonly h: number,
+    readonly texels: number,
+  ) {
+    this.canvas.width = Math.round(DESIGN[0] * texels);
+    this.canvas.height = Math.round(h * texels);
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
+    this.g = this.canvas.getContext("2d")!;
+  }
+
+  begin(): CanvasRenderingContext2D {
+    const g = this.g;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    g.setTransform(this.texels, 0, 0, this.texels, 0, 0);
+    return g;
+  }
+}
+
+/** The caption, label and credit on glass, `k` times the watch's type; the panel's top, design px. */
+function drawCard(c: CardCanvas, k: number, caption: string, label: string, credit: string): void {
+  const g = c.begin();
+  const max = DESIGN[0] - 2 * (CARD.side + CARD.pad[1]);
+  const blocks = [CARD.caption, CARD.label, CARD.credit].map((s, i) => {
+    const style = bigger(s, k);
+    return { style, ...wrap(g, [caption, label, credit][i], style, max) };
+  });
+  const h = CARD.pad[0] + CARD.gap + CARD.pad[2] + blocks.reduce((s, b) => s + b.lines.length * b.style.lead, 0);
+  const y0 = Math.max(4, c.h - CARD.foot - h);
+  glass(g, CARD.side, y0, DESIGN[0] - 2 * CARD.side, h, CARD.radius, CARD.glass, c.texels);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  let y = y0 + CARD.pad[0];
+  blocks.forEach((b, i) => {
+    setFont(g, b.style, b.px);
+    g.fillStyle = b.style.color;
+    for (const line of b.lines) {
+      g.fillText(line, DESIGN[0] / 2, y + b.style.lead / 2);
+      y += b.style.lead;
+    }
+    if (i === 0) y += CARD.gap;
+  });
+  c.top = y0;
+  c.tex.needsUpdate = true;
+}
+
+/** The Reality panel at the foot of its canvas, `k` times the watch's type. */
+function drawReality(c: CardCanvas, k: number, lines: string[]): void {
+  const g = c.begin();
+  const R = REALITY;
+  const w = DESIGN[0] - 2 * R.side;
+  const max = w - 2 * R.pad[1];
+  const [title, ...body] = lines;
+  const ts = bigger(R.title, k);
+  const bs = bigger(R.body, k);
+  const swatch = R.swatch * k;
+  const head = wrap(g, title, ts, max - swatch - 12);
+  const rows = body.map((l) => wrap(g, l, bs, max));
+  const want = R.pad[0] + R.pad[2] + head.lines.length * ts.lead + rows.reduce((s, r) => s + r.lines.length * bs.lead, 0);
+  // never taller than its canvas: the line height gives way, never the type below its min
+  const fit = Math.min(1, (c.h - R.foot - 4) / want);
+  const y0 = c.h - R.foot - want * fit;
+  glass(g, R.side, y0, w, want * fit, R.radius, R.glass, c.texels);
+  g.textBaseline = "middle";
+  let y = y0 + R.pad[0] * fit;
+  setFont(g, ts, head.px);
+  head.lines.forEach((line, i) => {
+    const tw = g.measureText(line).width;
+    const left = DESIGN[0] / 2 - (swatch + 12 + tw) / 2;
+    const cy = y + (ts.lead * fit) / 2;
+    if (i === 0) {
+      g.fillStyle = R.blue;
+      g.beginPath();
+      g.roundRect(left, cy - swatch / 2, swatch, swatch, 6 * k);
+      g.fill();
+    }
+    g.fillStyle = ts.color;
+    g.textAlign = "left";
+    g.fillText(line, left + swatch + 12, cy + 1);
+    y += ts.lead * fit;
+  });
+  g.textAlign = "center";
+  for (const r of rows) {
+    setFont(g, bs, r.px);
+    g.fillStyle = bs.color;
+    for (const line of r.lines) {
+      g.fillText(line, DESIGN[0] / 2, y + (bs.lead * fit) / 2);
+      y += bs.lead * fit;
+    }
+  }
+  c.top = y0;
+  c.tex.needsUpdate = true;
+}
+
+/**
+ * The caption, label and credit card (drawn once per placement's type size), and the Reality check's panel: its own plane
+ * just above the card, drawn once per change of its lines, fading and rising in while it's on.
+ */
+class CaptionPanel {
+  readonly mesh: THREE.Mesh;
+  /** The Reality panel's plane (a child of the card), for the card's sight-line test. */
+  readonly reality: THREE.Mesh;
+  readonly lines: string[] = [];
+  /** The fade (0-1) and the near fade over the pair (0-1): drawn at their product. */
+  private level = 0;
+  private nearness = 1;
+  private readonly material: THREE.MeshBasicMaterial;
+  private readonly realityMaterial: THREE.MeshBasicMaterial;
+  private readonly cards = { front: new CardCanvas(DESIGN[1], TEXELS.front), pair: new CardCanvas(DESIGN[1], TEXELS.pair) };
+  private readonly realities = { front: new CardCanvas(REALITY.h, TEXELS.front), pair: new CardCanvas(REALITY.h, TEXELS.pair) };
+  private placement: "front" | "pair" = "front";
+  /** The Reality panel: on or off, how far shown (0-1, linear in time), the lines it was drawn with. */
+  private realityOn = false;
+  private realityT = 0;
+  private realityLines: string[] = [];
+  private text: string[] = [];
+  /** The Reality plane's resting height in the card's plane, metres. */
+  private realityY = 0;
+
+  constructor() {
+    this.material = new THREE.MeshBasicMaterial({ map: this.cards.front.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(CAPTION_W, CAPTION_H), this.material);
+    this.mesh.name = "court-caption";
+    this.mesh.renderOrder = 100; // over the arena, under the fade-jump veil
+    this.mesh.visible = false;
+    this.realityMaterial = new THREE.MeshBasicMaterial({ map: this.realities.front.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+    this.reality = new THREE.Mesh(new THREE.PlaneGeometry(CAPTION_W, REALITY.h * M_PER_PX), this.realityMaterial);
+    this.reality.name = "court-reality";
+    this.reality.renderOrder = 101;
+    this.reality.visible = false;
+    this.mesh.add(this.reality);
+  }
+
+  set opacity(v: number) {
+    this.level = v;
+    this.apply();
+  }
+
+  get opacity(): number {
+    return this.level;
+  }
+
+  /** 1 = full, 0 = gone (the eye too close to the card over the pair). */
+  set near(v: number) {
+    this.nearness = v;
+    this.apply();
+  }
+
+  /** How far the watch's plane sits below its place so the card's top edge stays at WATCH_TOP, metres. */
+  get frontDrop(): number {
+    return (WATCH_TOP - this.cards.front.top) * M_PER_PX;
+  }
+
+  /** How far the Reality panel shows, 0-1: its own fade alone (the card's is on top of it). */
+  get realityShown(): number {
+    return easeOut(this.realityT);
+  }
+
+  /** Low in front (the watch's type) or over the pair (larger type): swapped while the card is faded out. */
+  place(placement: "front" | "pair"): void {
+    this.placement = placement;
+    this.material.map = this.cards[placement].tex; // one map for another: the same program, no recompile
+    this.realityMaterial.map = this.realities[placement].tex;
+    this.restReality();
+  }
+
+  /** Once a frame: the Reality panel's fade (ease-out in, ease-in out) and its rise into place. */
+  step(dt: number): void {
+    this.realityT = Math.min(1, Math.max(0, this.realityT + (this.realityOn ? dt : -dt) / REALITY_FADE.s));
+    this.reality.position.set(0, this.realityY - (1 - this.realityShown) * REALITY_FADE.rise, 0.0005);
+    this.apply();
+  }
+
+  private apply(): void {
+    this.material.opacity = this.level * this.nearness;
+    this.mesh.visible = this.material.opacity > 0.001;
+    this.realityMaterial.opacity = this.material.opacity * this.realityShown;
+    this.reality.visible = this.realityMaterial.opacity > 0.001;
+  }
+
+  /** The Reality plane's foot `gap` above the card's top edge (the panel's own shadow overlaps the card a little). */
+  private restReality(): void {
+    const top = this.cards[this.placement].top;
+    const foot = top - REALITY.gap + REALITY.foot; // design px from the card canvas's top
+    this.realityY = CAPTION_H / 2 - (foot - REALITY.h / 2) * M_PER_PX;
+  }
+
+  /** The caption, label and credit (the bundle's: drawn once, in both type sizes). */
+  draw(caption: string, label: string, credit: string): void {
+    drawCard(this.cards.front, 1, caption, label, credit);
+    drawCard(this.cards.pair, CARD.pair, caption, label, credit);
+    this.text = [caption, label, credit];
+    this.restReality();
+    this.lines.splice(0, this.lines.length, ...(this.realityOn ? this.realityLines : []), ...this.text);
+  }
+
+  /** The Reality check's lines (the legend first), or null while it's off: the panel fades in or out; it's redrawn only when its lines change. */
+  setReality(lines: string[] | null): void {
+    this.realityOn = !!lines;
+    if (lines && lines.join("\n") !== this.realityLines.join("\n")) {
+      drawReality(this.realities.front, 1, lines);
+      drawReality(this.realities.pair, CARD.pair, lines);
+      this.realityLines = [...lines];
+    }
+    this.lines.splice(0, this.lines.length, ...(this.realityOn ? this.realityLines : []), ...this.text);
+  }
+}
+
+/** A critically damped glide of `p` toward `to` carrying velocity `v`, settling in about `time` s (Game Programming Gems 4's SmoothDamp). */
+function glide(p: THREE.Vector3, to: THREE.Vector3, v: THREE.Vector3, time: number, dt: number): void {
+  const w = 2 / time;
+  const x = w * dt;
+  const k = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  for (const a of ["x", "y", "z"] as const) {
+    const change = p[a] - to[a];
+    const temp = (v[a] + w * change) * dt;
+    v[a] = (v[a] - w * temp) * k;
+    p[a] = to[a] + (change + temp) * k;
   }
 }
 
@@ -182,122 +742,6 @@ function blockers(bundle: CourtBundle): Blocker[] {
     out.push({ a: new THREE.Vector3(x, y + BLOCK.extra.foot, z), b: new THREE.Vector3(x, y + o.height - BLOCK.extra.head, z), r: BLOCK.extra.r + BLOCK.grow });
   }
   return out;
-}
-
-/** A small window glyph for See my room (a frame with four panes), as a child plane at the button's left. */
-function windowIcon(): THREE.Mesh {
-  const c = document.createElement("canvas");
-  c.width = c.height = 64;
-  const g = c.getContext("2d")!;
-  g.strokeStyle = "#f5f5f7";
-  g.lineWidth = 5;
-  g.strokeRect(10, 12, 44, 40);
-  g.beginPath();
-  g.moveTo(32, 12);
-  g.lineTo(32, 52);
-  g.moveTo(10, 32);
-  g.lineTo(54, 32);
-  g.stroke();
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const icon = new THREE.Mesh(new THREE.PlaneGeometry(0.0095, 0.0095), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
-  icon.position.set(-0.0365, 0, 0.0004); // in the pill's rounded left end; the label is padded clear of it
-  return icon;
-}
-
-/** The caption, label and credit panel (and the Reality check's lines above them) drawn on one canvas. */
-class CaptionPanel {
-  readonly mesh: THREE.Mesh;
-  readonly lines: string[] = [];
-  /** The fade (0-1) and the near fade over the pair (0-1): drawn at their product. */
-  private level = 0;
-  private nearness = 1;
-  private readonly canvas = document.createElement("canvas");
-  private readonly tex: THREE.CanvasTexture;
-  private readonly material: THREE.MeshBasicMaterial;
-
-  constructor() {
-    this.canvas.width = 1024;
-    this.canvas.height = 384;
-    this.tex = new THREE.CanvasTexture(this.canvas);
-    this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.tex.anisotropy = 8;
-    this.material = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(CAPTION_W, CAPTION_H), this.material);
-    this.mesh.name = "court-caption";
-    this.mesh.renderOrder = 100; // over the arena, under the fade-jump veil
-    this.mesh.visible = false;
-  }
-
-  set opacity(v: number) {
-    this.level = v;
-    this.apply();
-  }
-
-  get opacity(): number {
-    return this.level;
-  }
-
-  /** 1 = full, 0 = gone (the eye too close to the card over the pair). */
-  set near(v: number) {
-    this.nearness = v;
-    this.apply();
-  }
-
-  private apply(): void {
-    this.material.opacity = this.level * this.nearness;
-    this.mesh.visible = this.material.opacity > 0.001;
-  }
-
-  /** The caption, label and credit always; `reality` lines above them while the Reality check is on. */
-  draw(caption: string, label: string, credit: string, reality: string[] | null): void {
-    const g = this.canvas.getContext("2d")!;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
-    g.clearRect(0, 0, W, H);
-    const font = (weight: number, px: number) => `${weight} ${px}px -apple-system, "SF Pro Text", Inter, Roboto, sans-serif`;
-    const fit = (text: string, weight: number, px: number, max: number) => {
-      let size = px;
-      do g.font = font(weight, size);
-      while (g.measureText(text).width > max && (size -= 2) > 14);
-    };
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    this.lines.length = 0;
-    // the Reality panel: a blue-edged pill above the caption
-    if (reality?.length) {
-      const h = 40 + reality.length * 34;
-      g.fillStyle = "rgba(10,20,40,0.78)";
-      g.beginPath();
-      g.roundRect(96, 8, W - 192, h, 26);
-      g.fill();
-      g.strokeStyle = "rgba(64,156,255,0.9)";
-      g.lineWidth = 3;
-      g.stroke();
-      reality.forEach((line, i) => {
-        g.fillStyle = i === 0 ? "#8cc4ff" : "#e8f1ff";
-        fit(line, i === 0 ? 600 : 500, 28, W - 260);
-        g.fillText(line, W / 2, 8 + 20 + 17 + i * 34);
-        this.lines.push(line);
-      });
-    }
-    const top = 196;
-    g.fillStyle = "rgba(20,20,22,0.72)";
-    g.beginPath();
-    g.roundRect(40, top, W - 80, 180, 36);
-    g.fill();
-    g.fillStyle = "#f5f5f7";
-    fit(caption, 600, 40, W - 140);
-    g.fillText(caption, W / 2, top + 48);
-    g.fillStyle = "#d2d2d7";
-    fit(label, 500, 29, W - 140);
-    g.fillText(label, W / 2, top + 104);
-    g.fillStyle = "#a1a1a6";
-    fit(credit, 400, 24, W - 140);
-    g.fillText(credit, W / 2, top + 148);
-    this.lines.push(caption, label, credit);
-    this.tex.needsUpdate = true;
-  }
 }
 
 /** What the e2e reads (probe pages only). */
@@ -337,6 +781,11 @@ export class Ui {
   private phase: Phase = "arrival";
   private flags: UiFlags = { inRoom: false, reality: false, setup: true, nextView: false };
   private placed = false;
+  /** The card's fade, 0-1, linear in time (drawn eased). */
+  private fade = 0;
+  /** The watch's glide back in front: on once you've turned away, and its velocity. */
+  private gliding = false;
+  private readonly glideV = new THREE.Vector3();
   /** Where the caption is: low in front (the watch), or over the pair (the 3D). */
   private mode: "front" | "pair" = "front";
   /** The court group (court.ts's "court-world"): the card over the pair rides it. */
@@ -351,6 +800,12 @@ export class Ui {
   private readonly ptC = new THREE.Vector3();
   private readonly hitC = new THREE.Vector3();
   private readonly ray = new THREE.Ray();
+  private readonly toCourt = new THREE.Matrix4();
+  /** The card's plane and the Reality panel's, with their sizes, for the sight-line test. */
+  private readonly planes: [THREE.Object3D, number, number][] = [
+    [this.caption.mesh, CAPTION_W, CAPTION_H],
+    [this.caption.reality, CAPTION_W, REALITY.h * M_PER_PX],
+  ];
   private readonly headV = new THREE.Vector3();
   private readonly target = new THREE.Vector3();
 
@@ -359,25 +814,27 @@ export class Ui {
     this.hands = hands;
     this.sideOf = sideOf;
     this.bundle = bundle;
-    this.menu = new HandMenu(hands, sideOf, scene, 2);
-    const button = (action: UiAction, label: string) => new XrButton(action, label, () => this.press(action));
+    this.menu = new HandMenu(hands, sideOf, scene, 2, MENU_EASE);
+    const button = (action: UiAction, label: string, look = LOOK) => new XrButton(action, label, () => this.press(action), look);
     this.seatHere = new HoldButton("seatHere", "Hold to seat here", () => this.press("seatHere"));
     this.b = {
       step: button("step", "Step into the court"),
       back: button("back", "Back to my seat"),
       reality: button("reality", "Reality check"),
       replay: button("replay", "Replay"),
-      room: button("room", ROOM_OUT),
+      room: button("room", ROOM_OUT, courtLook(windowGlyph)),
       closer: button("closer", "Walk closer"),
       nextView: button("nextView", "Next view"),
       seatHere: this.seatHere,
       changeSeat: new HoldButton("changeSeat", "Hold to change seat", () => this.press("changeSeat")),
     };
-    this.b.room.mesh.add(windowIcon());
+    // the menu over the footage; a button's own layers (a hold's fill, then its label) over its face
+    for (const btn of Object.values(this.b)) btn.mesh.traverse((o) => (o.renderOrder = MENU_ORDER + (o === btn.mesh ? 0 : (o.userData.layer ?? 1))));
     this.world = scene.getObjectByName("court-world") ?? null;
     this.overPair.copy(overPair(bundle));
     this.blockers = blockers(bundle);
     scene.add(this.caption.mesh);
+    this.caption.draw(bundle.court.caption, bundle.court.label, bundle.court.credit);
     this.drawCaption();
     this.relayout();
     if (typeof window !== "undefined" && window.__court) window.__courtUi = this.probe();
@@ -421,18 +878,25 @@ export class Ui {
     const cap = this.caption;
     const mode = this.world && (this.phase === "open" || this.phase === "walking" || this.phase === "returning") ? "pair" : "front";
     const want = this.flags.setup || this.phase === "arrival" || mode !== this.mode ? 0 : 1;
-    cap.opacity = Math.min(1, Math.max(0, cap.opacity + Math.sign(want - cap.opacity) * dt * (mode !== this.mode ? 4 : 2)));
-    if (mode !== this.mode && cap.opacity <= 0) {
+    const rate = mode !== this.mode ? 1 / FADE.swap : want ? 1 / FADE.in : 1 / FADE.out;
+    this.fade = Math.min(1, Math.max(0, this.fade + Math.sign(want - this.fade) * dt * rate));
+    if (mode !== this.mode && this.fade <= 0) {
       this.mode = mode;
       this.placed = false;
+      cap.place(mode);
     }
+    const shown = easeOut(this.fade);
+    cap.opacity = shown;
+    cap.step(dt);
+    // it grows into place as it fades in, and shrinks a little as it goes
+    const appear = FADE.from + (1 - FADE.from) * shown;
     const m = cap.mesh;
     if (this.mode === "pair" && this.world) {
       this.world.updateWorldMatrix(true, false);
       m.position.copy(this.overPair);
       this.world.localToWorld(m.position);
       const far = m.position.distanceTo(this.headV);
-      const scale = Math.min(OVER_PAIR.scale[1], Math.max(OVER_PAIR.scale[0], (far * Math.tan(((OVER_PAIR.deg / 2) * Math.PI) / 180) * 2) / CAPTION_W));
+      const scale = appear * Math.min(OVER_PAIR.scale[1], Math.max(OVER_PAIR.scale[0], (far * Math.tan(((OVER_PAIR.deg / 2) * Math.PI) / 180) * 2) / CAPTION_W));
       m.scale.setScalar(scale);
       // the lower edge stays put; the card grows upward (the court group turns about y only, so up is up)
       m.position.add(this.lift.set(0, (CAPTION_H * scale) / 2, 0));
@@ -440,60 +904,73 @@ export class Ui {
       const near = Math.min(1, Math.max(0, (m.position.distanceTo(this.headV) - gone) / (full - gone)));
       m.lookAt(this.headV);
       this.clearView = Math.min(1, Math.max(0, this.clearView + (this.blocked(m) ? -1 : 1) * (dt / BLOCK.fade)));
-      cap.near = near * this.clearView;
+      cap.near = near * smooth(this.clearView);
       return;
     }
-    m.scale.setScalar(1);
+    m.scale.setScalar(appear);
     this.clearView = 1;
     cap.near = 1;
     const fx = -Math.sin(head.yaw);
     const fz = -Math.cos(head.yaw);
-    this.target.set(head.room[0] + fx * 1.05, head.room[1] - 0.42, head.room[2] + fz * 1.05);
+    this.target.set(head.room[0] + fx * 1.05, head.room[1] - 0.42 - cap.frontDrop, head.room[2] + fz * 1.05);
     if (!this.placed) {
       m.position.copy(this.target);
+      this.glideV.set(0, 0, 0);
+      this.gliding = false;
       this.placed = true;
     } else {
       const dx = m.position.x - head.room[0];
       const dz = m.position.z - head.room[2];
       const off = Math.abs(Math.atan2(dx * fz - dz * fx, dx * fx + dz * fz));
       const dist = Math.hypot(dx, dz);
-      if (off > (30 * Math.PI) / 180 || Math.abs(dist - 1.05) > 0.45 || Math.abs(m.position.y - this.target.y) > 0.3)
-        m.position.lerp(this.target, Math.min(1, dt * 2.5));
+      const dy = Math.abs(m.position.y - this.target.y);
+      if (off > (30 * Math.PI) / 180 || Math.abs(dist - 1.05) > 0.45 || dy > 0.3) this.gliding = true;
+      if (this.gliding) {
+        glide(m.position, this.target, this.glideV, FOLLOW.time, dt);
+        if (m.position.distanceTo(this.target) < FOLLOW.settle && this.glideV.length() < FOLLOW.still) {
+          this.gliding = false;
+          this.glideV.set(0, 0, 0);
+        }
+      }
     }
     m.lookAt(this.headV);
   }
 
-  /** Whether a person (BLOCK) stands between the eye and any of the card's grid points. */
+  /** Whether a person (BLOCK) stands between the eye and any of the card's grid points (and the Reality panel's, while it shows). */
   private blocked(m: THREE.Mesh): boolean {
     if (!this.world) return false;
-    m.updateMatrixWorld();
-    this.eyeC.copy(this.headV);
-    this.world.worldToLocal(this.eyeC);
+    m.updateMatrixWorld(true);
+    this.toCourt.copy(this.world.matrixWorld).invert();
+    this.eyeC.copy(this.headV).applyMatrix4(this.toCourt);
     const [nu, nv] = BLOCK.grid;
-    for (let i = 0; i < nu; i++)
-      for (let j = 0; j < nv; j++) {
-        this.ptC.set((i / (nu - 1) - 0.5) * CAPTION_W, (j / (nv - 1) - 0.5) * CAPTION_H, 0);
-        m.localToWorld(this.ptC);
-        this.world.worldToLocal(this.ptC);
-        const reach = this.eyeC.distanceTo(this.ptC);
-        this.ray.origin.copy(this.eyeC);
-        this.ray.direction.subVectors(this.ptC, this.eyeC).normalize();
-        // the nearest point of the sight line to a capsule's axis is inside it, and nearer than the card
-        for (const { a, b, r } of this.blockers) if (this.ray.distanceSqToSegment(a, b, this.hitC) < r * r && this.eyeC.distanceTo(this.hitC) < reach) return true;
-      }
+    for (let k = 0; k < (this.caption.realityShown > 0 ? 2 : 1); k++) {
+      const [plane, w, h] = this.planes[k];
+      for (let i = 0; i < nu; i++)
+        for (let j = 0; j < nv; j++) {
+          this.ptC.set((i / (nu - 1) - 0.5) * w, (j / (nv - 1) - 0.5) * h, 0);
+          plane.localToWorld(this.ptC).applyMatrix4(this.toCourt);
+          const reach = this.eyeC.distanceTo(this.ptC);
+          this.ray.origin.copy(this.eyeC);
+          this.ray.direction.subVectors(this.ptC, this.eyeC).normalize();
+          // the nearest point of the sight line to a capsule's axis is inside it, and nearer than the card
+          for (const { a, b, r } of this.blockers) if (this.ray.distanceSqToSegment(a, b, this.hitC) < r * r && this.eyeC.distanceTo(this.hitC) < reach) return true;
+        }
+    }
     return false;
   }
 
+  /** The Reality panel's lines while Reality check is on (the card itself is drawn once). */
   private drawCaption(): void {
     const c = this.bundle.court;
-    const reality = this.flags.reality
-      ? [
-          "Blue: what the camera never saw",
-          c.freeze.players.map((p) => `${p.name} ${Math.round(p.seenFraction * 100)}% seen`).join(" · "),
-          `In-between frames interpolated: ${Math.round(c.metrics.interpShare * 100)}% of the show`,
-        ]
-      : null;
-    this.caption.draw(c.caption, c.label, c.credit, reality);
+    this.caption.setReality(
+      this.flags.reality
+        ? [
+            "Blue: what the camera never saw",
+            c.freeze.players.map((p) => `${p.name} ${Math.round(p.seenFraction * 100)}% seen`).join(" · "),
+            `In-between frames interpolated: ${Math.round(c.metrics.interpShare * 100)}% of the show`,
+          ]
+        : null,
+    );
   }
 
   /** The menu's rows for this phase (top row first); the bottom row is always [Replay, See my room]. */

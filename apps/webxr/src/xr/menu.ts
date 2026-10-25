@@ -28,10 +28,24 @@ export function handIndex(sideOf: (i: number) => XRHandedness | null, want: "lef
 const ROW = 0.036;
 const COL = 0.1;
 
+/**
+ * A mode's own open and close (Court Side's), opt-in: the menu fades in over `inS` seconds while it grows from `from`
+ * of its size with a little spring, and fades out over `outS` in place, instead of showing and hiding at once. The
+ * buttons take presses from the moment it opens, as without it.
+ */
+export interface MenuEase {
+  inS: number;
+  outS: number;
+  from: number;
+}
+
 export class HandMenu {
   readonly group = new THREE.Group();
   readonly buttons: XrButton[] = [];
   open = false;
+  /** With an ease: how far open it shows, 0-1, linear in time, and what the buttons were last given (NaN: give it again). */
+  private shown = 0;
+  private applied = NaN;
   private held = 0; // ms the palm has stayed the other way (opening or closing waits for it)
   private palm = new THREE.Vector3();
   private normal = new THREE.Vector3();
@@ -45,6 +59,7 @@ export class HandMenu {
     private sideOf: (i: number) => XRHandedness | null,
     parent: THREE.Object3D,
     private cols = 2,
+    private ease?: MenuEase,
   ) {
     this.group.visible = false;
     parent.add(this.group);
@@ -53,6 +68,7 @@ export class HandMenu {
   /** Buttons fill rows of `cols`, first row on top. */
   add(...buttons: XrButton[]) {
     this.buttons.push(...buttons);
+    this.applied = NaN; // a button new to the menu takes its fade on the next frame
     const rows = Math.ceil(this.buttons.length / this.cols);
     this.buttons.forEach((b, k) => {
       const r = Math.floor(k / this.cols);
@@ -94,7 +110,8 @@ export class HandMenu {
       }
     } else this.held = 0;
     const wasVisible = this.group.visible;
-    this.group.visible = this.open;
+    if (this.ease) this.fade(dt);
+    else this.group.visible = this.open;
     if (!this.open) return false;
     // just above the palm, turned to your eyes, smoothed so it doesn't shake with the hand
     this.target.copy(this.palm).addScaledVector(this.normal, 0.06);
@@ -105,5 +122,23 @@ export class HandMenu {
     const tips = [right?.visible ? right.getWorldPosition(this.tip) : null];
     for (const b of this.buttons) b.touch(tips, now);
     return true;
+  }
+
+  /** The ease's step: the same curves both ways (a close cut short by an open never jumps): an ease-out fade and a spring to full size. */
+  private fade(dt: number) {
+    const e = this.ease!;
+    this.shown = Math.min(1, Math.max(0, this.shown + (this.open ? dt / e.inS : -dt / e.outS)));
+    this.group.visible = this.shown > 0;
+    if (!this.group.visible) return;
+    if (this.shown === this.applied) return; // settled: nothing to do while it stays open
+    this.applied = this.shown;
+    const u = this.shown - 1;
+    const opacity = 1 - u * u;
+    // easeOutBack, gently: half a percent past full size and back, the way a visionOS panel lands
+    this.group.scale.setScalar(e.from + (1 - e.from) * (1 + 2.2 * u ** 3 + 1.2 * u * u));
+    this.group.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (m) m.opacity = opacity;
+    });
   }
 }

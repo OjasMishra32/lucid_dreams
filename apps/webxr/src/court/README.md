@@ -228,7 +228,8 @@ frame, every tile inside 0-1, every person's `at` on the floor.
 - `seat` keeps only Decision W's watch seat and `clear`: the walking layout is derived (`seatmath.ts`, 3.4).
 - `loadCourt` returns the bundle (`{ base, court, frames, cards, file(path) }`), not only court.json.
 - `ClockState.nextJump` is what the second decoder primes; `handback(t, parts)` is the hand-back beside `handoff`.
-- `ui.ts`'s `HoldButton` extends `xr/hands.ts`'s `XrButton` (Seat here's 2 s hold); `xr/hands.ts` is unchanged.
+- `ui.ts`'s `HoldButton` extends `xr/hands.ts`'s `XrButton` (Seat here's 2 s hold). `xr/hands.ts` and `xr/menu.ts` gained opt-in
+  `ButtonLook` and `MenuEase` (Court Side's glass buttons and eased open/close); other modes pass neither and are unchanged.
 - court.ts requests the immersive-ar session itself (not through `SparkXr`, which ends a session on
   `visible-blurred`), with the viewer's `XR_QUALITY` scale and foveation.
 - `serve.mjs` listens on 5185 by default (5190 is `apps/site`).
