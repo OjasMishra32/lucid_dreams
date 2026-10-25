@@ -14,14 +14,16 @@
 // centre-hung scoreboard; one merged mesh, one atlas, one draw call) lit for a night game: the lower bowl in the
 // court's spill at the crowd's level, the upper deck darker, the roof very dark under the fixtures' glows, the boards
 // glowing on their own. All of it is imagined, so the Reality check tints it blue; the far image (proxies.ts) is real
-// and is never tinted.
+// and is never tinted. The floor's footage (floor.jpg, seen from near the seat) shows only where camera F saw it about
+// as sharply as you see it (lightfield.ts lightSharp; the plates' floor likewise, proxies.ts): by the seat its grazing
+// smear reads as streaks, so the clean floor is laid there.
 import * as THREE from "three";
 import { standaloneHoop } from "../props";
-import { cameraOf, type PinholeCamera } from "./camera";
+import { cameraOf, project, type PinholeCamera } from "./camera";
 import { APRON_M, DASHER, LOWER, UPPER, bowlArrays, bowlLayout } from "./surround";
-import type { CourtBundle } from "./format";
-import { PART, REACH_GLSL, edgeLevel, fixtureGlow, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
-import type { Proxies } from "./proxies";
+import type { CourtBundle, Vec3 } from "./format";
+import { PART, REACH_GLSL, edgeLevel, fixtureGlow, footageSharp, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
+import { frameFeather, type Proxies } from "./proxies";
 import { TONE_DEFAULT, floorTones } from "./floortone";
 import { EDGE_FADE } from "./seatmath";
 import type { Head } from "./types";
@@ -74,6 +76,8 @@ uniform vec3 uPaint;
 uniform vec3 uBlue;
 uniform float uReality;
 uniform float uHouseFloor; // with a surround: the house lights' spill on the floor, as a share of the crowd's light (0: none)
+uniform float uSharpOn;    // with a surround: the footage's floor only where camera F saw it sharply (1; 0: as filmed)
+uniform vec2 uFloorSharp;  // the footage's focal (the plate's own pixels) and floor.jpg's texel, metres
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -157,6 +161,9 @@ void main() {
   clean = mix(clean, uNavy, lines.y);
   // the footage where it was filmed and you see it near its own camera's ray (lightFilmedFloor: all of it from the seat)
   float filmed = seen * lightFilmedFloor(vLightCourt);
+  // with a surround: only where camera F saw the floor about as sharply as this eye sees it; elsewhere its grazing
+  // smear reads as streaks, so the clean floor
+  filmed *= mix(1.0, lightSharp(vec3(p.x, 0.0, p.y), uFloorSharp.x, uFloorSharp.y), uSharpOn);
   vec3 col = mix(clean, texture2D(uFloorMap, uv).rgb, filmed);
   col *= max(lightFloor(p, lightReach(vLightCourt)), uHouseFloor * lightCrowd());
   col = mix(col, uBlue * (0.04 + dot(col, vec3(0.2126, 0.7152, 0.0722))), (1.0 - filmed) * 0.75 * uReality);
@@ -400,6 +407,12 @@ export class CourtWorld {
   /** The floor's colour beyond the apron (uDark): the arena floor, or with a surround the courtside wood. */
   private floorDark: { value: THREE.Vector3 } | null = null;
   private readonly courtsideDark = new THREE.Vector3();
+  private readonly sharpOnU = { value: 0 };
+  /** The floor footage's focal and floor.jpg's texel (lightSharp's f and texel). */
+  private floorFocal = 1;
+  private floorTexel = 0;
+  /** Camera F (footageKept: where its picture, the plate's floor, lies over the floor). */
+  private cameraF: PinholeCamera | null = null;
   /** The dim boxes (no surround, or the surround switched off) and the imagined bowl (surround). */
   private bowl: THREE.Mesh | null = null;
   private arenaBowl: THREE.Mesh | null = null;
@@ -491,6 +504,13 @@ export class CourtWorld {
     const paint = tones.paint ? new THREE.Color().setRGB(tones.paint[0], tones.paint[1], tones.paint[2], THREE.SRGBColorSpace) : LANE_PAINT;
     const light = this.light;
     this.courtsideDark.set(wood.r, wood.g, wood.b).multiplyScalar(COURTSIDE_STAIN);
+    // the footage floor's focal: camera F's, in the stream's live region's pixels (the plate's own resolution)
+    const fAt = court.video.segments.eases[0]?.frames[1] ?? court.video.segments.pass1[0];
+    const atF = frames[Math.min(frames.length - 1, fAt)];
+    this.cameraF = atF ? cameraOf(court, atF) : null;
+    const floorFocal = (atF?.f ?? 1) * (court.video.regions.live[2] / court.camera.width);
+    this.floorFocal = floorFocal;
+    this.floorTexel = floorMap ? c.length / Math.max(1, fw) : 0;
 
     // the floor: court, apron and the dark arena floor out to the bowl (the imagined bowl's foot, with a surround)
     const foot = this.hasSurround ? bowlLayout(court) : null;
@@ -508,6 +528,8 @@ export class CourtWorld {
         uCourt: { value: new THREE.Vector4(halfL, halfW, APRON_M, halfL - Math.abs(c.rim[0])) },
         uWood: { value: new THREE.Vector3(wood.r, wood.g, wood.b) },
         uApron: { value: new THREE.Vector3(wood.r, wood.g, wood.b).multiplyScalar(APRON_STAIN) },
+        uSharpOn: this.sharpOnU,
+        uFloorSharp: { value: new THREE.Vector2(floorFocal, this.floorTexel) },
         uDark: (this.floorDark = { value: ARENA_DARK.clone() }),
         uHouseFloor: this.houseFloorU,
         uWhite: { value: new THREE.Vector3(LINE_WHITE.r, LINE_WHITE.g, LINE_WHITE.b) },
@@ -639,8 +661,25 @@ export class CourtWorld {
     if (this.bowl) this.bowl.visible = !this.surroundOn;
     if (this.arenaBowl) this.arenaBowl.visible = this.surroundOn;
     this.houseFloorU.value = this.surroundOn ? HOUSE_FLOOR : 0;
+    this.sharpOnU.value = this.surroundOn ? 1 : 0;
     if (this.floorDark) this.floorDark.value.copy(this.surroundOn ? this.courtsideDark : ARENA_DARK);
     this.proxies.surround(on);
+  }
+
+  /**
+   * How much of the floor's footage shows at floor point p from court-space `eye` (1 without a surround), as the GPU
+   * blends it: F's picture on the floor plate (feathered at the frame's edges, lightSharp at the plate's own
+   * resolution) over floor.jpg's footage (lightSharp with its texel). The e2e's twin (look, walkfloor).
+   */
+  footageKept(eye: Vec3, p: Vec3): number {
+    if (!this.sharpOnU.value) return 1;
+    const q: Vec3 = [p[0], 0, p[2]];
+    const centre = this.bundle.court.camera.centre;
+    const floor = footageSharp(centre, eye, q, this.floorFocal, this.floorTexel);
+    const px = this.cameraF ? project(this.cameraF, q) : null;
+    if (!px || !this.cameraF) return floor;
+    const plate = frameFeather((px[0] + 0.5) / this.cameraF.width, (px[1] + 0.5) / this.cameraF.height) * footageSharp(centre, eye, q, this.floorFocal, 0);
+    return plate + (1 - plate) * floor;
   }
 
   /** The Reality check: tint everything the camera never filmed (the rendered court, the bowl, the hoop). */

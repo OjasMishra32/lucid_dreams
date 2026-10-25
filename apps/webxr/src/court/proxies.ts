@@ -18,7 +18,10 @@
 // it carries on round the picture wherever the pan filmed, so the cinema mask darkens it to a night-game level
 // (CINEMA_SURROUND) instead of black, and the plates' feathered edges blend into the same scene; inside F's frame the
 // plate covers it, so the hand-off is unchanged there. Off the camera ray the courtside plate and the far image fade
-// out (P30 as opacity, not darkness) to the imagined bowl behind them (world.ts) instead of to black.
+// out (P30 as opacity, not darkness) to the imagined bowl behind them (world.ts) instead of to black. With a surround
+// every footage floor (the plates' floor in both layers, the far image's) shows only where its camera saw the floor
+// about as sharply as you see it (lightfield.ts lightSharp): from the seat the low camera's bottom rows smear over
+// metres of floor as streaks, and world.ts's clean floor shows there instead.
 import * as THREE from "three";
 import { cameraOf, rotate, conjugate, type PinholeCamera } from "./camera";
 import type { CourtBundle, SurroundFar, Vec3 } from "./format";
@@ -43,6 +46,16 @@ const FAR_TEXELS = 2048;
 const FAR_EDGE = 0.03;
 /** The lit region's edges are feathered over this share of the frame (3.2: ~10%). */
 export const FEATHER = 0.1;
+
+/** The plate's edge feather at picture uv (0-1 across the frame): GLSL frameFeather's twin. */
+export function frameFeather(u: number, v: number): number {
+  const ramp = (e: number) => {
+    const t = Math.min(1, Math.max(0, e / FEATHER));
+    return t * t * (3 - 2 * t);
+  };
+  return ramp(Math.min(u, 1 - u)) * ramp(Math.min(v, 1 - v));
+}
+
 /** A pair player's card reaches their splat depth this close to F, real seconds (the 1.2 s ease's span at 0.6x). */
 export const DEPTH_TAU_S = 0.36;
 /** Person cards drawn at most per frame. */
@@ -385,7 +398,7 @@ export function layerVisibility(opacity: number, mask: number): { plates: boolea
 /**
  * lightfield.ts's GLSL, with any helper this module calls that the field doesn't define filled in as "no change"
  * (the stub has only courtLight): lightDither(rgb), lightRoomStands(), lightRoomFloor(), lightPair(),
- * lightFilmedFloor(p).
+ * lightFilmedFloor(p), lightSharp(p, f, texel).
  */
 export function lightChunk(glsl: string): string {
   const has = (name: string) => new RegExp(`\\b(?:float|vec3)\\s+${name}\\s*\\(`).test(glsl);
@@ -395,6 +408,7 @@ export function lightChunk(glsl: string): string {
   if (!has("lightRoomFloor")) out += "float lightRoomFloor() { return 1.0; }\n";
   if (!has("lightPair")) out += "float lightPair() { return 1.0; }\n";
   if (!has("lightFilmedFloor")) out += "float lightFilmedFloor(vec3 p) { return 1.0; }\n";
+  if (!has("lightSharp")) out += "float lightSharp(vec3 p, float f, float texel) { return 1.0; }\n";
   return out;
 }
 
@@ -413,7 +427,7 @@ const CAMERA_GLSL = /* glsl */ `
 const footageGlsl = (light: string) => /* glsl */ `
   ${light}
   uniform float uOpacity; uniform float uMask; uniform float uFeather; uniform float uWipe; uniform float uDim; uniform float uReality;
-  uniform float uCinema; uniform float uDimAlpha;
+  uniform float uCinema; uniform float uDimAlpha; uniform float uSharpFloor; uniform float uPlateScale;
   vec3 decodeSrgb(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
   vec3 encodeSrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
   vec3 relight(vec3 c, float k) { return abs(k - 1.0) < 1e-6 ? c : encodeSrgb(decodeSrgb(c) * k); }
@@ -474,7 +488,11 @@ const plateFrag = (light: string) => /* glsl */ `
     float room = uKind == 1 ? lightRoomStands() : lightRoomFloor();
     // the floor plate is frame F's picture on the court plane: it holds only from near the seat; walking off F's view
     // the light field's clean court floor takes over (lightFilmedFloor, stream E). In edge, so both layers take it
-    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0) * mix(1.0, crowdDim(), crowd * uDimAlpha);
+    // with a surround the floor's picture also shows only where camera k saw the floor about as sharply as this eye
+    // sees it (lightSharp): by the seat its bottom rows smear into streaks. The same weight on both layers: the
+    // hand-off's blend is unchanged
+    float sharp = uKind == 0 ? mix(1.0, lightSharp(vec3(vCourt.x, 0.0, vCourt.z), uCamK.x * uPlateScale, 0.0), uSharpFloor) : 1.0;
+    float edge = f * card * room * (uKind == 0 ? lightFilmedFloor(vCourt) : 1.0) * mix(1.0, crowdDim(), crowd * uDimAlpha) * sharp;
     float a = uLayer == 0 ? uOpacity * edge : uOpacity >= 1.0 ? 0.0 : edge * (1.0 - uOpacity) / max(1.0 - uOpacity * edge, 1e-4);
     gl_FragColor = vec4(col * a, a);
   }`;
@@ -550,7 +568,7 @@ const FAR_VERT = /* glsl */ `
 const farFrag = (light: string) => /* glsl */ `
   ${CAMERA_GLSL}
   ${footageGlsl(light)}
-  uniform sampler2D uFar; uniform mat3 uFarR; uniform vec4 uFarK; uniform vec2 uFarSize;
+  uniform sampler2D uFar; uniform mat3 uFarR; uniform vec4 uFarK; uniform vec2 uFarSize; uniform float uFarFocal;
   uniform vec4 uBowl; uniform float uBowlR;
   uniform vec4 uClipPlane[${MAX_CLIPS}]; uniform vec4 uClipSpan[${MAX_CLIPS}]; uniform int uClips;
   varying vec3 vCourt; varying float vKind;
@@ -584,7 +602,9 @@ const farFrag = (light: string) => /* glsl */ `
     vec3 col = relight(t.rgb, stands ? lightOfCrowdLit(vCourt) : lightOfFloor(vCourt));
     col = lightDither(col * (1.0 - uWipe));
     float room = stands ? lightRoomStands() : lightRoomFloor();
-    float k = floorKind ? lightFilmedFloor(vCourt) : stands ? crowdDim() : 1.0;
+    // the floor: from near the seat only, and there only where camera F saw it about as sharply as this eye sees it
+    // (its grazing smear reads as streaks); the stands fade off the camera ray (P30)
+    float k = floorKind ? lightFilmedFloor(vCourt) * lightSharp(vCourt, uFarFocal, 0.0) : stands ? crowdDim() : 1.0;
     gl_FragColor = vec4(col, t.a * k * room);
   }`;
 
@@ -749,6 +769,8 @@ export class Proxies {
       uReality: { value: 0 },
       uCinema: { value: CINEMA },
       uDimAlpha: { value: 0 },
+      uSharpFloor: { value: 0 },
+      uPlateScale: { value: (court.video.regions?.plate[2] ?? court.camera.width) / court.camera.width },
     };
     this.hasSurround = !!court.surround;
     this.surroundOn = this.hasSurround && !(import.meta.env?.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("surround") === "off");
@@ -943,6 +965,7 @@ export class Proxies {
   private applySurround(): void {
     this.shared.uCinema.value = this.surroundOn ? CINEMA_SURROUND : CINEMA;
     this.shared.uDimAlpha.value = this.surroundOn ? 1 : 0;
+    this.shared.uSharpFloor.value = this.surroundOn ? 1 : 0;
     if (this.far) this.far.visible = this.surroundOn;
   }
 
@@ -1078,6 +1101,7 @@ export class Proxies {
         uFarR: { value: camRotation(cam) },
         uFarK: { value: new THREE.Vector4(cam.f, cam.cx, cam.cy, 0) },
         uFarSize: { value: new THREE.Vector2(cam.width, cam.height) },
+        uFarFocal: { value: cam.f * (w / cam.width) },
         uBowl: { value: new THREE.Vector4(bowl.x0, bowl.x1, bowl.z0, bowl.z1) },
         uBowlR: { value: bowl.r },
       },

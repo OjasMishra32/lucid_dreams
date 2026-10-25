@@ -106,6 +106,13 @@ export const UP_LAG_S = 0.25;
  */
 export const FILMED_NEAR = 0.4;
 export const FILMED_FAR = 1.4;
+/** The eye the footage's floor is judged against (lightSharp): the Quest 3S, 19.5 pixels per degree, per radian. */
+export const EYE_PX_PER_RAD = (19.5 * 180) / Math.PI;
+/**
+ * lightSharp: the footage's floor footprint along its ray (camera F's pixel on the floor, d^2 / (f h), or the map's
+ * texel if coarser) over the eye's own (the same for the eye's ray), kept whole up to SHARP_RATIO[0], gone by [1].
+ */
+export const SHARP_RATIO: [number, number] = [4, 8];
 /** The brightest surface (sRGB grey, 0-255) every light change keeps under 1 grey level per frame at 72 Hz: all of them. */
 export const SAFE_GREY = 255;
 
@@ -209,6 +216,7 @@ uniform vec4 uLightSpotsB; // walking spots 2, 3
 uniform vec4 uLightGrow;  // seconds into the growth; ramp s for a whole change; spread s; the set's floor level
 uniform vec4 uLightView;  // unused; the arena's opacity: stands, floor (See my room, the edge); unused
 uniform vec4 uLightFilmed;  // the dolly seat's floor point (court x, z); FILMED_NEAR, FILMED_FAR
+uniform vec4 uLightCamera; // the broadcast camera's fixed centre (court x, y, z)
 uniform mat4 uLightCourtFromWorld;
 float lightRamp(float u, float a) {
   u = clamp(u, 0.0, 1.0);
@@ -265,6 +273,19 @@ float lightAt(vec2 foot) { return lightFloor(foot, 1.0); }
 float lightFilmedFloor(vec3 p) {
   vec3 eye = (uLightCourtFromWorld * vec4(cameraPosition, 1.0)).xyz;
   return 1.0 - smoothstep(uLightFilmed.z, uLightFilmed.w, distance(eye.xz, uLightFilmed.xy));
+}
+// how sharply camera F saw the floor at p (court space, y = 0) against how sharply this eye sees it there: 1 where the
+// footage is no blurrier than the eye resolves (SHARP_RATIO), 0 where its grazing smear shows (footageSharp's twin);
+// f: the footage's focal in its own pixels, texel: its map's texel (metres, 0 for none)
+float lightSharp(vec3 p, float f, float texel) {
+  vec3 eye = (uLightCourtFromWorld * vec4(cameraPosition, 1.0)).xyz;
+  vec3 c = uLightCamera.xyz;
+  vec2 dc = p.xz - c.xz;
+  float foot = max((dot(dc, dc) + c.y * c.y) / (f * max(c.y, 0.05)), texel);
+  float h = max(eye.y, 0.2);
+  vec2 de = p.xz - eye.xz;
+  float seen = (dot(de, de) + h * h) / (${EYE_PX_PER_RAD.toFixed(3)} * h);
+  return 1.0 - smoothstep(${SHARP_RATIO[0].toFixed(3)}, ${SHARP_RATIO[1].toFixed(3)}, foot / seen);
 }
 // the multiplier for a footage, floor or stands fragment at a court-space position (part: PART.*)
 float courtLight(vec3 worldPos, float part) {
@@ -407,6 +428,7 @@ export class LightField {
       uLightGrow: { value: new Vec4(this.grow, POOL_RAMP_S, POOL_SPREAD_S, 1) },
       uLightView: { value: new Vec4(1, 1, 1, 0) },
       uLightFilmed: { value: new Vec4(0, 0, FILMED_NEAR, FILMED_FAR) },
+      uLightCamera: { value: new Vec4(court.camera.centre[0], court.camera.centre[1], court.camera.centre[2], 0) },
     };
     this.select(opts);
     if (bundle) this.fitFrames(bundle.frames);
@@ -739,6 +761,18 @@ export class LightField {
 }
 
 const fields = new WeakMap<CourtBundle, LightField>();
+
+/**
+ * lightSharp's twin: how much of the footage's floor to keep at floor point p seen from `eye` (court space), for a
+ * camera at `camera` with focal f (pixels of the footage) and a map texel (metres): 1 where camera F saw it about as
+ * sharply as the eye sees it, 0 where the grazing smear shows (SHARP_RATIO).
+ */
+export function footageSharp(camera: Vec3, eye: Vec3, p: Vec3, f: number, texel: number): number {
+  const foot = Math.max(((p[0] - camera[0]) ** 2 + camera[1] ** 2 + (p[2] - camera[2]) ** 2) / (f * Math.max(camera[1], 0.05)), texel);
+  const h = Math.max(eye[1], 0.2);
+  const seen = ((p[0] - eye[0]) ** 2 + h * h + (p[2] - eye[2]) ** 2) / (EYE_PX_PER_RAD * h);
+  return 1 - smoothstep(SHARP_RATIO[0], SHARP_RATIO[1], foot / seen);
+}
 
 // ---------------- the arena's maths (world.ts draws it; the numbers live here so node can test them) ----------------
 

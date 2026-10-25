@@ -591,3 +591,26 @@ test("the filmed floor (lightFilmedFloor): the footage from the dolly seat and a
   assert.ok(FILMED_NEAR > 0.3 && FILMED_FAR > FILMED_NEAR + 0.5, "a lean keeps it, a step starts the fade");
   assert.ok(f.glsl.includes("float lightFilmedFloor(vec3 p)") && f.glsl.includes("uLightFilmed"), "the GLSL names it");
 });
+
+test("the footage's floor is kept only where camera F saw it about as sharply as the eye sees it (lightSharp): never right by the seat, all of it far off", async () => {
+  const { footageSharp, SHARP_RATIO } = await import("../../src/court/lightfield.ts");
+  const b = bundleOf();
+  const f = new LightField(b);
+  const C = b.court.camera.centre;
+  const fF = 20000 * (1536 / 3840); // the stream's live region: the plate's own resolution
+  const eye = [f.seatFloor[0], 1.15, f.seatFloor[2]] as [number, number, number];
+  // a floor point 1.2 m in front of the seat, toward the pair: the footage's grazing smear is many times the eye's pixel
+  const toPair = [f.pairXZ[0] - eye[0], f.pairXZ[1] - eye[2]];
+  const n = Math.hypot(toPair[0], toPair[1]);
+  const near = [eye[0] + (1.2 * toPair[0]) / n, 0, eye[2] + (1.2 * toPair[1]) / n] as [number, number, number];
+  assert.equal(footageSharp(C, eye, near, fF, 0.02), 0, "right by the seat: the clean floor");
+  // the floor beyond the pair toward the far baseline: the eye sees it at a grazing angle too, so the footage holds
+  const far = [13.5, 0, 0.5] as [number, number, number];
+  assert.equal(footageSharp(C, eye, far, fF, 0.02), 1, "far off: the footage");
+  // a coarser map is blurrier everywhere
+  assert.ok(footageSharp(C, eye, far, fF, 0.5) < 1);
+  // the measure is the ratio of the two footprints, along the ray: kept up to SHARP_RATIO[0], gone by SHARP_RATIO[1]
+  assert.ok(SHARP_RATIO[0] >= 1 && SHARP_RATIO[1] > SHARP_RATIO[0]);
+  // the GLSL twin is in the field's chunk
+  assert.match(f.glsl, /float lightSharp\(vec3 p, float f, float texel\)/);
+});
