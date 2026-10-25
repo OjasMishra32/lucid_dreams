@@ -550,7 +550,9 @@ const shellFrag = (light: string) => /* glsl */ `
     }
     vec2 uv = (camPx(p) + 0.5) / uSrc;
     float room = kind == 0.0 ? lightRoomFloor() : lightRoomStands();
-    float a = uMask * uCinema * (kind < 0.0 ? 1.0 : outside(uv, toCam(p).z)) * room;
+    // uFootage: the Screen view's watch projects nothing, so nothing outside F's frame is dimmed (no cone of light round
+    // its frustum); the mask comes back with the projected picture, whole at F
+    float a = uMask * uCinema * (kind < 0.0 ? 1.0 : outside(uv, toCam(p).z)) * room * uFootage;
     gl_FragColor = vec4(0.0, 0.0, 0.0, a);
   }`;
 
