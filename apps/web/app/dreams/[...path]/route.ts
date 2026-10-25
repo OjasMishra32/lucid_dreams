@@ -73,9 +73,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     if (start > end || start >= size) {
       return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${size}` } });
     }
+    // a piece of a file is never cached: Safari opens every video by asking for bytes 0-1, and the public link's edge
+    // cache once kept that 2-byte piece and handed it to everyone as the whole preview
     return new Response(stream(file, start, end), {
       status: 206,
-      headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": String(end - start + 1) },
+      headers: {
+        ...headers,
+        "Cache-Control": "no-store",
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Content-Length": String(end - start + 1),
+      },
     });
   }
   return new Response(stream(file, 0, size - 1), { headers: { ...headers, "Content-Length": String(size) } });

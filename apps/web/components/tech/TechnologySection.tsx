@@ -172,12 +172,11 @@ export default function TechnologySection() {
           <p className="t-num">04</p>
           <h2>Rendering a pixel</h2>
           <p>
-            Spark projects each Gaussian to a 2D ellipse and draws it as a quad. As you move, all 290k get re-sorted by
-            distance and blended: each pixel&apos;s color is every Gaussian&apos;s color, weighted by its alpha and by how
-            much light is left after the ones in front.
+            Spark flattens each Gaussian into an ellipse on screen, sorts them near to far and blends them. Along a
+            pixel&apos;s ray, the nearest one takes its share α of the light. The ones behind split what&apos;s left, T.
+            The pixel is the mix of those shares.
           </p>
-          <Eq tex={String.raw`C=\sum_i c_i\,\alpha_i\,T_i,\qquad T_i=\prod_{j<i}(1-\alpha_j)`} />
-          <p className="quiet">Drag the ray to move the pixel.</p>
+          <Eq tex={String.raw`C=\sum_i c_i\,\alpha_i\,T_i,\qquad T_i=\prod_{j<i}(1-\alpha_j)`} label="c color, α opacity at this pixel, T light left" />
         </div>
         <Compositing />
       </section>
@@ -225,11 +224,13 @@ export default function TechnologySection() {
         <div className="t-text">
           <h2>Frame budget</h2>
           <p>
-            Spark draws every Gaussian as a quad, even faint ones, so cost is total quad area. On the headset we keep the
-            160k that matter most, render at 70%, and a governor shrinks splats and adds foveation when frames run late.
+            Spark draws every Gaussian as a flat quad, even the faint ones, so the GPU&apos;s work is how many quads land
+            on each pixel. The map is one real frame seen from 1.8 m: the brighter a spot, the more quads are stacked on
+            it. On the headset we keep the 160,000 that add the most and render at 70%. When frames run late, a governor
+            cuts the quads shorter and skips the faint ones.
           </p>
-          <Eq tex={String.raw`N_{\text{px}}=\sum_i 4k^2\,\sigma_{1i}\sigma_{2i}\Big(\frac{f}{z_i}\Big)^{2}`} label="pixels shaded: each quad's area, with σ the Gaussian's two biggest radii, z its distance, f the focal length" />
-          <p className="quiet">Estimates from one real frame, face-on. Foveation not counted.</p>
+          <Eq tex={String.raw`N_{\text{px}}=\sum_i 4k^2\,\sigma_{1i}\sigma_{2i}\Big(\frac{f}{z_i}\Big)^{2}`} label="pixels shaded: each quad is 2kσ₁ by 2kσ₂ on screen, scaled by focal length f over distance z" />
+          <p className="quiet">Counted from one frame of each clip, face on. Foveation not counted.</p>
         </div>
         <FillRate />
       </section>

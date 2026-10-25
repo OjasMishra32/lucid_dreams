@@ -1,0 +1,100 @@
+{
+ "cell": 0.01,
+ "u": [
+  -0.7,
+  0.7
+ ],
+ "y": [
+  -0.05,
+  2.15
+ ],
+ "z": 1.8,
+ "people": {
+  "jump": {
+   "dream": "lebron-shot",
+   "frame": 50,
+   "n": 293718,
+   "w": 140,
+   "h": 220,
+   "top": 5790.5,
+   "states": [
+    {
+     "key": "all",
+     "drawn": 293718,
+     "k": 2.83,
+     "alpha": 0.002,
+     "res": 0.8,
+     "pixels": 115620172,
+     "eyePixels": 2251162,
+     "peak": 4947.6,
+     "offset": 0
+    },
+    {
+     "key": "headset",
+     "drawn": 160000,
+     "k": 2.83,
+     "alpha": 0.002,
+     "res": 0.7,
+     "pixels": 82486160,
+     "eyePixels": 1723546,
+     "peak": 4876.6,
+     "offset": 30800
+    },
+    {
+     "key": "load",
+     "drawn": 150383,
+     "k": 1.9,
+     "alpha": 0.03,
+     "res": 0.7,
+     "pixels": 34231978,
+     "eyePixels": 1723546,
+     "peak": 2763.5,
+     "offset": 61600
+    }
+   ]
+  },
+  "dancer": {
+   "dream": "dance-01",
+   "frame": 60,
+   "n": 293516,
+   "w": 140,
+   "h": 220,
+   "top": 4314.8,
+   "states": [
+    {
+     "key": "all",
+     "drawn": 293516,
+     "k": 2.83,
+     "alpha": 0.002,
+     "res": 0.8,
+     "pixels": 95683038,
+     "eyePixels": 2251162,
+     "peak": 3920.2,
+     "offset": 92400
+    },
+    {
+     "key": "headset",
+     "drawn": 160000,
+     "k": 2.83,
+     "alpha": 0.002,
+     "res": 0.7,
+     "pixels": 69376979,
+     "eyePixels": 1723546,
+     "peak": 3876.8,
+     "offset": 123200
+    },
+    {
+     "key": "load",
+     "drawn": 137446,
+     "k": 1.9,
+     "alpha": 0.03,
+     "res": 0.7,
+     "pixels": 26417275,
+     "eyePixels": 1723546,
+     "peak": 1765.9,
+     "offset": 154000
+    }
+   ]
+  }
+ }
+}
