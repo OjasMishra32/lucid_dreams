@@ -35,16 +35,23 @@ function matcap(): THREE.Texture {
   c.width = c.height = 128;
   const g = c.getContext("2d")!;
   const grad = g.createRadialGradient(48, 40, 6, 64, 64, 64);
-  grad.addColorStop(0, "#f6f6f8");
-  grad.addColorStop(0.55, "#d3d5da");
-  grad.addColorStop(0.9, "#8e919a");
-  grad.addColorStop(1, "#5c5f66");
+  grad.addColorStop(0, "#ebecef");
+  grad.addColorStop(0.55, "#c5c8cf");
+  grad.addColorStop(0.9, "#878b95");
+  grad.addColorStop(1, "#5a5e67");
   g.fillStyle = grad;
   g.fillRect(0, 0, 128, 128);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+// A soft cool rim (fresnel): the edges glow a little, so the hands read against the dark arena without being flat
+// white; scaled by the arena's light like the rest (diffuseColor is light(level)).
+LOOKS.push({
+  fragment: `float rim = pow(1.0 - saturate(dot(normal, viewDir)), 2.5);
+outgoingLight += diffuseColor.rgb * vec3(0.80, 0.88, 1.0) * (0.55 * rim);`,
+});
 
 /** A skinned hand mesh in its bind pose: vertex `i` and a joint's position, in the same space. */
 interface BindPose {
