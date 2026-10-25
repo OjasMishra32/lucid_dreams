@@ -15,6 +15,9 @@
 //   video/freeze.png, freeze-clean.png, stands-mask.png   frame F and its plate (1920x1080)
 //   players/<id>/freeze.ply, reality.ply, proxy.glb, shadow.png, reflection.png   two frozen players (3DGS PLY, SH1)
 //   others/trailer/...                 a third person in the lit region, built like the pair
+//   surround/far.jpg, far-alpha.png, crowd.jpg   the arena round the footage: the scene seen round camera F's own
+//                                       centre and rotation over twice its window (far, with a never-filmed notch) and an
+//                                       atlas of four tiles of seated crowd (format.ts SurroundInfo)
 //   stands/front-row.png, court/floor.jpg, court/floor-seen.png, audio/bed.m4a, audio/swell.m4a
 // The scene: a fixed long-lens camera ~23 m from the pair that pans and zooms with the play; the pair stand with a
 // clear gap between their bodies (the layered watch must show nobody twice through it, P43) and a third person
@@ -65,6 +68,42 @@ const STANDS_X = 16.0;
 const CARD = { x: 15.2, z0: -4, z1: 10, y1: 1.35 };
 const BOARD = { x: 13.105, y0: 2.9, y1: 3.97, z: 0.915 }; // the rulebook board: face 1.22 m in from the baseline
 const LIGHT = norm([-0.35, 1, 0.3]);
+/** The surround: the far picture holds `reach` x camera F's window each way; the crowd atlas is `tiles` tiles of
+ *  seated crowd (tileM metres wide and high) at `ppm` px per metre in `cols` columns, `gutter` px round each. */
+const FAR = { width: 1600, height: 900, reach: 2, notch: [0.3, 0.3], feather: 6, margin: 24 };
+const CROWD = { ppm: 60, tileM: [3.0, 2.2], tiles: 4, cols: 2, gutter: 4 };
+const crowdLayout = () => {
+  const w = Math.round(CROWD.tileM[0] * CROWD.ppm);
+  const h = Math.round(CROWD.tileM[1] * CROWD.ppm);
+  const cw = w + 2 * CROWD.gutter;
+  const ch = h + 2 * CROWD.gutter;
+  const rows = Math.ceil(CROWD.tiles / CROWD.cols);
+  const tiles = Array.from({ length: CROWD.tiles }, (_, k) => {
+    const x = (k % CROWD.cols) * cw + CROWD.gutter;
+    const y = Math.floor(k / CROWD.cols) * ch + CROWD.gutter;
+    return [x, y, x + w, y + h];
+  });
+  return { w, h, width: CROWD.cols * cw, height: rows * ch, tiles };
+};
+/** The far picture's camera: camera F's centre and rotation, its own focal and a centred principal point. */
+const farCamera = (camF) => ({
+  centre: camF.centre, q: camF.q, f: (camF.f * FAR.width) / (FAR.reach * camF.width), cx: (FAR.width - 1) / 2, cy: (FAR.height - 1) / 2, width: FAR.width, height: FAR.height,
+});
+/** The far picture's alpha: 255 where it was "filmed" (everywhere but a notch in the top-left corner and a margin round
+ *  the edge), feathered `FAR.feather` px inward. */
+function farAlpha() {
+  const { width: W, height: H } = FAR;
+  const nx = FAR.notch[0] * W;
+  const ny = FAR.notch[1] * H;
+  const a = new Uint8Array(W * H);
+  for (let v = 0; v < H; v++)
+    for (let u = 0; u < W; u++) {
+      const edge = Math.min(u - FAR.margin, W - 1 - u - FAR.margin, v - FAR.margin, H - 1 - v - FAR.margin);
+      const notch = u < nx && v < ny ? -1 : Math.hypot(Math.max(0, u - nx), Math.max(0, v - ny));
+      a[v * W + u] = Math.round(255 * Math.min(1, Math.max(0, Math.min(edge, notch) / FAR.feather)));
+    }
+  return a;
+}
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -336,6 +375,9 @@ export function standinBundle({ ballInBody = false } = {}) {
   const chest = [trailer.foot[0], 1.2, trailer.foot[2]];
   const maxRayAngle = Math.max(...spots.map((s) => angleDeg(sub(chest, CAM_C), sub(chest, eye(s)))));
   const interpShare = tl.shows.filter((s) => s.interp).length / tl.shows.length;
+  const fShow = tl.segments.eases[0].frames[1];
+  const farCam = farCamera(srcCam(tl.shows[fShow]));
+  const crowd = crowdLayout();
   const player = (p, name, seen) => ({
     id: p.id,
     name,
@@ -416,6 +458,10 @@ export function standinBundle({ ballInBody = false } = {}) {
       events: [],
     },
     metrics: { reprojDeg: { median: null, p95: null }, heldOutPsnrVsGenerated: {}, seatPsnr: {}, interpShare: round(interpShare, 4) },
+    surround: {
+      far: { image: "surround/far.jpg", alpha: "surround/far-alpha.png", frame: fShow, f: round(farCam.f, 3), cx: farCam.cx, cy: farCam.cy, width: FAR.width, height: FAR.height },
+      crowd: { atlas: "surround/crowd.jpg", width: crowd.width, height: crowd.height, pxPerM: CROWD.ppm, tiles: crowd.tiles },
+    },
   };
   const frames = tl.shows.map((s) => ({ src: s.src, interp: s.interp, q: s.q.map((x) => round(x, 9)), f: round(s.f, 4) }));
   const cards = tl.shows.map((s) => ({ cards: cardsAt(s) }));
@@ -1027,7 +1073,7 @@ async function main() {
   const t0 = Date.now();
   const log = (m) => console.log(`[standin ${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
   rmSync(out, { recursive: true, force: true });
-  for (const d of ["video", "court", "stands", "audio", "players/shooter", "players/defender", "others/trailer"]) mkdirSync(join(out, d), { recursive: true });
+  for (const d of ["video", "court", "stands", "surround", "audio", "players/shooter", "players/defender", "others/trailer"]) mkdirSync(join(out, d), { recursive: true });
 
   const tl = timeline();
   writeFileSync(join(out, "court.json"), JSON.stringify(court, null, 2));
@@ -1114,6 +1160,30 @@ async function main() {
     writePng(join(out, "court/floor-seen.png"), { width: w, height: h, channels: 1, data: seen });
   }
   log("court/floor.jpg, floor-seen.png, stands/front-row.png");
+
+  // the surround: the scene round camera F over twice its window, and tiles of seated crowd
+  {
+    const jpeg = (file, rgb, w, h) =>
+      run("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", `${w}x${h}`, "-i", "pipe:0", "-q:v", "3", join(out, file)], Buffer.from(rgb));
+    const far = render(farCamera(camF), 0, { people: false, rim: false });
+    await jpeg("surround/far.jpg", far.rgb, FAR.width, FAR.height);
+    writePng(join(out, "surround/far-alpha.png"), { width: FAR.width, height: FAR.height, channels: 1, data: farAlpha() });
+    const lay = crowdLayout();
+    const rgb = new Uint8Array(lay.width * lay.height * 3);
+    lay.tiles.forEach(([x0, y0, x1, y1], k) => {
+      const z0 = -16 + k * 5.5; // each tile its own stretch of the stands
+      const g = CROWD.gutter;
+      for (let j = y0 - g; j < y1 + g; j++)
+        for (let i = x0 - g; i < x1 + g; i++) {
+          const ti = Math.min(Math.max(i, x0), x1 - 1) - x0; // edge pixels repeat into the gutter
+          const tj = Math.min(Math.max(j, y0), y1 - 1) - y0;
+          const c = crowdAt(z0 + ((ti + 0.5) / lay.w) * CROWD.tileM[0], CROWD.tileM[1] * (1 - (tj + 0.5) / lay.h));
+          rgb.set([c[0] * 255, c[1] * 255, c[2] * 255], (j * lay.width + i) * 3);
+        }
+    });
+    await jpeg("surround/crowd.jpg", rgb, lay.width, lay.height);
+  }
+  log("surround/far.jpg, far-alpha.png, crowd.jpg");
 
   // a crowd-like bed (pink noise, slow swells, -23 LUFS) and a swell one-shot
   const ff = ["-y", "-hide_banner", "-loglevel", "error"];

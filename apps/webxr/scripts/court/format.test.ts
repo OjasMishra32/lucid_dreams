@@ -68,6 +68,31 @@ test("a ball held in a player's own splats (freeze.ballInBody, nothing erased fr
   assert.deepEqual(validateCourt(held.court), []);
 });
 
+test("the optional surround (the pan's far end, real; the bowl's crowd tiles, imagined) validates, and its broken fields are named", () => {
+  const { court } = fresh();
+  const far = { image: "surround/far.jpg", alpha: "surround/far-alpha.png", frame: 3, f: 1200, cx: 1023.5, cy: 767.5, width: 2048, height: 1536 };
+  const crowd = { atlas: "surround/crowd.jpg", width: 2048, height: 1024, pxPerM: 160, tiles: [[0, 0, 640, 480], [640, 0, 1280, 480]] };
+  court.surround = { far, crowd };
+  assert.deepEqual(validateCourt(court), []);
+  court.surround = { crowd };
+  assert.deepEqual(validateCourt(court), []);
+  const broken: [string, (s: Json) => void, RegExp][] = [
+    ["surround.far.alpha", (s) => delete s.far.alpha, /missing/],
+    ["surround.far.frame", (s) => (s.far.frame = 1.5), /whole number/],
+    ["surround.far.image", (s) => (s.far.image = "../far.jpg"), /./],
+    ["surround.crowd.tiles", (s) => (s.crowd.tiles = []), /at least one crowd tile/],
+    ["surround.crowd.tiles[1]", (s) => (s.crowd.tiles[1] = [640, 0, 4096, 480]), /inside the atlas/],
+    ["surround.crowd.pxPerM", (s) => (s.crowd.pxPerM = 0), /./],
+  ];
+  for (const [path, breakIt, why] of broken) {
+    const c = fresh().court;
+    c.surround = structuredClone({ far, crowd });
+    breakIt(c.surround);
+    const errors = validateCourt(c);
+    assert.ok(errors.some((e: string) => e.startsWith(path) && why.test(e)), `${path}: ${errors.join(" | ")}`);
+  }
+});
+
 test("they still validate after a JSON round trip", () => {
   const { court, frames } = JSON.parse(JSON.stringify(fresh()));
   assert.deepEqual(validateCourt(court), []);
