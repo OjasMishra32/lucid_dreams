@@ -4,14 +4,15 @@ import type { SparkRenderer } from "@sparkjsdev/spark";
 // How sharp the headset draws, and how it stays at the headset's frame rate. Tunable from the URL on a slow device
 // without a rebuild: ?res=0.8 (framebuffer scale), ?fov=0.3 (0 = none, 1 = most foveation), ?budget=150000
 // (Gaussians per replay frame, 0 = all of them), ?std=2.4 (how far out each Gaussian is drawn), ?auto=0 (hold these).
-const q = new URLSearchParams(location.search);
+// ?sharp=0 puts back the softer splat settings (Spark's 0.3 splat blur, anisotropy 8) to compare.
+const q = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
 const num = (k: string, fallback: number, lo: number, hi: number) => {
   const v = Number(q.get(k));
   return q.has(k) && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
 };
 
 /** A standalone headset (Quest): its GPU is a phone's, so replays are trimmed to a budget there. */
-export const HEADSET = /OculusBrowser|Quest|Pico|Wolvic/i.test(navigator.userAgent);
+export const HEADSET = typeof navigator !== "undefined" && /OculusBrowser|Quest|Pico|Wolvic/i.test(navigator.userAgent);
 
 // 1.0 / 0 froze the Quest 3S at the chess board twice (no code error: the GPU fell behind); 0.8 with light
 // foveation is the sharpest that keeps up so far. ?res=1&fov=0 still forces full resolution.
@@ -26,6 +27,17 @@ export const XR_QUALITY = {
   std: num("std", Math.sqrt(8), 1.2, 3.2),
   auto: q.get("auto") !== "0",
 };
+
+export const SHARP = q.get("sharp") !== "0";
+
+/** SparkRenderer options: Spark's default 0.3 px² anti-alias blur softens faces at walk distance; 0.1 keeps edges crisp
+ * without the sparkle of 0. */
+export const SPLAT_QUALITY: { blurAmount?: number } = SHARP ? { blurAmount: 0.1 } : {};
+
+/** Texture anisotropy: the GPU's maximum when sharp (16 on the Quest), else the earlier cap of 8. */
+export function maxAniso(renderer?: THREE.WebGLRenderer): number {
+  return Math.min(SHARP ? 16 : 8, renderer?.capabilities?.getMaxAnisotropy?.() ?? 1);
+}
 
 /** Text drawn into a canvas stays sharp when seen at an angle or from across the room. */
 export function crisp(tex: THREE.Texture, renderer?: THREE.WebGLRenderer): THREE.Texture {
