@@ -1,83 +1,48 @@
 # The film: 3:00, strict
 
-The video is our whole presentation. It opens and closes on one true story (Ian hasn't been home in four years, and
-his grandma stands in his room and answers him), shows everything you can do in between, then opens up the machine
-with motion graphics made from our real data. Apple style: black, white, one blue, SF Pro, nothing fake.
+The video is our whole presentation: one continuous montage that opens and closes on one true story (Ian hasn't been
+home in four years, and his grandma stands in his room and answers him) and, in between, grows from "oh" to "oh, this
+is insane". The tech is never a separate section: every world gets an x-ray moment, a cut into the machine at the
+exact second you're seeing it (the headset assembling as it goes on, the 48 cameras landing around the dancer, the
+ball's tracked path, the Talk timing under Vishal's answer). Apple style: black, white, one blue, SF Pro, nothing
+fake, every number measured.
 
 ## Who does what
 
 | Who | What | By |
 | --- | --- | --- |
-| Ojasva | Films every scene (headset recordings + phone b-roll), records the voiceover, final polish in CapCut | footage 9 AM, voice 10 AM |
-| Ian | On camera for the grandma scenes, says his own line (his words, his OK to tell it) | 9 AM |
-| Claude | Renders the motion graphics from real data, picks the best takes, assembles the rough cut on the timeline below | rough cut 11:30 AM |
-| Ojasva | CapCut: music, captions, final timing, export 1080p, upload to YouTube (unlisted), link on Devpost | upload 2 PM, Devpost 3 PM |
+| Ojasva | Films every VR world (checklist below) and the phone b-roll | 9 AM |
+| Ian | On camera for the grandma scenes, his own words (his OK to tell it) | 9 AM |
+| Claude | Picks the best moments of every clip, cuts the montage to the song, builds the x-ray inserts and the overlays drawn onto the footage | cut 11 AM |
+| Ojasva | Voiceover over the finished cut, section by section; CapCut polish; export; YouTube (unlisted); Devpost link | 2 PM |
 
 Drop everything in `~/Downloads/lucid-video/` on Ojasva's Mac: `quest/` (headset recordings), `phone/` (b-roll and
 screen recordings), `voice/` (voiceover takes), `music/` (the track). Name files loosely (`chess-1.mp4`); more takes
 are better, Claude picks.
 
-## Second by second
+## The flow
 
-The film has one story and one argument. The story: Ian hasn't been home in four years, and his grandma is in his
-room. The argument: that is now possible from one phone video, here is everything else it does, and here is exactly
-how the machine does it. Emotion at the start and end, wonder in the middle, depth after. The voiceover is Ojasva,
-calm and close; Ian's lines are his own words. Files in `motion/` are the rendered graphics; everything else is
-footage from the checklist below.
+One song under everything (Juice WRLD's "Lucid Dreams" if a 30-second unlisted YouTube test shows it's only claimed,
+not blocked or muted; else a licensed track). Its opening guitar for the story, its build for the montage, the guitar
+alone again for the ending, and nothing under grandma's, Ian's or Vishal's words. Cuts land on the beat. X-ray
+inserts are 2 to 4 s, enter and leave on a match cut (same person, same pose, same framing), and carry one big line
+of type; the voiceover is recorded last, over the finished cut, and only says what the picture can't.
 
-**Sound arc:** a solo piano (0:00), one sustained low note under the title (0:35), a light pulse joins for the
-gameplay (0:37 to 1:19), the pulse drops out and soft synth pads carry the graphics (1:21 to 2:28), the opening
-piano returns alone for the ending (2:30). Real sound always sits on top: grandma's voice, the chess clock, the
-tennis ball, Vishal's answer.
-
-### Act 1: four years (0:00 to 0:36)
-
-| Time | Picture | Voice | Sound | On screen |
-| --- | --- | --- | --- | --- |
-| 0:00-0:03 | Black | | Grandma's real voice from her old video, Vietnamese, quiet, no music | |
-| 0:03-0:08 | Ian's phone in his hand in a dark room, her old video playing on it, the screen lighting his face | | Her voice continues; first piano notes | |
-| 0:08-0:12 | Close on Ian's face, the phone glow; his thumb pauses the video | **Ian:** "I haven't been home in four years." (his words) | Piano | |
-| 0:12-0:16 | Ian puts the phone down and puts the Quest on (side b-roll) | | Piano, a breath of room tone | |
-| 0:16-0:24 | Headset view: his room, lamp light. She is standing there, life size. Hold. | | Piano rises slowly | |
-| 0:24-0:31 | Headset view: Ian presses Talk, asks her something in Vietnamese; she answers | **Ian**, then **grandma (AI voice)** | Music ducks under the voices | her words, the English line under it, "AI voice" |
-| 0:31-0:34 | Side b-roll: Ian's face under the headset as she answers | | One held piano chord | |
-| 0:34-0:36 | Cut to black, then `motion/title.mp4` | | Low note under the title | "Lucid Dreams" |
-
-### Act 2: anyone, from any video (0:36 to 1:20)
-
-| Time | Picture | Voice | Sound | On screen |
-| --- | --- | --- | --- | --- |
-| 0:36-0:41 | iPhone screen recording: the camera roll, picking the dance clip on Make one, typing "teach me this dance" | "Lucid Dreams turns any video into a person, standing in your room." | Pulse comes in | |
-| 0:41-0:46 | Headset, wide: the dancer at full size on the floor; you step to the side and she's solid from there too | "Real size. Real motion. Walk all the way around them." | | |
-| 0:46-0:52 | Lesson on: the step card, a step slowed down, "your turn", the glowing follow-along targets on your wrists | "Ask it to teach you, and every move slows down and waits for you." | | step title |
-| 0:52-0:56 | Two fast cuts: golf (you hit off the tee), guitar (your strum) | | Ball strike, a strum | |
-| 0:56-1:03 | Chess: Magnus offers his hand, you shake; you move a piece by pinch; he reaches, moves, hits the clock | "Sit across the board from a legend." | The clock's click | "Stockfish at Magnus Carlsen's peak rating. Not affiliated." |
-| 1:03-1:09 | Tennis: Federer's handshake at the net, your toss and serve, a rally | "Rally with one." | Ball off the strings | "Roger Federer's likeness. AI opponent, not affiliated." |
-| 1:09-1:13 | Basketball: you pass, LeBron catches and shoots | "Pass, and he takes the shot." | Swish | "Demo footage. Not affiliated." |
-| 1:13-1:20 | Talk: Vishal in your room; you ask "What's up, Vishal?", he answers out loud | "Or just talk. Vishal gave it sixteen seconds of video." | His answer over a ducked bed | caption, "AI voice" |
-
-### Act 3: how it works (1:20 to 2:30)
-
-| Time | Picture | Voice | Sound | On screen |
-| --- | --- | --- | --- | --- |
-| 1:20-1:22 | Black | "Here's the hard part." | The pulse stops; a pad comes in | |
-| 1:22-1:32 | `motion/cameras.mp4`: her phone video, then 4DAnyone's 48 real cameras landing around her | "A camera only sees one side of you. 4DAnyone, published at SIGGRAPH Asia this August, turns one video into forty-eight views, all the way around." | Soft whoosh per ring | in the graphic |
-| 1:32-1:44 | `motion/fit.mp4`: twelve B200s working, the frame counter to 121, 290,000 Gaussians pulling together into her | "On UF's HiPerGator, twelve B200 GPUs fit two hundred ninety thousand 3D Gaussians to every frame." | | in the graphic |
-| 1:44-1:51 | `motion/reality.mp4`: the Reality check sweeps her blue | "Anything the camera never saw, we paint blue. Nothing imagined gets passed off as real." | | in the graphic |
-| 1:51-2:03 | `motion/avatar.mp4`: Vishal's 14 frames fly into a rigged body, his face lands | "From a handful of frames, LHM++ builds a body we can move, and UIKA gives it his face." | | in the graphic |
-| 2:03-2:12 | `motion/headset.mp4`, first part: the Quest 3S assembling, its eyes beaming out, the dancer appearing | "Then it all has to run on a headset." | Parts clicking together | |
-| 2:12-2:18 | `motion/headset.mp4`, the heat map: 115 to 82 to 34 million | "One person is a hundred and fifteen million pixels per eye, every frame. So we budget every splat." | | in the graphic |
-| 2:18-2:25 | `motion/talk.mp4`: his voice, then hears you, answers as him, in his voice, 3.1 s | "When you talk, it listens, answers as them, and speaks in their voice. About three seconds." | | in the graphic |
-| 2:25-2:30 | `motion/numbers.mp4` (first three): Aug 2026, 48, 290,000 | | Pad swells, then drops away | in the graphic |
-
-### Act 4: home (2:30 to 3:00)
-
-| Time | Picture | Voice | Sound | On screen |
-| --- | --- | --- | --- | --- |
-| 2:30-2:34 | Four wide b-roll cuts, one second each: the dancer, Magnus, Federer, Vishal, each life size in a real room | | Opening piano returns, alone | |
-| 2:34-2:48 | Ian and his grandma again: she says something warm, he answers; the side b-roll of him sitting with her | **Grandma (AI voice)**, then **Ian** | Piano under the voices | her words, English line, "AI voice" |
-| 2:48-2:53 | Ian lifts the headset off. The chair across from him is empty. He sits a second. | | One last chord, held | |
-| 2:53-3:00 | `motion/end.mp4` | | Piano resolves, silence at 3:00 | "Lucid Dreams. Anyone from any video, standing in your room." · getluciddreams.vercel.app · team · "AI voices are labeled. Public figures are likenesses, not affiliated." |
+| Time | Beat | Picture | X-ray (the tech, woven in) |
+| --- | --- | --- | --- |
+| 0:00-0:28 | **Four years** | Black, grandma's real voice from her old video; Ian's phone glowing in the dark; "I haven't been home in four years" (his words); the headset on; she's in his room, life size; he asks her something in Vietnamese and she answers; his face | none: only "AI voice" and the English line under hers |
+| 0:28-0:31 | **Title** | Black, "Lucid Dreams"; the song comes in | |
+| 0:31-0:37 | **Put it on** | You lift the Quest to your face | match cut into the render: the Quest 3S assembling, its two eyes beaming out, and back into your view of the room |
+| 0:37-0:52 | **She's here** | The dancer appears in your room, life size; you walk around her | freeze, cut into her render: her phone video, then 4DAnyone's 48 cameras landing around her, "1 phone video. 48 views."; back into the room as she moves again |
+| 0:52-1:05 | **Learn** | Lesson: her step card, a step slowed, "your turn", targets on your wrists; golf off the tee; a guitar strum; tai chi with Mirror; fast cuts on the beat | "her 22 joints, from the video" over the follow-along targets |
+| 1:05-1:10 | **Made of light** | Cut out of a lesson into the machine | the fit render: twelve B200s, frames to 121, 290,000 Gaussians pulling together into her; cut back into the room on the same pose |
+| 1:10-1:38 | **Play** | Pass to LeBron, he catches and shoots; Magnus's handshake, your move, his reach and the clock; Federer's handshake at the net, your serve, a rally | the real ball's tracked path drawn over the shot; "Stockfish at Magnus Carlsen's peak rating. Not affiliated." and "his hands never pass through a piece"; the ball's flight traced over the rally with "240 Hz · drag · Magnus lift · grass" |
+| 1:38-1:46 | **Honest** | You tap the Reality check on the dancer; she turns partly blue | her render sweeping blue: "never seen by the camera. 49% seen." |
+| 1:46-2:02 | **Talk** | "What's up, Vishal?" and he answers out loud | before he answers, his 14 frames fly into his body (the avatar render); under his answer, the timing bar filling "hears 1.5 s · answers 1.0 s · speaks 0.5 s" |
+| 2:02-2:08 | **On a headset** | You moving fast through a world, smooth | the heat map: "115 million pixels per eye" dropping to 34 |
+| 2:08-2:26 | **Anyone** | The fastest cuts of every world, one or two beats each, building to the song's peak | quick numbers flashing on the cuts: Aug 2026 · 48 views · 290,000 · 3.1 s |
+| 2:26-2:53 | **Home** | The song drops to the guitar. Ian and his grandma again: she says something warm, he answers, he sits with her; he lifts the headset off; the chair across from him is empty | none |
+| 2:53-3:00 | **End** | "Lucid Dreams. Anyone from any video, standing in your room." · link · team · labels | |
 
 ## What to film (checklist)
 
@@ -137,36 +102,17 @@ recordings to `~/Downloads/lucid-video/quest/` (OpenMTP over USB), named loosely
 - Music playing in the room, other people's faces without their OK, private screens
 - Grandma without Ian in the room saying yes to the take
 
-## Voiceover (record list)
+## Voiceover
 
-Quiet room, iPhone Voice Memos 15 cm from your mouth, 3 takes of each line, calm and close, slower than feels
-natural. Save to `~/Downloads/lucid-video/voice/`.
-
-1. "Lucid Dreams turns any video into a person, standing in your room."
-2. "Real size. Real motion. Walk all the way around them."
-3. "Ask it to teach you, and every move slows down and waits for you."
-4. "Sit across the board from a legend."
-5. "Rally with one."
-6. "Pass, and he takes the shot."
-7. "Or just talk. Vishal gave it sixteen seconds of video."
-8. "Here's the hard part."
-9. "A camera only sees one side of you. 4DAnyone, published at SIGGRAPH Asia this August, turns one video into
-   forty-eight views, all the way around."
-10. "On UF's HiPerGator, twelve B200 GPUs fit two hundred ninety thousand 3D Gaussians to every frame."
-11. "Anything the camera never saw, we paint blue. Nothing imagined gets passed off as real."
-12. "From a handful of frames, LHM++ builds a body we can move, and UIKA gives it his face."
-13. "Then it all has to run on a headset."
-14. "One person is a hundred and fifteen million pixels per eye, every frame. So we budget every splat."
-15. "When you talk, it listens, answers as them, and speaks in their voice. About three seconds."
-
-Ian, in his own words: the opening line about how long he's been away, what he asks her, and what he says to her at
-the end. Nothing scripted for him; if a line isn't true for him, it isn't in the film.
+Recorded last, over the finished cut, section by section, after Claude hands over the cut. Short, calm, close; it says
+what the picture can't, and the numbers live on screen. Ian says only his own words.
 
 ## Music
 
-Use a track we're allowed to publish: CapCut's library filtered to commercial use, or Pixabay Music, or the YouTube
-Audio Library. Search "emotional piano", "bittersweet", "cinematic piano build". A popular song (like "deja vu")
-gets the YouTube upload claimed or muted, and the Devpost video plays from YouTube.
+"Lucid Dreams" plays from YouTube on Devpost, and it's copyrighted twice over (Juice WRLD, and the Sting sample). Upload
+a 30-second unlisted test with it tonight: YouTube Studio shows "Copyright claim" and whether it's blocked anywhere.
+Only claimed: use it. Blocked or muted: a licensed track (CapCut's commercial library, Pixabay Music, the YouTube Audio
+Library). Put the audio file in `music/`.
 
 ## On screen, always
 
