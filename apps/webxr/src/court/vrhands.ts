@@ -69,6 +69,35 @@ function bindPose(mesh: THREE.SkinnedMesh, right: boolean): BindPose {
   };
 }
 
+// The glTF's forearm ends in a cut cylinder (only ~2 cm behind the wrist joint): the wrist fades out toward it (opaque
+// 3 cm into the palm, gone just short of the cut), as the headset's own hands do, so there's no hard edge. Fully faded
+// pixels are dropped, so they don't hide the menu behind them in depth.
+LOOKS.push({
+  attribute: {
+    name: "handFade",
+    weigh: (pose) => {
+      const w = new Float32Array(pose.count).fill(1);
+      const wrist = pose.joint("wrist");
+      const knuckle = pose.joint("middle-finger-phalanx-proximal");
+      if (!wrist || !knuckle) return w;
+      const axis = knuckle.sub(wrist).normalize();
+      const v = new THREE.Vector3();
+      const t = new Float32Array(pose.count);
+      let cut = 0;
+      for (let i = 0; i < pose.count; i++) cut = Math.min(cut, (t[i] = pose.at(i, v).sub(wrist).dot(axis)));
+      const from = 0.03; // opaque from 3 cm ahead of the wrist joint
+      const to = cut + 0.004; // gone 4 mm short of the cut
+      if (cut > -0.005) return w; // no forearm to fade
+      for (let i = 0; i < pose.count; i++) {
+        const x = Math.min(1, Math.max(0, (t[i] - to) / (from - to)));
+        w[i] = x * x * (3 - 2 * x);
+      }
+      return w;
+    },
+  },
+  fragment: "diffuseColor.a *= v_handFade;\nif (diffuseColor.a < 0.01) discard;",
+});
+
 /** The hands' material: the matcap with every LOOK patched in. */
 function handMaterial(): THREE.MeshMatcapMaterial {
   const material = new THREE.MeshMatcapMaterial({ matcap: matcap(), transparent: true, opacity: OPACITY });
