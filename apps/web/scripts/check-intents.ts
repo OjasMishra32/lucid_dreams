@@ -2,11 +2,11 @@ import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { CASES_FILE, MODES, compare, fromExperience, fromRaw, loadCases, type IntentCase } from "../tests/intents";
 
-// The intent box against Gemini: each of the forty sentences in tests/intents.json goes through the bridge's own
+// The intent box against Gemma: each of the forty sentences in tests/intents.json goes through the bridge's own
 // writeExperience (lib/bridge/gemini.ts) as a sentence-only plan, and anything that doesn't come out as expected is
 // reported. Without GEMINI_API_KEY it checks the file and says so.
 //
-//   npm run test:intents                  all forty
+//   npm run test:intents                  all forty (uses the newest listed gemma-...-it unless GEMINI_MODEL is set)
 //   npm run test:intents -- play          one mode (teach, companion, watch, play)
 //   npm run test:intents -- jump-shot     any case whose id contains the words
 
@@ -40,14 +40,14 @@ async function main() {
 
   if (!process.env.GEMINI_API_KEY) {
     console.log(
-      "Gemini wasn't asked: this needs GEMINI_API_KEY (from https://aistudio.google.com/apikey) in apps/web/.env.local " +
+      "Gemma wasn't asked: this needs GEMINI_API_KEY (from https://aistudio.google.com/apikey) in apps/web/.env.local " +
         "or the environment. With it, every sentence is planned and checked.",
     );
     return 0;
   }
 
   const { writeExperience, humanError } = await import("../lib/bridge/gemini");
-  console.log(`Asking Gemini for ${chosen.length} sentence-only plan${chosen.length === 1 ? "" : "s"}, one at a time.\n`);
+  console.log(`Asking Gemma for ${chosen.length} sentence-only plan${chosen.length === 1 ? "" : "s"}, one at a time.\n`);
   let right = 0;
   let modelRight = 0;
   const models = new Set<string>();
