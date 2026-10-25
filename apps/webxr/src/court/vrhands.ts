@@ -46,11 +46,13 @@ function matcap(): THREE.Texture {
   return tex;
 }
 
-// A soft cool rim (fresnel): the edges glow a little, so the hands read against the dark arena without being flat
-// white; scaled by the arena's light like the rest (diffuseColor is light(level)).
+// A cool glass rim (fresnel), as the headset's own hands: the edges glow and stay solid while the middle of the hand
+// lets a little of the arena through, so the hands read against the dark arena without being flat white; scaled by
+// the arena's light like the rest (diffuseColor is light(level)).
 LOOKS.push({
-  fragment: `float rim = pow(1.0 - saturate(dot(normal, viewDir)), 2.5);
-outgoingLight += diffuseColor.rgb * vec3(0.80, 0.88, 1.0) * (0.55 * rim);`,
+  fragment: `float rim = pow(1.0 - saturate(dot(normal, viewDir)), 2.2);
+outgoingLight += diffuseColor.rgb * vec3(0.76, 0.87, 1.0) * (0.9 * rim);
+diffuseColor.a *= mix(0.84, 1.0, rim);`,
 });
 
 /** A skinned hand mesh in its bind pose: vertex `i` and a joint's position, in the same space. */
