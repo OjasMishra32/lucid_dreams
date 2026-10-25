@@ -36,6 +36,7 @@ import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
 import { BUILT as VRHANDS_BUILT, VrHands } from "./vrhands";
+import { WarpLanding } from "./warpLanding";
 import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
 /** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves a real bundle at /bundle/. */
@@ -263,6 +264,10 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     return x * x * x * (x * (6 * x - 15) + 10);
   };
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
+  // TEMPORARY (warp.ts replaces it): the landing's flash and ring, and the warp's riser from the ease's first frame
+  const landing = new WarpLanding(court.freeze.players);
+  world.add(landing.object);
+  let warped = false;
   // what draws a ball this frame (the e2e's ball scenario): the ball's card on the video layer, the 3D's own sphere,
   // the holder's splats (freeze.ballInBody); and the holder's card, which the ball's goes with
   const drawn = (o: THREE.Object3D | undefined): boolean => {
@@ -396,6 +401,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     restored = false;
     tScreen = -1;
     screenWatch(1);
+    landing.update(-Infinity, head);
     stepGlow.stop();
     clock.restart();
   };
@@ -432,6 +438,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       tF = HANDOFF_END;
       tLight = HANDOFF_END;
       handoff(tF, parts);
+      landing.update(tF, head);
       tClean = 0;
       go("open");
     }
@@ -504,10 +511,16 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         courtWorld.frame(video.stats.onScreen >= 0 ? video.stats.onScreen : s.frame);
         video.prime(s.nextJump);
         const hush = 1 - s.speed / court.video.pass2Speed; // 0 at pass 2's speed, 1 frozen
-        if (phase === "watching" && s.segment === "ease") go("easing");
+        if (phase === "watching" && s.segment === "ease") {
+          warped = false;
+          go("easing");
+        }
         if (phase === "easing") {
           const ease = s.ease !== null ? court.video.segments.eases[s.ease] : null;
           tF = ease ? -(ease.frames[1] - s.frame) / hz : 0; // seconds to F
+          if (!warped && tF < 0) sound.warpRiser(-tF);
+          warped = true;
+          landing.update(tF, head);
           light.set("ease", ease ? ease.seconds + tF : 0);
           sound.timeStop(Math.max(0, Math.min(1, hush)));
           if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
@@ -546,6 +559,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         tF += rushed && tF < fadeEnd ? Math.max(dt, rushRate * dt) : dt;
         tLight += dt;
         handoff(tF, parts, tLight);
+        landing.update(tF, head);
         if (tF >= HANDOFF_END) {
           tClean = 0;
           go("open");
