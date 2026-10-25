@@ -14,7 +14,8 @@ Config (private, never in git: the rects and every number about the footage live
   calib         (or the assemble config's) the calibration whose k1 undoes the show's lens (xn -> xn (1 + k1 r^2))
   maxWidth      the far image's widest side (default 4096)
   feather       alpha ramp inside the covered edge, px (default 8)
-  crowd         {tiles: [[x0, y0, x1, y1] in mosaic px, ...], pxPerM (default 200), atlas: [maxW, maxH]}
+  crowd         {tiles: [[x0, y0, x1, y1] in mosaic px | {wall: [z0, y0, z1, y1] in metres on the stands wall, y up}, ...],
+                pxPerM (default 200), atlas: [maxW, maxH]}
   freezeCleanAlpha  optional: the clean plate's replaced-pixel map (255 = replaced), to score only untouched pixels
   check         folder for the alignment check image
 
@@ -340,27 +341,50 @@ def tile_scale(sight: Sight, planes: list[dict], cu: float, cv_: float) -> dict:
             "mPerPxUp": abs(float(hy[1][1] - hy[0][1])) / 2.0}
 
 
-def rectified_tile(mosaic: np.ndarray, sight: Sight, planes: list[dict], rect, px_per_m: float) -> tuple[np.ndarray, dict]:
-    """A mosaic rect laid flat on the stands' wall at `px_per_m` atlas pixels per metre: each tile pixel is a point of the
-    wall (z across, y up), found in the mosaic through camera F. Size from the rect's width and height in metres."""
-    x0, y0, x1, y1 = rect
-    cu, cv_ = (x0 + x1 - 1) / 2.0, (y0 + y1 - 1) / 2.0
-    sc = tile_scale(sight, planes, cu, cv_)
-    w_m, h_m = (x1 - x0) * sc["mPerPxAcross"], (y1 - y0) * sc["mPerPxUp"]
-    W, H = max(8, int(round(w_m * px_per_m))), max(8, int(round(h_m * px_per_m)))
+def wall_tile(mosaic: np.ndarray, sight: Sight, planes: list[dict], wall, px_per_m: float) -> tuple[np.ndarray, dict]:
+    """A rect of the stands' wall, [z0, y0, z1, y1] in metres (z across, y = height above the floor, y1 the top), laid flat at
+    `px_per_m` atlas pixels per metre: each tile pixel is a wall point, found in the mosaic through camera F. The size is
+    exactly the rect's (row pitches and edges are then measured in wall metres)."""
+    z0, y0, z1, y1 = (float(v) for v in wall)
+    plane = plane_for((y0 + y1) / 2, planes)
+    x = float(np.asarray(plane["points"], float)[0, 0])
+    W, H = max(8, int(round((z1 - z0) * px_per_m))), max(8, int(round((y1 - y0) * px_per_m)))
     a, b = np.meshgrid(np.arange(W, dtype=np.float64), np.arange(H, dtype=np.float64))
-    P = np.stack([np.full_like(a, sc["x"]), sc["hit"][1] - (b - (H - 1) / 2) / px_per_m, sc["hit"][2] + (a - (W - 1) / 2) / px_per_m], -1)
+    P = np.stack([np.full_like(a, x), y1 - (b + 0.5) / px_per_m, z0 + (a + 0.5) / px_per_m], -1)
     mu, mv = sight.canvas_of(P)
-    # sampled finer than the atlas: low-pass the source first (sigma of half the shrink) so it doesn't alias
-    shrink = 1.0 / (0.5 * (sc["mPerPxAcross"] + sc["mPerPxUp"]) * px_per_m)
+    tile = sample_filtered(mosaic, mu, mv, shrink_of(sight, P, px_per_m))
+    c = sight.canvas_of(np.array([x, (y0 + y1) / 2, (z0 + z1) / 2]))
+    sc = tile_scale(sight, planes, float(c[0]), float(c[1]))
+    return tile, {"mPerPxAcross": sc["mPerPxAcross"], "mPerPxUp": sc["mPerPxUp"], "widthM": z1 - z0, "heightM": y1 - y0, "wall": [z0, y0, z1, y1]}
+
+
+def shrink_of(sight: Sight, P: np.ndarray, px_per_m: float) -> float:
+    """How many mosaic pixels one atlas pixel spans over the tile (the centre's, along both axes)."""
+    h, w = P.shape[:2]
+    mu, mv = sight.canvas_of(P[[h // 2, h // 2, h // 2 + 1], [w // 2, w // 2 + 1, w // 2]])
+    return float(0.5 * (math.hypot(mu[1] - mu[0], mv[1] - mv[0]) + math.hypot(mu[2] - mu[0], mv[2] - mv[0])))
+
+
+def sample_filtered(mosaic: np.ndarray, mu: np.ndarray, mv: np.ndarray, shrink: float) -> np.ndarray:
+    """The mosaic at (mu, mv), low-passed first (sigma of half the shrink) when sampled finer than the mosaic so it doesn't alias."""
     pad = int(math.ceil(3 * max(shrink, 1.0))) + 4
     cx0, cy0 = max(0, int(math.floor(mu.min())) - pad), max(0, int(math.floor(mv.min())) - pad)
     cx1, cy1 = min(mosaic.shape[1], int(math.ceil(mu.max())) + pad), min(mosaic.shape[0], int(math.ceil(mv.max())) + pad)
     src = mosaic[cy0:cy1, cx0:cx1]
     if shrink > 1.0:
         src = cv2.GaussianBlur(src, (0, 0), 0.5 * shrink)
-    tile = cv2.remap(src, (mu - cx0).astype(np.float32), (mv - cy0).astype(np.float32), cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-    return tile, {"mPerPxAcross": sc["mPerPxAcross"], "mPerPxUp": sc["mPerPxUp"], "widthM": w_m, "heightM": h_m}
+    return cv2.remap(src, (mu - cx0).astype(np.float32), (mv - cy0).astype(np.float32), cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def rectified_tile(mosaic: np.ndarray, sight: Sight, planes: list[dict], rect, px_per_m: float) -> tuple[np.ndarray, dict]:
+    """A mosaic rect laid flat on the stands' wall at `px_per_m` atlas pixels per metre: the wall rect its centre ray
+    meets, as wide and high in metres as the rect is in mosaic pixels there (see wall_tile)."""
+    x0, y0, x1, y1 = rect
+    cu, cv_ = (x0 + x1 - 1) / 2.0, (y0 + y1 - 1) / 2.0
+    sc = tile_scale(sight, planes, cu, cv_)
+    w_m, h_m = (x1 - x0) * sc["mPerPxAcross"], (y1 - y0) * sc["mPerPxUp"]
+    zc, yc = float(sc["hit"][2]), float(sc["hit"][1])
+    return wall_tile(mosaic, sight, planes, [zc - w_m / 2, yc - h_m / 2, zc + w_m / 2, yc + h_m / 2], px_per_m)
 
 
 def shelves(sizes: list, width: int, gutter: int) -> tuple[list, int] | None:
@@ -408,7 +432,7 @@ def pack(tiles: list[np.ndarray], limit=ATLAS_MAX, gutter: int = GUTTER) -> tupl
 def build_crowd(mosaic: np.ndarray, sight: Sight, planes: list[dict], rects: list, px_per_m: float = PX_PER_M, limit=ATLAS_MAX) -> dict:
     tiles, info = [], []
     for r in rects:
-        t, i = rectified_tile(mosaic, sight, planes, r, px_per_m)
+        t, i = wall_tile(mosaic, sight, planes, r["wall"], px_per_m) if isinstance(r, dict) else rectified_tile(mosaic, sight, planes, r, px_per_m)
         tiles.append(t)
         info.append(i)
     atlas, boxes = pack(tiles, limit)

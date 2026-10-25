@@ -212,6 +212,24 @@ class Crowd(unittest.TestCase):
         flips = int(np.abs(np.diff(row)).sum())
         self.assertAlmostEqual(flips, 2.0 / 0.1 - 1, delta=2)  # a square every 0.1 m
 
+    def test_a_wall_tile_is_exactly_the_rect_asked_for(self):
+        """A tile named in wall metres (z across, y up) is that rect to the pixel: its top row is the rect's top."""
+        yy, xx = np.mgrid[0:1600, 0:2000]
+        stripes = ((yy // 40) % 2 * 255).astype(np.uint8)  # 40 px bands = 0.2 m on the wall, edges at whole bands
+        mosaic = cv2.merge([stripes, stripes, stripes])
+        sight = trivial_sight()
+        # canvas row r is wall y = (C0y - r) * 20 / F0 metres up: bands 40 px high are 0.2 m, with edges at y = 0.2 j
+        tile, info = S.wall_tile(mosaic, sight, PLANES, [-1.0, 0.4, 1.0, 1.4], 100.0)
+        self.assertEqual(tile.shape[:2], (100, 200))  # 2 m x 1 m at 100 px/m, exactly
+        self.assertAlmostEqual(info["widthM"], 2.0)
+        self.assertAlmostEqual(info["heightM"], 1.0)
+        col = (tile[:, 100, 0] > 127).astype(int)
+        edges = np.nonzero(np.diff(col))[0] + 1  # tile rows where the bands flip: every 0.2 m = 20 rows
+        self.assertTrue(np.all(np.abs(np.diff(edges) - 20) <= 1), edges.tolist())
+        # y = 1.4 is the tile's top, 1.4 / 0.2 = 7 bands up: a band edge, so the first 20 rows are one band
+        self.assertEqual(len(set(col[:15].tolist())), 1)
+        self.assertEqual(int(edges[0]), 20)
+
     def test_the_atlas_holds_every_tile_apart(self):
         rng = np.random.default_rng(5)
         tiles = [rng.integers(0, 255, (h, w, 3), dtype=np.uint8) for h, w in [(120, 200), (90, 150), (150, 100), (60, 60)]]
