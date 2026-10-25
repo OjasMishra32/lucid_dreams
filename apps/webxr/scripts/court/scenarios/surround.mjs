@@ -236,5 +236,7 @@ export default async function surround(ctx) {
   const behind = measure(ctx, "surround-behind-on-reality").blueRed / measure(ctx, "surround-behind-on").blueRed;
   ctx.check("the Reality check turns the imagined bowl blue (looking behind)", behind >= 1.5, `blue / red x${behind.toFixed(2)} over the whole view`);
   report.realityBehind = behind;
+  // what the far image measured (proxies.ts measureTone): its tone to the plate
+  report.tone = await ctx.page.evaluate(() => Promise.race([window.__courtLook.proxies.measured, new Promise((done) => setTimeout(() => done("not measured in 10 s"), 10000))]));
   ctx.report.surround = report;
 }

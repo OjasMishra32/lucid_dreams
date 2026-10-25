@@ -5,7 +5,9 @@
 //   walking, the Reality check tints the floor the bundle marks as filmed (it is the clean floor now: imagined), up
 //   at least 50% in blue / red; at the seat it leaves that floor alone (within 2%: the footage, as P23 has it).
 // The frames (walk-<stop>.png) are the before/after record. D's 3D floor plate takes the same weight; until it does,
-// it is hidden here and the check says so.
+// it is hidden here and the check says so. With a surround (court.surround) the footage's floor shows from the seat
+// only under F's picture or where camera F saw it about as sharply as the eye sees it (world.ts footageKept); the
+// seat's check judges the filmed points it keeps (by its grazing smear the rest is the clean floor, tinted).
 // Owner: stream E.
 import { HZ, blueRedAt, lookFrom, realityPoints, sitAtSeat, walkStops } from "../look/view.mjs";
 
@@ -64,11 +66,12 @@ export default async function walkfloor(ctx) {
   const report = {};
   for (const v of views) {
     const file = v.name === "seat" ? "walk-seat" : `walk-${v.name.split(" ")[1]}`;
-    const { seen } = await realityPoints(ctx, v.log.view, { plates: plate === "weighted" });
+    // from the seat, only the filmed floor the world keeps as footage (all of it without a surround)
+    const { seen, blurred } = await realityPoints(ctx, v.log.view, { plates: plate === "weighted", eye: v.name === "seat" ? v.log.view.centre : null });
     const rise = blueRedAt(ctx, `${file}-reality`, v.log.view, seen) / blueRedAt(ctx, file, v.log.view, seen);
     report[v.name] = { points: seen.length, rise };
     if (v.name === "seat")
-      ctx.check(`walk: from the seat the filmed floor is the footage (Reality leaves it within 2%)${why}`, seen.length >= 12 && Math.abs(rise - 1) <= 0.02, `${seen.length} filmed points, blue / red x${rise.toFixed(3)}`);
+      ctx.check(`walk: from the seat the filmed floor is the footage (Reality leaves it within 2%)${why}`, seen.length >= 12 && Math.abs(rise - 1) <= 0.02, `${seen.length} filmed points${blurred ? ` (and ${blurred} too blurred from here: the clean floor)` : ""}, blue / red x${rise.toFixed(3)}`);
     else if (seen.length < 12)
       // nothing filmed in view here (the real floor's footage covers a third of the court): nothing it could smear
       ctx.check(`walk: at ${v.name} no filmed floor is in view, so no footage to smear${why}`, true, `${seen.length} filmed points in view`);

@@ -187,9 +187,12 @@ export function frameMargin(ctx, k, p) {
  * 0.6 m all round, so no point sits on the mask's soft edge) plus the apron round the court (outside floor-seen's
  * extent). Imagined: neither, more than 3% of the frame outside F's picture. With `plates` (D's floor plate draws F's
  * picture), points well inside it (past its 10% feather) are filmed too; without, they are left out.
- * Points off the frame, or under a person, the ball or the hoop in `view`, are left out.
+ * Points off the frame, or under a person, the ball or the hoop in `view`, are left out. With `eye` (court space), a
+ * filmed point counts only where the world still shows its footage from there (world.footageKept: with a surround, the
+ * footage's floor only where camera F saw it about as sharply as that eye sees it; the rest is the clean floor):
+ * `blurred` counts the filmed points left out so.
  */
-export async function realityPoints(ctx, view, { plates = false } = {}) {
+export async function realityPoints(ctx, view, { plates = false, eye = null } = {}) {
   const F = ctx.court.video.segments.eases[0]?.frames[1];
   const c = ctx.court.court;
   const [hl, hw] = [c.length / 2, c.width / 2];
@@ -247,6 +250,12 @@ export async function realityPoints(ctx, view, { plates = false } = {}) {
     if (boxes.some(([x0, y0, x1, y1]) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1)) return;
     out[kind].push([x, 0, z]);
   });
+  out.blurred = 0;
+  if (eye && out.seen.length) {
+    const kept = await ctx.page.evaluate(([e, pts]) => pts.map((p) => window.__courtLook.world.footageKept?.(e, p) ?? 1), [eye, out.seen]);
+    out.blurred = kept.filter((k) => k < 0.99).length;
+    out.seen = out.seen.filter((_, i) => kept[i] >= 0.99);
+  }
   return out;
 }
 

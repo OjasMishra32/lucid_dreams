@@ -93,8 +93,9 @@ export default async function look(ctx) {
   await ctx.pressFrames("reality", 3);
   await ctx.save("look-reality");
   await ctx.pressFrames("reality", 3);
-  // filmed and imagined by the one definition (floor-seen, or camera F's picture where D's floor plate shows it)
-  const sets = await realityPoints(ctx, opened.view, { plates: !!onF });
+  // filmed and imagined by the one definition (floor-seen, or camera F's picture where D's floor plate shows it); the
+  // filmed floor judged is what the world still shows as footage from here (with a surround, not its blurred smear)
+  const sets = await realityPoints(ctx, opened.view, { plates: !!onF, eye: opened.view.centre });
   const rise = (pts) => blueRedAt(ctx, "look-reality", opened.view, pts) / blueRedAt(ctx, "look-open", opened.view, pts);
   const [imagined, seen] = [rise(sets.imagined), rise(sets.seen)];
   const ratios = (pts) => `${blueRedAt(ctx, "look-open", opened.view, pts).toFixed(3)} -> ${blueRedAt(ctx, "look-reality", opened.view, pts).toFixed(3)}`;
@@ -106,7 +107,7 @@ export default async function look(ctx) {
   ctx.check(
     "the Reality check leaves the filmed floor alone (P23: blue / red within 2%)",
     sets.seen.length >= 12 && Math.abs(seen - 1) <= 0.02,
-    `${sets.seen.length} filmed points: blue / red ${ratios(sets.seen)} (x${seen.toFixed(3)})`,
+    `${sets.seen.length} filmed points${sets.blurred ? ` (and ${sets.blurred} too blurred from here: the clean floor)` : ""}: blue / red ${ratios(sets.seen)} (x${seen.toFixed(3)})`,
   );
   ctx.report.reality = { imagined: { points: sets.imagined.length, rise: imagined }, seen: { points: sets.seen.length, rise: seen } };
   // the hoop and the house lights take the field's light the frame it moves: court.ts calls the world's per-frame

@@ -9,7 +9,7 @@ import type { PinholeCamera } from "../../src/court/camera.ts";
 
 const { Proxies } = await import("../../src/court/proxies.ts");
 const THREE = await import("three");
-const { cardPlane, depthBox, rasterDepth, dilateDepth, parseGlb, depthWeight, lightChunk, plateAlphas, layerVisibility, floorClips, behindStands, maskSurfaceHit } = await import("../../src/court/proxies.ts");
+const { cardPlane, depthBox, rasterDepth, dilateDepth, parseGlb, depthWeight, lightChunk, plateAlphas, layerVisibility, floorClips, behindStands, maskSurfaceHit, frameFeather, FEATHER } = await import("../../src/court/proxies.ts");
 const { lookRotation, project, rayOf } = await import("../../src/court/camera.ts");
 
 const close = (a: number, b: number, eps = 1e-9, what = "") => assert.ok(Math.abs(a - b) <= eps, `${what} ${a} vs ${b}`);
@@ -171,12 +171,22 @@ test("the card depth weight: 1 on F, 0 a third of a second of real time away, sm
   assert.ok(a > 0 && a < 1);
 });
 
+test("the plate's edge feather (frameFeather's TS twin): whole inside, 0 at and past the frame's edge, smooth between", () => {
+  assert.equal(frameFeather(0.5, 0.5), 1);
+  assert.equal(frameFeather(FEATHER, 1 - FEATHER), 1);
+  assert.equal(frameFeather(0, 0.5), 0);
+  assert.equal(frameFeather(0.5, -0.2), 0);
+  assert.equal(frameFeather(1.3, 0.5), 0);
+  assert.equal(frameFeather(FEATHER / 2, 0.5), 0.5);
+  assert.ok(frameFeather(FEATHER / 4, 0.5) < frameFeather(FEATHER / 2, 0.5));
+});
+
 test("the light chunk: lightfield.ts's GLSL as given, with any helper the stub lacks filled in as 1 (no dither, the arena, the pair at full light)", () => {
   const stub = "float courtLight(vec3 worldPos, float part) { return 1.0; }\n";
   const filled = lightChunk(stub);
   assert.ok(filled.startsWith(stub), "the field's own GLSL first");
-  for (const name of ["vec3 lightDither(", "float lightRoomStands(", "float lightRoomFloor(", "float lightPair(", "float lightFilmedFloor("]) assert.ok(filled.includes(name), name);
-  const full = `${stub}float lightPair() { return uLightLevel.z; }\nfloat lightFilmedFloor(vec3 courtPos) { return 1.0; }\nfloat lightRoomStands() { return uLightView.y; }\nfloat lightRoomFloor() { return uLightView.z; }\nvec3 lightDither(vec3 rgb) { return rgb + 0.0; }\n`;
+  for (const name of ["vec3 lightDither(", "float lightRoomStands(", "float lightRoomFloor(", "float lightPair(", "float lightFilmedFloor(", "float lightSharp("]) assert.ok(filled.includes(name), name);
+  const full = `${stub}float lightPair() { return uLightLevel.z; }\nfloat lightFilmedFloor(vec3 courtPos) { return 1.0; }\nfloat lightRoomStands() { return uLightView.y; }\nfloat lightRoomFloor() { return uLightView.z; }\nvec3 lightDither(vec3 rgb) { return rgb + 0.0; }\nfloat lightSharp(vec3 p, float f, float texel) { return 1.0; }\n`;
   assert.equal(lightChunk(full), full, "nothing added when the field has them all");
 });
 
