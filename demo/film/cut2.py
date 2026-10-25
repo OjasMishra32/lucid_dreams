@@ -67,6 +67,30 @@ def conform(k: int, v: dict, head: int, body: int, tail: int, fps: int, work: Pa
     f += ["format=yuv420p", f"tpad=start_duration={pre:.4f}:start_mode=clone:stop_mode=clone:stop_duration=10",
           f"trim=end_frame={frames}", "setpts=PTS-STARTPTS"]
     out = work / f"{k:03d}.mp4"
+    if v["src"] == "split":
+        # two pieces side by side, each the centre of its frame, a hairline of black between
+        halves = []
+        for side in ("left", "right"):
+            h = v[side]
+            sp = float(h.get("speed", 1.0))
+            t0 = max(0.0, float(h.get("in", 0.0)) - hin * sp)
+            hf = [f"trim=start={t0:.4f}:duration={(length * sp) + 0.2:.4f}", "setpts=PTS-STARTPTS"]
+            if sp != 1.0:
+                hf.append(f"setpts=PTS/{sp}")
+            if h.get("fit") == "contain":  # the whole frame (a portrait turntable), centred in its half on black
+                hf += [f"fps={fps}", f"scale=-2:{H}:flags=lanczos", f"pad={W // 2 - 3}:{H}:(ow-iw)/2:0:black", "setsar=1"]
+            else:
+                hf += [f"fps={fps}", f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos", f"crop={W}:{H}",
+                       f"crop={W // 2 - 3}:{H}:{(W - (W // 2 - 3)) // 2}:0", "setsar=1"]
+            if h.get("grade", True):
+                hf.append(GRADE)
+            hf += ["format=yuv420p", "tpad=stop_mode=clone:stop_duration=10", f"trim=end_frame={frames}", "setpts=PTS-STARTPTS"]
+            halves.append(",".join(hf))
+        fc = f"[0:v]{halves[0]}[l];[1:v]{halves[1]}[r];[l]pad={W // 2}:{H}:0:0:black[lp];[lp][r]hstack=inputs=2,pad={W}:{H}:0:0:black,setsar=1[v]"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(ROOT / v["left"]["src"]), "-i", str(ROOT / v["right"]["src"]),
+                        "-filter_complex", fc, "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "12",
+                        "-r", str(fps), "-frames:v", str(frames), str(out)], check=True)
+        return out, frames
     if v["src"] == "black":
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=black:s={W}x{H}:r={fps}",
                         "-frames:v", str(frames), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "12",
@@ -114,9 +138,19 @@ def main(timeline: str, out_name: str, remix: str | None = None) -> None:
         last = f"x{k}"
         total += pieces[k][1] - d[k]
     n_in = len(pieces)
+    texts = tl.get("text", [])
+    lb = tl.get("letterbox")
+    if lb:  # cinema bars (2.39:1) over the opening, sliding away as it opens up; under the type, so captions sit on them
+        bi = n_in + len(texts)
+        h, until, op = int(lb.get("h", 132)), float(lb["until"]), float(lb.get("open", 0.8))
+        k = f"clip((t-{until})/{op},0,1)"
+        graph.append(f"[{bi}:v]format=yuv420p,split[lbt][lbb]")
+        graph.append(f"[{last}][lbt]overlay=x=0:y='-{h}*{k}':eof_action=pass[lb1]")
+        graph.append(f"[lb1][lbb]overlay=x=0:y='H-{h}+{h}*{k}':eof_action=pass[lb2]")
+        last = "lb2"
 
     # type: each line drawn by text.swift (SF Pro) to a PNG, faded in and out
-    for i, t in enumerate(tl.get("text", [])):
+    for i, t in enumerate(texts):
         png = work / f"type-{i:03d}.png"
         subprocess.run(["swift", str(TYPE), t["text"], str(t.get("size", 34)), str(png), t.get("color", "#f5f5f7"),
                         t.get("weight", "semibold")], check=True, capture_output=True)
@@ -129,6 +163,12 @@ def main(timeline: str, out_name: str, remix: str | None = None) -> None:
             "lower-left": (f"{90 - pad}", f"H-h-{80 - pad}"),
             "lower-right": (f"W-w-{90 - pad}", f"H-h-{80 - pad}"),
             "upper": ("(W-w)/2", f"{100 - pad}"),
+            "left-top": (f"{W // 4}-w/2", f"{90 - pad}"),
+            "right-top": (f"{3 * W // 4}-w/2", f"{90 - pad}"),
+            "left-low": (f"{W // 4}-w/2", f"H-h-{60 - pad}"),
+            "right-low": (f"{3 * W // 4}-w/2", f"H-h-{60 - pad}"),
+            "bar1": ("(W-w)/2", "978-h/2"),   # inside the letterbox's bottom bar: the line
+            "bar2": ("(W-w)/2", "1038-h/2"),  # ...and the one under it
         }[t.get("pos", "lower")]
         d = float(t["dur"])
         fi, fo = float(t.get("fadein", 0.4)), float(t.get("fadeout", 0.4))
@@ -136,6 +176,8 @@ def main(timeline: str, out_name: str, remix: str | None = None) -> None:
                      f"setpts=PTS+{t['at']}/TB[ty{i}]")
         graph.append(f"[{last}][ty{i}]overlay=x={x}:y={y}:enable='between(t,{t['at']},{t['at'] + d})':eof_action=pass[t{i}]")
         last = f"t{i}"
+    if lb:
+        args += ["-f", "lavfi", "-t", str(length), "-i", f"color=black:s={W}x{int(lb.get('h', 132))}:r={fps}"]
     graph.append(f"[{last}]trim=duration={length},format=yuv420p[vout]")
 
     mix_and_mux(tl, length, fps, work, graph, args, out_name, None)

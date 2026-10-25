@@ -57,17 +57,23 @@ export function lineup(key: string, dur: number, word: string, line: string): Sc
       const tileW = (tileH * 1080) / 1920;
       const floor = 790;
       const cx = W / 2;
+      // the camera scales about Grandma's face, so the opening is her face, not her feet; the floor moves with it
+      const face = floor - tileH * 0.85;
+      const floorS = face + zoom * (floor - face);
       g.save();
       // floor: a soft pool of light, darker at the edges
-      const pool = g.createRadialGradient(cx, floor + 10, 20, cx, floor + 10, 980);
-      pool.addColorStop(0, "rgba(40,40,46,0.9)");
-      pool.addColorStop(0.5, "rgba(16,16,20,0.6)");
-      pool.addColorStop(1, "rgba(0,0,0,0)");
-      g.fillStyle = pool;
-      g.fillRect(0, floor, W, H - floor);
-      // everyone, scaled about Grandma's feet
-      g.translate(cx, floor);
+      if (floorS < H) {
+        const pool = g.createRadialGradient(cx, floorS + 10, 20, cx, floorS + 10, 980 * zoom);
+        pool.addColorStop(0, "rgba(40,40,46,0.9)");
+        pool.addColorStop(0.5, "rgba(16,16,20,0.6)");
+        pool.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = pool;
+        g.fillRect(0, floorS, W, H - floorS);
+      }
+      // everyone, scaled about Grandma's face
+      g.translate(cx, face);
       g.scale(zoom, zoom);
+      g.translate(0, floor - face);
       g.globalCompositeOperation = "lighten";
       vids.forEach((v, i) => {
         if (v.readyState < 2) return;
@@ -86,13 +92,15 @@ export function lineup(key: string, dur: number, word: string, line: string): Sc
       });
       g.restore();
       // a gradient over the reflections so they fade out downward
-      g.save();
-      const fade = g.createLinearGradient(0, floor, 0, H);
-      fade.addColorStop(0, "rgba(0,0,0,0)");
-      fade.addColorStop(1, "rgba(0,0,0,1)");
-      g.fillStyle = fade;
-      g.fillRect(0, floor + 8, W, H - floor);
-      g.restore();
+      if (floorS + 8 < H) {
+        g.save();
+        const fade = g.createLinearGradient(0, floorS, 0, Math.max(H, floorS + 1));
+        fade.addColorStop(0, "rgba(0,0,0,0)");
+        fade.addColorStop(1, "rgba(0,0,0,1)");
+        g.fillStyle = fade;
+        g.fillRect(0, floorS + 8, W, H - floorS);
+        g.restore();
+      }
 
       // the word, then the line
       const a = ease((t - dur * 0.55) / 0.8);

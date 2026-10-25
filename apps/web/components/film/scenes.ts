@@ -769,6 +769,137 @@ function sourceCard(spec: SourceSpec): Scene {
   };
 }
 
+// The warp: the original (a clip, or a fan of photos) plays in its card with one line; then the card rushes forward to
+// fill the frame, the original blurring and swelling past you as your headset view takes its place inside the same
+// shape, the corners opening out. Like opening an app, into the room.
+const W_INTRO = 1.35; // the original on its own (photos: dealt in first)
+const W_MORPH = 0.95; // the rush
+function warpCard(spec: SourceSpec): Scene {
+  const intro = spec.photos ? W_INTRO + 0.35 : W_INTRO;
+  const total = spec.shots.reduce((a, b) => a + b.dur, 0);
+  let src: HTMLVideoElement | null = null;
+  let photos: HTMLImageElement[] = [];
+  const shots: { v: HTMLVideoElement; t0: number; in: number; dur: number }[] = [];
+  return {
+    key: spec.key,
+    dur: intro + total,
+    async prepare(s) {
+      if (spec.video) {
+        src = await videoEl(spec.video.src);
+        const v0 = spec.video.in;
+        s.clips.push({ v: src, at: (t) => (t <= intro + W_MORPH + 0.1 ? v0 + t : null) });
+      }
+      if (spec.photos) photos = await Promise.all(spec.photos.map(imageEl));
+      let t0 = intro;
+      for (const sh of spec.shots) {
+        const v = await videoEl(sh.src);
+        const k = { v, t0, in: sh.in ?? 0, dur: sh.dur };
+        shots.push(k);
+        // the first shot is already playing inside the card as it rushes in
+        s.clips.push({ v, at: (t) => (t >= k.t0 - (k.t0 === intro ? W_MORPH : 0) - 0.05 && t < k.t0 + k.dur ? k.in + Math.max(0, t - k.t0) : null) });
+        t0 += sh.dur;
+      }
+    },
+    draw(g, t) {
+      const front: CanvasImageSource | null = src ?? photos[0] ?? null;
+      if (!front) return;
+      const fw = src ? src.videoWidth : photos[0].naturalWidth;
+      const fh = src ? src.videoHeight : photos[0].naturalHeight;
+      const a = fw / Math.max(1, fh);
+      const bh = a >= 1 ? Math.min(700, 1240 / a) : 760;
+      const bw = bh * a;
+      const bx = (W - bw) / 2;
+      const by = 120 + (760 - bh) / 2;
+      const m = smooth((t - (intro - W_MORPH * 0.15)) / W_MORPH); // the rush, 0 -> 1
+      const inK = ramp(t, 0.05, 0.55);
+
+      // after the rush: the headset view, full frame, settling from a touch of overshoot
+      const shot = shots.find((k) => t < k.t0 + k.dur) ?? shots[shots.length - 1];
+      if (m >= 0.999) {
+        const z = lerp(1.04, 1, smooth((t - intro - W_MORPH * 0.85) / 1.2));
+        g.drawImage(shot.v, (W - W * z) / 2, (H - H * z) / 2, W * z, H * z);
+      } else {
+        // the photos fanned behind the front one, folding away as the rush starts
+        if (photos.length > 1) {
+          const n = photos.length;
+          const fold = ramp(t, intro - 0.45, intro - 0.05);
+          for (let i = n - 1; i >= 1; i--) {
+            const d = ramp(t, 0.08 + i * 0.08, 0.45 + i * 0.08);
+            if (d <= 0.001) continue;
+            const p = photos[i];
+            const ph = bh * 0.86;
+            const pw = ph * (p.naturalWidth / Math.max(1, p.naturalHeight));
+            const k = (i - 1) / Math.max(1, n - 2) - 0.5;
+            g.save();
+            g.translate(W / 2 + k * Math.min(980, 190 * (n - 1)) * (1 - fold), by + bh / 2 + 24 + Math.abs(k) * 40 * (1 - fold) + (1 - d) * 260);
+            g.rotate(k * 0.42 * (1 - fold));
+            card(g, p, -pw / 2, -ph / 2, pw, ph, 22, d * (1 - fold) * inK, 1);
+            g.restore();
+          }
+        }
+        // the card growing to the frame: the original swelling and blurring away, the headset view clearing in
+        const x = lerp(bx, 0, m);
+        const y = lerp(by, 0, m);
+        const w = lerp(bw, W, m);
+        const h = lerp(bh, H, m);
+        const r = lerp(26, 0, m);
+        g.save();
+        g.globalAlpha = inK;
+        round(g, x, y, w, h, r);
+        g.clip();
+        g.fillStyle = "#000";
+        g.fillRect(x, y, w, h);
+        if (m > 0.001 && shot) {
+          // the view inside: cover-fit to the growing shape
+          const s2 = Math.max(w / W, h / H);
+          g.globalAlpha = inK * smooth(m * 1.15);
+          g.drawImage(shot.v, x + (w - W * s2) / 2, y + (h - H * s2) / 2, W * s2, H * s2);
+        }
+        const zo = 1 + 0.35 * m * m; // the original rushes past, a little faster than the frame grows
+        g.globalAlpha = inK * (1 - smooth(m * 1.25));
+        g.filter = m > 0.01 ? `blur(${(m * 14).toFixed(1)}px)` : "none";
+        g.drawImage(front, x + (w - w * zo) / 2, y + (h - h * zo) / 2, w * zo, h * zo);
+        g.filter = "none";
+        g.restore();
+        if (m < 0.02) {
+          round(g, bx + 0.5, by + 0.5, bw - 1, bh - 1, 26);
+          g.strokeStyle = `rgba(255,255,255,${0.16 * inK})`;
+          g.lineWidth = 1.5;
+          g.stroke();
+        }
+      }
+      // the line and credit under the original, gone as the rush starts
+      const lineK = inK * (1 - ramp(t, intro - W_MORPH * 0.25, intro));
+      rise(g, spec.line, W / 2, by + bh + 84, ramp(t, 0.25, 0.85) * lineK, { size: 48, align: "center", track: -0.8 });
+      text(g, spec.credit, W / 2, by + bh + 130, { size: 25, weight: 500, color: INK3, align: "center", alpha: ramp(t, 0.45, 1.0) * lineK });
+      if (spec.label)
+        overText(g, spec.label, W - 64, H - 64 - 6, { size: 21, weight: 500, color: "rgba(245,245,247,0.8)", align: "right", alpha: ramp(t, intro + 0.3, intro + 0.9) });
+    },
+  };
+}
+
+const WARPS: Scene[] = [
+  warpCard({ key: "warp-guitar", video: { src: "sources/guitar-01.mp4", in: 6.0 }, line: "One video.", credit: "Khanh Hoang Minh 2 · Pexels",
+    shots: [{ src: "selects/guitar-appear.mp4", dur: 2.0 }, { src: "selects/guitar-follow.mp4", dur: 3.9 }] }),
+  warpCard({ key: "warp-golf", video: { src: "sources/golf-01.mp4", in: 3.0 }, line: "One video.", credit: "Be The Observer · Pexels",
+    shots: [{ src: "selects/golf-swing.mp4", dur: 1.7 }, { src: "selects/golf-you.mp4", dur: 2.6 }] }),
+  warpCard({ key: "warp-lebron", video: { src: "sources/lebron-shot.mp4", in: 3.0 }, line: "One video.", credit: "His training footage · demo use only",
+    shots: [{ src: "selects/lebron-dribble.mp4", dur: 3.1 }, { src: "selects/lebron-catch.mp4", in: 0.1, dur: 2.1 }],
+    label: "His likeness, from his footage. Not affiliated." }),
+  warpCard({ key: "warp-federer", photos: ["rf-wimbledon09-js-02", "rf-wimbledon09-js-03", "rf-wimbledon09-js-05", "rf-wimbledon09-js-06",
+      "rf-wimbledon09-js-07", "rf-wimbledon09-sk", "rf-wimbledon09-sk-2", "rf-wimbledon09-js-10"].map((f) => `sources/photos/roger-federer-src/${f}.jpg`),
+    line: "14 photos.", credit: "Wimbledon 2009 · Wikimedia Commons",
+    shots: [{ src: "selects/tennis-shake.mp4", dur: 3.0 }, { src: "selects/tennis-face.mp4", dur: 1.7 }],
+    label: "Roger Federer's likeness. AI opponent, not affiliated." }),
+  warpCard({ key: "warp-magnus", photos: ["n3s-2299", "x-tata2017-standing", "n3s-2307", "x-berlin2015-prize", "n3s-2314", "x-olympiad2016", "n3s-2320",
+      "x-tata2017-profile"].map((f) => `sources/photos/magnus-carlsen-360/${f}.jpg`),
+    line: "14 photos.", credit: "2015 to 2017 · Wikimedia Commons",
+    shots: [{ src: "selects/magnus-wide.mp4", dur: 2.0 }, { src: "selects/magnus-look.mp4", dur: 2.0 }],
+    label: "Stockfish at Carlsen's peak rating. Not affiliated." }),
+  warpCard({ key: "warp-vishal", video: { src: "sources/vishal.mp4", in: 0 }, line: "One phone video.", credit: "Vishal, turning around once",
+    shots: [{ src: "selects/vishal-appear.mp4", in: 0.5, dur: 3.0 }] }),
+];
+
 // Gemma writing the lesson (Atina's planner, demo/gemma-plans/guitar-01.json on her branch): the sentence, the eight
 // frames it reads from the clip, then its plan as it wrote it. Its real output, word for word.
 const GEMMA_PLAN = {
@@ -1218,7 +1349,7 @@ const end: Scene = {
     });
     rise(g, "getluciddreams.vercel.app", W / 2, 650, ramp(t, 1.7, 2.7), { size: 36, weight: 600, color: BLUE, align: "center" });
     const k = ramp(t, 2.4, 3.4);
-    text(g, "Ojasva · Vishal · Ian · Atina · Raami", W / 2, 900, { size: 30, weight: 500, color: INK3, align: "center", alpha: k });
+    text(g, "Ojasva · Vishal · Ian · Atina", W / 2, 900, { size: 30, weight: 500, color: INK3, align: "center", alpha: k });
     text(g, "Gator Hack V · University of Florida", W / 2, 944, { size: 24, weight: 500, color: INK3, align: "center", alpha: k });
     text(g, "AI voices are labeled. Public figures are likenesses, not affiliated.", W / 2, 1000, {
       size: 22,
@@ -1231,4 +1362,4 @@ const end: Scene = {
 };
 
 export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy, court, courtOrbit, gemma, ...SOURCES,
-  lineup("lineup", 5.8, "Anyone.", "Each from one video, or a few photos."), frontier];
+  lineup("lineup", 7.6, "Anyone.", "Each from one video, or a few photos."), frontier, ...WARPS];
