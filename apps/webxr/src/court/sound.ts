@@ -35,21 +35,21 @@ export const MIX_TRIM_DB = 5.5;
  */
 export const MASTER_DB = -4;
 /** On top of each one-shot's own gainDb (court.json): the make's swell, its second wave and the roar stay under -1 dBTP together. */
-export const ONE_SHOT_TRIM_DB = -4;
+export const ONE_SHOT_TRIM_DB = -3;
 /** The step-in's whoosh: band-passed noise swept up and back (low-passed: air, not hiss), panned across, this long and loud (dBFS before the master). */
 export const WHOOSH_S = 1.5;
 export const WHOOSH_DB = -19;
 /** The reverse swell into F: noise opening up with the hush's p (p^3), cut at F; its peak (dBFS before the master). */
-export const REVERSE_DB = -22;
+export const REVERSE_DB = -19;
 /** The thump at F: a sine falling 95 -> 42 Hz with its octave (for small speakers) and a low noise body; its peak. */
-export const THUMP_DB = -10;
+export const THUMP_DB = -7;
 /** The riser from the sit into the resume: climbs over the hand-back (handoff.ts HANDBACK_END, 1.8 s), holds, gives way to the rush. */
 export const RISER_S = 1.8;
-export const RISER_DB = -24;
+export const RISER_DB = -21;
 /** A riser the resume never comes for (See my room left mid-freeze) fades out this long after it starts. */
 const RISER_CAP_S = 4;
 /** The make's roar: decorrelated noise per stand source, this far over the bed's loudness; the second wave follows this much later. */
-export const ROAR_DB = -3;
+export const ROAR_DB = 0;
 export const SECOND_WAVE_S = 0.9;
 /** The band-passed roar noise's own level (dBFS RMS) before its gain: white noise through the roar's band. */
 const ROAR_NOISE_DB = -16;
