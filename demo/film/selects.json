@@ -1,0 +1,16 @@
+[
+ {"name": "tennis-walkup", "src": "quest/tennis-1.mp4", "in": 5.0, "out": 5.75, "smooth": 0.12, "zoom": 1.05},
+ {"name": "tennis-shake", "src": "quest/tennis-1.mp4", "in": 7.0, "out": 10.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "tennis-face", "src": "quest/tennis-1.mp4", "in": 10.4, "out": 12.1, "smooth": 0.12, "zoom": 1.05},
+ {"name": "tennis-jog", "src": "quest/tennis-1.mp4", "in": 14.0, "out": 15.0, "smooth": 0.1, "zoom": 1.06},
+ {"name": "tennis-rally", "src": "quest/tennis-1.mp4", "in": 27.7, "out": 33.3, "smooth": 0.06, "zoom": 1.08},
+ {"name": "tennis-serve", "src": "quest/tennis-1.mp4", "in": 79.2, "out": 80.4, "smooth": 0.06, "zoom": 1.08},
+ {"name": "tennis-rally-2", "src": "quest/tennis-1.mp4", "in": 61.0, "out": 67.0, "smooth": 0.06, "zoom": 1.08},
+ {"name": "vishal-appear", "src": "quest/vishal-1.mp4", "in": 3.5, "out": 7.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "vishal-around", "src": "quest/vishal-1.mp4", "in": 7.0, "out": 10.3, "smooth": 0.06, "zoom": 1.06},
+ {"name": "vishal-face", "src": "quest/vishal-1.mp4", "in": 11.4, "out": 12.2, "smooth": 0.1, "zoom": 1.05},
+ {"name": "vishal-talk", "src": "quest/vishal-1.mp4", "in": 14.6, "out": 15.6, "smooth": 0.1, "zoom": 1.05},
+ {"name": "vishal-send", "src": "quest/vishal-1.mp4", "in": 17.6, "out": 18.6, "smooth": 0.1, "zoom": 1.05},
+ {"name": "vishal-reply", "src": "quest/vishal-1.mp4", "in": 23.6, "out": 28.6, "smooth": 0.15, "zoom": 1.04},
+ {"name": "vishal-close", "src": "quest/vishal-1.mp4", "in": 30.5, "out": 32.0, "smooth": 0.1, "zoom": 1.05}
+]
