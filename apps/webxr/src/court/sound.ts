@@ -35,7 +35,7 @@ export const MIX_TRIM_DB = 5.5;
  */
 export const MASTER_DB = -4;
 /** On top of each one-shot's own gainDb (court.json): the make's swell, its second wave and the roar stay under -1 dBTP together. */
-export const ONE_SHOT_TRIM_DB = -3;
+export const ONE_SHOT_TRIM_DB = -4;
 /** The step-in's whoosh: band-passed noise swept up and back (low-passed: air, not hiss), panned across, this long and loud (dBFS before the master). */
 export const WHOOSH_S = 1.5;
 export const WHOOSH_DB = -19;
