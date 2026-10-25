@@ -262,7 +262,8 @@ const reality: Scene = {
   async mount(host, s) {
     if (!s.data.frame) return () => {};
     const { mountStory } = await import("@/lib/three/story");
-    return mountStory(host, { frame: s.data.frame, reality: s.data.reality, cameras: s.data.cameras as RigCamera[] }, {
+    // no camera rig here: blue means unseen by the one real camera, and 48 generated cameras around her would blur that
+    return mountStory(host, { frame: s.data.frame, reality: s.data.reality, cameras: [] }, {
       // the story's Reality check: to the front view by 0.7, swept to blue by 0.76, turned to her back by 0.78
       progress: () => (s.t < 0 ? 0.6 : lerp(0.66, 0.795, ramp(s.t, 0.3, 5.6))),
       loading: () => {},

@@ -153,6 +153,12 @@ export default function Film({ data }: { data: FilmData }) {
       const done = await post(`do=done&fps=${fps}`);
       setStatus(done.ok ? `${scene.key} · done · ${done.out}` : `${scene.key} · encode failed`);
       document.title = done.ok ? `done ${scene.key}` : `failed ${scene.key}`;
+      // ?queue=a,b,c renders the next scene in a fresh page (a clean clock and a fresh GL context each time)
+      const queue = (q.get("queue") ?? "").split(",").filter(Boolean);
+      if (done.ok && queue.length) {
+        const [next, ...rest] = queue;
+        location.href = `/film?scene=${next}&capture${rest.length ? `&queue=${rest.join(",")}` : ""}`;
+      }
     })().catch((e) => {
       console.error(e);
       setStatus(`error: ${String(e?.message ?? e)}`);
