@@ -590,7 +590,6 @@ const REALITY = {
   blue: "rgb(70,132,255)",
   title: { weight: 600, px: 25, min: 20, lead: 34, track: -0.006, color: "rgba(255,255,255,0.97)" } as TextStyle,
   body: { weight: 500, px: 22, min: 17, lead: 29, track: 0, color: "rgba(255,255,255,0.78)" } as TextStyle,
-  glass: { tint: "rgba(24,32,52,0.74)", sheen: 0.12, rim: 0.44, shadow: 0.34, blur: 20, drop: 6, grain: true } as Glass,
 };
 /** Metres per design px on the card's plane. */
 const M_PER_PX = CAPTION_H / DESIGN[1];
@@ -783,6 +782,37 @@ function drawBroadcastCard(c: CardCanvas, k: number, caption: string, label: str
   c.tex.needsUpdate = true;
 }
 
+/** The Reality panel's body in the current look: cool frosted glass (vision), a navy plate behind an orange bar (broadcast), a soft shadow (minimal). */
+function realityPanel(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, texels: number): void {
+  if (look === "vision") {
+    halo(g, x, y, w, h, REALITY.radius, "rgba(120,160,255,0.45)", 14 * texels);
+    glass(g, x, y, w, h, REALITY.radius, { tint: "rgba(96,116,170,0.64)", tint2: "rgba(28,38,72,0.8)", sheen: 0.2, rim: 0.85, shadow: 0.45, blur: 22, drop: 7, grain: true }, texels);
+    specular(g, x, y, w, h, REALITY.radius, 0.22);
+  } else if (look === "broadcast") {
+    glass(g, x, y, w, h, 6, BROADCAST_CARD.plate, texels);
+    g.save();
+    g.beginPath();
+    g.roundRect(x, y, w, h, 6);
+    g.clip();
+    g.fillStyle = ORANGE;
+    g.fillRect(x, y, BROADCAST_CARD.bar, h);
+    g.fillStyle = "rgba(255,255,255,0.18)";
+    g.fillRect(x, y, w, 1.5);
+    g.restore();
+  } else {
+    g.save();
+    g.translate(x + w / 2, y + h / 2);
+    g.scale(1, (h / 2 + 16) / (w * 0.55));
+    const pool = g.createRadialGradient(0, 0, 0, 0, 0, w * 0.55);
+    pool.addColorStop(0, "rgba(0,0,0,0.5)");
+    pool.addColorStop(0.6, "rgba(0,0,0,0.3)");
+    pool.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = pool;
+    g.fillRect(-w * 0.55, -w * 0.55, w * 1.1, w * 1.1);
+    g.restore();
+  }
+}
+
 /** The Reality panel at the foot of its canvas, `k` times the watch's type. */
 function drawReality(c: CardCanvas, k: number, lines: string[]): void {
   const g = c.begin();
@@ -790,16 +820,22 @@ function drawReality(c: CardCanvas, k: number, lines: string[]): void {
   const w = DESIGN[0] - 2 * R.side;
   const max = w - 2 * R.pad[1];
   const [title, ...body] = lines;
-  const ts = bigger(R.title, k);
+  const cut = look === "broadcast" ? { family: CONDENSED_STACK, weight: 800, caps: true } : look === "vision" ? { family: DISPLAY_STACK, weight: 700 } : {};
+  const ts = bigger({ ...R.title, ...cut }, k);
   const bs = bigger(R.body, k);
   const swatch = R.swatch * k;
-  const head = wrap(g, title, ts, max - swatch - 12);
+  const head = wrap(g, ts.caps ? title.toUpperCase() : title, ts, max - swatch - 12);
   const rows = body.map((l) => wrap(g, l, bs, max));
   const want = R.pad[0] + R.pad[2] + head.lines.length * ts.lead + rows.reduce((s, r) => s + r.lines.length * bs.lead, 0);
   // never taller than its canvas: the line height gives way, never the type below its min
   const fit = Math.min(1, (c.h - R.foot - 4) / want);
   const y0 = c.h - R.foot - want * fit;
-  glass(g, R.side, y0, w, want * fit, R.radius, R.glass, c.texels);
+  realityPanel(g, R.side, y0, w, want * fit, c.texels);
+  g.save();
+  if (look === "minimal") {
+    g.shadowColor = "rgba(0,0,0,0.75)";
+    g.shadowBlur = 10 * c.texels;
+  }
   g.textBaseline = "middle";
   let y = y0 + R.pad[0] * fit;
   setFont(g, ts, head.px);
@@ -827,6 +863,7 @@ function drawReality(c: CardCanvas, k: number, lines: string[]): void {
       y += bs.lead * fit;
     }
   }
+  g.restore();
   c.top = y0;
   c.tex.needsUpdate = true;
 }
@@ -928,6 +965,10 @@ class CaptionPanel {
   draw(caption: string, label: string, credit: string): void {
     drawCard(this.cards.front, 1, caption, label, credit);
     drawCard(this.cards.pair, CARD.pair, caption, label, credit);
+    if (this.realityLines.length) {
+      drawReality(this.realities.front, 1, this.realityLines);
+      drawReality(this.realities.pair, CARD.pair, this.realityLines);
+    }
     this.text = [caption, label, credit];
     this.restReality();
     this.lines.splice(0, this.lines.length, ...(this.realityOn ? this.realityLines : []), ...this.text);
