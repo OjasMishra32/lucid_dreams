@@ -126,15 +126,23 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 .court-load[hidden], .court-load-text[hidden] { display: none; }
 
 /* ---------- Court Side's loading page (the markup is court/court.ts's; scoped to it by #court-stage) ----------
-   visionOS-style: the title over the black the arena starts from, then one glass card (a translucent body lit from
+   visionOS-style, as the in-headset vision look: the title (white falling to a cool blue) over a soft blue glow in the
+   black the arena starts from, then one frosted glass card (a cool halo round it, a shimmer on the bar) (a translucent body lit from
    above, a rim of light, a deep soft shadow) with a white progress bar, the megabytes and a full-width Enter that
    reads disabled until the court is in. Both rise in on load; once loaded, the bar and its numbers fold away. */
-#court-stage.stage { background: #000; }
+#court-stage.stage {
+  /* the in-headset vision look's cool light: a soft blue glow behind the card, falling off to the arena's black */
+  background: radial-gradient(ellipse 60% 45% at 50% 52%, rgba(70, 110, 200, 0.22), rgba(30, 50, 110, 0.08) 55%, transparent 80%), #000;
+}
 #court-stage ~ .topbar {
   inset: auto 0 calc(50% + 30px) 0; height: auto; display: block; padding: 0 24px; text-align: center;
   animation: court-rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
-#court-stage ~ .topbar .title { font-size: 44px; font-weight: 700; letter-spacing: -0.028em; line-height: 1.08; }
+#court-stage ~ .topbar .title {
+  font-size: 48px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.08;
+  background: linear-gradient(180deg, #fff 30%, rgba(200, 215, 255, 0.78)); -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 0 40px rgba(130, 170, 255, 0.18);
+}
 #court-stage ~ .topbar .subtitle {
   font-size: 17px; font-weight: 500; letter-spacing: -0.012em; line-height: 1.35; color: rgba(235, 235, 245, 0.6);
   margin: 10px auto 0; max-width: 560px; min-height: 23px;
@@ -142,8 +150,12 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 #court-stage ~ .controls {
   top: calc(50% - 4px); bottom: auto; width: min(380px, calc(100% - 32px)); flex-wrap: wrap; gap: 0; padding: 20px 18px 18px;
   border-radius: 30px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04) 55%, rgba(255, 255, 255, 0.02)), rgba(44, 44, 48, 0.62);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 30px 70px rgba(0, 0, 0, 0.7), 0 2px 10px rgba(0, 0, 0, 0.45);
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(255, 255, 255, 0.22), transparent 70%),
+    linear-gradient(180deg, rgba(132, 134, 150, 0.5), rgba(64, 66, 80, 0.62));
+  -webkit-backdrop-filter: blur(30px) saturate(1.4); backdrop-filter: blur(30px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 0 1px rgba(150, 190, 255, 0.18),
+    0 0 50px rgba(120, 170, 255, 0.16), 0 30px 70px rgba(0, 0, 0, 0.7), 0 2px 10px rgba(0, 0, 0, 0.45);
   animation: court-rise-card 0.6s 0.08s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 #court-stage ~ .controls .court-load {
@@ -151,7 +163,8 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
   transition: opacity 0.25s ease, height 0.35s 0.1s cubic-bezier(0.2, 0.8, 0.2, 1), margin 0.35s 0.1s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 #court-stage ~ .controls .court-load i {
-  border-radius: inherit; background: linear-gradient(90deg, rgba(255, 255, 255, 0.7), #fff); box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
+  border-radius: inherit; background: linear-gradient(90deg, rgba(150, 190, 255, 0.8), #fff 70%, #fff); box-shadow: 0 0 12px rgba(160, 200, 255, 0.55);
+  background-size: 200% 100%; animation: court-shimmer 1.6s linear infinite;
   transition: width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 #court-stage ~ .controls .court-load-text {
@@ -170,10 +183,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
 #court-stage ~ .controls .cta:disabled {
   background: rgba(255, 255, 255, 0.08); color: rgba(235, 235, 245, 0.34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); cursor: default;
 }
+@keyframes court-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @keyframes court-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes court-rise-card { from { opacity: 0; transform: translate(-50%, 12px) scale(0.98); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) {
-  #court-stage ~ .topbar, #court-stage ~ .controls { animation: none; }
+  #court-stage ~ .topbar, #court-stage ~ .controls, #court-stage ~ .controls .court-load i { animation: none; }
 }
 
 .hint { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 9; font-size: 13px; color: var(--muted); }
