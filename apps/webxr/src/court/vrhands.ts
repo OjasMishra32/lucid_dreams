@@ -135,6 +135,7 @@ export class VrHands {
   private room = 0;
   /** The arena's light on the hands, 0-1: 0 (the default, until court.ts says) draws nothing. */
   private level = 0;
+  private readonly press: PressGlow;
 
   /** `hands` are renderer.xr.getHand(0) and (1), already in the scene. */
   constructor(hands: THREE.Object3D[], scene: THREE.Scene) {
@@ -175,6 +176,7 @@ export class VrHands {
       if (group) group.visible = false;
       return { update, group };
     });
+    this.press = new PressGlow(scene);
   }
 
   /** Once a frame while presenting. */
@@ -192,6 +194,7 @@ export class VrHands {
       if (this.room > 0) o.update();
       else if (o.group) o.group.visible = false;
     }
+    this.press.update(this.hands, this.models);
   }
 
   /** 0 = drawn hands (the arena), 1 = faded out (the room: the real hands show, occluders on). */
@@ -215,5 +218,75 @@ export class VrHands {
   private show(): void {
     const drawn = this.room < 1 && this.level > 0.01;
     this.hands.forEach((hand, i) => (this.models[i].visible = drawn && !!liveJoints(hand).wrist?.visible));
+  }
+}
+
+/** How bright the right index fingertip glows, 0-1 (eased; shared by the hands' one material). */
+const PRESS = { value: 0 };
+
+// Press feedback: the right index fingertip brightens softly while it's on a button (the weight is the right hand's
+// fingertip, 0 everywhere on the left).
+LOOKS.push({
+  attribute: {
+    name: "handTip",
+    weigh: (pose) => {
+      const w = new Float32Array(pose.count);
+      const tip = pose.joint("index-finger-tip");
+      if (!pose.right || !tip) return w;
+      const v = new THREE.Vector3();
+      for (let i = 0; i < pose.count; i++) {
+        const x = Math.min(1, Math.max(0, (0.02 - pose.at(i, v).distanceTo(tip)) / 0.014)); // full within 6 mm, none past 2 cm
+        w[i] = x * x * (3 - 2 * x);
+      }
+      return w;
+    },
+  },
+  uniforms: { handPress: PRESS },
+  fragmentPars: "uniform float handPress;",
+  fragment: "outgoingLight = mix(outgoingLight, vec3(0.86, 0.93, 1.0) * 1.2, 0.75 * v_handTip * handPress);",
+});
+
+/**
+ * Whether the right index fingertip is on one of the palm menu's buttons (ui.ts draws them as planes over the hands, at
+ * a renderOrder above HANDS_ORDER; found in the scene once a second), easing PRESS toward it.
+ */
+class PressGlow {
+  private buttons: THREE.Mesh[] = [];
+  private scanned = -Infinity;
+  private at = -1;
+  private readonly tip = new THREE.Vector3();
+  private readonly local = new THREE.Vector3();
+
+  constructor(private readonly scene: THREE.Scene) {}
+
+  update(hands: THREE.Object3D[], models: THREE.Object3D[]): void {
+    const now = performance.now();
+    if (now - this.scanned > 1000) {
+      this.scanned = now;
+      this.buttons = [];
+      this.scene.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh && m.geometry.type === "PlaneGeometry" && m.renderOrder > HANDS_ORDER) this.buttons.push(m);
+      });
+    }
+    let on = false;
+    hands.forEach((hand, i) => {
+      if (!models[i].visible || (models[i] as { xrInputSource?: { handedness?: string } }).xrInputSource?.handedness !== "right") return;
+      const tip = liveJoints(hand)["index-finger-tip"];
+      if (tip?.visible) on = this.touching(tip.getWorldPosition(this.tip));
+    });
+    const dt = this.at < 0 ? 0 : now - this.at;
+    this.at = now;
+    PRESS.value += ((on ? 1 : 0) - PRESS.value) * (1 - Math.exp(-dt / 60));
+  }
+
+  /** On a shown button's face: over it, from just in front (8 mm) to pushed 3 cm in. */
+  private touching(tip: THREE.Vector3): boolean {
+    return this.buttons.some((b) => {
+      for (let o: THREE.Object3D | null = b; o; o = o.parent) if (!o.visible) return false;
+      const { width, height } = (b.geometry as THREE.PlaneGeometry).parameters;
+      b.worldToLocal(this.local.copy(tip));
+      return Math.abs(this.local.x) < width / 2 && Math.abs(this.local.y) < height / 2 && this.local.z < 0.008 && this.local.z > -0.03;
+    });
   }
 }
