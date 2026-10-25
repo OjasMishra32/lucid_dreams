@@ -32,15 +32,17 @@ of type; the voiceover is recorded last, over the finished cut, and only says wh
 | --- | --- | --- | --- |
 | 0:00-0:28 | **Four years** | Black, grandma's real voice from her old video; Ian's phone glowing in the dark; "I haven't been home in four years" (his words); the headset on; she's in his room, life size; he asks her something in Vietnamese and she answers; his face | none: only "AI voice" and the English line under hers |
 | 0:28-0:31 | **Title** | Black, "Lucid Dreams"; the song comes in | |
-| 0:31-0:37 | **Put it on** | You lift the Quest to your face | match cut into the render: the Quest 3S assembling, its two eyes beaming out, and back into your view of the room |
-| 0:37-0:52 | **She's here** | The dancer appears in your room, life size; you walk around her | freeze, cut into her render: her phone video, then 4DAnyone's 48 cameras landing around her, "1 phone video. 48 views."; back into the room as she moves again |
-| 0:52-1:05 | **Learn** | Lesson: her step card, a step slowed, "your turn", targets on your wrists; golf off the tee; a guitar strum; tai chi with Mirror; fast cuts on the beat | "her 22 joints, from the video" over the follow-along targets |
-| 1:05-1:10 | **Made of light** | Cut out of a lesson into the machine | the fit render: twelve B200s, frames to 121, 290,000 Gaussians pulling together into her; cut back into the room on the same pose |
-| 1:10-1:38 | **Play** | Pass to LeBron, he catches and shoots; Magnus's handshake, your move, his reach and the clock; Federer's handshake at the net, your serve, a rally | the real ball's tracked path drawn over the shot; "Stockfish at Magnus Carlsen's peak rating. Not affiliated." and "his hands never pass through a piece"; the ball's flight traced over the rally with "240 Hz · drag · Magnus lift · grass" |
-| 1:38-1:46 | **Honest** | You tap the Reality check on the dancer; she turns partly blue | her render sweeping blue: "never seen by the camera. 49% seen." |
-| 1:46-2:02 | **Talk** | "What's up, Vishal?" and he answers out loud | before he answers, his 14 frames fly into his body (the avatar render); under his answer, the timing bar filling "hears 1.5 s · answers 1.0 s · speaks 0.5 s" |
-| 2:02-2:08 | **On a headset** | You moving fast through a world, smooth | the heat map: "115 million pixels per eye" dropping to 34 |
-| 2:08-2:26 | **Anyone** | The fastest cuts of every world, one or two beats each, building to the song's peak | quick numbers flashing on the cuts: Aug 2026 · 48 views · 290,000 · 3.1 s |
+| 0:31-0:37 | **Put it on** | Your view coming up into the room | the Quest 3S assembling, its two eyes beaming out, cut back into your view of the room |
+| 0:37-0:44 | **Who's there** | Your room, and Magnus is sitting at a real walnut table across from you | |
+| 0:44-0:50 | **Made from photos** | Cut into the machine | the legends render: Magnus and Bobby pulling together out of their own Gaussians, "LHM++ builds each body from photos. UIKA rebuilds each face." |
+| 0:50-1:22 | **Chess (the hero)** | Magnus rises a little and holds his hand out; you shake it. He sits back, thinks, chin on his fist. You pinch a piece and move it. He reaches across, takes a piece between thumb and finger, sets it down, presses the clock, looks up at you. A capture: your piece goes into your hand, you hit the clock with it. Then Bobby: his handshake, his reach. | "Stockfish at Magnus Carlsen's peak rating. Not affiliated." the whole time he's in frame; one callout on his hand mid-reach: "arm IK, 75,000 frames checked: his hand never passes through a piece" |
+| 1:22-1:30 | **How a person is made** | Cut out of the game into the machine | the dancer's reconstruction: her phone video, 4DAnyone's 48 cameras landing ("1 phone video. 48 views."), then the fit: twelve B200s, 290,000 Gaussians pulling together |
+| 1:30-1:46 | **Play** | Federer's handshake at the net, your serve, a rally; you pass to LeBron, he catches and shoots | the ball's flight traced over the rally, "240 Hz · drag · Magnus lift · grass"; the real ball's tracked path over LeBron's shot |
+| 1:46-1:52 | **Learn** | Golf off the tee, a guitar strum, tai chi with Mirror, one beat each | |
+| 1:52-1:58 | **Honest** | A replay turning partly blue | the Reality check render: "never seen by the camera. 49% seen." |
+| 1:58-2:12 | **Talk** | "What's up, Vishal?" and he answers out loud | his 14 frames flying into his body before he answers; the timing bar under his answer, "hears 1.5 s · answers 1.0 s · speaks 0.5 s" |
+| 2:12-2:16 | **On a headset** | You moving through the chess game, smooth | the heat map, "115 million pixels per eye" dropping to 34 |
+| 2:16-2:26 | **Anyone** | The fastest cuts: Magnus's clock press, Federer's serve, LeBron's release, Bobby's reach, Vishal laughing, a beat each | numbers flashing on the cuts: Aug 2026 · 48 views · 290,000 · 3.1 s |
 | 2:26-2:53 | **Home** | The song drops to the guitar. Ian and his grandma again: she says something warm, he answers, he sits with her; he lifts the headset off; the chair across from him is empty | none |
 | 2:53-3:00 | **End** | "Lucid Dreams. Anyone from any video, standing in your room." · link · team · labels | |
 
