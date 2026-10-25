@@ -275,6 +275,8 @@ export class Seat {
   /** Probe pages only: [veil, x, z, yaw] after every update, for the e2e (P24). */
   private trace: number[][] | null = null;
   private readonly chairObj: THREE.Group;
+  /** The chair is drawn once Seat here sets it (off in the demo: no walk back to it, no box on the court). */
+  private chairDrawn = true;
   private readonly veilMesh: THREE.Mesh;
   private readonly veilMat: THREE.MeshBasicMaterial;
 
@@ -324,10 +326,16 @@ export class Seat {
     this.sit.reset(position);
     this.chairObj.position.set(position[0], 0, position[2]);
     this.chairObj.rotation.set(0, yaw, 0);
-    this.chairObj.visible = true;
+    this.chairObj.visible = this.chairDrawn;
     this.veilMesh.position.set(head.room[0], head.room[1], head.room[2]);
     if (this.group.parent && this.chairObj.parent !== this.group.parent) this.group.parent.add(this.chairObj, this.veilMesh);
     this.go(this.home);
+  }
+
+  /** Draw the chair or not (the demo: not); it shows only once Seat here has set it. */
+  drawChair(on: boolean): void {
+    this.chairDrawn = on;
+    this.chairObj.visible = on && this.chair !== null;
   }
 
   /** Back to the dolly seat (undoing the walking anchoring), behind the fade. */
