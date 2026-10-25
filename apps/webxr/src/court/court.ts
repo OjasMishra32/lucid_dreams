@@ -488,7 +488,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
           // the Screen view: over the ease's last SCREEN_EASE_S (show seconds, slowing into F) the screen dissolves
           // into the same picture projected into the arena, so F lands on the Courtside path, pixel-exact from the seat
-          if (screen && tF >= -SCREEN_EASE_S) screenAside(1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S));
+          // the projected picture fades up from the dissolve's start instead of popping on at full under the screen,
+          // and is whole before the splats come up (no 3D seen before F)
+          if (screen && tF >= -SCREEN_EASE_S) {
+            screenAside(1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S));
+            if (tF < BEATS.splatsUp[0]) video.opacity = smooth((tF + SCREEN_EASE_S) / Math.max(1e-3, SCREEN_EASE_S + BEATS.splatsUp[0]));
+          }
         }
         if (phase === "easing" && s.segment === "freeze") {
           tF = 0;
