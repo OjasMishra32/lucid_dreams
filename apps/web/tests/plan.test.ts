@@ -81,6 +81,10 @@ describe("Gemma lesson planning", () => {
 
   test("reads a fenced Gemma object without changing its transcript fields", () => {
     assert.deepEqual(parseGemmaJson("```json\n{\"mode\":\"watch\",\"title\":\"A move\"}\n```"), { mode: "watch", title: "A move" });
+    assert.deepEqual(
+      parseGemmaJson('Reasoning used {"scratch":"example"}.\n{"mode":"teach","title":"A real plan","steps":[{"start":0,"end":1}]}'),
+      { mode: "teach", title: "A real plan", steps: [{ start: 0, end: 1 }] },
+    );
     assert.throws(() => parseGemmaJson("not JSON"), /JSON lesson plan/);
   });
 

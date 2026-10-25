@@ -20,6 +20,12 @@ const run = promisify(execFile);
 const GEMMA_FRAME_COUNT = 8;
 let discoveredPlanModels: Promise<string[]> | null = null;
 
+/** Keep a stalled provider request from blocking a job or a resumable QA batch indefinitely. */
+function planTimeoutMs(): number {
+  const value = Number(process.env.GEMMA_TIMEOUT_MS ?? 45_000);
+  return Number.isFinite(value) ? Math.min(Math.max(Math.round(value), 10_000), 120_000) : 45_000;
+}
+
 let client: GoogleGenAI | null = null;
 function ai(): GoogleGenAI {
   client ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -173,11 +179,13 @@ export async function writeExperience(
 
   const generate = async (repair = false) =>
     firstModel(await planModels(), (model) =>
-      retry(2, () =>
+      // The resumable QA runner owns provider retries for plans. Keep one
+      // request here so a stalled model does not multiply retries per case.
+      retry(1, () =>
         ai().models.generateContent({
           model,
           contents: [{ role: "user", parts: [...parts, { text: gemmaPrompt(`${p.name}\n${want}\n${who}\n${media}`, repair) }] }],
-          config: { httpOptions: { timeout: 180_000 } },
+          config: { httpOptions: { timeout: planTimeoutMs() } },
         }),
       ).then((r) => ({ text: r.text ?? "", model })),
     );
@@ -238,15 +246,44 @@ export function gemmaPrompt(context: string, repair = false): string {
   return `${SYSTEM}\n\n${context}${repairText}\n\nReturn only one JSON object. No Markdown, no code fence, no explanation. Its required fields are mode, title, summary, and place. It may include category, steps, environment, objects, and strength. For a teach plan, every step must have numeric start and end times in the clip, plus title and tip. Do not add fields outside that shape.`;
 }
 
-/** Gemma sometimes wraps an otherwise valid object in a Markdown fence; accept that presentation without altering words. */
+/**
+ * Gemma sometimes wraps the answer in a Markdown fence or precedes it with a
+ * reasoning trace. Extract the final complete JSON object without changing any
+ * of its fields. A brace scanner is used rather than first/lastIndexOf so a
+ * brace in the trace cannot make a valid final plan unparsable.
+ */
 export function parseGemmaJson(text: string): Record<string, unknown> {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start < 0 || end < start) throw new Error("Gemma did not return a JSON lesson plan.");
-  const value = JSON.parse(trimmed.slice(start, end + 1));
-  if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("Gemma returned a non-object lesson plan.");
-  return value as Record<string, unknown>;
+  const candidates: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') { quoted = true; continue; }
+    if (char === "{") {
+      if (depth++ === 0) start = i;
+    } else if (char === "}" && depth > 0 && --depth === 0 && start >= 0) {
+      candidates.push(trimmed.slice(start, i + 1));
+      start = -1;
+    }
+  }
+  for (const candidate of candidates.reverse()) {
+    try {
+      const value = JSON.parse(candidate);
+      if (value && !Array.isArray(value) && typeof value === "object") return value as Record<string, unknown>;
+    } catch {
+      // Continue to an earlier complete object if a reasoning trace used braces.
+    }
+  }
+  throw new Error("Gemma did not return a JSON lesson plan.");
 }
 
 async function imagePart(path: string, mime: string): Promise<object> {
