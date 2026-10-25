@@ -18,6 +18,7 @@ import * as THREE from "three";
 import { SparkRenderer } from "@sparkjsdev/spark";
 import { handSides } from "../xr/menu";
 import { SPLAT_QUALITY, XR_QUALITY } from "../xr/quality";
+import { FloorArrows } from "./arrows";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
 import { demoMode } from "./demo";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
@@ -238,6 +239,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
+  // the demo's floor guide (arrows.ts): glowing trails round the pair once the 3D has the court; `?demo=0` = the old show
+  const arrows = demoMode ? new FloorArrows(court) : null;
+  if (arrows) world.add(arrows.group);
   /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
   const screenWatch = (level: number) => {
     if (!screen) return;
@@ -467,6 +471,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     sound.room(roomP);
     vrHands.fade(roomP);
     opening.hide(); // drawn only in the arrival (below)
+    if (setup || (phase !== "open" && phase !== "walking")) arrows?.reset(); // drawn only once the 3D has the court (below)
     courtWorld.edge(demoMode ? Infinity : seat.boundsDistance(head)); // the demo: the arena whole wherever the head goes
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
@@ -568,6 +573,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         tClean += dt;
         screenAside(0, cleanFloor(), 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
         freeze.update(head, dt);
+        arrows?.update(head, dt, seat.world, roomP);
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
         if (tLight < HANDOFF_END) {
           tLight = Math.min(HANDOFF_END, tLight + dt);
