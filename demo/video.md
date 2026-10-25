@@ -33,20 +33,19 @@ of type; the voiceover is recorded last, over the finished cut, and only says wh
 | --- | --- | --- | --- |
 | 0:00-0:24 | **Four years** | Black, grandma's real voice from her old video; Ian's phone glowing in the dark; "I haven't been home in four years" (his words); she's in his room, life size; he asks her something in Vietnamese and she answers; his face | none: only "AI voice" and the English line under hers |
 | 0:24-0:27 | **Title** | Black, "Lucid Dreams"; the song comes in | |
-| 0:27-0:33 | **The book** | Phone b-roll: Ojasva's worn chess book open to one of Fischer's games, his finger on the moves; his line, in his words (e.g. how he learned the game from Bobby's games) | |
-| 0:33-0:38 | **Put it on** | His view coming up into the room | the Quest 3S assembling, its two eyes beaming out |
-| 0:38-0:46 | **Bobby** | A walnut table in his room, and Bobby Fischer is sitting there. He rises a little, holds his hand out across the table, looks at him. Ojasva shakes it. | "Stockfish at Bobby Fischer's peak rating. Not affiliated." the whole time he's in frame |
-| 0:46-0:50 | **From six photos** | Cut into the machine | the legends render, Bobby's side first: "6 photos, 1966 and 1972, colorized", his body pulling together |
-| 0:50-1:06 | **The game** | Bobby thinks; Ojasva moves; Bobby reaches across, takes a piece, sets it down, hits the clock, looks up at him. Quiet: just the clock and the pieces. | one callout on his hand mid-reach: "his hand never passes through a piece: 75,000 frames checked" |
-| 1:06-1:18 | **And Magnus** | The song kicks up. Magnus's handshake, his reach, his clock press, fast | "Stockfish at Magnus Carlsen's peak rating. Not affiliated."; the legends render, Magnus's side: "14 public photos · LHM++ body · UIKA face" |
-| 1:22-1:30 | **How a person is made** | Cut out of the game into the machine | the dancer's reconstruction: her phone video, 4DAnyone's 48 cameras landing ("1 phone video. 48 views."), then the fit: twelve B200s, 290,000 Gaussians pulling together |
-| 1:30-1:46 | **Play** | Federer's handshake at the net, your serve, a rally; you pass to LeBron, he catches and shoots | the ball's flight traced over the rally, "240 Hz · drag · Magnus lift · grass"; the real ball's tracked path over LeBron's shot |
-| 1:46-1:52 | **Learn** | Golf off the tee, a guitar strum, tai chi with Mirror, one beat each | |
-| 1:52-1:58 | **Honest** | A replay turning partly blue | the Reality check render: "never seen by the camera. 49% seen." |
-| 1:58-2:12 | **Talk** | "What's up, Vishal?" and he answers out loud | his 14 frames flying into his body before he answers; the timing bar under his answer, "hears 1.5 s · answers 1.0 s · speaks 0.5 s" |
-| 2:12-2:16 | **On a headset** | You moving through the chess game, smooth | the heat map, "115 million pixels per eye" dropping to 34 |
-| 2:16-2:26 | **Anyone** | The fastest cuts: Magnus's clock press, Federer's serve, LeBron's release, Bobby's reach, Vishal laughing, a beat each | numbers flashing on the cuts: Aug 2026 · 48 views · 290,000 · 3.1 s |
-| 2:26-2:53 | **Home** | The song drops to the guitar. Ian and his grandma again: she says something warm, he answers, he sits with her. Ojasva and Bobby: the game ends, Bobby holds his hand out again, Ojasva shakes it. Both headsets come off. Two empty chairs. | none |
+| 0:27-0:36 | **Any video** | A phone scrolling: a guitar lesson, a golf swing, a jump shot, an old photo of Fischer | |
+| 0:36-0:39 | **Put it on** | Your view coming up into the room | the Quest 3S assembling, its eyes beaming out |
+| 0:39-0:48 | **Learn guitar** | The guitarist beside you; your left hand on the neck; a strum; Lesson slowing it down | |
+| 0:48-0:56 | **How** | Cut into the machine | 4DAnyone's 48 cameras landing around a person ("1 phone video. 48 views."), then twelve B200s and 290,000 Gaussians pulling together |
+| 0:56-1:02 | **A pro's swing** | The golfer swinging beside you; you swing with him, then hit off the tee | |
+| 1:02-1:12 | **Learn from LeBron** | His shot slowed down, then you pass, he catches and shoots | the real ball's tracked path over his shot; "Demo footage. Not affiliated." |
+| 1:12-1:24 | **Play a legend** | Magnus's handshake, his reach, his clock press; Federer's serve and a rally | "Stockfish at Magnus Carlsen's peak rating. Not affiliated."; Magnus's x-ray, "14 public photos"; the tennis ball traced, "240 Hz · drag · Magnus lift" |
+| 1:24-1:50 | **Bobby** | Your chess book open to a Fischer game, your line; Bobby at the table, his hand out, you shake it; his x-ray "6 photos, 1966 and 1972"; the game, quiet: he thinks, reaches, hits the clock, looks up at you | "Stockfish at Bobby Fischer's peak rating. Not affiliated." the whole time |
+| 1:50-2:04 | **Talk** | "What's up, Vishal?" and he answers out loud | his 14 frames flying into his body; the timing bar under his answer |
+| 2:04-2:10 | **Honest** | A person turning partly blue | the Reality check render: "never seen by the camera. 49% seen." |
+| 2:10-2:14 | **On a headset** | You moving through a world, smooth | the heat map, 115 million pixels per eye dropping to 34 |
+| 2:14-2:26 | **Anyone** | The fastest cuts of every world, a beat each | numbers flashing: Aug 2026 · 48 views · 290,000 · 3.1 s |
+| 2:26-2:53 | **Home** | The song drops to the guitar. Ian and his grandma: she says something warm, he answers. Bobby holds his hand out again as your game ends; you shake it. Both headsets come off. Two empty chairs. | none |
 | 2:53-3:00 | **End** | "Lucid Dreams. Anyone from any video, standing in your room." · link · team · labels | |
 
 ## What to film (checklist)
@@ -107,10 +106,29 @@ recordings to `~/Downloads/lucid-video/quest/` (OpenMTP over USB), named loosely
 - Music playing in the room, other people's faces without their OK, private screens
 - Grandma without Ian in the room saying yes to the take
 
-## Voiceover
+## Voiceover (the narration)
 
-Recorded last, over the finished cut, section by section, after Claude hands over the cut. Short, calm, close; it says
-what the picture can't, and the numbers live on screen. Ian says only his own words.
+Recorded last, over the finished cut. Calm, close, a little slower than feels natural. Numbers live on screen; the voice
+says what the picture can't. Ian and Ojasva each say their own lines in their own words.
+
+| Time | Over | Line |
+| --- | --- | --- |
+| 0:27 | the phone scrolling videos | "Everyone you want to learn from, everyone you look up to, everyone you miss. They're already on your phone." |
+| 0:32 | | "Lucid Dreams takes any video, or any photo, and stands that person in your room. Real size. And then they do things with you." |
+| 0:40 | the guitarist beside you | "Always wanted to play guitar? Pick anyone on YouTube. They sit next to you, and slow down until your hands catch up." |
+| 0:49 | the cameras landing | "One phone only ever sees one side of someone. 4DAnyone, from this August, imagines the other forty-seven views." |
+| 0:53 | the Gaussians forming | "Twelve GPUs turn them into two hundred ninety thousand 3D Gaussians, every frame." |
+| 0:57 | the golfer beside you | "Take a pro's swing, and swing right next to it." |
+| 1:03 | LeBron | "Learn a jump shot from LeBron. Then pass him the ball." |
+| 1:13 | Magnus | "Sit across the board from the best player in the world." |
+| 1:25 | your chess book | **Ojasva, his own words:** what Bobby's games meant to him, and that he never got to play him |
+| 1:51 | Vishal | "Or just talk. They answer in their own voice." |
+| 2:05 | the blue sweep | "Anything the camera never saw shows up blue. We never pretend it's real." |
+| 2:11 | the heat map | "And all of it runs on a three-hundred-dollar headset." |
+| 2:50 | the end card coming up | "Anyone, from any video, standing in your room." |
+
+Don't name a real person the footage isn't: the golf clip isn't Rory McIlroy, so the line says "a pro's swing" (any
+pro's video works the same way).
 
 ## Music
 
