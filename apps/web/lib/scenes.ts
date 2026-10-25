@@ -168,49 +168,56 @@ export function heroJoints(frame = 0): number[][] | null {
   }
 }
 
-/** The pipeline section's real data: the dancer's clip, her 48 views, her sentence, her plan and her bundle's numbers. */
-export interface PipelineData {
+/** The pipeline section, followed through Vishal: his phone video, the frames picked from it, his avatar, his voice. */
+export interface VishalPipeline {
   clip: string;
-  clipPoster: string;
-  wall: string;
-  wallPoster: string;
-  frame: string | null;
-  preview: string | null;
+  poster: string;
+  roll: string[]; // camera-roll stills around his video's tile
+  frames: string[]; // the 14 picked frames
+  avatar: string; // his avatar's Gaussians (SPZ), rest pose
+  preview: string | null; // his avatar in the room (the bundle's own preview)
   intent: string;
-  plan: { title: string; steps: { title: string; start: number; end: number; speed: number; repeat: number }[] };
-  facts: { width: number; height: number; fps: number; frames: number; views: number; gaussians: number; mb: number };
+  voice: { seconds: number; env: number[] };
+  facts: { frames: number; gaussians: number; height: number; clipS: number };
+  talk: { heard: number; wrote: number; spoke: number; total: number; n: number } | null; // medians, seconds
 }
-export function pipelineData(): PipelineData {
-  const d = readDream("dance-01");
-  const hero = heroFrames();
-  let plan: PipelineData["plan"] = { title: "", steps: [] };
+export function vishalPipeline(): VishalPipeline {
+  const d = readDream("vishal");
+  const media = join(process.cwd(), "public", "media", "vishal");
+  let voice = { seconds: 0, env: [] as number[] };
   try {
-    const e = JSON.parse(readFileSync(join(DREAMS_DIR, "dance-01", "experience.json"), "utf8")) as {
-      title?: string;
-      steps?: { title: string; start: number; end: number; speed?: number; repeat?: number }[];
-    };
-    plan = { title: e.title ?? "", steps: (e.steps ?? []).map((s) => ({ title: s.title, start: s.start, end: s.end, speed: s.speed ?? 0.5, repeat: s.repeat ?? 1 })) };
+    voice = JSON.parse(readFileSync(join(media, "voice.json"), "utf8"));
   } catch {
-    // no plan: the step shows the sentence alone
+    // no waveform: the voice step draws a flat line
   }
-  const src = (d as unknown as { source?: { width?: number; height?: number } } | null)?.source;
+  // his real Talk round trips, from the Talk server's own log (apps/talk: "[talk] vishal 2720 ms (heard 1568, wrote 791, spoke 361)")
+  let talk: VishalPipeline["talk"] = null;
+  try {
+    const log = readFileSync(join(process.env.HOME ?? "", "Library", "Logs", "lucid-talk.log"), "utf8");
+    // spoke 0: a try from before his voice was cloned (words only), so it isn't a whole round trip
+    const rows = [...log.matchAll(/\[talk\] vishal (\d+) ms \(heard (\d+), wrote (\d+), spoke (\d+)\)/g)].map((m) => m.slice(1).map(Number)).filter((r) => r[3] > 0);
+    if (rows.length) {
+      const median = (k: number) => {
+        const v = rows.map((r) => r[k]).sort((a, b) => a - b);
+        const h = v.length >> 1;
+        return (v.length % 2 ? v[h] : (v[h - 1] + v[h]) / 2) / 1000;
+      };
+      talk = { heard: median(1), wrote: median(2), spoke: median(3), total: median(0), n: rows.length };
+    }
+  } catch {
+    // no log on this machine: the room step leaves the timings out
+  }
+  const roll = ["v109-1", "dance", "tennis", "v109-2", "v108", "chess", "golf", "v109-3", "guitar", "basketball", "v109-4", "taichi", "v109-5", "dance", "v109-6"].map((k) => `/media/vishal/roll/${k}.jpg`);
   return {
-    clip: "/media/input-dance.mp4",
-    clipPoster: "/media/input-dance.jpg",
-    wall: "/media/wall-dance.mp4",
-    wallPoster: "/media/wall-dance.jpg",
-    frame: hero?.frame ?? null,
+    clip: "/media/vishal/clip.mp4",
+    poster: "/media/vishal/clip.jpg",
+    roll,
+    frames: Array.from({ length: 14 }, (_, i) => `/media/vishal/f${String(i + 1).padStart(2, "0")}.jpg`),
+    avatar: "/media/vishal/avatar.spz",
     preview: d ? mediaUrl(d, d.preview) : null,
-    intent: d?.intent ?? "teach me this routine step by step",
-    plan,
-    facts: {
-      width: src?.width ?? 2160,
-      height: src?.height ?? 4096,
-      fps: d?.fps ?? 25,
-      frames: d?.frameCount ?? 121,
-      views: d?.metrics?.views ?? 48,
-      gaussians: d?.frames?.gaussiansPerFrame ?? 289466,
-      mb: Math.round((d?.frames?.spzBytesTotal ?? 517547439) / 1e6),
-    },
+    intent: d?.intent ?? "hang out and talk with me",
+    voice,
+    facts: { frames: 14, gaussians: 190815, height: 1.88, clipS: 16.5 },
+    talk,
   };
 }

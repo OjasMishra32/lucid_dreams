@@ -1,5 +1,5 @@
-// The pipeline's reconstruction step, live: one real frame of the dancer (289k Gaussians) starting as a scattered,
-// shrunken cloud and pulling together into her as `amount()` goes 0 -> 1, turning slowly. Client only.
+// The pipeline's build step, live: a person's Gaussians (a replay frame or an avatar's rest pose) starting as a
+// scattered, shrunken cloud and pulling together as `amount()` goes 0 -> 1, turning slowly. Client only.
 import * as THREE from "three";
 import { SparkRenderer, type SplatMesh } from "@sparkjsdev/spark";
 import { loadSplat, makeUniforms } from "./story";
@@ -51,6 +51,8 @@ export async function mountForming(host: HTMLElement, frame: string, hooks: Form
   person.add(mesh);
   const box = mesh.getBoundingBox(true);
   const h = Math.max(1.2, box.max.y - box.min.y);
+  // feet on y = 0, centred: a replay frame already is, an avatar's rest pose hangs from its pelvis
+  mesh.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
 
   let w = 0;
   let hh = 0;
@@ -81,7 +83,7 @@ export async function mountForming(host: HTMLElement, frame: string, hooks: Form
     u.size.value = 0.12 + 0.88 * k;
     mesh!.updateVersion();
     const yaw = still ? 0.4 : 0.4 + ((now - t0) / 1000) * 0.25;
-    const dist = h * (2.45 + 1.4 * (1 - k)); // further out while she's still a loose cloud
+    const dist = h * (2.45 + 1.4 * (1 - k)); // further out while it's still a loose cloud
     camera.position.set(Math.sin(yaw) * dist, h * 0.55, Math.cos(yaw) * dist);
     camera.lookAt(0, h * 0.48, 0);
     renderer.render(scene, camera);

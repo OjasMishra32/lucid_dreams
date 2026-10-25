@@ -3,7 +3,7 @@ import HomeMotion from "@/components/home/HomeMotion";
 import PlayReel from "@/components/home/PlayReel";
 import Pipeline from "@/components/home/Pipeline";
 import SceneGallery, { type GroupCopy } from "@/components/home/SceneGallery";
-import { heroFrames, pipelineData, playClips, rigCameras, scenes } from "@/lib/scenes";
+import { heroFrames, playClips, rigCameras, scenes, vishalPipeline } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
 import TechnologySection from "@/components/tech/TechnologySection";
 import HeadsetStage from "@/components/tech/HeadsetStage";
@@ -24,7 +24,7 @@ export default function Home() {
   const cards = scenes();
   const cams = rigCameras() as RigCamera[];
   const clips = playClips();
-  const pipe = pipelineData();
+  const pipe = vishalPipeline();
 
   return (
     <div className="home">
