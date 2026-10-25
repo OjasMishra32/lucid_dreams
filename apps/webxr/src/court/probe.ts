@@ -99,7 +99,7 @@ export interface ProbeHooks {
 export interface CourtTestApi {
   ready: boolean;
   error: string | null;
-  mode: "capture" | "timing";
+  mode: "capture" | "timing" | "realtime";
   modules: Record<string, boolean>;
   errors: string[];
   snapshot(): ReturnType<ProbeHooks["snapshot"]>;
@@ -131,7 +131,7 @@ declare global {
 }
 
 export class Probe {
-  readonly mode: "capture" | "timing";
+  readonly mode: "capture" | "timing" | "realtime";
   readonly api: CourtTestApi;
   private n = 0;
   private rate: number | null = null;
@@ -145,7 +145,7 @@ export class Probe {
   private readonly stamp = new URLSearchParams(location.search).has("stamp");
 
   constructor(param: string | null, hooks: ProbeHooks) {
-    this.mode = param === "timing" ? "timing" : "capture";
+    this.mode = param === "timing" ? "timing" : param === "realtime" ? "realtime" : "capture";
     this.hooks = hooks;
     const api: CourtTestApi = {
       ready: false,
@@ -190,8 +190,9 @@ export class Probe {
   }
 
   /** The dt every probed frame advances by: one period of the headset's rate (or 1 / the rate setRate chose). */
-  dt(xrHz: number): number {
-    return 1 / (this.rate ?? xrHz);
+  dt(xrHz: number): number | null {
+    // realtime: the wall clock drives the show, as on a headset (court.ts's own dt); the API still presses and reads
+    return this.mode === "realtime" ? null : 1 / (this.rate ?? xrHz);
   }
 
   /** Whether this XR frame runs (court.ts asks at the top of every frame): always, unless lockstep holds it. */
@@ -210,7 +211,7 @@ export class Probe {
       still: s.still, lightsUp: s.lightsUp, tF: s.tF, roomP: s.roomP, fed: s.fed, lightBeat: s.lightBeat, lightT: s.lightT,
       xrHz: s.xrHz, clockHz: s.clockHz,
     };
-    if (this.mode === "timing") f.cpuMs = Number(cpuMs.toFixed(3));
+    if (this.mode === "timing" || (this.mode === "realtime" && !this.saves.length && !this.steps.length)) f.cpuMs = Number(cpuMs.toFixed(3));
     else {
       const w = gl.drawingBufferWidth;
       const h = gl.drawingBufferHeight;

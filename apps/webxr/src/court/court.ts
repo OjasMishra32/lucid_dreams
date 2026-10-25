@@ -523,8 +523,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let lastTime = -1;
   let frameStart = 0;
   const onFrame = (time: number) => {
-    // probed, every XR frame is one period of the headset's rate (the session's, else the show's), as on a headset
-    const dt = probe ? probe.dt(xr.rate ?? hz) : lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000);
+    // probed, every XR frame is one period of the headset's rate (the session's, else the show's), as on a headset;
+    // ?probe=realtime keeps the wall clock (probe.dt null) so the e2e sees what a slow headset sees
+    const dt = probe?.dt(xr.rate ?? hz) ?? (lastTime < 0 ? 0 : Math.min(0.1, (time - lastTime) / 1000));
     const interval = lastTime < 0 ? 0 : time - lastTime;
     lastTime = time;
     const eye = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
