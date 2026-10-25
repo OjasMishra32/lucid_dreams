@@ -677,13 +677,18 @@ function drawCard(c: CardCanvas, k: number, caption: string, label: string, cred
     g.shadowBlur = 6 * c.texels;
     g.shadowOffsetY = 1.5 * c.texels;
   } else {
-    // a soft dark pool behind the text, no edge anywhere
-    const pool = g.createRadialGradient(DESIGN[0] / 2, y0 + h / 2, 0, DESIGN[0] / 2, y0 + h / 2, w * 0.55);
+    // a soft dark pool behind the text, no edge anywhere: an ellipse that fades to nothing at its own rim
+    const rx = w * 0.55;
+    g.save();
+    g.translate(DESIGN[0] / 2, y0 + h / 2);
+    g.scale(1, (h / 2 + 20) / rx);
+    const pool = g.createRadialGradient(0, 0, 0, 0, 0, rx);
     pool.addColorStop(0, "rgba(0,0,0,0.5)");
     pool.addColorStop(0.6, "rgba(0,0,0,0.3)");
     pool.addColorStop(1, "rgba(0,0,0,0)");
     g.fillStyle = pool;
-    g.fillRect(0, Math.max(0, y0 - 20), DESIGN[0], h + 40);
+    g.fillRect(-rx, -rx, 2 * rx, 2 * rx);
+    g.restore();
     g.shadowColor = "rgba(0,0,0,0.75)";
     g.shadowBlur = 10 * c.texels;
     g.shadowOffsetY = 1.5 * c.texels;
