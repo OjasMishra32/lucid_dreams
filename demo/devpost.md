@@ -48,7 +48,7 @@ where Â is the rendered silhouette and the last term holds small penalties on o
 
 **Animated avatars:** LHM++ creates a rigged SMPL-X body from 8 to 16 photos, or from the 14 sharpest frames of a phone video. UIKA renders the head from 91 views, and we distill those renders into new, opaque Gaussians on the body's own head, so nothing is pasted on. Then we add blinks and a 20-second living idle. The browser poses all of it live with dual-quaternion skinning.
 
-**Lesson plans:** Your sentence and eight frames of the clip become `experience.json`: the steps, their speed and repeats, and where the person stands. Gemma 4 (E4B) writes it locally through Ollama, so the clip never leaves the laptop (branch `atina/gemma-planner`). The lessons in the live library use hand-checked plans.
+**Lesson plans:** Your sentence and eight frames of the clip become `experience.json`: the steps, their speed and repeats, and where the person stands. Gemma 4 (E4B) writes it locally through Ollama, so the clip never leaves the laptop (branch `atina/gemma-planner`). The lessons in the live library use hand-written plans.
 
 **Headset:** A WebXR app built with three.js and Spark runs in the Quest browser with hand tracking only: a palm-up menu, world anchors, and nothing moves unless you press a button. Spark sorts the Gaussians and blends them front to back:
 
