@@ -178,6 +178,17 @@ export default async function controls(ctx) {
   await r.point();
   await r.moveJointTo("right", "index-finger-tip", (await r.button("reality")).front);
   await ctx.save("controls-menu");
+  // Look repaints every surface in the next look, live, through all three and back to the first (a still of each)
+  const looks = [];
+  for (let i = 0; i < 3; i++) {
+    await r.press("look");
+    await ctx.frames(4);
+    const name = await r.ui((u) => u.look());
+    looks.push([name, (await r.button("look")).label]);
+    await r.moveJointTo("right", "index-finger-tip", (await r.button("reality")).front);
+    await ctx.save(`controls-menu-${name}`);
+  }
+  ctx.check("Look cycles the three looks live and back", new Set(looks.map(([n]) => n)).size === 3 && looks.every(([n, l]) => l.toLowerCase() === `look: ${n}`), looks.map(([n, l]) => `${n} (${l})`).join(" -> "));
   const watchIds = (await r.buttons()).map((b) => b.id);
   await r.press("room");
   await ctx.frames(4);

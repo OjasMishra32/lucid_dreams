@@ -549,8 +549,8 @@ export class HoldButton extends XrButton {
 // ---------------- the caption card ----------------
 
 /**
- * The card: the caption, then the honesty label and the credit (each in one line, or two when that keeps it large), on
- * glass at the foot of the canvas with room under it for its shadow, design px. Over the pair it is the same plane seen
+ * The card's layout in every look (each look's type and panel are VISION_CARD, BROADCAST_CARD, MINIMAL_CARD): the
+ * caption, then the honesty label and the credit (each in one line, or two when that keeps it large), at the foot of the canvas with room under it for its shadow, design px. Over the pair it is the same plane seen
  * from metres away, so its type is `pair` times larger there (its own texture, swapped in while the card is faded out).
  */
 const CARD = {
@@ -560,10 +560,6 @@ const CARD = {
   gap: 12,
   radius: 40,
   pair: 1.32,
-  caption: { weight: 600, px: 38, min: 34, lead: 47, track: -0.014, color: "rgba(255,255,255,0.97)" } as TextStyle,
-  label: { weight: 500, px: 28, min: 27, lead: 35, track: -0.004, color: "rgba(255,255,255,0.82)" } as TextStyle,
-  credit: { weight: 500, px: 24, min: 22, lead: 31, track: 0, color: "rgba(255,255,255,0.66)" } as TextStyle,
-  glass: { tint: "rgba(40,40,46,0.70)", sheen: 0.12, rim: 0.4, shadow: 0.42, blur: 26, drop: 8, grain: true } as Glass,
 };
 /**
  * The Reality panel, its own plane just above the card (its canvas DESIGN wide, `h` tall, the panel at its foot): a
