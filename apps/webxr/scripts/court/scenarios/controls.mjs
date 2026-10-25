@@ -178,6 +178,17 @@ export default async function controls(ctx) {
   await r.point();
   await r.moveJointTo("right", "index-finger-tip", (await r.button("reality")).front);
   await ctx.save("controls-menu");
+  // Look repaints every surface in the next look, live, through all three and back to the first (a still of each)
+  const looks = [];
+  for (let i = 0; i < 3; i++) {
+    await r.press("look");
+    await ctx.frames(4);
+    const name = await r.ui((u) => u.look());
+    looks.push([name, (await r.button("look")).label]);
+    await r.moveJointTo("right", "index-finger-tip", (await r.button("reality")).front);
+    await ctx.save(`controls-menu-${name}`);
+  }
+  ctx.check("Look cycles the three looks live and back", new Set(looks.map(([n]) => n)).size === 3 && looks.every(([n, l]) => l.toLowerCase() === `look: ${n}`), looks.map(([n, l]) => `${n} (${l})`).join(" -> "));
   const watchIds = (await r.buttons()).map((b) => b.id);
   await r.press("room");
   await ctx.frames(4);
@@ -201,7 +212,7 @@ export default async function controls(ctx) {
   await r.press("step");
   await ctx.frames(2);
   const clock = (await ctx.snapshot()).clock;
-  ctx.check("P21: Step into the court takes or arms the stop", watchIds.join() === "changeSeat,step,reality,replay,room" && (clock.armed || clock.segment === "ease" || clock.segment === "freeze"), `menu ${watchIds.join(", ")}; armed ${clock.armed} in ${clock.segment}`);
+  ctx.check("P21: Step into the court takes or arms the stop", watchIds.join() === "changeSeat,look,step,reality,replay,room" && (clock.armed || clock.segment === "ease" || clock.segment === "freeze"), `menu ${watchIds.join(", ")}; armed ${clock.armed} in ${clock.segment}`);
   await r.handsAway();
   const toOpen = await ctx.until("open", 72 * 40);
   ctx.check("the stop lands and the world opens", toOpen.at(-1)?.phase === "open", `${toOpen.at(-1)?.phase} after ${toOpen.length} frames`);
@@ -215,8 +226,8 @@ export default async function controls(ctx) {
   const seatAt = await r.seat();
   await r.palm(true);
   const walkIds = (await r.buttons()).map((b) => b.id);
-  const wantWalk = seatAt.nextView ? "changeSeat,nextView,back,reality,replay,room" : "changeSeat,back,reality,replay,room";
-  ctx.check("P21: Walk closer jumps to the walking anchoring; Next view shows only where it applies", openIds.join() === "changeSeat,closer,back,reality,replay,room" && walking.phase === "walking" && seatAt.walking && walkIds.join() === wantWalk,
+  const wantWalk = seatAt.nextView ? "changeSeat,look,nextView,back,reality,replay,room" : "changeSeat,look,back,reality,replay,room";
+  ctx.check("P21: Walk closer jumps to the walking anchoring; Next view shows only where it applies", openIds.join() === "changeSeat,look,closer,back,reality,replay,room" && walking.phase === "walking" && seatAt.walking && walkIds.join() === wantWalk,
     `menus ${openIds.join(",")} / ${walkIds.join(",")}; Next view ${seatAt.nextView ? "applies" : "hidden (3.5 x 3.5 m)"}`);
 
   // P22 over the 3D: the caption card is above the pair, clear of both players' torsos and heads from every walk stop,

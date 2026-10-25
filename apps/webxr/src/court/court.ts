@@ -322,6 +322,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     actions.set(action, queued);
     ui.on(action, queued);
   };
+  on("look", () => ui.cycleLook());
   on("seatHere", () => {
     seat.place(head, head.yaw);
     // ?solo: one person tests alone, so there is no hand-over to wait for (the seated, still head still gates it)
