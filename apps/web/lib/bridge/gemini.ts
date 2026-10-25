@@ -9,6 +9,7 @@ import {
 // Models are tried in order, so a renamed or unavailable model never takes the step down.
 const MODELS = (process.env.GEMINI_MODEL ?? "gemini-3.8-flash,gemini-3.6-flash,gemini-3-flash-preview").split(",");
 const FPS = 15; // frames per second Gemini sees: enough for a jump shot's release (the default is 1)
+const TEACH_REQUEST = /\b(teach me|show me how|help me learn|break it down|coach me)\b/;
 
 let client: GoogleGenAI | null = null;
 function ai(): GoogleGenAI {
@@ -173,26 +174,45 @@ export async function writeExperience(
       : `The user didn't say what they want: choose teach if the clip shows a move someone could learn, otherwise watch.`;
     parts.push({ text: `The user calls this dream "${p.name}". ${want}\n${who}\n${media}` });
 
-    const { text, model } = await firstModel(MODELS, (model) =>
-      retry(2, () =>
-        ai().models.generateContent({
-          model,
-          contents: [{ role: "user", parts }],
-          config: {
-            systemInstruction: SYSTEM,
-            responseMimeType: "application/json",
-            responseJsonSchema: SCHEMA,
-            httpOptions: { timeout: 180_000 },
-          },
-        }),
-      ).then((r) => ({ text: r.text ?? "", model })),
-    );
-    const raw = JSON.parse(text) as Record<string, unknown>;
+    const generate = async (repair = false) =>
+      firstModel(MODELS, (model) =>
+        retry(2, () =>
+          ai().models.generateContent({
+            model,
+            contents: [{ role: "user", parts }],
+            config: {
+              systemInstruction: repair
+                ? `${SYSTEM}\n\nThe user explicitly asked for a lesson. Recheck the video and return a complete, runnable teach plan only if it visibly supports a learnable move: mode \"teach\" with 2 to 6 ordered steps inside the clip, each with a title and tip. If the video cannot support that, return an honest watch plan. Never invent a move or step.`
+                : SYSTEM,
+              responseMimeType: "application/json",
+              responseJsonSchema: SCHEMA,
+              httpOptions: { timeout: 180_000 },
+            },
+          }),
+        ).then((r) => ({ text: r.text ?? "", model })),
+      );
+    let result = await generate();
+    let raw = JSON.parse(result.text) as Record<string, unknown>;
+    let experience = clean(raw, p);
+    // A model can recognize an explicit lesson but omit enough valid steps for a player to run it.
+    // Ask it once to repair from the actual media; never synthesize steps in this service.
+    if (shouldRepairTeachPlan(p, experience)) {
+      result = await generate(true);
+      raw = JSON.parse(result.text) as Record<string, unknown>;
+      experience = clean(raw, p);
+    }
     debug.raw?.(raw);
-    return { ...clean(raw, p), source, model };
+    return { ...experience, source, model: result.model };
   } finally {
     for (const f of files) ai().files.delete({ name: f.name! }).catch(() => {}); // don't leave people's clips on Google's side
   }
+}
+
+/** A single model-side repair is safe only for an explicit lesson from a moving replay. */
+export function shouldRepairTeachPlan(p: Plan, experience: Pick<Experience, "mode">): boolean {
+  const still = !p.video && !(p.intentOnly && p.kind === "replay");
+  const intent = p.intent ?? "";
+  return p.kind === "replay" && !still && !CHESS.test(intent) && TEACH_REQUEST.test(intent) && experience.mode !== "teach";
 }
 
 /** Upload and wait until Gemini can read it. It joins `keep` as soon as it exists, so it's always deleted. */
