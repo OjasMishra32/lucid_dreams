@@ -37,6 +37,7 @@ import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
 import { RESET_OUT_S, ResetFade, ResetVeil, StepGlow } from "./transitions";
 import { Warp } from "./warp";
+import { RING_FROM_S, RING_S } from "./warpLanding";
 import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
@@ -63,6 +64,8 @@ const CLEAN_FLOOR_S = 1;
 /** The demo lands in a fully, evenly lit arena: under the warp's flash the floor's pool gives way to the even house
  * light over the last LAND_EVEN_S before F, and the cinema mask lifts from LAND_MASK_S before F to LAND_MASK_S after. */
 const LAND_EVEN_S = 0.3;
+/** The demo's floor guide (arrows.ts) comes up this long after F: the picture gone and the warp's shockwave ring done. */
+const GUIDE_FROM_S = RING_FROM_S + RING_S;
 const LAND_MASK_S = 0.3;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
@@ -488,7 +491,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     sound.room(roomP);
     vrHands.fade(roomP);
     opening.hide(); // drawn only in the arrival (below)
-    if (setup || (phase !== "open" && phase !== "walking")) arrows?.reset(); // drawn only once the 3D has the court (below)
+    // the floor guide: only once the 3D has the court, from GUIDE_FROM_S after F (below)
+    if (setup || !(phase === "open" || phase === "walking" || (phase === "handoff" && tF >= GUIDE_FROM_S))) arrows?.reset();
     courtWorld.edge(demoMode ? Infinity : seat.boundsDistance(head)); // the demo: the arena whole wherever the head goes
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
@@ -591,6 +595,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           fullLight();
           video.mask(landMask(tF));
         }
+        if (tF >= GUIDE_FROM_S) arrows?.update(head, dt, seat.world, roomP);
         if (tF >= HANDOFF_END) {
           tClean = 0;
           go("open");

@@ -1,11 +1,13 @@
-// The demo's floor guide: once the 3D has the court (open, walking), glowing chevron trails on the floor lead the
-// walker on a short path from the seat (the head where the 3D opened) round the frozen pair: a camera-side three-quarter
-// of each player, then the gap between them. One trail and its ring are lit at a time, the rest of the path faint ahead;
-// a ring the head reaches (0.4 m on the floor) flashes and fades and the next trail lights. The path stays within 1.4 m
-// of the seat, keeps clear of every torso and head capsule, each body's bounds and the extras' feet, and is planned
-// again (from the same seat) when Walk closer or Next view moves the court. Court space, in the world group, so the
-// anchor's corrections carry it with the players. Drawn additively just above the wood, before the splats (renderOrder
-// under Spark's 0), so a body in front still covers it. court.ts resets it whenever the phase leaves the 3D.
+// The demo's floor guide: once the 3D has the court (late in the hand-off, open, walking), glowing chevron trails on the
+// floor lead the walker on a short path from the seat (the head where the 3D opened) round the frozen pair: a camera-side
+// three-quarter of each player, then the gap between them. One trail and its ring are lit at a time, the rest of the path
+// faint ahead; the lit ring sends up a soft column of light, seen from a level gaze at the seat; a ring the head reaches
+// (0.4 m on the floor) flashes and fades and the next trail lights. The path stays within 1.4 m of the seat, keeps clear
+// of every torso and head capsule, each body's bounds and the extras' feet, and is planned again (from the same seat)
+// when Walk closer or Next view moves the court. Court space, in the world group, so the anchor's corrections carry it
+// with the players. Additive; the floor marks draw before the splats (renderOrder under Spark's 0) so a body in front
+// still covers them, the column after them (it stands on the seat's side of the pair). court.ts resets it whenever the
+// phase leaves the 3D.
 import * as THREE from "three";
 import type { Court } from "./format";
 import { toCourt, toRoom } from "./seatmath";
@@ -31,13 +33,18 @@ const AHEAD = 0.14;
 const FADE_RATE = 4.5;
 const RISE_RATE = 6;
 /** The whole guide comes up over this long once planned, and goes with the arena in See my room. */
-const APPEAR_S = 0.8;
+const APPEAR_S = 0.35;
 /** Trail strip width; a ring's plane and its radius, metres. */
 const TRAIL_W = 0.36;
 const RING_PLANE = 1.1;
 const RING_R = 0.24;
-/** Draw order: after the floor's shadows (-10, -11), before the hoop (-5) and Spark's splats (0). */
+/** The lit stop's column of light (seen from a level gaze at the seat), metres. */
+const BEAM_H = 0.75;
+const BEAM_R = 0.2;
+/** Draw order: the floor marks after the floor's shadows (-10, -11), before the hoop (-5) and Spark's splats (0); the
+ * column after the splats, under the video layer (50) and the UI (100). */
 const ORDER = -8;
+const COLUMN_ORDER = 10;
 
 /** One body to keep clear of, on the floor: torso and head capsules, the bounds' rectangle. */
 interface Obstacle {
@@ -237,9 +244,36 @@ void main() {
 }
 `;
 
+/** The lit stop's column: soft light rising off the ring, densest at its foot and through its middle, a shimmer climbing it. */
+const BEAM_VERT = /* glsl */ `
+varying vec2 vUv;
+varying float vFacing;
+void main() {
+  vUv = uv;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vFacing = abs(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)));
+  gl_Position = projectionMatrix * mv;
+}
+`;
+const BEAM_FRAG = /* glsl */ `
+uniform float uTime;
+uniform float uLevel;
+uniform vec3 uCyan;
+varying vec2 vUv;
+varying float vFacing;
+void main() {
+  float h = vUv.y;
+  float fall = pow(1.0 - h, 1.7) * smoothstep(0.0, 0.04, h);
+  float rise = fract(h * 1.2 - uTime * 0.45);
+  float shimmer = exp(-pow((rise - 0.5) / 0.09, 2.0));
+  float a = fall * (0.20 + 0.22 * shimmer) * pow(vFacing, 1.4) * uLevel;
+  gl_FragColor = vec4(mix(vec3(1.0), uCyan, smoothstep(0.0, 0.5, h)), clamp(a, 0.0, 1.0));
+}
+`;
+
 /** Additive colour over the arena; the frame's alpha only ever kept (the room behind stays hidden, as world.ts's overRoom). */
-function glowMaterial(fragmentShader: string, uniforms: Record<string, THREE.IUniform>): THREE.ShaderMaterial {
-  const m = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader, transparent: true, depthWrite: false });
+function glowMaterial(fragmentShader: string, uniforms: Record<string, THREE.IUniform>, vertexShader = VERT): THREE.ShaderMaterial {
+  const m = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, transparent: true, depthWrite: false, side: THREE.DoubleSide });
   m.blending = THREE.CustomBlending;
   m.blendSrc = THREE.SrcAlphaFactor;
   m.blendDst = THREE.OneFactor;
@@ -253,10 +287,14 @@ interface Stop {
   at: XZ;
   level: number;
   burst: number;
+  /** The column's own level: up while this stop is lit, down once reached. */
+  beam: number;
   ring: THREE.Mesh;
   trail: THREE.Mesh;
+  column: THREE.Mesh;
   ringU: Record<string, THREE.IUniform>;
   trailU: Record<string, THREE.IUniform>;
+  columnU: Record<string, THREE.IUniform>;
 }
 
 export class FloorArrows {
@@ -280,7 +318,7 @@ export class FloorArrows {
     if (import.meta.env?.DEV && typeof window !== "undefined") (window as unknown as { __courtArrows?: FloorArrows }).__courtArrows = this;
   }
 
-  /** Once a frame in open and walking: plan from the seat on the first frame (again if the court moved), light, fade. */
+  /** Once a frame once the 3D has the court: plan from the seat on the first frame (again if the court moved), light, fade. */
   update(head: Head, dt: number, world: WorldPose, roomP: number): void {
     if (!this.seatRoom) this.seatRoom = [head.room[0], 0, head.room[2]];
     if (!this.plannedFor || moved(this.plannedFor, world)) this.plan(world, head);
@@ -300,6 +338,9 @@ export class FloorArrows {
       s.level += (target - s.level) * Math.min(1, dt * (target > s.level ? RISE_RATE : FADE_RATE));
       s.burst = Math.max(0, s.burst - dt / 0.6);
       const on = i === this.active ? 1 : 0;
+      s.beam += (on - s.beam) * Math.min(1, dt * (on > s.beam ? RISE_RATE * 0.5 : FADE_RATE));
+      s.columnU.uLevel.value = s.beam * master;
+      s.column.visible = s.beam * master > 0.003;
       s.ringU.uLevel.value = s.level * master;
       s.ringU.uActive.value = on;
       s.ringU.uBurst.value = s.burst * master;
@@ -359,12 +400,17 @@ export class FloorArrows {
       const centre = add(from, u, start + length / 2);
       trail.position.set(centre[0], 0.006, centre[1]);
       trail.rotation.y = Math.atan2(-u[1], u[0]); // the plane's +x (uv.x) along the walk
-      for (const m of [ring, trail]) {
-        m.renderOrder = m === ring ? ORDER + 1 : ORDER;
+      const columnU = { uTime: this.time, uCyan: this.cyan, uLevel: { value: 0 } };
+      const columnGeo = new THREE.CylinderGeometry(BEAM_R, BEAM_R * 1.15, BEAM_H, 48, 1, true);
+      columnGeo.translate(0, BEAM_H / 2, 0);
+      const column = new THREE.Mesh(columnGeo, glowMaterial(BEAM_FRAG, columnU, BEAM_VERT));
+      column.position.set(p[0], 0.01, p[1]);
+      for (const m of [ring, trail, column]) {
+        m.renderOrder = m === column ? COLUMN_ORDER : m === trail ? ORDER : ORDER + 1;
         m.frustumCulled = false;
         this.group.add(m);
       }
-      this.stops.push({ at: p, level: i === 0 ? 0 : AHEAD, burst: 0, ring, trail, ringU, trailU });
+      this.stops.push({ at: p, level: i === 0 ? 0 : AHEAD, burst: 0, beam: 0, ring, trail, column, ringU, trailU, columnU });
       from = p;
     }
     this.active = 0;
@@ -372,7 +418,7 @@ export class FloorArrows {
 
   private clear(): void {
     for (const s of this.stops) {
-      for (const m of [s.ring, s.trail]) {
+      for (const m of [s.ring, s.trail, s.column]) {
         this.group.remove(m);
         m.geometry.dispose();
         (m.material as THREE.Material).dispose();
