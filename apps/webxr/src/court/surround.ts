@@ -4,8 +4,9 @@
 // stands proxy where that stands farther out, so the far image always owns the space in front of it), an LED dasher
 // at their foot, the ribbon board on the upper deck's fascia, 14 steeper upper tiers, a back wall, a dark domed roof
 // and a centre-hung scoreboard. Each tier carries one row of real crowd from `surround.crowd`'s atlas on a billboard
-// standing on its tread, the tiles laid along it at real scale (pxPerM), chosen and mirrored at random per section,
-// each tier showing one of its tile's rows so the crowd's rows sit on the tiers. The mesh is written back to front
+// standing on its tread, the tiles laid along it at real scale (pxPerM), chosen and mirrored at random per section;
+// a few tiers in a row share their tiles (the same columns on the straights), each showing the next of the tile's
+// rows, so a tile shows whole and its rows sit on the tiers. The mesh is written back to front
 // (it draws without depth), every face toward the court. `farCamera` is the far image's pinhole camera (camera F's
 // centre and rotation, its own intrinsics): proxies.ts projects it onto the floor, the stands proxy and the backboard.
 import type { PinholeCamera } from "./camera";
@@ -35,6 +36,8 @@ const ROOF = { edge: 24, top: 26.5 };
 const BOARD = { hx: 4.2, hz: 3.2, y0: 14, y1: 18.5, band: { inset: 0.5, y0: 13.4 } };
 /** Arc segments every this many radians (chord sag under 6 mm on the inner corners). */
 const ARC_STEP = (6 * Math.PI) / 180;
+/** Segments per corner arc in ringPoints (each arc is ARC_N + 1 points). */
+const ARC_N = Math.max(1, Math.ceil(Math.PI / 2 / ARC_STEP));
 /** Without crowd tiles the procedural crowd's virtual tile is this wide, metres. */
 const VIRTUAL_TILE_M = 6;
 
@@ -112,10 +115,9 @@ export function ringPoints(l: BowlLayout, o: number): [number, number][] {
     [l.x1 - l.r, l.z0 + l.r, (3 * Math.PI) / 2],
   ];
   const pts: [number, number][] = [];
-  const n = Math.max(1, Math.ceil(Math.PI / 2 / ARC_STEP));
   for (const [cx, cz, a0] of centres)
-    for (let i = 0; i <= n; i++) {
-      const a = a0 + (i / n) * (Math.PI / 2);
+    for (let i = 0; i <= ARC_N; i++) {
+      const a = a0 + (i / ARC_N) * (Math.PI / 2);
       pts.push([cx + R * Math.cos(a), cz + R * Math.sin(a)]);
     }
   pts.push([...pts[0]]);
@@ -135,7 +137,7 @@ export interface BowlArrays {
   surf: Float32Array;
   /** Crowd: the tile's atlas rect (u0, v0, u1, v1), texture coordinates with v up (u0 > u1: mirrored); zeros without an atlas. */
   tile: Float32Array;
-  /** (BOWL_KIND, the tier's row in its tile, rows per tile, brightness 0.85-1.15); for the LED: (kind, 0 dasher / 1 ribbon / 2 band). */
+  /** (BOWL_KIND, the tier's row in its tile, rows per tile, brightness 0.92-1.08); for the LED: (kind, 0 dasher / 1 ribbon / 2 band). */
   info: Float32Array;
   index: Uint32Array;
 }
@@ -160,7 +162,6 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
   const tile: number[] = [];
   const info: number[] = [];
   const index: number[] = [];
-  const random = rng(seed);
   const vertex = (p: readonly number[], s: readonly number[], t: readonly number[], i: readonly number[]) => {
     pos.push(p[0], p[1], p[2]);
     surf.push(s[0], s[1]);
@@ -196,8 +197,15 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
       heightM: (b[3] - b[1]) / crowd!.pxPerM,
     };
   });
-  /** One tier of crowd: billboards round the ring at offset o standing on tread y, tiles laid along it at real scale. */
-  const tier = (kind: number, o: number, y: number, rise: number) => {
+  /** Tiers that share their tiles: the fewest rows any tile holds at this rise (its rows stacked up those tiers). */
+  const groupOf = (rise: number) => (tiles.length ? Math.max(1, Math.min(...tiles.map((t) => Math.round(t.heightM / rise)))) : 1);
+  /**
+   * One tier of crowd: billboards round the ring at offset o standing on tread y, tiles laid along it at real scale,
+   * from the start of each of the ring's 8 sections (4 corners, 4 straights). Tier r of the deck is row r mod G of
+   * its group's tiles (G tiers a group): the group's tiers draw the same tiles, so on the straights their columns
+   * line up and each tile shows whole, its top G rows one per tier.
+   */
+  const tier = (kind: number, o: number, y: number, rise: number, r: number, G: number) => {
     const pts = ringPoints(l, o);
     const cum = [0];
     for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
@@ -210,24 +218,31 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
     };
     const top = y + (kind === BOWL_KIND.upper ? UPPER.person : LOWER.person);
     const h = top - y;
-    for (let s = 0; s < total - 1e-6; ) {
-      // a tile, at random and either way round
-      const pick = tiles.length ? tiles[Math.floor(random() * tiles.length)] : null;
-      const w = pick ? pick.widthM : VIRTUAL_TILE_M;
-      const k = pick ? Math.max(1, Math.round(pick.heightM / rise)) : 1;
-      const row = Math.floor(random() * k);
-      const mirror = random() < 0.5;
-      const shade = 0.85 + 0.3 * random();
-      const rect = pick ? (mirror ? [pick.rect[2], pick.rect[1], pick.rect[0], pick.rect[3]] : pick.rect) : NO_TILE;
-      const end = Math.min(total, s + w);
-      // split at the ring's own corners inside [s, end]
-      const cuts = [s, ...cum.filter((c) => c > s + 1e-6 && c < end - 1e-6), end];
-      for (let c = 0; c + 1 < cuts.length; c++) {
-        const [a, b] = [at(cuts[c]), at(cuts[c + 1])];
-        const [ua, ub] = [(cuts[c] - s) / w, (cuts[c + 1] - s) / w];
-        quad([[a[0], y, a[1]], [b[0], y, b[1]], [b[0], top, b[1]], [a[0], top, a[1]]], [[ua, h], [ub, h], [ub, 0], [ua, 0]], rect, [kind, row, k, shade]);
+    // the sections: each corner arc, then the straight after it
+    const bounds = [0];
+    for (let i = 0; i < 4; i++) bounds.push(cum[i * (ARC_N + 1) + ARC_N], i < 3 ? cum[(i + 1) * (ARC_N + 1)] : total);
+    const [p, g] = [r % G, Math.floor(r / G)];
+    for (let si = 0; si + 1 < bounds.length; si++) {
+      const random = rng(seed * 1000003 + kind * 10007 + g * 101 + si);
+      for (let s = bounds[si]; s < bounds[si + 1] - 1e-6; ) {
+        // a tile, at random and either way round (the same for the group's tiers)
+        const pick = tiles.length ? tiles[Math.floor(random() * tiles.length)] : null;
+        const w = pick ? pick.widthM : VIRTUAL_TILE_M;
+        const k = pick ? Math.max(1, Math.round(pick.heightM / rise)) : 1;
+        const row = k - G + p;
+        const mirror = random() < 0.5;
+        const shade = 0.92 + 0.16 * random();
+        const rect = pick ? (mirror ? [pick.rect[2], pick.rect[1], pick.rect[0], pick.rect[3]] : pick.rect) : NO_TILE;
+        const end = Math.min(bounds[si + 1], s + w);
+        // split at the ring's own corners inside [s, end]
+        const cuts = [s, ...cum.filter((c) => c > s + 1e-6 && c < end - 1e-6), end];
+        for (let c = 0; c + 1 < cuts.length; c++) {
+          const [a, b] = [at(cuts[c]), at(cuts[c + 1])];
+          const [ua, ub] = [(cuts[c] - s) / w, (cuts[c + 1] - s) / w];
+          quad([[a[0], y, a[1]], [b[0], y, b[1]], [b[0], top, b[1]], [a[0], top, a[1]]], [[ua, h], [ub, h], [ub, 0], [ua, 0]], rect, [kind, row, k, shade]);
+        }
+        s = end;
       }
-      s = end;
     }
   };
 
@@ -248,12 +263,12 @@ export function bowlArrays(court: Court, crowd: SurroundCrowd | null, seed = 1):
   }
   // the upper deck: its back wall, the tiers outermost first, the parapet and the ribbon board on its fascia
   band(UPPER_BACK_O, UPPER_Y0 + (UPPER.rows - 3) * UPPER.rise, ROOF.edge + 0.01, [BOWL_KIND.structure, 1, 0, 0]);
-  for (let u = UPPER.rows - 1; u >= 0; u--) tier(BOWL_KIND.upper, UPPER_O0 + u * UPPER.tread, UPPER_Y0 + u * UPPER.rise, UPPER.rise);
+  for (let u = UPPER.rows - 1; u >= 0; u--) tier(BOWL_KIND.upper, UPPER_O0 + u * UPPER.tread, UPPER_Y0 + u * UPPER.rise, UPPER.rise, u, groupOf(UPPER.rise));
   band(BACK_O, RIBBON.y0 + RIBBON.h, RIBBON.y0 + RIBBON.h + PARAPET_H, [BOWL_KIND.structure, 2, 0, 0]);
   band(BACK_O, RIBBON.y0, RIBBON.y0 + RIBBON.h, [BOWL_KIND.led, 1, 0, 0]);
   // the lower bowl: its back wall, the tiers outermost first, the LED dasher at its foot
   band(BACK_O, LOWER.firstTread + (LOWER.rows - 6) * LOWER.rise, RIBBON.y0, [BOWL_KIND.structure, 0, 0, 0]);
-  for (let r = LOWER.rows - 1; r >= 0; r--) tier(BOWL_KIND.crowd, LOWER.seat + r * LOWER.tread, LOWER.firstTread + r * LOWER.rise, LOWER.rise);
+  for (let r = LOWER.rows - 1; r >= 0; r--) tier(BOWL_KIND.crowd, LOWER.seat + r * LOWER.tread, LOWER.firstTread + r * LOWER.rise, LOWER.rise, r, groupOf(LOWER.rise));
   band(DASHER.o, 0, DASHER.h, [BOWL_KIND.led, 0, 0, 0]);
   // the centre-hung scoreboard over centre court: its bottom, the four screens, then the LED band under it (faces out)
   {

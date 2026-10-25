@@ -117,10 +117,26 @@ test("tiles are chosen at random per section, both ways round, with a little bri
   assert.ok(keys.size >= crowd.tiles.length * 2 - 1, `${keys.size} distinct (tile, mirror)`);
   assert.ok(lower.some((q) => q.tile[0] > q.tile[2]) && lower.some((q) => q.tile[0] < q.tile[2]), "mirrored and not");
   const shades = lower.map((q) => q.info[3]);
-  assert.ok(Math.min(...shades) >= 0.8 && Math.max(...shades) <= 1.2 && Math.max(...shades) - Math.min(...shades) > 0.1);
+  assert.ok(Math.min(...shades) >= 0.9 && Math.max(...shades) <= 1.1 && Math.max(...shades) - Math.min(...shades) > 0.1);
   // deterministic for a seed, different for another
   assert.deepEqual(bowlArrays(court(), crowd, 3).tile, a.tile);
   assert.notDeepEqual(bowlArrays(court(), crowd, 4).tile, a.tile);
+});
+
+test("a few tiers in a row share their tiles: on a straight their columns line up and each shows the next row up", () => {
+  const c = court();
+  const l = bowlLayout(c);
+  const a = bowlArrays(c, crowd, 5);
+  // the +z side's straight, tiers 0 and 1 (every test tile holds 5 rows at 0.4 m: a group of 5)
+  const side = quads(a).filter((q) => q.kind === BOWL_KIND.crowd && q.corners.every((p) => p[2] > l.z1 + 0.1 && p[0] < l.x1 - l.r + 1e-6 && p[0] > l.x0 + l.r - 1e-6));
+  const at = (r: number) => side.filter((q) => Math.abs(Math.min(...q.corners.map((p) => p[1])) - (LOWER.firstTread + r * LOWER.rise)) < 1e-4);
+  const [t0, t1] = [at(0), at(1)];
+  assert.ok(t0.length > 3 && t0.length === t1.length, `${t0.length} and ${t1.length} quads`);
+  t0.forEach((q, i) => {
+    assert.deepEqual(q.tile, t1[i].tile, "the same tile, the same way round");
+    assert.ok(Math.abs(q.corners[0][0] - t1[i].corners[0][0]) < 1e-4, "the same column");
+    assert.equal(t1[i].info[1], q.info[1] + 1, "the next row up");
+  });
 });
 
 test("drawn back to front (the bowl writes no depth): the roof first, the upper deck, then the lower tiers outermost first", () => {
