@@ -2,8 +2,11 @@
 // the judge sees the real footage playing and moving, with no 3D anywhere (in the Screen view, no footage on the floor
 // either); with ?solo the show steps into the court by itself in pass 2, eases to a stop at F and holds F's own
 // pixels, and only then does the 3D take over; Back to my seat gives the picture back and the make plays as footage.
+// The demo (court.ts demo.ts: every page unless ?demo=0): the watch is one clip looping (pass 2 up to the first ease's
+// press window) with no step by itself; a press after it has looped replays it from its first frame into the ease, and
+// the arena stays whole walking anywhere (far past the play area too). ?demo=0 is the full show's path above.
 // A slow device (--throttle: CPU x4) must still show a moving picture, never a frozen one. Stills: rt-*.png.
-// Run with --realtime --query solo (skipped otherwise).
+// Run with --realtime --query solo (skipped otherwise; --query "solo&demo=0" for the full show).
 // Owner: loop.
 import { rig } from "../rig.mjs";
 
@@ -19,6 +22,7 @@ export default async function realtime(ctx) {
   if (!ctx.realtime) ctx.skip("run with --realtime (the wall clock drives the show)");
   if (!new URL(ctx.page.url()).searchParams.has("solo")) ctx.skip("run with --query solo");
   const r = rig(ctx);
+  const demo = new URL(ctx.page.url()).searchParams.get("demo") !== "0";
   const { segments } = ctx.court.video;
   // every ease ends on F's source frame at its own show frame (a later press takes a later ease): any of them is F
   const ENDS = new Set(segments.eases.map((e) => e.frames[1]));
@@ -29,7 +33,8 @@ export default async function realtime(ctx) {
     const s = window.__court.snapshot();
     const video = window.__courtLook?.proxies?.video?.opacity ?? 1;
     const floor = window.__courtLook?.world?.filmedLevel ?? -1;
-    return { phase: s.phase, frame: s.clock.frame, segment: s.clock.segment, onScreen: s.onScreen, freeze: !!window.__courtLook?.freeze?.group?.visible, video, floor, t: performance.now() };
+    const arena = window.__courtLook?.world?.arena ?? { stands: -1, floor: -1, dome: -1 };
+    return { phase: s.phase, frame: s.clock.frame, segment: s.clock.segment, pass: s.clock.pass, onScreen: s.onScreen, freeze: !!window.__courtLook?.freeze?.group?.visible, video, floor, arena: { ...arena }, t: performance.now() };
   });
   const playing = (samples) => {
     const shown = new Set(samples.map((x) => x.onScreen).filter((x) => x >= 0));
@@ -75,11 +80,37 @@ export default async function realtime(ctx) {
     }
   }
 
-  // ---- no press: ?solo steps into the court by itself in pass 2 (court.ts AUTO_STEP_FRAMES); the ease lands on F, F's
-  // own pixels hold, then the 3D takes over
-  const last = (w2.length ? w2 : w1).at(-1);
-  const toEase = easing(last) ? [last] : await watchFor(40, easing);
-  ctx.check("realtime: ?solo steps into the court by itself (the ease starts with no press)", toEase.at(-1)?.segment === "ease", `segment ${toEase.at(-1)?.segment}, show frame ${toEase.at(-1)?.frame}`);
+  let toEase;
+  if (demo) {
+    // ---- the demo's clip: it loops in its window, never steps in by itself; a press (after it has looped) replays it
+    // from its first frame into the first ease
+    const clip = [segments.pass2[0], segments.eases[0].start - 1];
+    const watched = [...w1, ...w2];
+    const wraps = watched.filter((x, i) => i > 0 && x.pass > watched[i - 1].pass).length;
+    const outside = watched.filter((x) => x.segment !== "pass2" || x.frame < clip[0] || x.frame > clip[1]);
+    report.loop = { clip, wraps, passes: [...new Set(watched.map((x) => x.pass))], outside: outside.length };
+    ctx.check("realtime: demo, no step by itself (8 s of watch, no ease)", !watched.some(easing), `${watched.filter(easing).length} of ${watched.length} samples in an ease or the freeze`);
+    ctx.check("realtime: demo, the clip loops (it repeats from its first frame)", wraps >= 1, `${wraps} repeats in ${((watched.at(-1).t - watched[0].t) / 1000).toFixed(1)} s (passes ${report.loop.passes.join(", ")})`);
+    ctx.check("realtime: demo, the clip stays in its window (pass 2 up to the first ease's press window)", !outside.length, outside.length ? `${outside.length} samples outside [${clip}], first ${outside[0].segment} ${outside[0].frame}` : `all ${watched.length} samples in [${clip}]`);
+    const pressedAt = watched.at(-1);
+    await ctx.press("step");
+    toEase = await watchFor(20, easing);
+    const run = toEase.filter((x) => x.segment === "pass2");
+    const lowest = Math.min(...run.map((x) => x.frame));
+    const seconds = toEase.length > 1 ? (toEase.at(-1).t - toEase[0].t) / 1000 : 0;
+    report.replay = { pressedAt: pressedAt.frame, lowest, lastBeforeEase: run.at(-1)?.frame, seconds };
+    ctx.check("realtime: demo, Step into the court replays the clip from its first frame", lowest <= clip[0] + 24 && run.every((x, i) => i === 0 || x.frame >= run[i - 1].frame),
+      `pressed at show frame ${pressedAt.frame}; the replay's lowest ${lowest} (clip starts ${clip[0]}), ${run.length} samples, then ${toEase.at(-1)?.segment}`);
+    ctx.check("realtime: demo, the replay plays on into the ease (no repeat once pressed)", toEase.at(-1)?.segment === "ease" && (run.at(-1)?.frame ?? 0) >= clip[1] - 12,
+      `segment ${toEase.at(-1)?.segment} at show frame ${toEase.at(-1)?.frame} after ${seconds.toFixed(1)} s; last clip sample ${run.at(-1)?.frame}`);
+    await ctx.save("rt-02b-ease");
+  } else {
+    // ---- no press: ?solo steps into the court by itself in pass 2 (court.ts AUTO_STEP_FRAMES); the ease lands on F, F's
+    // own pixels hold, then the 3D takes over
+    const last = (w2.length ? w2 : w1).at(-1);
+    toEase = easing(last) ? [last] : await watchFor(40, easing);
+    ctx.check("realtime: ?solo steps into the court by itself (the ease starts with no press)", toEase.at(-1)?.segment === "ease", `segment ${toEase.at(-1)?.segment}, show frame ${toEase.at(-1)?.frame}`);
+  }
   const ease = toEase.at(-1)?.segment === "ease" ? [toEase.at(-1)] : [];
   let savedBefore = false;
   let savedF = false;
@@ -119,6 +150,25 @@ export default async function realtime(ctx) {
   if (screenView) {
     ctx.check("realtime: Screen view, F's floor footage is all there on F (the hand-off's own floor)", !!heldF && heldF.floor === 1, `footage floor ${heldF?.floor} on F`);
     ctx.check("realtime: Screen view, clean wood under the 3D once it has the court", walk.floor === 0, `footage floor ${walk.floor} mid-walk`);
+  }
+  if (demo) {
+    // ---- the demo: the arena whole wherever the head goes, far past the play area and turned round (no edge fade, no
+    // room), and standing up never jumps the world
+    const before = await r.seat();
+    const walked = [walk];
+    for (const [dx, dz, yaw] of [[3, 2, 1.6], [5.5, -1, 3.1], [-4, 4.5, -2]]) {
+      await r.setHead([home[0] + dx, home[1] + 0.45, home[2] + dz], yaw);
+      walked.push(...(await watchFor(0.6)));
+    }
+    await ctx.save("rt-06b-far-walk");
+    const dim = walked.filter((x) => x.arena.stands < 1 || x.arena.floor < 1 || x.arena.dome < 1);
+    const edges = await r.edge([home[0] + 5.5, 0, home[2] - 1]);
+    report.walkArena = { samples: walked.length, dim: dim.length, edgeAtFarthest: edges };
+    ctx.check("realtime: demo, the arena stays opaque walking anywhere (stands, floor, dome all 1)", !dim.length && walked.every((x) => x.arena.stands === 1),
+      dim.length ? `${dim.length} of ${walked.length} samples dimmed, first ${JSON.stringify(dim[0].arena)} (phase ${dim[0].phase})` : `all ${walked.length} samples at 1, incl. ${edges?.toFixed?.(2)} m from the play area's edge`);
+    const after = await r.seat();
+    const moved = !before || !after || before.world.position.some((v, i) => Math.abs(v - after.world.position[i]) > 0.01) || Math.abs(before.world.yaw - after.world.yaw) > 0.01;
+    ctx.check("realtime: demo, standing up and walking never jump the world", !moved, moved ? `world ${JSON.stringify(before?.world)} -> ${JSON.stringify(after?.world)}` : `world held at ${JSON.stringify(after?.world)}`);
   }
 
   // ---- Back to my seat: the picture returns, and the make plays as real footage

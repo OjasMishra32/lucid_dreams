@@ -8,6 +8,8 @@
 //   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer or standing up: the walking
 //   anchoring; Next view) -> returning (through the room to the chair, re-seat, handback(t)) -> resume (through the
 //   make) -> ended (Replay).
+// The demo (demo.ts, unless ?demo=0): the watch is the clock's looping clip until Step into the court, and nothing reads
+// the room's bounds (no edge fade, Back to my seat re-seats where you stand, standing up never jumps the world).
 // See my room works in every phase; the edge fade runs every frame; every button, key and probe action is queued to
 // the next frame, right after its head pose is read. A throw inside the frame is logged once and the loop keeps going
 // (a stopped loop freezes the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e
@@ -17,6 +19,7 @@ import { SparkRenderer } from "@sparkjsdev/spark";
 import { handSides } from "../xr/menu";
 import { SPLAT_QUALITY, XR_QUALITY } from "../xr/quality";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
+import { demoMode } from "./demo";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
@@ -32,6 +35,7 @@ import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
 import { RESET_OUT_S, ResetFade, ResetVeil, StepGlow } from "./transitions";
+import { Warp } from "./warp";
 import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
@@ -53,7 +57,7 @@ const RISE_FINISH = 0.1;
 const RISE_FADE_S = 0.25;
 /** ?solo: the show steps into the court by itself this many show frames into pass 2 (after the e2e's own press at +24,
  * well ahead of the first ease's window), so a judge alone, or the laptop without a palm menu, still reaches F. */
-const AUTO_STEP_FRAMES = 48;
+const AUTO_STEP_FRAMES = 48; // not in the demo: its clip loops until a press
 /** The Screen view: once the 3D has the court, the footage floor gives way to clean wood over this long (seconds). */
 const CLEAN_FLOOR_S = 1;
 
@@ -206,7 +210,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   if (stats) (window as unknown as { __courtStats?: FrameStats }).__courtStats = stats;
 
   // ---------------- the modules ----------------
-  const clock = new Clock(court, frames);
+  const clock = new Clock(court, frames, { loop: demoMode });
   clockRef = clock;
   clockState = clock.state;
   const light = new LightField(court);
@@ -233,6 +237,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const resetVeil = new ResetVeil();
   scene.add(resetVeil.mesh);
   const stepGlow = new StepGlow();
+  // demo mode (`?demo=0` is the plain show): Step into the court warps from the screen into the court (warp.ts)
+  const warp = screen && params.get("demo") !== "0" ? new Warp(screen) : null;
+  if (warp) scene.add(warp.group);
   // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
@@ -371,7 +378,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   });
   on("back", () => {
     if (phase !== "open" && phase !== "walking") return;
-    inRoom = true; // back to the chair always goes through the room (3.5)
+    // back to the chair always goes through the room (3.5); the demo skips the room and the walk: the seat comes to
+    // wherever the judge stands now, behind the fade-jump's veil, so the hand-back is F from their own eyes
+    if (demoMode) {
+      seat.place(head, head.yaw);
+      seatedEyeY = head.room[1];
+    } else inRoom = true;
     restored = false;
     tBack = 0;
     go("returning");
@@ -419,7 +431,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (setup) return;
     resetFade.cancel();
     restart();
-    feed(court.video.segments.pass1[0]);
+    feed(clock.first);
     screenAside(0);
     setup = true;
     lightsUp = -1;
@@ -466,7 +478,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     sound.room(roomP);
     vrHands.fade(roomP);
     opening.hide(); // drawn only in the arrival (below)
-    courtWorld.edge(seat.boundsDistance(head));
+    courtWorld.edge(demoMode ? Infinity : seat.boundsDistance(head)); // the demo: the arena whole wherever the head goes
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
     handsLevel = arrive * light.at(head.court[0], head.court[2], PART.person);
@@ -483,7 +495,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
         sound.arrive(p);
         // the lit footage region rises out of black on pass 1's first frame (3.2), so the watch starts on a frame shown
-        const first = court.video.segments.pass1[0];
+        // (the demo's clip starts in pass 2: the second decoder primes it)
+        const first = clock.first;
+        if (demoMode) video.prime(first);
         feed(first);
         video.wipe(1 - p);
         screenWatch(p);
@@ -504,7 +518,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         const s = clock.state;
         // ?solo: nobody to press Step into the court, so the show takes it by itself early in pass 2 (once a pass; a
         // press of the judge's own already took it)
-        if (params.has("solo") && phase === "watching" && !inRoom && s.segment === "pass2" && s.frame >= court.video.segments.pass2[0] + AUTO_STEP_FRAMES && !clock.pressed) stepIn();
+        if (!demoMode && params.has("solo") && phase === "watching" && !inRoom && s.segment === "pass2" && s.frame >= court.video.segments.pass2[0] + AUTO_STEP_FRAMES && !clock.pressed) stepIn();
         feed(s.frame);
         screenWatch(1);
         // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)
@@ -583,7 +597,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "returning": {
         feed(clock.state.frame);
         freeze.update(head, dt);
-        if (!restored && seat.seated(head)) {
+        if (!restored && (demoMode || seat.seated(head))) {
           seat.restore(); // the chair back at the dolly seat, behind the room
           restored = true;
           inRoom = false;
@@ -616,8 +630,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         break;
     }
     sound.update(head, clock.state, seat.world); // the crowd turns with the court; the hush lifts only on the resume (sound.ts)
-    // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4)
-    if (head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
+    // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4); never in the demo
+    if (!demoMode && head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
       seat.closer();
       go("walking");
     }
@@ -641,6 +655,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     const charge = ease ? (tF + ease.seconds) / Math.max(1e-3, ease.seconds - SCREEN_EASE_S) : null;
     const { glow, wave } = stepGlow.update(dt, charge);
     screen?.glow(glow, wave);
+    // the warp rides the ease's last seconds into F and is gone the instant F lands; off in every other phase
+    warp?.update(phase === "easing" ? tF : null, head.room);
   };
 
   // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again
