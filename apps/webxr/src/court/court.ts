@@ -40,7 +40,6 @@ import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
 import { BUILT as VRHANDS_BUILT, VrHands } from "./vrhands";
-import { WarpLanding } from "./warpLanding";
 import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
 /** The stand-in during development (scripts/court/standin.mjs writes it); serve.mjs serves a real bundle at /bundle/. */
@@ -242,7 +241,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   scene.add(resetVeil.mesh);
   const stepGlow = new StepGlow();
   // demo mode (`?demo=0` is the plain show): Step into the court warps from the screen into the court (warp.ts)
-  const warp = screen && demoMode ? new Warp(screen, video.regions.live) : null;
+  const warp = screen && demoMode ? new Warp(screen, video.regions.live, court.freeze.players) : null;
   if (warp) {
     world.add(warp.object);
     warp.prewarm(renderer, camera, scene);
@@ -278,11 +277,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     return x * x * x * (x * (6 * x - 15) + 10);
   };
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
-  // the demo's landing beside the warp (warpLanding.ts): the shockwave ring from the hand-off (the warp has the flash;
-  // the landing's own flash only where there is no warp) and the riser from the ease's first frame into F's thump
-  const landing = demoMode ? new WarpLanding(court.freeze.players, { flash: !warp }) : null;
-  if (landing) world.add(landing.object);
-  let warped = false;
+  let warped = false; // the warp's riser has started (sound.warpRiser, from the ease's first frame into F's thump)
   /** The demo's light from the step-in on: the watch's full light, no dim time-stop beat, no pool (the even floor). */
   const fullLight = () => light.set("watch", 0);
   /** The demo's cinema mask at tF: lifted under the flash, by LAND_MASK_S after F (never below the hand-off's own). */
@@ -425,7 +420,6 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     restored = false;
     tScreen = -1;
     screenWatch(1);
-    landing?.update(-Infinity, head);
     stepGlow.stop();
     clock.restart();
   };
@@ -463,7 +457,6 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       tLight = HANDOFF_END;
       handoff(tF, parts, demoMode ? -Infinity : tLight);
       if (demoMode) fullLight();
-      landing?.update(tF, head);
       tClean = 0;
       go("open");
     }
@@ -545,9 +538,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         if (phase === "easing") {
           const ease = s.ease !== null ? court.video.segments.eases[s.ease] : null;
           tF = ease ? -(ease.frames[1] - s.frame) / hz : 0; // seconds to F
-          if (landing && !warped && tF < 0) sound.warpRiser(-tF);
+          if (warp && !warped && tF < 0) sound.warpRiser(-tF);
           warped = true;
-          landing?.update(tF, head);
           if (demoMode) fullLight();
           else light.set("ease", ease ? ease.seconds + tF : 0);
           sound.timeStop(Math.max(0, Math.min(1, hush)));
@@ -594,7 +586,6 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           fullLight();
           video.mask(landMask(tF));
         }
-        landing?.update(tF, head);
         if (tF >= HANDOFF_END) {
           tClean = 0;
           go("open");

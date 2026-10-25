@@ -1,23 +1,22 @@
 // The warp's landing on F (the Screen view's step into the court), one function of tF (seconds from F, negative
 // before it) so a recording is deterministic:
 // - the flash: a white-blue veil round the head that builds through the ease's last moments, peaks just before F and
-//   clears smoothly by F itself (FLASH_CLEAR_S = 0), so what's left on F is F's own picture (the veil is hidden from then on and
-//   never touches F's pixels); nothing moves with the head, only the light.
+//   clears smoothly by FLASH_CLEAR_S after F, so what's left on F is F's own picture (the veil is hidden from
+//   then on and never touches F's pixels); nothing moves with the head, only the light. Under it the demo's arena goes
+//   to its full, even light and the cinema mask starts to lift (court.ts), so neither change is seen happening.
 // - the shockwave: a thin glowing ring on the floor, centred under the players, running out toward the seat over RING_S
 //   from the moment the picture starts handing off (handoff.ts videoFades, F + 0.15 s), so F's own pixels are never
 //   touched (additive, drawn before the splats so the players stand in front of it).
-// The arena's light is left alone: the light field (lightfield.ts) holds F's light through the hand-off (P44), so a lift
-// at the landing would change the pixels the hand-off promises to hold.
-// Add `object` to the court world group (court space): the ring sits on the court, the veil follows head.court. With
-// warp.ts's warp (the demo) the flash is the warp's own (`flash: false`).
+// One of warp.ts's parts: its `object` goes in the court world group (court space), so the ring sits on the court and
+// the veil follows head.court. `flash: false` leaves the flash to another part.
 import * as THREE from "three";
 import type { FreezePlayer } from "./format";
 import type { Head } from "./types";
 
 /** The flash: from FLASH_FROM_S it builds to FLASH_PEAK at FLASH_PEAK_S, then clears by FLASH_CLEAR_S (seconds from F). */
-export const FLASH_FROM_S = -0.55;
-export const FLASH_PEAK_S = -0.22;
-export const FLASH_CLEAR_S = 0;
+export const FLASH_FROM_S = -0.42;
+export const FLASH_PEAK_S = -0.12;
+export const FLASH_CLEAR_S = 0.1;
 export const FLASH_PEAK = 0.8;
 /** The ring: out from RING_START_M to RING_END_M over RING_S from RING_FROM_S, at most RING_LEVEL bright. */
 export const RING_FROM_S = 0.15;
@@ -80,7 +79,7 @@ export class WarpLanding {
 
   /**
    * `players`: court.freeze.players (the ring's centre is the middle of their feet, as freeze.ts places them);
-   * `flash: false` leaves the flash to warp.ts's own.
+   * `flash: false` leaves the flash to another part.
    */
   constructor(players: readonly Pick<FreezePlayer, "bounds">[], opts: { flash?: boolean } = {}) {
     this.flashOn = opts.flash !== false;
