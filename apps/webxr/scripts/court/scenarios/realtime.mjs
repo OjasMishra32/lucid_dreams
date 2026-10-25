@@ -1,5 +1,6 @@
 // The demo in real time, as on the headset (?probe=realtime: the wall clock drives the show, no lockstep): after Enter
-// the judge sees the real footage playing and moving, with no 3D anywhere; it eases to a stop at F and holds F's own
+// the judge sees the real footage playing and moving, with no 3D anywhere (in the Screen view, no footage on the floor
+// either); with ?solo the show steps into the court by itself in pass 2, eases to a stop at F and holds F's own
 // pixels, and only then does the 3D take over; Back to my seat gives the picture back and the make plays as footage.
 // A slow device (--throttle: CPU x4) must still show a moving picture, never a frozen one. Stills: rt-*.png.
 // Run with --realtime --query solo (skipped otherwise).
@@ -27,7 +28,8 @@ export default async function realtime(ctx) {
   const now = () => ctx.page.evaluate(() => {
     const s = window.__court.snapshot();
     const video = window.__courtLook?.proxies?.video?.opacity ?? 1;
-    return { phase: s.phase, frame: s.clock.frame, segment: s.clock.segment, onScreen: s.onScreen, freeze: !!window.__courtLook?.freeze?.group?.visible, video, t: performance.now() };
+    const floor = window.__courtLook?.world?.filmedLevel ?? -1;
+    return { phase: s.phase, frame: s.clock.frame, segment: s.clock.segment, onScreen: s.onScreen, freeze: !!window.__courtLook?.freeze?.group?.visible, video, floor, t: performance.now() };
   });
   const playing = (samples) => {
     const shown = new Set(samples.map((x) => x.onScreen).filter((x) => x >= 0));
@@ -48,6 +50,7 @@ export default async function realtime(ctx) {
     return out;
   };
   const report = (ctx.report.realtime = {});
+  const screenView = new URL(ctx.page.url()).searchParams.get("view") !== "courtside";
 
   // ---- the watch: the footage plays, moving, keeping up, and no 3D
   const start = await ctx.until("watching", 72 * 40);
@@ -62,12 +65,16 @@ export default async function realtime(ctx) {
     ctx.check(`realtime: the watch (${name}) shows the footage moving`, p.perS >= MOVING_PER_S, `${p.shown} different show frames in ${p.seconds.toFixed(1)} s (${p.perS.toFixed(1)}/s)`);
     ctx.check(`realtime: the watch (${name}) keeps up with the clock`, p.lag <= LAG_MAX, `median lag ${p.lag} show frames`);
     ctx.check(`realtime: no 3D player during the watch (${name})`, !p.freeze, p.freeze ? "a 3D player was drawn" : "none drawn");
+    if (screenView) {
+      const lit = w.filter((x) => x.floor !== 0);
+      ctx.check(`realtime: Screen view, no footage on the floor during the watch (${name})`, !lit.length, lit.length ? `${lit.length} of ${w.length} samples with the footage floor at ${lit[0].floor}` : `footage floor 0 in all ${w.length} samples`);
+    }
   }
 
   // ---- Step into the court early in pass 2: the ease lands on F, F's own pixels hold, then the 3D takes over
   const toPass2 = await watchFor(20, (x) => x.segment === "pass2" && x.frame >= segments.pass2[0] + 24);
   ctx.check("realtime: pass 2 is reached", toPass2.at(-1)?.segment === "pass2", `segment ${toPass2.at(-1)?.segment}, show frame ${toPass2.at(-1)?.frame}`);
-  await ctx.press("step");
+  // no press: ?solo steps into the court by itself (court.ts AUTO_STEP_FRAMES); the checks below see it reach the 3D
   const ease = [];
   let savedBefore = false;
   let savedF = false;

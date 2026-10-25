@@ -48,6 +48,9 @@ const ROOM_BACK_S = 0.8;
  * which leaves the frame or two before the rise is seen inside the bar. */
 const RISE_FINISH = 0.1;
 const RISE_FADE_S = 0.25;
+/** ?solo: the show steps into the court by itself this many show frames into pass 2 (after the e2e's own press at +24,
+ * well ahead of the first ease's window), so a judge alone, or the laptop without a palm menu, still reaches F. */
+const AUTO_STEP_FRAMES = 48;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
   document.title = "Court Side · Lucid Dreams";
@@ -223,12 +226,14 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (!screen) return;
     screen.opacity = level;
     proxies.footage(false);
+    courtWorld.filmed(0);
   };
   /** The Screen view off the watch: the footage on the 3D (the Courtside path), the screen at `level`. */
   const screenAside = (level: number) => {
     if (!screen) return;
     screen.opacity = level;
     proxies.footage(true);
+    courtWorld.filmed(1 - level); // the footage floor comes up as the screen goes (F: all of it, pixel-exact)
   };
   // the setup page (before Seat here) is the arena as the projection shows it; the screen comes up with the arrival
   screenAside(0);
@@ -319,10 +324,13 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     light.set("dark", 0);
     go("arrival");
   });
-  on("step", () => {
-    if (phase !== "watching") return;
+  const stepIn = () => {
     clock.press();
     sound.oneShot("stepIn");
+  };
+  on("step", () => {
+    if (phase !== "watching") return;
+    stepIn();
   });
   on("closer", () => {
     if (phase !== "open" && phase !== "walking") return;
@@ -402,6 +410,16 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   };
   on("room", toggleRoom);
   ui.onToggleRoom = () => queue.push(toggleRoom);
+  // the laptop has no palm menu: Space or Enter on the page is the show's next step, Step into the court in the watch
+  // and Back to my seat in the 3D; R is Reset (Replay: the show from the top). A focused button keeps its own keys.
+  window.addEventListener("keydown", (e) => {
+    const key = e.code === "Space" || e.key === "Enter" ? "next" : e.key === "r" || e.key === "R" ? "reset" : null;
+    if (!key || e.repeat || e.metaKey || e.ctrlKey || (e.target as HTMLElement | null)?.closest?.("button, input, textarea, select, a")) return;
+    const next = key === "reset" ? actions.get("replay") : phase === "watching" ? actions.get("step") : phase === "open" || phase === "walking" ? actions.get("back") : undefined;
+    if (!next) return;
+    e.preventDefault();
+    next();
+  });
 
   const step = (dt: number) => {
     fed = -1;
@@ -443,6 +461,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "resume": {
         if (!(inRoom && phase !== "resume")) clockState = clock.update(dt); // the clock holds in the room (3.6)
         const s = clock.state;
+        // ?solo: nobody to press Step into the court, so the show takes it by itself early in pass 2 (once a pass; a
+        // press of the judge's own already took it)
+        if (params.has("solo") && phase === "watching" && !inRoom && s.segment === "pass2" && s.frame >= court.video.segments.pass2[0] + AUTO_STEP_FRAMES && !clock.pressed) stepIn();
         feed(s.frame);
         screenWatch(1);
         // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)

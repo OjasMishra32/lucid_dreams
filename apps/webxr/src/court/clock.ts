@@ -299,6 +299,11 @@ export class Clock {
     this.refresh();
   }
 
+  /** A press is in: an ease taken in this pass 2, or a stop armed for the next. */
+  get pressed(): boolean {
+    return this.take !== null || this.armNext;
+  }
+
   /** From the freeze, play on through the make (the resume segment). */
   resume(): void {
     if (this.state.segment !== "freeze") return;

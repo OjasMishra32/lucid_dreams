@@ -10,7 +10,7 @@
 //   [Walk closer] | [Next view]        while the world is open and you're not in the room: Walk closer before the walking
 //                                      anchoring, Next view after it, only where a second placement fits
 //   [Step into the court | Back to my seat, Reality check]
-//   [Replay, See my room]              nearest the palm; this row never moves (See my room flips to "Back to the arena", stays lit)
+//   [Reset, See my room]               nearest the palm; this row never moves (See my room flips to "Back to the arena", stays lit)
 // and the setup page, [Seat here] over [See my room], where Seat here acts only after a 2 s hold (P32: HoldButton).
 // No gesture acts by itself and there is no other control path (P21): no keys. Every surface is visionOS-style glass,
 // faked (glass(): a translucent body lit from above, a rim light, a soft shadow; no blur), drawn once per change of
@@ -821,7 +821,7 @@ export class Ui {
       step: button("step", "Step into the court"),
       back: button("back", "Back to my seat"),
       reality: button("reality", "Reality check"),
-      replay: button("replay", "Replay"),
+      replay: button("replay", "Reset"), // the show from the top: the video, then the 3D again
       room: button("room", ROOM_OUT, courtLook(windowGlyph)),
       closer: button("closer", "Walk closer"),
       nextView: button("nextView", "Next view"),

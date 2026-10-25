@@ -68,6 +68,7 @@ REACH
 uniform sampler2D uFloorMap;
 uniform sampler2D uSeenMap;
 uniform float uHasFloor;
+uniform float uFilmed;     // the footage floor's share: 1 as on F, 0 the clean floor (the Screen view's watch)
 uniform float uTone;        // the boards' tone spread, measured across them on the real floor
 uniform vec4 uCourt;    // half length, half width, apron, basket from the baseline
 uniform vec3 uWood;
@@ -163,7 +164,7 @@ void main() {
   clean = mix(clean, uWhite, lines.x);
   clean = mix(clean, uNavy, lines.y);
   // the footage where it was filmed and you see it near its own camera's ray (lightFilmedFloor: all of it from the seat)
-  float filmed = seen * lightFilmedFloor(vLightCourt);
+  float filmed = seen * lightFilmedFloor(vLightCourt) * uFilmed;
   // with a surround: only where camera F saw the floor about as sharply as this eye sees it; elsewhere its grazing
   // smear reads as streaks, so the clean floor
   filmed *= mix(1.0, lightSharp(vec3(p.x, 0.0, p.y), uFloorSharp.x, uFloorSharp.y), uSharpOn);
@@ -417,6 +418,7 @@ export class CourtWorld {
   private readonly apronStain = new THREE.Vector3();
   private readonly apronWood = new THREE.Vector3();
   private readonly sharpOnU = { value: 0 };
+  private readonly filmedU = { value: 1 };
   /** The floor footage's focal and floor.jpg's texel (lightSharp's f and texel). */
   private floorFocal = 1;
   private floorTexel = 0;
@@ -457,6 +459,10 @@ export class CourtWorld {
     const seat = params.has("seat") ? Number(params.get("seat")) : undefined;
     light.fitFrames(bundle.frames);
     light.select({ set, seatDistance: seat });
+    if (import.meta.env?.DEV && typeof window !== "undefined") {
+      const w = window as unknown as { __courtLook?: Record<string, unknown> };
+      (w.__courtLook ??= {}).world = this;
+    }
     this.hasSurround = !!bundle.court.surround;
     this.surroundOn = this.hasSurround && !(import.meta.env.DEV && params.get("surround") === "off");
     this.dome = new THREE.Mesh(
@@ -536,6 +542,7 @@ export class CourtWorld {
         uFloorMap: { value: floorMap },
         uSeenMap: { value: seenMap },
         uHasFloor: { value: floorMap && seenMap ? 1 : 0 },
+        uFilmed: this.filmedU,
         uTone: { value: tones.tone },
         uCourt: { value: new THREE.Vector4(halfL, halfW, APRON_M, halfL - Math.abs(c.rim[0])) },
         uWood: { value: new THREE.Vector3(wood.r, wood.g, wood.b) },
@@ -693,6 +700,19 @@ export class CourtWorld {
     if (!px || !this.cameraF) return floor;
     const plate = frameFeather((px[0] + 0.5) / this.cameraF.width, (px[1] + 0.5) / this.cameraF.height) * footageSharp(centre, eye, q, this.floorFocal, 0);
     return plate + (1 - plate) * floor;
+  }
+
+  /**
+   * The footage floor's share, 0-1: 1 shows floor.jpg where it was filmed (Courtside, and F on every path), 0 the clean
+   * floor. The Screen view holds it at 0 while its screen plays the watch, so no footage wedge lies in front of it.
+   */
+  filmed(level: number): void {
+    this.filmedU.value = Math.min(1, Math.max(0, level));
+  }
+
+  /** The footage floor's share as last set (filmed()). */
+  get filmedLevel(): number {
+    return this.filmedU.value;
   }
 
   /** The Reality check: tint everything the camera never filmed (the rendered court, the bowl, the hoop). */
