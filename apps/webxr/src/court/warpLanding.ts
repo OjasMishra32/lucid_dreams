@@ -1,7 +1,7 @@
 // The warp's landing on F (the Screen view's step into the court), one function of tF (seconds from F, negative
 // before it) so a recording is deterministic:
-// - the flash: a white-blue veil round the head that builds through the ease's last moments, peaks just before F and
-//   clears smoothly by FLASH_CLEAR_S after F, so what's left on F is F's own picture (the veil is hidden from
+// - the flash: white-blue light added round the head (a burst, never a fog over the picture) that builds once the
+//   warp's punch-in has peaked, peaks just before F and clears smoothly by FLASH_CLEAR_S (F itself), so what's left on F is F's own picture (the veil is hidden from
 //   then on and never touches F's pixels); nothing moves with the head, only the light. Under it the demo's arena goes
 //   to its full, even light and the cinema mask starts to lift (court.ts), so neither change is seen happening.
 // - the shockwave: a thin glowing ring on the floor, centred under the players, running out toward the seat over RING_S
@@ -14,10 +14,10 @@ import type { FreezePlayer } from "./format";
 import type { Head } from "./types";
 
 /** The flash: from FLASH_FROM_S it builds to FLASH_PEAK at FLASH_PEAK_S, then clears by FLASH_CLEAR_S (seconds from F). */
-export const FLASH_FROM_S = -0.42;
-export const FLASH_PEAK_S = -0.12;
-export const FLASH_CLEAR_S = 0.1;
-export const FLASH_PEAK = 0.8;
+export const FLASH_FROM_S = -0.4;
+export const FLASH_PEAK_S = -0.18;
+export const FLASH_CLEAR_S = 0;
+export const FLASH_PEAK = 0.65;
 /** The ring: out from RING_START_M to RING_END_M over RING_S from RING_FROM_S, at most RING_LEVEL bright. */
 export const RING_FROM_S = 0.15;
 export const RING_S = 1.1;
@@ -85,7 +85,7 @@ export class WarpLanding {
     this.flashOn = opts.flash !== false;
     this.object.name = "court-warp";
     // as transitions.ts's ResetVeil: a sphere round the head over everything, under the black veils (1e6, 1e6 + 1)
-    this.flashMat = new THREE.MeshBasicMaterial({ color: WHITE_BLUE, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+    this.flashMat = new THREE.MeshBasicMaterial({ color: WHITE_BLUE, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
     this.flash = new THREE.Mesh(new THREE.SphereGeometry(4, 16, 8), this.flashMat);
     this.flash.name = "court-warp-flash";
     this.flash.renderOrder = 1e6 - 1;
