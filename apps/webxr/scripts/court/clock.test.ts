@@ -511,3 +511,55 @@ test("the Clock at 120 Hz keeps real time (not 1.67x) and the stop still lands o
   assert.equal(c.state.segment, "freeze");
   assert.equal(frames[c.state.frame].src, v.freezeSource);
 });
+
+// the demo's clip (demo.ts, ClockOptions.loop): pass 2 up to the first ease's press window, repeating with every jump
+// primed; a press replays the clip from its first frame into the first ease and lands on F; restart() loops again
+for (const [name, bundle] of [["stand-in 72 Hz", standinBundle()], ["bake-rule 90 Hz", show(90)]] as const) {
+  const { court, frames } = bundle;
+  const seg = court.video.segments;
+  const dt = 1 / court.video.displayHz;
+  test(`${name}: the demo's clip loops pass 2 up to the first ease's window, and a press replays it from its start into F`, () => {
+    const c = new Clock(court, frames, { loop: true });
+    const [f0, start] = [seg.pass2[0], seg.eases[0].start];
+    assert.equal(c.first, f0);
+    assert.equal(c.state.frame, f0);
+    assert.equal(c.state.segment, "pass2");
+    assert.equal(c.state.nextJump, f0, "the repeat is primed from the first frame");
+    const len = start - f0;
+    let prev: ClockState = { ...c.state };
+    let wraps = 0;
+    for (let i = 0; i < 2 * len + 5; i++) {
+      const s = { ...c.update(dt) };
+      assert.equal(s.segment, "pass2");
+      assert.ok(s.frame >= f0 && s.frame < start, `frame ${s.frame} outside the clip [${f0}, ${start - 1}]`);
+      close(s.speed, court.video.pass2Speed);
+      if (s.frame !== prev.frame + 1) {
+        assert.equal(prev.frame, start - 1, "it repeats only from the frame before the press window");
+        assert.equal(s.frame, f0);
+        assert.equal(prev.nextJump, f0, "the repeat was primed");
+        wraps++;
+      }
+      prev = s;
+    }
+    assert.equal(wraps, 2);
+    assert.equal(c.state.pass, 3);
+    assert.equal(c.state.frame, f0 + 5);
+    assert.equal(c.pressed, false);
+    c.press();
+    assert.ok(c.pressed);
+    assert.equal(c.state.nextJump, f0, "the replay's jump back is primed");
+    const back = { ...c.update(dt) };
+    assert.equal(back.frame, f0, "the press replays the clip from its first frame");
+    assert.equal(back.nextJump, seg.eases[0].frames[0], "then the first ease is primed");
+    const rest = framesToFreeze(c)!;
+    assert.ok(rest, "the replay lands on F");
+    const clip = rest.filter((s) => s.segment === "pass2").map((s) => s.frame);
+    assert.deepEqual(clip, Array.from({ length: start - f0 }, (_, i) => f0 + 1 + i), "once through, up to the press window");
+    const ease = rest.filter((s) => s.segment === "ease");
+    assert.ok(ease.every((s) => s.ease === 0));
+    assert.equal(ease[0].frame, seg.eases[0].frames[0]);
+    assert.equal(rest.at(-1)!.frame, seg.eases[0].frames[1], "F");
+    c.restart();
+    assert.deepEqual([c.state.frame, c.state.segment, c.pressed, c.state.nextJump], [f0, "pass2", false, f0]);
+  });
+}
