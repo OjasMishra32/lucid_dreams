@@ -8,7 +8,8 @@
 //   touched (additive, drawn before the splats so the players stand in front of it).
 // The arena's light is left alone: the light field (lightfield.ts) holds F's light through the hand-off (P44), so a lift
 // at the landing would change the pixels the hand-off promises to hold.
-// Add `object` to the court world group (court space): the ring sits on the court, the veil follows head.court.
+// Add `object` to the court world group (court space): the ring sits on the court, the veil follows head.court. With
+// warp.ts's warp (the demo) the flash is the warp's own (`flash: false`).
 import * as THREE from "three";
 import type { FreezePlayer } from "./format";
 import type { Head } from "./types";
@@ -75,8 +76,14 @@ export class WarpLanding {
   private readonly rings: { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; delay: number; level: number }[] = [];
   private readonly ringGeo: THREE.BufferGeometry;
 
-  /** `players`: court.freeze.players (the ring's centre is the middle of their feet, as freeze.ts places them). */
-  constructor(players: readonly Pick<FreezePlayer, "bounds">[]) {
+  private readonly flashOn: boolean;
+
+  /**
+   * `players`: court.freeze.players (the ring's centre is the middle of their feet, as freeze.ts places them);
+   * `flash: false` leaves the flash to warp.ts's own.
+   */
+  constructor(players: readonly Pick<FreezePlayer, "bounds">[], opts: { flash?: boolean } = {}) {
+    this.flashOn = opts.flash !== false;
     this.object.name = "court-warp";
     // as transitions.ts's ResetVeil: a sphere round the head over everything, under the black veils (1e6, 1e6 + 1)
     this.flashMat = new THREE.MeshBasicMaterial({ color: WHITE_BLUE, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
@@ -113,7 +120,7 @@ export class WarpLanding {
 
   /** The landing at tF seconds from F, the veil round the head (court space). */
   update(tF: number, head: Pick<Head, "court">): void {
-    const f = flashLevel(tF);
+    const f = this.flashOn ? flashLevel(tF) : 0;
     this.flashMat.opacity = f;
     this.flash.visible = f > 0;
     this.flash.position.set(head.court[0], head.court[1], head.court[2]);

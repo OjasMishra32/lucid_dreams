@@ -52,4 +52,9 @@ test("WarpLanding draws nothing outside the landing and hides the flash once it 
   w.update(3, head);
   assert.deepEqual(drawn(), []);
   w.dispose();
+  // beside warp.ts's warp, which has its own flash: the ring only
+  const ringOnly = new WarpLanding(players as never, { flash: false });
+  ringOnly.update(-0.2, head);
+  assert.deepEqual(ringOnly.object.children.filter((c) => c.visible).map((c) => c.name), []);
+  ringOnly.dispose();
 });

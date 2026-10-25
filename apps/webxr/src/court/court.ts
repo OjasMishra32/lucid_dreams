@@ -22,7 +22,7 @@ import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
 import { demoMode } from "./demo";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
-import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
+import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, handoffBeats, type HandoffParts } from "./handoff";
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { expectedFiles, loads, megabytes } from "./loading";
 import { Opening } from "./opening";
@@ -60,6 +60,10 @@ const RISE_FADE_S = 0.25;
 const AUTO_STEP_FRAMES = 48; // not in the demo: its clip loops until a press
 /** The Screen view: once the 3D has the court, the footage floor gives way to clean wood over this long (seconds). */
 const CLEAN_FLOOR_S = 1;
+/** The demo lands in a fully, evenly lit arena: under the warp's flash the floor's pool gives way to the even house
+ * light over the last LAND_EVEN_S before F, and the cinema mask lifts from LAND_MASK_S before F to LAND_MASK_S after. */
+const LAND_EVEN_S = 0.3;
+const LAND_MASK_S = 0.3;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
   document.title = "Court Side · Lucid Dreams";
@@ -271,10 +275,15 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     return x * x * x * (x * (6 * x - 15) + 10);
   };
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
-  // TEMPORARY (warp.ts replaces it): the landing's flash and ring, and the warp's riser from the ease's first frame
-  const landing = new WarpLanding(court.freeze.players);
-  world.add(landing.object);
+  // the demo's landing beside the warp (warpLanding.ts): the shockwave ring from the hand-off (the warp has the flash;
+  // the landing's own flash only where there is no warp) and the riser from the ease's first frame into F's thump
+  const landing = demoMode ? new WarpLanding(court.freeze.players, { flash: !warp }) : null;
+  if (landing) world.add(landing.object);
   let warped = false;
+  /** The demo's light from the step-in on: the watch's full light, no dim time-stop beat, no pool (the even floor). */
+  const fullLight = () => light.set("watch", 0);
+  /** The demo's cinema mask at tF: lifted under the flash, by LAND_MASK_S after F (never below the hand-off's own). */
+  const landMask = (t: number) => Math.max(handoffBeats(t).mask, smooth((t + LAND_MASK_S) / (2 * LAND_MASK_S)));
   // what draws a ball this frame (the e2e's ball scenario): the ball's card on the video layer, the 3D's own sphere,
   // the holder's splats (freeze.ballInBody); and the holder's card, which the ball's goes with
   const drawn = (o: THREE.Object3D | undefined): boolean => {
@@ -413,7 +422,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     restored = false;
     tScreen = -1;
     screenWatch(1);
-    landing.update(-Infinity, head);
+    landing?.update(-Infinity, head);
     stepGlow.stop();
     clock.restart();
   };
@@ -449,8 +458,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       sound.timeStop(1); // landed on F: the full hush (it lifts only on the resume)
       tF = HANDOFF_END;
       tLight = HANDOFF_END;
-      handoff(tF, parts);
-      landing.update(tF, head);
+      handoff(tF, parts, demoMode ? -Infinity : tLight);
+      if (demoMode) fullLight();
+      landing?.update(tF, head);
       tClean = 0;
       go("open");
     }
@@ -532,10 +542,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         if (phase === "easing") {
           const ease = s.ease !== null ? court.video.segments.eases[s.ease] : null;
           tF = ease ? -(ease.frames[1] - s.frame) / hz : 0; // seconds to F
-          if (!warped && tF < 0) sound.warpRiser(-tF);
+          if (landing && !warped && tF < 0) sound.warpRiser(-tF);
           warped = true;
-          landing.update(tF, head);
-          light.set("ease", ease ? ease.seconds + tF : 0);
+          landing?.update(tF, head);
+          if (demoMode) fullLight();
+          else light.set("ease", ease ? ease.seconds + tF : 0);
           sound.timeStop(Math.max(0, Math.min(1, hush)));
           if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
           // the Screen view: over the ease's last SCREEN_EASE_S (show seconds, slowing into F) the screen dissolves
@@ -543,9 +554,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           // the projected picture fades up from the dissolve's start instead of popping on at full under the screen,
           // and is whole before the splats come up (no 3D seen before F)
           if (screen && tF >= -SCREEN_EASE_S) {
-            screenAside(1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S));
+            const level = 1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S);
+            // the demo: the pool gives way to the even floor under the flash, whole by F
+            screenAside(level, 1 - level, demoMode ? Math.max(level, smooth((tF + LAND_EVEN_S) / LAND_EVEN_S)) : level);
             if (tF < BEATS.splatsUp[0]) video.opacity = smooth((tF + SCREEN_EASE_S) / Math.max(1e-3, SCREEN_EASE_S + BEATS.splatsUp[0]));
           }
+          if (demoMode) video.mask(landMask(tF));
         }
         if (phase === "easing" && s.segment === "freeze") {
           tF = 0;
@@ -562,7 +576,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       }
       case "handoff": {
         feed(clock.state.frame);
-        screenAside(0);
+        screenAside(0, 1, demoMode ? 1 : 0); // the demo: the even floor, no pool
         const [, fadeEnd] = BEATS.videoFades;
         // rushed: whatever is left of the fade plays out in RISE_FADE_S, at the rate latched at the rise (P10); the
         // light keeps the unrushed time
@@ -572,8 +586,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         }
         tF += rushed && tF < fadeEnd ? Math.max(dt, rushRate * dt) : dt;
         tLight += dt;
-        handoff(tF, parts, tLight);
-        landing.update(tF, head);
+        handoff(tF, parts, demoMode ? -Infinity : tLight); // the demo keeps the watch's full light: no hand-off beat
+        if (demoMode) {
+          fullLight();
+          video.mask(landMask(tF));
+        }
+        landing?.update(tF, head);
         if (tF >= HANDOFF_END) {
           tClean = 0;
           go("open");
@@ -584,10 +602,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "walking":
         feed(clock.state.frame);
         tClean += dt;
-        screenAside(0, cleanFloor(), 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
+        screenAside(0, cleanFloor(), demoMode ? 1 : 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
         freeze.update(head, dt);
+        if (demoMode) fullLight();
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
-        if (tLight < HANDOFF_END) {
+        else if (tLight < HANDOFF_END) {
           tLight = Math.min(HANDOFF_END, tLight + dt);
           light.set("handoff", tLight);
         }
