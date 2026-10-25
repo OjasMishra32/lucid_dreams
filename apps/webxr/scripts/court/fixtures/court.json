@@ -475,5 +475,49 @@
     "heldOutPsnrVsGenerated": {},
     "seatPsnr": {},
     "interpShare": 0.2338
+  },
+  "surround": {
+    "far": {
+      "image": "surround/far.jpg",
+      "alpha": "surround/far-alpha.png",
+      "frame": 731,
+      "f": 4166.667,
+      "cx": 799.5,
+      "cy": 449.5,
+      "width": 1600,
+      "height": 900
+    },
+    "crowd": {
+      "atlas": "surround/crowd.jpg",
+      "width": 376,
+      "height": 280,
+      "pxPerM": 60,
+      "tiles": [
+        [
+          4,
+          4,
+          184,
+          136
+        ],
+        [
+          192,
+          4,
+          372,
+          136
+        ],
+        [
+          4,
+          144,
+          184,
+          276
+        ],
+        [
+          192,
+          144,
+          372,
+          276
+        ]
+      ]
+    }
   }
 }
