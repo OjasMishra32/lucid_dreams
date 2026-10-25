@@ -81,7 +81,7 @@ const VERT = /* glsl */ `
 // arena near the picture (drawn under the hands and the caption). Premultiplied
 const FRAG = /* glsl */ `
   uniform sampler2D uTex; uniform vec2 uHalf; uniform float uRadius; uniform float uHalo; uniform float uRim;
-  uniform float uOpacity; uniform float uPart;
+  uniform float uOpacity; uniform float uPart; uniform float uGlow;
   varying vec2 vP;
   float rounded(vec2 p, vec2 h, float r) { vec2 q = abs(p) - h + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
   void main() {
@@ -100,10 +100,12 @@ const FRAG = /* glsl */ `
     float shade = 1.0 - smoothstep(0.0, uHalo, out_);
     float halo = 0.82 * shade * shade * (1.0 - inside);
     float w = max(uRim, 1.5 * aa);
-    float rim = 0.32 * (1.0 - smoothstep(w, w + aa, out_)) * (1.0 - inside);
-    float a = max(halo, rim) * uOpacity;
+    float rim = (0.32 + 0.5 * uGlow) * (1.0 - smoothstep(w, w + aa, out_)) * (1.0 - inside);
+    // Step into the court's pulse (glow): the rim brightens and a soft light spreads just past it; 0 is the plain rim
+    float lit = max(rim, uGlow * 0.4 * (1.0 - smoothstep(0.0, 0.3, out_)) * (1.0 - inside));
+    float a = max(halo, lit) * uOpacity;
     if (a <= 0.002) discard;
-    gl_FragColor = vec4(vec3(0.86) * rim * uOpacity, a);
+    gl_FragColor = vec4(vec3(0.86) * lit * uOpacity, a);
   }`;
 
 /** The cinema screen: one mesh in court space (add it to the court world group). */
@@ -112,6 +114,7 @@ export class CinemaScreen {
   private readonly halo: THREE.Mesh;
   readonly pose: ScreenPose;
   private readonly uOpacity = { value: 1 };
+  private readonly uGlow = { value: 0 };
   private level = 1;
   private roomP = 0;
 
@@ -131,6 +134,7 @@ export class CinemaScreen {
           uRim: { value: SCREEN_RIM_M },
           uOpacity: this.uOpacity,
           uPart: { value: part },
+          uGlow: this.uGlow,
         },
         vertexShader: VERT,
         fragmentShader: FRAG,
@@ -167,6 +171,11 @@ export class CinemaScreen {
   set opacity(k: number) {
     this.level = Math.min(1, Math.max(0, k));
     this.apply();
+  }
+
+  /** Step into the court's pulse on the rim round the picture (0 the plain rim, 1 the peak); the picture never changes. */
+  glow(k: number): void {
+    this.uGlow.value = Math.min(1, Math.max(0, k));
   }
 
   /** See my room's fade (0 the arena, 1 the room): the screen goes with the arena. */
