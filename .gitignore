@@ -29,6 +29,9 @@ apps/quest/Build*/
 # fetched dream bundles (big)
 /dreams/
 apps/webxr/dist/
+# Court Side's bundle (290 MB), extracted for the build; its standard hands are committed
+/apps/webxr/public/court/*
+!/apps/webxr/public/court/hands/
 .claude/
 
 # the small sample bundle is committed on purpose (everyone develops against it)

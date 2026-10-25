@@ -38,10 +38,10 @@ import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
 import { BUILT as VRHANDS_BUILT, VrHands } from "./vrhands";
 import { BUILT as WORLD_BUILT, CourtWorld } from "./world";
 
-/** The stand-in during development (scripts/court/standin.mjs writes it); a build looks in <repo>/dreams/court-side/,
- * which vite.config.ts's dreams middleware serves under the build's base (the site's /xr/dreams/court-side/). serve.mjs
- * serves a real bundle at /bundle/ (its --defaults link names it with ?bundle=, which always wins). */
-const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : `${import.meta.env.BASE_URL}dreams/court-side/`;
+/** The stand-in during development (scripts/court/standin.mjs writes it); a build looks in its own court/ (the bundle
+ * extracted into apps/webxr/public/court/, git-ignored beside hands/: the site's /xr/court/). serve.mjs serves a real
+ * bundle at /bundle/ (its --defaults link names it with ?bundle=, which always wins). */
+const DEFAULT_BUNDLE = import.meta.env.DEV ? "/scripts/court/out/standin/" : `${import.meta.env.BASE_URL}court/`;
 /** The arrival's lights-up, once seat.arrival says the judge is in (3.2): the light field's own rise from black, long
  * enough to stay under 1 grey level a frame on white (P44), so the watch starts at full light. */
 const LIGHTS_UP_S = ARRIVAL_S;
