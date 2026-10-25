@@ -51,6 +51,8 @@ const RISE_FADE_S = 0.25;
 /** ?solo: the show steps into the court by itself this many show frames into pass 2 (after the e2e's own press at +24,
  * well ahead of the first ease's window), so a judge alone, or the laptop without a palm menu, still reaches F. */
 const AUTO_STEP_FRAMES = 48;
+/** The Screen view: once the 3D has the court, the footage floor gives way to clean wood over this long (seconds). */
+const CLEAN_FLOOR_S = 1;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
   document.title = "Court Side · Lucid Dreams";
@@ -136,6 +138,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let fed = -1; // the show frame this display frame handed the video and the proxies (-1 none)
   let tBack = 0; // seconds from the sit (the hand-back's clock)
   let tScreen = -1; // the Screen view: seconds into the screen's dissolve back in after the hand-back; -1 none
+  let tClean = 0; // the Screen view: seconds since the 3D took the court (the footage floor's fade to clean wood)
   let inRoom = false;
   let roomP = 0;
   let reality = false;
@@ -228,13 +231,18 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     proxies.footage(false);
     courtWorld.filmed(0);
   };
-  /** The Screen view off the watch: the footage on the 3D (the Courtside path), the screen at `level`. */
-  const screenAside = (level: number) => {
+  /**
+   * The Screen view off the watch: the footage on the 3D (the Courtside path), the screen at `level`, and the footage
+   * floor at `floor`: up as the screen goes by default (F: all of it, pixel-exact).
+   */
+  const screenAside = (level: number, floor = 1 - level) => {
     if (!screen) return;
     screen.opacity = level;
     proxies.footage(true);
-    courtWorld.filmed(1 - level); // the footage floor comes up as the screen goes (F: all of it, pixel-exact)
+    courtWorld.filmed(floor);
   };
+  /** The footage floor once the 3D has the court: clean wood over CLEAN_FLOOR_S from the open. */
+  const cleanFloor = () => 1 - smooth(tClean / CLEAN_FLOOR_S);
   // the setup page (before Seat here) is the arena as the projection shows it; the screen comes up with the arrival
   screenAside(0);
   const smooth = (u: number) => {
@@ -404,6 +412,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       tF = HANDOFF_END;
       tLight = HANDOFF_END;
       handoff(tF, parts);
+      tClean = 0;
       go("open");
     }
     ui.setPhase(phase, flags());
@@ -507,13 +516,17 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         tF += rushed && tF < fadeEnd ? Math.max(dt, rushRate * dt) : dt;
         tLight += dt;
         handoff(tF, parts, tLight);
-        if (tF >= HANDOFF_END) go("open");
+        if (tF >= HANDOFF_END) {
+          tClean = 0;
+          go("open");
+        }
         break;
       }
       case "open":
       case "walking":
         feed(clock.state.frame);
-        screenAside(0);
+        tClean += dt;
+        screenAside(0, cleanFloor()); // the Screen view: clean wood under the 3D, F's floor footage gone
         freeze.update(head, dt);
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
         if (tLight < HANDOFF_END) {
@@ -544,10 +557,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
             clock.resume();
             tBack = 0;
             go("resume");
-          } else screenAside(0);
+          } else screenAside(0, video.opacity); // the footage floor comes back with the picture over it
         } else {
           light.set("return", tBack);
-          screenAside(0);
+          tClean += dt;
+          screenAside(0, cleanFloor());
         }
         break;
       }

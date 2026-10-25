@@ -116,6 +116,10 @@ export default async function realtime(ctx) {
   await ctx.save("rt-06-mid-walk");
   const walk = await now();
   ctx.check("realtime: walking, the 3D players are drawn and the picture is gone", walk.freeze && walk.video === 0, `phase ${walk.phase}, 3D drawn ${walk.freeze}, picture ${walk.video}`);
+  if (screenView) {
+    ctx.check("realtime: Screen view, F's floor footage is all there on F (the hand-off's own floor)", !!heldF && heldF.floor === 1, `footage floor ${heldF?.floor} on F`);
+    ctx.check("realtime: Screen view, clean wood under the 3D once it has the court", walk.floor === 0, `footage floor ${walk.floor} mid-walk`);
+  }
 
   // ---- Back to my seat: the picture returns, and the make plays as real footage
   await ctx.press("back");
