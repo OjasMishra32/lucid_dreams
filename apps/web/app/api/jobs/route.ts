@@ -20,6 +20,10 @@ const MAX_PHOTOS = 10;
  * rest go to the face model, saved in faces/ beside it (.data/uploads/<uuid>/faces/face-01.jpg, ...).
  */
 export async function POST(req: Request) {
+  // the website in the cloud (~/LucidDreams-held/cloud-web.sh) has no connection to HiPerGator
+  if (process.env.LUCID_CLOUD) {
+    return json({ error: "Making a new dream needs our HiPerGator connection, and it isn't on right now." }, 503);
+  }
   if (!req.body || !req.headers.get("content-type")?.startsWith("multipart/form-data")) {
     return json({ error: "Send multipart/form-data with file, name and kind." }, 400);
   }

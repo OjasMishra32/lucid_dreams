@@ -232,6 +232,11 @@ export default function MakeDream() {
 
   function send() {
     if (!file || !info) return;
+    // the website in the cloud has no way to HiPerGator: say so before anything is uploaded
+    if (process.env.NEXT_PUBLIC_LUCID_CLOUD) {
+      setError("Making a new dream needs our HiPerGator connection, and it isn't on right now. Every scene above works without it.");
+      return;
+    }
     setError(null);
     setSent(0);
     const form = new FormData();
