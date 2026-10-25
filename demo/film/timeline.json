@@ -1,0 +1,858 @@
+{
+ "fps": 30,
+ "length": 180.0,
+ "video": [
+  {
+   "src": "black",
+   "in": 0.0,
+   "start": 0.0,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 2.383
+  },
+  {
+   "src": "phone/open-2.mov",
+   "in": 1.4,
+   "start": 2.383,
+   "x": "dissolve",
+   "xd": 1.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "zoom": [
+    1.0,
+    1.05
+   ],
+   "end": 5.24
+  },
+  {
+   "src": "phone/open-1.mov",
+   "in": 3.0,
+   "start": 5.24,
+   "x": "dissolve",
+   "xd": 0.7,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "zoom": [
+    1.0,
+    1.04
+   ],
+   "end": 8.097
+  },
+  {
+   "src": "phone/open-3.mov",
+   "in": 5.0,
+   "start": 8.097,
+   "x": "dissolve",
+   "xd": 0.6,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 10.954
+  },
+  {
+   "src": "motion/source-grandma.mp4",
+   "in": 0.0,
+   "start": 10.954,
+   "x": "dissolve",
+   "xd": 0.6,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 14.526
+  },
+  {
+   "src": "selects/grandma-ian.mp4",
+   "in": 0.1,
+   "start": 14.526,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 19.526
+  },
+  {
+   "src": "selects/grandma-reply.mp4",
+   "in": 0.05,
+   "start": 19.526,
+   "x": "dissolve",
+   "xd": 0.9,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 23.811
+  },
+  {
+   "src": "selects/grandma-stand.mp4",
+   "in": 0.0,
+   "start": 23.811,
+   "x": "dissolve",
+   "xd": 1.0,
+   "grade": true,
+   "speed": 0.7,
+   "fit": "cover",
+   "end": 28.097
+  },
+  {
+   "src": "motion/title.mp4",
+   "in": 0.0,
+   "start": 28.097,
+   "x": "dip",
+   "xd": 0.8,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 30.954
+  },
+  {
+   "src": "motion/headset-full.mp4",
+   "in": 0.2,
+   "start": 30.954,
+   "x": "dissolve",
+   "xd": 0.5,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 39.526
+  },
+  {
+   "src": "motion/cameras.mp4",
+   "in": 2.0,
+   "start": 39.526,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 43.811
+  },
+  {
+   "src": "motion/fit.mp4",
+   "in": 3.5,
+   "start": 43.811,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 48.097
+  },
+  {
+   "src": "motion/anatomy.mp4",
+   "in": 5.0,
+   "start": 48.097,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 53.811
+  },
+  {
+   "src": "motion/reality.mp4",
+   "in": 0.6,
+   "start": 53.811,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 56.669
+  },
+  {
+   "src": "motion/frontier.mp4",
+   "in": 0.0,
+   "start": 56.669,
+   "x": "dissolve",
+   "xd": 0.5,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 62.383
+  },
+  {
+   "src": "motion/gemma.mp4",
+   "in": 0.6,
+   "start": 62.383,
+   "x": "dissolve",
+   "xd": 0.4,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 65.954
+  },
+  {
+   "src": "motion/source-guitar.mp4",
+   "in": 0.0,
+   "start": 65.954,
+   "x": "dissolve",
+   "xd": 0.5,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 73.097
+  },
+  {
+   "src": "selects/guitar-lesson.mp4",
+   "in": 0.8,
+   "start": 73.097,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 75.24
+  },
+  {
+   "src": "selects/golf-swing.mp4",
+   "in": 0.1,
+   "start": 75.24,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 77.383
+  },
+  {
+   "src": "selects/golf-hit.mp4",
+   "in": 0.0,
+   "start": 77.383,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 0.62,
+   "fit": "cover",
+   "interp": true,
+   "end": 80.24
+  },
+  {
+   "src": "motion/source-bobby.mp4",
+   "in": 0.0,
+   "start": 80.24,
+   "x": "dip",
+   "xd": 0.8,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 85.954
+  },
+  {
+   "src": "motion/bobby.mp4",
+   "in": 2.0,
+   "start": 85.954,
+   "x": "dissolve",
+   "xd": 0.6,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 89.526
+  },
+  {
+   "src": "selects/chess-you-bobby.mp4",
+   "in": 0.0,
+   "start": 89.526,
+   "x": "dissolve",
+   "xd": 0.5,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 92.383
+  },
+  {
+   "src": "selects/bobby-reach1.mp4",
+   "in": 0.0,
+   "start": 92.383,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 0.95,
+   "fit": "cover",
+   "end": 95.24
+  },
+  {
+   "src": "selects/bobby-steady.mp4",
+   "in": 0.0,
+   "start": 95.24,
+   "x": "dissolve",
+   "xd": 0.5,
+   "grade": true,
+   "speed": 0.8,
+   "fit": "cover",
+   "end": 99.526
+  },
+  {
+   "src": "motion/magnus.mp4",
+   "in": 2.0,
+   "start": 99.526,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 102.383
+  },
+  {
+   "src": "selects/chess-you-magnus.mp4",
+   "in": 0.0,
+   "start": 102.383,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 105.24
+  },
+  {
+   "src": "selects/magnus-look.mp4",
+   "in": 0.0,
+   "start": 105.24,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 0.93,
+   "fit": "cover",
+   "end": 107.383
+  },
+  {
+   "src": "selects/tennis-shake.mp4",
+   "in": 0.0,
+   "start": 107.383,
+   "x": "dissolve",
+   "xd": 0.4,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 110.24
+  },
+  {
+   "src": "selects/tennis-face.mp4",
+   "in": 0.0,
+   "start": 110.24,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 0.8,
+   "fit": "cover",
+   "end": 112.383
+  },
+  {
+   "src": "selects/tennis-serve.mp4",
+   "in": 0.0,
+   "start": 112.383,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 113.811
+  },
+  {
+   "src": "selects/tennis-rally.mp4",
+   "in": 2.6,
+   "start": 113.811,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 116.669
+  },
+  {
+   "src": "selects/lebron-dribble.mp4",
+   "in": 0.0,
+   "start": 116.669,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 119.526
+  },
+  {
+   "src": "selects/lebron-catch.mp4",
+   "in": 0.1,
+   "start": 119.526,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 121.669
+  },
+  {
+   "src": "selects/lebron-score.mp4",
+   "in": 0.0,
+   "start": 121.669,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 123.811
+  },
+  {
+   "src": "selects/court-game.mp4",
+   "in": 0.0,
+   "start": 123.811,
+   "x": "dissolve",
+   "xd": 0.4,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 126.669
+  },
+  {
+   "src": "selects/court-walk.mp4",
+   "in": 0.0,
+   "start": 126.669,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 131.669
+  },
+  {
+   "src": "selects/court-gobert.mp4",
+   "in": 0.0,
+   "start": 131.669,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 133.811
+  },
+  {
+   "src": "motion/court-orbit.mp4",
+   "in": 2.4,
+   "start": 133.811,
+   "x": "dissolve",
+   "xd": 0.4,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 136.669
+  },
+  {
+   "src": "motion/avatar.mp4",
+   "in": 1.0,
+   "start": 136.669,
+   "x": "dissolve",
+   "xd": 0.4,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 142.383
+  },
+  {
+   "src": "selects/vishal-ask-reply.mp4",
+   "in": 0.0,
+   "start": 142.383,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 150.954
+  },
+  {
+   "src": "motion/headset-heat.mp4",
+   "in": 10.0,
+   "start": 150.954,
+   "x": "dissolve",
+   "xd": 0.5,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 153.811
+  },
+  {
+   "src": "selects/grandma-calm.mp4",
+   "in": 0.0,
+   "start": 153.811,
+   "x": "dissolve",
+   "xd": 1.0,
+   "grade": true,
+   "speed": 0.7,
+   "fit": "cover",
+   "end": 155.954
+  },
+  {
+   "src": "selects/bobby-face.mp4",
+   "in": 1.6,
+   "start": 155.954,
+   "x": "dissolve",
+   "xd": 0.8,
+   "grade": true,
+   "speed": 0.7,
+   "fit": "cover",
+   "end": 158.811
+  },
+  {
+   "src": "phone/end-ian.mov",
+   "in": 0.3,
+   "start": 158.811,
+   "x": "dissolve",
+   "xd": 0.8,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "zoom": [
+    1.0,
+    1.03
+   ],
+   "end": 163.097
+  },
+  {
+   "src": "phone/end-ojas.mov",
+   "in": 0.6,
+   "start": 163.097,
+   "x": "dissolve",
+   "xd": 0.6,
+   "grade": true,
+   "speed": 0.8,
+   "fit": "cover",
+   "zoom": [
+    1.0,
+    1.03
+   ],
+   "end": 165.24
+  },
+  {
+   "src": "motion/lineup.mp4",
+   "in": 0.0,
+   "start": 165.24,
+   "x": "dip",
+   "xd": 0.8,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 170.954
+  },
+  {
+   "src": "motion/end.mp4",
+   "in": 0.0,
+   "start": 170.954,
+   "x": "dip",
+   "xd": 0.8,
+   "grade": false,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 180.0
+  }
+ ],
+ "text": [
+  {
+   "text": "Ian hasn't been home in four years.",
+   "at": 0.4,
+   "dur": 3.0,
+   "pos": "center",
+   "size": 50,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "He has a video of his grandmother.",
+   "at": 2.883,
+   "dur": 3.2,
+   "pos": "lower",
+   "size": 40,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "So we brought her into his room.",
+   "at": 8.497,
+   "dur": 2.4,
+   "pos": "lower",
+   "size": 40,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "\u201cGrandma, I miss you so much. It's been four years since I've been home.\u201d",
+   "at": 14.876,
+   "dur": 4.7,
+   "pos": "lower",
+   "size": 42,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "B\u00e0 \u01a1i, con nh\u1edb b\u00e0 nhi\u1ec1u l\u1eafm. 4 n\u0103m r\u1ed3i con ch\u01b0a v\u1ec1.",
+   "at": 14.876,
+   "dur": 4.7,
+   "pos": "lower2",
+   "size": 24,
+   "color": "#a1a1a6",
+   "weight": "medium"
+  },
+  {
+   "text": "\u201cI know, dear. I miss you every day. Tell me what you're doing!\u201d",
+   "at": 19.926,
+   "dur": 4.0,
+   "pos": "lower",
+   "size": 42,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "B\u00e0 bi\u1ebft, con. B\u00e0 nh\u1edb con t\u1eebng ng\u00e0y. H\u00e3y cho b\u00e0 bi\u1ebft con \u0111ang l\u00e0m g\u00ec nh\u00e9!",
+   "at": 19.926,
+   "dur": 4.0,
+   "pos": "lower2",
+   "size": 24,
+   "color": "#a1a1a6",
+   "weight": "medium"
+  },
+  {
+   "text": "AI voice, cloned with her family's consent",
+   "at": 19.926,
+   "dur": 4.0,
+   "pos": "upper",
+   "size": 20,
+   "color": "#a1a1a6",
+   "weight": "medium"
+  },
+  {
+   "text": "Ojasva learned chess from Bobby Fischer's games.",
+   "at": 80.54,
+   "dur": 1.6,
+   "pos": "upper",
+   "size": 30,
+   "color": "#a1a1a6",
+   "weight": "medium"
+  },
+  {
+   "text": "Stockfish at Fischer's peak rating. Not affiliated.",
+   "at": 89.826,
+   "dur": 9.4,
+   "pos": "lower-right",
+   "size": 20,
+   "color": "#d2d2d7",
+   "weight": "medium"
+  },
+  {
+   "text": "Stockfish at Carlsen's peak rating. Not affiliated.",
+   "at": 102.583,
+   "dur": 4.6,
+   "pos": "lower-right",
+   "size": 20,
+   "color": "#d2d2d7",
+   "weight": "medium"
+  },
+  {
+   "text": "Roger Federer's likeness. AI opponent, not affiliated.",
+   "at": 107.583,
+   "dur": 8.886000000000001,
+   "pos": "lower-right",
+   "size": 20,
+   "color": "#d2d2d7",
+   "weight": "medium"
+  },
+  {
+   "text": "His likeness, from his footage. Not affiliated.",
+   "at": 116.869,
+   "dur": 6.74200000000001,
+   "pos": "lower-right",
+   "size": 20,
+   "color": "#d2d2d7",
+   "weight": "medium"
+  },
+  {
+   "text": "Real footage, rebuilt in 3D. Not affiliated with the NBA or the players.",
+   "at": 124.111,
+   "dur": 12.258000000000004,
+   "pos": "lower-right",
+   "size": 20,
+   "color": "#d2d2d7",
+   "weight": "medium"
+  },
+  {
+   "text": "\u201cHey Vishal, how are you doing?\u201d",
+   "at": 143.283,
+   "dur": 1.9,
+   "pos": "lower",
+   "size": 40,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "\u201cHey! Not much, just excited to chat and share about Lucid Dreams. How about you?\u201d",
+   "at": 146.683,
+   "dur": 4.0,
+   "pos": "lower",
+   "size": 34,
+   "color": "#f5f5f7",
+   "weight": "semibold"
+  },
+  {
+   "text": "AI voice \u00b7 his own, cloned with his consent",
+   "at": 146.683,
+   "dur": 4.0,
+   "pos": "lower2",
+   "size": 22,
+   "color": "#a1a1a6",
+   "weight": "medium"
+  }
+ ],
+ "audio": [
+  {
+   "src": "music/stems/no_vocals.mp3",
+   "in": 0.0,
+   "at": 5.1,
+   "dur": 22.5,
+   "gain": -15,
+   "bus": "bed",
+   "fadein": 3.0,
+   "fadeout": 0.0
+  },
+  {
+   "src": "music/lucid-dreams.mp3",
+   "in": 22.5,
+   "at": 27.6,
+   "dur": 6.610999999999997,
+   "gain": -9,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.8
+  },
+  {
+   "src": "music/stems/no_vocals.mp3",
+   "in": 28.311,
+   "at": 33.411,
+   "dur": 108.97200000000001,
+   "gain": -13,
+   "bus": "bed",
+   "fadein": 0.8,
+   "fadeout": 0.0
+  },
+  {
+   "src": "music/stems/no_vocals.mp3",
+   "in": 137.28300000000002,
+   "at": 142.383,
+   "dur": 28.570999999999998,
+   "gain": -14,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.8
+  },
+  {
+   "src": "music/stems/vocals.mp3",
+   "in": 22.52,
+   "at": 156.189,
+   "dur": 6.1,
+   "gain": -12,
+   "bus": "bed",
+   "fadein": 0.2,
+   "fadeout": 1.2
+  },
+  {
+   "src": "music/lucid-dreams.mp3",
+   "in": 228.71,
+   "at": 170.954,
+   "dur": 9.045999999999992,
+   "gain": -11,
+   "bus": "bed",
+   "fadein": 0.6,
+   "fadeout": 2.5
+  },
+  {
+   "src": "quest/grandma-1.mp4",
+   "in": 8.5,
+   "at": 14.526,
+   "dur": 5.1,
+   "gain": 9,
+   "bus": "voice",
+   "fadein": 0.0,
+   "fadeout": 0.0
+  },
+  {
+   "src": "quest/grandma-1.mp4",
+   "in": 18.95,
+   "at": 19.526,
+   "dur": 4.2,
+   "gain": 7,
+   "bus": "voice",
+   "fadein": 0.0,
+   "fadeout": 0.0
+  },
+  {
+   "src": "selects/vishal-ask-reply.mp4",
+   "in": 0.0,
+   "at": 142.383,
+   "dur": 8.6,
+   "gain": 2,
+   "bus": "voice",
+   "fadein": 0.0,
+   "fadeout": 0.0
+  },
+  {
+   "src": "selects/guitar-lesson.mp4",
+   "in": 0.8,
+   "at": 73.097,
+   "dur": 2.1430000000000007,
+   "gain": -12,
+   "bus": "bed",
+   "fadein": 0.2,
+   "fadeout": 0.2
+  },
+  {
+   "src": "selects/tennis-serve.mp4",
+   "in": 0.0,
+   "at": 112.383,
+   "dur": 1.4280000000000115,
+   "gain": -5,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.1
+  },
+  {
+   "src": "selects/tennis-rally.mp4",
+   "in": 2.6,
+   "at": 113.811,
+   "dur": 2.85799999999999,
+   "gain": -5,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.3
+  },
+  {
+   "src": "selects/lebron-catch.mp4",
+   "in": 0.1,
+   "at": 119.526,
+   "dur": 2.1430000000000007,
+   "gain": -9,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.0
+  },
+  {
+   "src": "selects/lebron-score.mp4",
+   "in": 0.0,
+   "at": 121.669,
+   "dur": 2.14200000000001,
+   "gain": -9,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.2
+  },
+  {
+   "src": "selects/golf-hit.mp4",
+   "in": 0.0,
+   "at": 77.383,
+   "dur": 2.8569999999999993,
+   "gain": -6,
+   "bus": "bed",
+   "fadein": 0.0,
+   "fadeout": 0.3
+  }
+ ]
+}
