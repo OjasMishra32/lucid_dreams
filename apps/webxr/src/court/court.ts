@@ -8,6 +8,8 @@
 //   (the time stop) -> handoff (handoff(t) from F) -> open -> walking (Walk closer or standing up: the walking
 //   anchoring; Next view) -> returning (through the room to the chair, re-seat, handback(t)) -> resume (through the
 //   make) -> ended (Replay).
+// The demo (demo.ts, unless ?demo=0): the watch is the clock's looping clip until Step into the court, and nothing reads
+// the room's bounds (no edge fade, Back to my seat re-seats where you stand, standing up never jumps the world).
 // See my room works in every phase; the edge fade runs every frame; every button, key and probe action is queued to
 // the next frame, right after its head pose is read. A throw inside the frame is logged once and the loop keeps going
 // (a stopped loop freezes the headset). `?stats` keeps the frame log; `?probe` (dev only) hands the loop to the e2e
@@ -17,9 +19,10 @@ import { SparkRenderer } from "@sparkjsdev/spark";
 import { handSides } from "../xr/menu";
 import { COURT_QUALITY, SPLAT_QUALITY } from "../xr/quality";
 import { BUILT as CLOCK_BUILT, Clock, type ClockState } from "./clock";
+import { demoMode } from "./demo";
 import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
-import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
+import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, handoffBeats, type HandoffParts } from "./handoff";
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
 import { expectedFiles, loads, megabytes } from "./loading";
 import { Opening } from "./opening";
@@ -32,6 +35,7 @@ import { BUILT as SEATMATH_BUILT, STAND_RISE, toCourt } from "./seatmath";
 import { BUILT as SOUND_BUILT, Sound } from "./sound";
 import { FrameStats } from "./stats";
 import { RESET_OUT_S, ResetFade, ResetVeil, StepGlow } from "./transitions";
+import { Warp } from "./warp";
 import type { Head, Phase } from "./types";
 import { BUILT as UI_BUILT, Ui, type UiAction } from "./ui";
 import { BUILT as VIDEO_BUILT, ShowVideo } from "./video";
@@ -54,9 +58,13 @@ const RISE_FINISH = 0.1;
 const RISE_FADE_S = 0.25;
 /** ?solo: the show steps into the court by itself this many show frames into pass 2 (after the e2e's own press at +24,
  * well ahead of the first ease's window), so a judge alone, or the laptop without a palm menu, still reaches F. */
-const AUTO_STEP_FRAMES = 48;
+const AUTO_STEP_FRAMES = 48; // not in the demo: its clip loops until a press
 /** The Screen view: once the 3D has the court, the footage floor gives way to clean wood over this long (seconds). */
 const CLEAN_FLOOR_S = 1;
+/** The demo lands in a fully, evenly lit arena: under the warp's flash the floor's pool gives way to the even house
+ * light over the last LAND_EVEN_S before F, and the cinema mask lifts from LAND_MASK_S before F to LAND_MASK_S after. */
+const LAND_EVEN_S = 0.3;
+const LAND_MASK_S = 0.3;
 
 export async function renderCourt(root: HTMLElement): Promise<void> {
   document.title = "Court Side · Lucid Dreams";
@@ -210,7 +218,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   if (stats) (window as unknown as { __courtStats?: FrameStats }).__courtStats = stats;
 
   // ---------------- the modules ----------------
-  const clock = new Clock(court, frames);
+  const clock = new Clock(court, frames, { loop: demoMode });
   clockRef = clock;
   clockState = clock.state;
   const light = new LightField(court);
@@ -237,6 +245,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const resetVeil = new ResetVeil();
   scene.add(resetVeil.mesh);
   const stepGlow = new StepGlow();
+  // demo mode (`?demo=0` is the plain show): Step into the court warps from the screen into the court (warp.ts)
+  const warp = screen && demoMode ? new Warp(screen, video.regions.live, court.freeze.players) : null;
+  if (warp) {
+    world.add(warp.object);
+    warp.prewarm(renderer, camera, scene);
+  }
   // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
@@ -268,6 +282,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     return x * x * x * (x * (6 * x - 15) + 10);
   };
   const parts: HandoffParts = { video, proxies, world: courtWorld, freeze, sound, light };
+  let warped = false; // the warp's riser has started (sound.warpRiser, from the ease's first frame into F's thump)
+  /** The demo's light from the step-in on: the watch's full light, no dim time-stop beat, no pool (the even floor). */
+  const fullLight = () => light.set("watch", 0);
+  /** The demo's cinema mask at tF: lifted under the flash, by LAND_MASK_S after F (never below the hand-off's own). */
+  const landMask = (t: number) => Math.max(handoffBeats(t).mask, smooth((t + LAND_MASK_S) / (2 * LAND_MASK_S)));
   // what draws a ball this frame (the e2e's ball scenario): the ball's card on the video layer, the 3D's own sphere,
   // the holder's splats (freeze.ballInBody); and the holder's card, which the ball's goes with
   const drawn = (o: THREE.Object3D | undefined): boolean => {
@@ -371,7 +390,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   });
   on("back", () => {
     if (phase !== "open" && phase !== "walking") return;
-    inRoom = true; // back to the chair always goes through the room (3.5)
+    // back to the chair always goes through the room (3.5); the demo skips the room and the walk: the seat comes to
+    // wherever the judge stands now, behind the fade-jump's veil, so the hand-back is F from their own eyes
+    if (demoMode) {
+      seat.place(head, head.yaw);
+      seatedEyeY = head.room[1];
+    } else inRoom = true;
     restored = false;
     tBack = 0;
     go("returning");
@@ -418,7 +442,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     if (setup) return;
     resetFade.cancel();
     restart();
-    feed(court.video.segments.pass1[0]);
+    feed(clock.first);
     screenAside(0);
     setup = true;
     lightsUp = -1;
@@ -436,7 +460,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       sound.timeStop(1); // landed on F: the full hush (it lifts only on the resume)
       tF = HANDOFF_END;
       tLight = HANDOFF_END;
-      handoff(tF, parts);
+      handoff(tF, parts, demoMode ? -Infinity : tLight);
+      if (demoMode) fullLight();
       tClean = 0;
       go("open");
     }
@@ -464,7 +489,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     sound.room(roomP);
     vrHands.fade(roomP);
     opening.hide(); // drawn only in the arrival (below)
-    courtWorld.edge(seat.boundsDistance(head));
+    courtWorld.edge(demoMode ? Infinity : seat.boundsDistance(head)); // the demo: the arena whole wherever the head goes
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
     handsLevel = arrive * light.at(head.court[0], head.court[2], PART.person);
@@ -481,7 +506,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
         sound.arrive(p);
         // the lit footage region rises out of black on pass 1's first frame (3.2), so the watch starts on a frame shown
-        const first = court.video.segments.pass1[0];
+        // (the demo's clip starts in pass 2: the second decoder primes it)
+        const first = clock.first;
+        if (demoMode) video.prime(first);
         feed(first);
         video.wipe(1 - p);
         screenWatch(p);
@@ -502,18 +529,24 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         const s = clock.state;
         // ?solo: nobody to press Step into the court, so the show takes it by itself early in pass 2 (once a pass; a
         // press of the judge's own already took it)
-        if (solo && phase === "watching" && !inRoom && s.segment === "pass2" && s.frame >= court.video.segments.pass2[0] + AUTO_STEP_FRAMES && !clock.pressed) stepIn();
+        if (!demoMode && solo && phase === "watching" && !inRoom && s.segment === "pass2" && s.frame >= court.video.segments.pass2[0] + AUTO_STEP_FRAMES && !clock.pressed) stepIn();
         feed(s.frame);
         screenWatch(1);
         // the rendered court's darkness follows the pan: the frame on screen (the clock's until the player reports one)
         courtWorld.frame(video.stats.onScreen >= 0 ? video.stats.onScreen : s.frame);
         video.prime(s.nextJump);
         const hush = 1 - s.speed / court.video.pass2Speed; // 0 at pass 2's speed, 1 frozen
-        if (phase === "watching" && s.segment === "ease") go("easing");
+        if (phase === "watching" && s.segment === "ease") {
+          warped = false;
+          go("easing");
+        }
         if (phase === "easing") {
           const ease = s.ease !== null ? court.video.segments.eases[s.ease] : null;
           tF = ease ? -(ease.frames[1] - s.frame) / hz : 0; // seconds to F
-          light.set("ease", ease ? ease.seconds + tF : 0);
+          if (warp && !warped && tF < 0) sound.warpRiser(-tF);
+          warped = true;
+          if (demoMode) fullLight();
+          else light.set("ease", ease ? ease.seconds + tF : 0);
           sound.timeStop(Math.max(0, Math.min(1, hush)));
           if (tF >= BEATS.splatsUp[0]) handoff(tF, parts); // the splats come up under the picture before F
           // the Screen view: over the ease's last SCREEN_EASE_S (show seconds, slowing into F) the screen dissolves
@@ -521,9 +554,12 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
           // the projected picture fades up from the dissolve's start instead of popping on at full under the screen,
           // and is whole before the splats come up (no 3D seen before F)
           if (screen && tF >= -SCREEN_EASE_S) {
-            screenAside(1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S));
+            const level = 1 - smooth((tF + SCREEN_EASE_S) / SCREEN_EASE_S);
+            // the demo: the pool gives way to the even floor under the flash, whole by F
+            screenAside(level, 1 - level, demoMode ? Math.max(level, smooth((tF + LAND_EVEN_S) / LAND_EVEN_S)) : level);
             if (tF < BEATS.splatsUp[0]) video.opacity = smooth((tF + SCREEN_EASE_S) / Math.max(1e-3, SCREEN_EASE_S + BEATS.splatsUp[0]));
           }
+          if (demoMode) video.mask(landMask(tF));
         }
         if (phase === "easing" && s.segment === "freeze") {
           tF = 0;
@@ -540,7 +576,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       }
       case "handoff": {
         feed(clock.state.frame);
-        screenAside(0);
+        screenAside(0, 1, demoMode ? 1 : 0); // the demo: the even floor, no pool
         const [, fadeEnd] = BEATS.videoFades;
         // rushed: whatever is left of the fade plays out in RISE_FADE_S, at the rate latched at the rise (P10); the
         // light keeps the unrushed time
@@ -550,7 +586,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         }
         tF += rushed && tF < fadeEnd ? Math.max(dt, rushRate * dt) : dt;
         tLight += dt;
-        handoff(tF, parts, tLight);
+        handoff(tF, parts, demoMode ? -Infinity : tLight); // the demo keeps the watch's full light: no hand-off beat
+        if (demoMode) {
+          fullLight();
+          video.mask(landMask(tF));
+        }
         if (tF >= HANDOFF_END) {
           tClean = 0;
           go("open");
@@ -561,10 +601,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "walking":
         feed(clock.state.frame);
         tClean += dt;
-        screenAside(0, cleanFloor(), 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
+        screenAside(0, cleanFloor(), demoMode ? 1 : 1 - cleanFloor()); // the Screen view: clean, evenly lit wood under the 3D, F's floor footage and pool gone
         freeze.update(head, dt);
+        if (demoMode) fullLight();
         // a rushed fade opened the world early: the light's hand-off beat runs on in its own time to its end
-        if (tLight < HANDOFF_END) {
+        else if (tLight < HANDOFF_END) {
           tLight = Math.min(HANDOFF_END, tLight + dt);
           light.set("handoff", tLight);
         }
@@ -574,7 +615,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "returning": {
         feed(clock.state.frame);
         freeze.update(head, dt);
-        if (!restored && seat.seated(head)) {
+        if (!restored && (demoMode || seat.seated(head))) {
           seat.restore(); // the chair back at the dolly seat, behind the room
           restored = true;
           inRoom = false;
@@ -607,8 +648,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         break;
     }
     sound.update(head, clock.state, seat.world); // the crowd turns with the court; the hush lifts only on the resume (sound.ts)
-    // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4)
-    if (head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
+    // standing up in the open world jumps to the walking anchoring, as Walk closer does (3.4); never in the demo
+    if (!demoMode && head.room[1] - seatedEyeY > STAND_RISE && phase === "open") {
       seat.closer();
       go("walking");
     }
@@ -632,6 +673,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     const charge = ease ? (tF + ease.seconds) / Math.max(1e-3, ease.seconds - SCREEN_EASE_S) : null;
     const { glow, wave } = stepGlow.update(dt, charge);
     screen?.glow(glow, wave);
+    // the warp rides the ease into F and lands on F's own picture; off in every other phase
+    warp?.update(phase === "easing" || phase === "handoff" ? tF : null, head);
   };
 
   // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again

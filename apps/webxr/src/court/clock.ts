@@ -216,6 +216,16 @@ function jumpTo(from: number, to: number): number | null {
   return to === from + 1 ? null : to;
 }
 
+/** How the clock runs the watch. */
+export interface ClockOptions {
+  /**
+   * The demo's clip (demo.ts): the watch is pass 2 from its first frame up to the first ease's press window, looping
+   * (each repeat counts as a pass) until a press, which jumps back to the clip's first frame and plays it once into
+   * the first ease; restart() and Replay come back to the loop. No pass 1, no cutoff, no later ease.
+   */
+  loop?: boolean;
+}
+
 /** Which part of the show is on screen. "freeze" holds F (after an ease lands, until resume()). */
 export type Segment = "pass1" | "pass2" | "ease" | "freeze" | "resume" | "ended";
 
@@ -259,11 +269,16 @@ export class Clock {
   private armNext = false;
   /** resume() was called in the freeze: the next step enters the resume. */
   private resuming = false;
+  /** The demo's clip loop (ClockOptions.loop). */
+  private readonly loop: boolean;
+  /** Loop: a press waits to jump back to the clip's first frame (the jump the second decoder has primed). */
+  private replay = false;
   private readonly cadence: Cadence;
 
-  constructor(court: Court, frames: readonly ShowFrame[]) {
+  constructor(court: Court, frames: readonly ShowFrame[], options: ClockOptions = {}) {
     this.court = court;
     this.frames = frames;
+    this.loop = !!options.loop;
     this.cadence = new Cadence(court.video.displayHz);
     const first = court.video.segments.pass1[0];
     this.state = { frame: first, segment: "pass1", ease: null, speed: PASS1_SPEED, nextEase: 0, nextJump: null, armed: false, pass: 0, segmentFrame: 0 };
@@ -287,10 +302,21 @@ export class Clock {
     return this.state;
   }
 
-  /** Step into the court: take the next ease still ahead, arm it in pass 1, or arm the next pass after the cutoff. */
+  /** The watch's first show frame: pass 1's, or the clip's (pass 2's) when looping. */
+  get first(): number {
+    const seg = this.court.video.segments;
+    return this.loop ? seg.pass2[0] : seg.pass1[0];
+  }
+
+  /** Step into the court: take the next ease still ahead, arm it in pass 1, or arm the next pass after the cutoff. Looping: replay the clip from its first frame into the first ease. */
   press(): void {
     const s = this.state;
-    if (s.segment === "pass1") this.armNext = true;
+    if (this.loop) {
+      if (s.segment === "pass2" && this.take === null) {
+        this.take = 0;
+        this.replay = s.frame !== this.first;
+      }
+    } else if (s.segment === "pass1") this.armNext = true;
     else if (s.segment === "pass2" && this.take === null) {
       const k = this.easeAhead(s.frame);
       if (k === null) this.armNext = true;
@@ -311,12 +337,14 @@ export class Clock {
     this.refresh();
   }
 
-  /** Back to pass 1's first frame (See my room during the watch restarts it; Replay). */
+  /** Back to pass 1's first frame, or the clip's when looping (See my room during the watch restarts it; Replay). */
   restart(): void {
-    Object.assign(this.state, { frame: this.court.video.segments.pass1[0], segment: "pass1", ease: null, speed: PASS1_SPEED, pass: 0, segmentFrame: 0 });
+    if (this.loop) Object.assign(this.state, { frame: this.first, segment: "pass2", ease: null, speed: this.court.video.pass2Speed, pass: 1, segmentFrame: 0 });
+    else Object.assign(this.state, { frame: this.court.video.segments.pass1[0], segment: "pass1", ease: null, speed: PASS1_SPEED, pass: 0, segmentFrame: 0 });
     this.take = null;
     this.armNext = false;
     this.resuming = false;
+    this.replay = false;
     this.refresh();
   }
 
@@ -327,6 +355,7 @@ export class Clock {
     this.take = null;
     this.armNext = false;
     this.resuming = false;
+    this.replay = false;
     Object.assign(this.state, { frame: eases[k].frames[1], segment: "freeze", ease: null, speed: 0, segmentFrame: 0 });
     this.refresh();
   }
@@ -358,11 +387,14 @@ export class Clock {
         } else this.startPass2();
         break;
       case "pass2":
-        if (this.take !== null && s.frame === seg.eases[this.take].start) {
+        if (this.replay) {
+          this.replay = false;
+          this.startPass2(); // the press's replay: the clip from its first frame, into the ease taken
+        } else if (this.take !== null && s.frame === seg.eases[this.take].start) {
           s.ease = this.take;
           this.take = null;
           this.enter("ease", seg.eases[s.ease].frames[0]);
-        } else if (s.frame < seg.pass2[1]) {
+        } else if (s.frame < this.passEnd()) {
           s.frame++;
           s.segmentFrame++;
         } else this.startPass2();
@@ -390,6 +422,12 @@ export class Clock {
       case "ended":
         break;
     }
+  }
+
+  /** Pass 2's last frame before it repeats: the frame before the first ease's press window while the clip loops untaken. */
+  private passEnd(): number {
+    const seg = this.court.video.segments;
+    return this.loop && this.take === null ? seg.eases[0].start - 1 : seg.pass2[1];
   }
 
   /** Pass 2 from its first frame (after pass 1, and every repeat); an armed stop becomes this pass's first ease. */
@@ -421,6 +459,12 @@ export class Clock {
         break;
       case "pass2": {
         s.speed = v.pass2Speed;
+        if (this.loop) {
+          // the clip's repeat, the press's replay (both its first frame), or the ease taken
+          s.nextEase = 0;
+          s.nextJump = this.take === null || this.replay ? seg.pass2[0] : seg.eases[this.take].frames[0];
+          break;
+        }
         s.nextEase = this.take ?? (this.armNext ? 0 : this.easeAhead(s.frame));
         const easeNow = this.take ?? (this.armNext ? null : this.easeAhead(s.frame));
         s.nextJump = easeNow !== null ? seg.eases[easeNow].frames[0] : seg.pass2[0];
@@ -446,7 +490,7 @@ export class Clock {
       case "ended":
         s.speed = 0;
         s.nextEase = null;
-        s.nextJump = seg.pass1[0]; // Replay
+        s.nextJump = this.first; // Replay
         break;
     }
   }

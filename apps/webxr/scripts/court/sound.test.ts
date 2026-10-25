@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ARRIVAL_FROM_DB, MASTER_DB, MIX_TRIM_DB, ROOM_DUCK_DB, RUSH_S, SECOND_WAVE_S, STOP_DUCK_DB, STOP_HUSH_HZ, STOP_OPEN_HZ, Sound, WHOOSH_S, arrivalGain, stopDb, stopHz,
+  ARRIVAL_FROM_DB, MASTER_DB, MIX_TRIM_DB, ROOM_DUCK_DB, RUSH_S, SECOND_WAVE_S, STOP_DUCK_DB, STOP_HUSH_HZ, STOP_OPEN_HZ, Sound, WARP_RISER_S, WHOOSH_S, arrivalGain, stopDb, stopHz,
 } from "../../src/court/sound.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -636,6 +636,28 @@ test("the freeze is felt: a reverse swell builds into F, a sub thump lands on F,
   assert.ok(d.db(F + 0.15, F + 0.4, 2000) < building - 20, "the swell stops short at F");
   assert.ok(d.db(F + 2.2, F + 3.1) - MASTER_DB < -65, "then nothing but the hush and room tone");
   assert.deepEqual(clicks(d, T0, F + 1.5), [], "no clicks");
+});
+
+test("the warp: a riser builds over WARP_RISER_S into F and is cut on F where the thump lands, the whole mix under -1 dBFS", async () => {
+  const T0 = 4.4;
+  const F = Math.ceil((T0 + 1.2) / FRAME) * FRAME; // the first frame the ease's p is exactly 1
+  const S = Math.round((F - WARP_RISER_S - 0.2) / FRAME) * FRAME; // the warp starts 0.2 s before the riser should
+  const base = [...arrival(), ...ease(T0, 1.2)];
+  const spec = { seconds: F + 2, bed: "tones" };
+  const withRiser = await render({ ...spec, calls: [...base, { t: S, fn: "warpRiser", args: [F - S] }] });
+  const without = await render({ ...spec, calls: base });
+  // the riser alone: the same render with and without the call, subtracted (everything else is deterministic)
+  const sub = (a: Float32Array, b: Float32Array) => a.map((v, i) => v - b[i]);
+  const d = new Signal({ ...withRiser, l: sub(withRiser.l, without.l), r: sub(withRiser.r, without.r) });
+  const top = d.db(F - 0.25, F - 0.02);
+  assert.ok(d.db(S, F - WARP_RISER_S - 0.02) < top - 40, "it waits until WARP_RISER_S before F");
+  assert.ok(top > d.db(F - WARP_RISER_S + 0.1, F - WARP_RISER_S + 0.4) + 15, `it builds (${top.toFixed(1)} dBFS at the top)`);
+  assert.ok(top - MASTER_DB > -40 && top - MASTER_DB < -15, `and is heard (${(top - MASTER_DB).toFixed(1)} dB before the master)`);
+  assert.ok(d.db(F + 0.08, F + 0.5) < top - 30, "cut on F: the thump is the impact");
+  assert.deepEqual(clicks(d, S, F + 1), [], "no clicks");
+  let peak = 0;
+  for (const x of [withRiser.l, withRiser.r]) for (const v of x) peak = Math.max(peak, Math.abs(v));
+  assert.ok(20 * Math.log10(peak) < -1, `the whole mix peaks at ${(20 * Math.log10(peak)).toFixed(2)} dBFS`);
 });
 
 test("Back to my seat: a riser climbs from the sit into the resume, then gives way to the crowd's rush", async () => {

@@ -3,8 +3,9 @@
 // low-pass 18 kHz -> 350 Hz and a 20 dB duck to near-silence, never silence, room tone kept: P20), the rush back on play
 // (0.6 s), See my room's murmur (-18 dB, low-passed), the swell one-shot on the make (and softly at Step in), and
 // events at 3D positions when Vishal approves CC0 sounds. No voices ever (P19): only the bundle's files are played,
-// plus the moments, synthesized here from seeded noise and sine (no files): the step-in whoosh, the reverse swell into
-// F and its sub thump, the riser from the sit into the resume, and the make's roar with its second wave.
+// plus the moments, synthesized here from seeded noise and sine (no files): the step-in whoosh, the warp's riser and
+// the reverse swell into F and its sub thump (the impact), the riser from the sit into the resume, and the make's roar
+// with its second wave.
 // Stream F (`sound`) builds it. Pure Web Audio and type-only imports, so sound.test.ts renders it in an
 // OfflineAudioContext (it takes the context and the file loader as options).
 import type { ClockState } from "./clock";
@@ -43,6 +44,12 @@ export const WHOOSH_DB = -19;
 export const REVERSE_DB = -19;
 /** The thump at F: a sine falling 95 -> 42 Hz with its octave (for small speakers) and a low noise body; its peak. */
 export const THUMP_DB = -7;
+/** The warp into F (warpRiser): a tone climbing two octaves under opening air, over this long, to this peak (dBFS before
+ * the master); cut on F, where the thump is the impact. */
+export const WARP_RISER_S = 1.5;
+export const WARP_RISER_DB = -12;
+/** A warp riser F never comes for (a Reset mid-ease) lets go this long after its top. */
+const WARP_HOLD_S = 0.6;
 /** The riser from the sit into the resume: climbs over the hand-back (handoff.ts HANDBACK_END, 1.8 s), holds, gives way to the rush. */
 export const RISER_S = 1.8;
 export const RISER_DB = -21;
@@ -138,6 +145,8 @@ export class Sound {
   private rev: { src: AudioBufferSourceNode; band: BiquadFilterNode; gain: GainNode } | null = null;
   /** The riser from the sit, until the resume's rush takes over. */
   private riser: { src: AudioBufferSourceNode; cut: GainNode } | null = null;
+  /** The warp's riser into F, until F cuts it. */
+  private warp: { nodes: AudioScheduledSourceNode[]; cut: GainNode } | null = null;
   private loaded = false;
   private wantStart = false;
   private started = false;
@@ -209,9 +218,69 @@ export class Sound {
     if (!this.moments) return;
     if (p >= 1 && was < 1) {
       this.cutReverse();
+      this.cutWarp();
       this.thump();
     } else if (p < 1 && p > 0) this.reverse(p);
-    else if (p <= 0) this.cutReverse();
+    else if (p <= 0) {
+      this.cutReverse();
+      this.cutWarp();
+    }
+  }
+
+  /**
+   * The warp into F, `secondsToF` from now: a riser that climbs over the last WARP_RISER_S (later if called earlier)
+   * and tops out on F, where timeStop(1)'s thump lands and cuts it. Once per warp; a second call replaces the first.
+   */
+  warpRiser(secondsToF: number): void {
+    if (!this.loaded || !this.moments || !this.started || !this.arrived) return;
+    this.cutWarp();
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const top = now + Math.max(0.3, secondsToF);
+    const from = Math.max(now, top - WARP_RISER_S);
+    const cut = ctx.createGain();
+    cut.gain.setValueAtTime(1, now);
+    cut.gain.setTargetAtTime(0, top + WARP_HOLD_S, 0.12); // no F came: let it go
+    cut.connect(this.master);
+    // the climb (u^1.8: heard as the crowd hushes), held at the top until F cuts it
+    const climb = ctx.createGain();
+    climb.gain.value = 0;
+    climb.gain.setValueCurveAtTime(Float32Array.from({ length: 128 }, (_, i) => dbToGain(WARP_RISER_DB) * (i / 127) ** 1.8), from, top - from);
+    climb.connect(cut);
+    // the tone: two saws a few cents apart, 55 -> 220 Hz, through a low-pass opening 300 Hz -> 2.6 kHz, spread L/R
+    const tone = this.lowpass(300);
+    tone.frequency.setValueAtTime(300, from);
+    tone.frequency.exponentialRampToValueAtTime(2600, top);
+    tone.connect(climb);
+    const end = top + WARP_HOLD_S + 1.5;
+    const nodes: AudioScheduledSourceNode[] = [];
+    for (const [cents, side] of [[-8, -0.35], [8, 0.35]] as const) {
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.detune.value = cents;
+      osc.frequency.setValueAtTime(55, from);
+      osc.frequency.exponentialRampToValueAtTime(220, top);
+      const level = ctx.createGain();
+      level.gain.value = 0.5;
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = side;
+      osc.connect(level).connect(pan).connect(tone);
+      osc.start(from);
+      osc.stop(end);
+      nodes.push(osc);
+    }
+    // the air: noise opening 600 Hz -> 3.2 kHz, low-passed so it never hisses
+    const air = this.noiseSource(2.6, from);
+    const band = this.bandpass(600, 0.9);
+    band.frequency.setValueAtTime(600, from);
+    band.frequency.exponentialRampToValueAtTime(3200, top);
+    const airLevel = ctx.createGain();
+    airLevel.gain.value = 0.6;
+    air.connect(band).connect(this.lowpass(4000)).connect(airLevel).connect(climb);
+    air.stop(end);
+    air.onended = () => cut.disconnect();
+    nodes.push(air);
+    this.warp = { nodes, cut };
   }
 
   /** Play: the filter opens and the crowd rushes back over `seconds` (0.6), from wherever the stop is. */
@@ -231,6 +300,7 @@ export class Sound {
     this.rushEnd = now + 0.001 + seconds;
     this.stopP = 0;
     this.cutReverse();
+    this.cutWarp();
     if (this.riser) {
       // the riser gives way to the crowd's rush
       this.riser.cut.gain.setTargetAtTime(0, now + 0.05, 0.09);
@@ -461,6 +531,17 @@ export class Sound {
     src.stop(now + 0.4);
     src.onended = () => gain.disconnect();
     this.rev = null;
+  }
+
+  /** F: the warp's riser stops on the thump (a 15 ms fall, never a click). */
+  private cutWarp(): void {
+    if (!this.warp) return;
+    const now = this.ctx.currentTime;
+    const { nodes, cut } = this.warp;
+    cut.gain.cancelScheduledValues(now);
+    cut.gain.setTargetAtTime(0, now, 0.015);
+    for (const n of nodes) n.stop(now + 0.3);
+    this.warp = null;
   }
 
   /** F lands: a sub thump (95 -> 42 Hz, its octave for small speakers, a low-passed noise body), then the hush. */

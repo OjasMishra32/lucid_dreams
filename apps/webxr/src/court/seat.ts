@@ -10,6 +10,7 @@ import {
   Arrival, SeatedWatch, boundsDistance, freezeCamera, nextViewWorld, placeWorld, placements, playArea, ringFits, ringPoints,
   seatPoint, toCourt, toRoom, usableBounds, walkingLayout, walkingProblems, walkingWorld, yawOf, type ChairPose, type LayoutCase, type SeatSpot,
 } from "./seatmath";
+import { demoMode } from "./demo";
 import type { Head, Polygon, WorldPose } from "./types";
 
 /** True once stream C has built this module. */
@@ -414,9 +415,9 @@ export class Seat {
     if (this.trace && this.trace.length < 4000) this.trace.push([this.veil, this.world.position[0], this.world.position[2], this.world.yaw]);
   }
 
-  /** The bounds in room space: `bounded-floor` (when granted and it has area: seatmath usableBounds) or the play area. */
+  /** The bounds in room space: `bounded-floor` (when granted and it has area: seatmath usableBounds) or the play area; the demo never reads the room's, only the play area. */
   useBounds(floorBounds: Polygon | null): void {
-    this.floorBounds = floorBounds && usableBounds(floorBounds) ? floorBounds : null; // no area: the play area set at Seat here
+    this.floorBounds = !demoMode && floorBounds && usableBounds(floorBounds) ? floorBounds : null; // no area: the play area set at Seat here
     this.bounds = this.floorBounds ?? this.area;
   }
 
