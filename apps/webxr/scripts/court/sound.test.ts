@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ARRIVAL_FROM_DB, MIX_TRIM_DB, ROOM_DUCK_DB, RUSH_S, STOP_DUCK_DB, STOP_HUSH_HZ, STOP_OPEN_HZ, Sound, arrivalGain, stopDb, stopHz,
+  ARRIVAL_FROM_DB, MASTER_DB, MIX_TRIM_DB, ROOM_DUCK_DB, RUSH_S, STOP_DUCK_DB, STOP_HUSH_HZ, STOP_OPEN_HZ, Sound, arrivalGain, stopDb, stopHz,
 } from "../../src/court/sound.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -366,11 +366,11 @@ const arrival = (t0 = 0.5, dur = 2.5): Call[] =>
 
 // ---------------- the checks ----------------
 
-test("P19 gain staging: the steady crowd mix sits at the bed's own loudness (-23), within 1.5 dB", async () => {
+test("P19 gain staging: the steady crowd mix sits at the bed's own loudness (-23) lifted by MASTER_DB (-18), within 1.5 dB", async () => {
   const calls = [...perFrame(7, (t) => [listen(t)]), ...arrival()];
   const s = new Signal(await render({ seconds: 7, bed: "noise", calls }));
   const steady = s.db(3.5, 6.9);
-  assert.ok(Math.abs(steady - -23) < 1.5, `steady ${steady.toFixed(2)} dBFS vs -23 (MIX_TRIM_DB = ${MIX_TRIM_DB})`);
+  assert.ok(Math.abs(steady - (-23 + MASTER_DB)) < 1.5, `steady ${steady.toFixed(2)} dBFS vs ${-23 + MASTER_DB} (MIX_TRIM_DB = ${MIX_TRIM_DB}, MASTER_DB = ${MASTER_DB})`);
 });
 
 test("nothing plays before the arrival but room tone: no crowd, no one-shots, no events", async () => {
@@ -385,8 +385,8 @@ test("nothing plays before the arrival but room tone: no crowd, no one-shots, no
   const events = [{ frame: 40, kind: "squeak", at: [0, 0, 0], file: "sfx" }];
   const s = new Signal(await render({ seconds: 3, bed: "noise", calls, oneShots, events, frames, makeSource: 60 }));
   const level = s.db(0.3, 3);
-  assert.ok(level > -62, `room tone is there, never dead silence (${level.toFixed(1)} dBFS)`);
-  assert.ok(level < -44, `only room tone plays (${level.toFixed(1)} dBFS)`);
+  assert.ok(level > -62 + MASTER_DB, `room tone is there, never dead silence (${level.toFixed(1)} dBFS)`);
+  assert.ok(level < -44 + MASTER_DB, `only room tone plays (${level.toFixed(1)} dBFS)`); // the whole mix, room tone too, is lifted by MASTER_DB
   assert.equal(s.render.sources, 5);
 });
 
@@ -540,7 +540,7 @@ test("the swell fires once each time the show passes the make; the step-in swell
   const swell = onsets(1000, floor + 25, 0, 3.1);
   assert.equal(swell.length, 1, `one swell for one pass over the make: ${swell}`);
   assert.ok(Math.abs(swell[0] - (0.2 + 60 / 72)) < 0.1, `on the make frame (${swell[0].toFixed(2)} s vs ${(0.2 + 60 / 72).toFixed(2)})`);
-  const squeaks = onsets(3000, s.db(0.05, 0.15, 3000) + 25);
+  const squeaks = onsets(3000, s.db(0.05, 0.15, 3000) + 25, 0, 3.1); // before the step-in's whoosh sweeps through 3 kHz
   assert.equal(squeaks.length, 2, `the event fires on each pass over its frame: ${squeaks}`);
   assert.ok(Math.abs(squeaks[0] - (0.2 + 30 / 72)) < 0.1);
   const peak = (a: number, b: number) => Math.max(...Array.from({ length: Math.round((b - a) / 0.01) }, (_, i) => s.db(a + i * 0.01, a + i * 0.01 + 0.03, 1000)));

@@ -23,10 +23,15 @@ export const RUSH_S = 0.6;
 /** See my room (3.6): the crowd is this far down, low-passed to this cutoff. */
 export const ROOM_DUCK_DB = -18;
 export const ROOM_HZ = 500;
-/** Room tone, dBFS RMS: always there, so the hold before the arrival is never dead silence. */
+/** Room tone, dBFS RMS before the master's MASTER_DB lift (so -45 at the output): always there, so the hold before the arrival is never dead silence. */
 export const ROOM_TONE_DB = -50;
 /** On top of 1/sqrt(N) per source, so the summed bed sits at the file's own loudness (-23 LUFS) at the seat (HRTF and distance take the rest; sound.test.ts measures it). */
 export const MIX_TRIM_DB = 5.5;
+/** The whole mix up from the bed's -23 LUFS to about -18 LUFS (bed true peak -7.5 dBTP -> -2.5); the limiter catches the make's stack. */
+export const MASTER_DB = 5;
+/** The step-in's whoosh: a band-passed noise riser, this long, peaking this loud (dBFS) into the ease. */
+export const WHOOSH_S = 1.4;
+export const WHOOSH_DB = -22;
 
 /** Seconds of smoothing on every per-frame parameter write (no zipper noise, no clicks). */
 const SMOOTH_S = 0.03;
@@ -104,6 +109,7 @@ export class Sound {
   private roomLP!: BiquadFilterNode;
   private roomGain!: GainNode;
   private master!: GainNode;
+  private whooshBuf?: AudioBuffer;
   private loaded = false;
   private wantStart = false;
   private started = false;
@@ -202,6 +208,7 @@ export class Sound {
   /** A one-shot from court.json audio.oneShots by its cue: the swell, spread over the stand sources. */
   oneShot(id: "make" | "stepIn"): void {
     if (!this.started || !this.arrived) return;
+    if (id === "stepIn") this.whoosh();
     for (const shot of this.bundle.court.audio.oneShots) {
       if (shot.at !== id) continue;
       const buffer = this.buffers.get(shot.file)!;
@@ -265,7 +272,15 @@ export class Sound {
     const ctx = this.ctx;
     const audio = this.bundle.court.audio;
     this.master = ctx.createGain();
-    this.master.connect(ctx.destination);
+    this.master.gain.value = dbToGain(MASTER_DB);
+    // a fast, hard-kneed limiter before the output so the make's stacked swell never clips
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5; // above the lifted bed's -2.5 dBTP: idle on the steady mix
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.15;
+    this.master.connect(limiter).connect(ctx.destination);
     // crowd -> time stop -> room murmur -> master
     this.crowd = ctx.createGain();
     this.crowd.gain.value = 0;
@@ -305,6 +320,37 @@ export class Sound {
     p.positionZ.value = at[2];
     p.connect(this.crowd);
     return p;
+  }
+
+  /** The step-in's riser: noise through a band-pass sweeping 250 Hz -> 3.5 kHz, swelling then falling away (no file). */
+  private whoosh(): void {
+    const ctx = this.ctx;
+    if (!this.whooshBuf) {
+      const length = Math.round(WHOOSH_S * ctx.sampleRate);
+      const data = new Float32Array(length);
+      let seed = 777;
+      for (let i = 0; i < length; i++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        data[i] = (seed / 2 ** 32) * 2 - 1;
+      }
+      this.whooshBuf = ctx.createBuffer(1, length, ctx.sampleRate);
+      this.whooshBuf.copyToChannel(data, 0);
+    }
+    const now = ctx.currentTime;
+    const node = ctx.createBufferSource();
+    const band = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    node.buffer = this.whooshBuf;
+    band.type = "bandpass";
+    band.Q.value = 1.2;
+    band.frequency.setValueAtTime(250, now);
+    band.frequency.exponentialRampToValueAtTime(3500, now + WHOOSH_S * 0.8);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(dbToGain(WHOOSH_DB), now + WHOOSH_S * 0.7);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + WHOOSH_S);
+    node.connect(band).connect(gain).connect(this.master);
+    node.onended = () => gain.disconnect();
+    node.start(now);
   }
 
   /** Looped brown-ish noise at ROOM_TONE_DB with a crossfaded seam: the floor under everything. */
