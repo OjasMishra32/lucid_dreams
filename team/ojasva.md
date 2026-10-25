@@ -3,6 +3,36 @@
 You (with Claude Code) own everything that runs on HiPerGator and the hand-off to the apps. You are the only person
 who submits GPU jobs. Read `AGENTS.md` first.
 
+## FIRST, Sun Oct 25 (Vishal): put Court Side on the website
+
+Vishal wants Court Side (his feature, `?mode=court`) live on **https://getluciddreams.vercel.app/xr/?mode=court**.
+The site and `/xr/` run on your Mac and your Vercel, so only you (or your Claude) can do this. He has approved it
+going public. Today it runs on Vishal's Mac behind a quick tunnel; that link only works while his Mac is up.
+
+1. **Stopgap (2 min, do it now):** a "Court Side" link or button on the site that opens Vishal's live link. Ask
+   Vishal for the link (it carries an access token, so it's not written here).
+2. **The real thing:**
+   - **The code:** branch `court-on-site` = `main` + `court-side`, with Court Side working under the `/xr/` base. It
+     defaults to the Screen view and seats the judge by itself.
+     - `git fetch origin court-on-site`. Vishal's loop session is preparing it; if it isn't on origin yet, wait for
+       it or merge `origin/court-side` (7ba5060) into `main` yourself.
+     - Check chess, tennis and the replays still load, then merge into `main` (your call: you own `main`).
+   - **The bundle (290 MB, not in git):** one tar served through Vishal's tunnel at `<his link host>/bundle/court-side.tar`.
+     It needs his token, so first visit `https://<host>/?k=<token>` to set the cookie, then:
+     ```bash
+     J=$(mktemp); curl -s -o /dev/null -c "$J" "https://<host>/?k=<token>"
+     mkdir -p apps/webxr/public/court && curl -sS -b "$J" "https://<host>/bundle/court-side.tar" | tar -x -C apps/webxr/public/court
+     ```
+     Keep `apps/webxr/public/court/` git-ignored (the branch adds it to .gitignore; check before any commit). Or
+     AirDrop it from Vishal: `~/court-side-data/luka/bundle/headset-test/court-side/`.
+   - **Build and check:**
+     - Run `~/LucidDreams-held/rebuild-stable.sh`. The court then serves at `/xr/court/`, which is Court Side's
+       default bundle path under that base.
+     - Open https://getluciddreams.vercel.app/xr/?mode=court: the loading bar, then Enter, then the video on the big
+       screen, then it steps into 3D by itself. On a laptop add `&emulate` (dev build only); in the Quest use the link
+       as is.
+   - **Tell Vishal** when it's live.
+
 ## Unblock right now (only a human can do these)
 
 1. **SMPL-X** (needed by 4DAnyone and by Vishal's avatars): make a free account at https://smpl-x.is.tue.mpg.de/,
