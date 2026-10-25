@@ -2,7 +2,7 @@
 //   - the tunnel: the screen's own rounded rim extruded from the picture toward the eye, flaring as it passes, its walls
 //     streaked with light lanes and crossed by rings that run at the viewer, faster and faster (added onto the frame);
 //   - the punch-in: the picture itself lifts off the screen and rushes at the eye, growing past the edges of the view
-//     with two lagging echoes (the zoom, drawn on the world: the camera never moves) and a glowing rim, brightening as
+//     with a lagging echo (the zoom, drawn on the world: the camera never moves) and a glowing rim, brightening as
 //     it comes and gone well before F. It starts exactly over the screen's own pixels (the same texture, the same
 //     rounded corners), so the lift-off never pops; behind it the screen is already dissolving into the court (court.ts
 //     SCREEN_EASE_S), which is what it uncovers.
@@ -20,7 +20,10 @@ export const TUNNEL_OUT = -0.08;
 export const PUNCH_IN = -0.62;
 export const PUNCH_END = -0.1;
 const ECHO_S = 0.045;
-const ECHOES = [1, 0.45, 0.22];
+const ECHOES = [1, 0.45];
+/** A punch-in layer's opacity is taken down by this much and gone below it: the faint tail that fills the whole view
+ * (the costliest pixels on the headset) is never drawn, and the fade still reaches 0 smoothly. */
+const PUNCH_FLOOR = 0.03;
 /** A warp first seen late in its window (a short ease) still fades in over this long, seconds. */
 const GUARD_S = 0.25;
 /** The travel speed into the tunnel, metres per second: V0 + V1 u^3 over the tunnel's progress u (0-1). */
@@ -41,9 +44,13 @@ export interface TunnelBeats {
   punch: { p: number; opacity: number }[];
 }
 
+const OFF: TunnelBeats = { level: 0, extend: 0, travel: 0, punch: ECHOES.map(() => ({ p: 0, opacity: 0 })) };
+/** The warp's window: [TUNNEL_IN, TUNNEL_OUT) (false for NaN and the infinities). */
+const inWindow = (tF: number): boolean => tF > TUNNEL_IN && tF < TUNNEL_OUT;
+
 /** The tunnel and the punch-in at tF seconds from F, before the guard fade: nothing outside [TUNNEL_IN, TUNNEL_OUT). */
 export function tunnelBeats(tF: number): TunnelBeats {
-  if (!(tF > TUNNEL_IN) || tF >= TUNNEL_OUT) return { level: 0, extend: 0, travel: 0, punch: ECHOES.map(() => ({ p: 0, opacity: 0 })) };
+  if (!inWindow(tF)) return OFF;
   const u = (tF - TUNNEL_IN) / -TUNNEL_IN;
   const out = 1 - smooth((tF + 0.36) / (TUNNEL_OUT + 0.36));
   const punch = ECHOES.map((w, i) => {
@@ -252,12 +259,12 @@ export class WarpTunnel {
 
   /** Once a frame: `tF` seconds from F (anything outside the window: nothing drawn), `head` the eye. */
   update(tF: number, head: Head): void {
-    const b = tunnelBeats(tF);
-    if (!(tF > TUNNEL_IN) || tF >= TUNNEL_OUT) {
+    if (!inWindow(tF)) {
       this.object.visible = false;
       this.start = null;
       return;
     }
+    const b = tunnelBeats(tF);
     if (this.start === null || tF < this.last) {
       this.start = tF;
       const o = this.u.uO.value.set(...head.court).applyMatrix4(this.inv); // the eye in the screen's frame
@@ -273,7 +280,7 @@ export class WarpTunnel {
     b.punch.forEach((l, i) => {
       const layer = this.layers[i];
       layer.uP.value = l.p;
-      layer.uOpacity.value = l.opacity * guard;
+      layer.uOpacity.value = Math.max(0, (l.opacity * guard - PUNCH_FLOOR) / (1 - PUNCH_FLOOR));
       layer.mesh.visible = layer.uOpacity.value > 0;
     });
     this.object.visible = true;

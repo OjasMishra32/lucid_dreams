@@ -64,7 +64,9 @@ uniform float uSoft;
 varying float vR;
 void main() {
   float d = (vR - 1.0) / uSoft;
-  gl_FragColor = vec4(uColor, uLevel * exp(-d * d));
+  float a = uLevel * exp(-d * d);
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(uColor, a);
 }`;
 
 export class WarpLanding {
@@ -95,7 +97,8 @@ export class WarpLanding {
     const n = Math.max(1, players.length);
     const x = players.reduce((s, p) => s + (p.bounds.min[0] + p.bounds.max[0]) / 2, 0) / n;
     const z = players.reduce((s, p) => s + (p.bounds.min[2] + p.bounds.max[2]) / 2, 0) / n;
-    this.ringGeo = new THREE.RingGeometry(0.5, 1.5, 128, 1).rotateX(-Math.PI / 2);
+    // only the band the glow lives in (uSoft <= 0.12 once the ring is seen): less floor to fill on the headset
+    this.ringGeo = new THREE.RingGeometry(0.7, 1.3, 128, 1).rotateX(-Math.PI / 2);
     for (const [delay, level] of [[0, 1], [ECHO_S, ECHO_LEVEL]] as const) {
       const mat = new THREE.ShaderMaterial({
         vertexShader: RING_VERT,
@@ -124,6 +127,11 @@ export class WarpLanding {
     this.flash.visible = f > 0;
     this.flash.position.set(head.court[0], head.court[1], head.court[2]);
     for (const r of this.rings) {
+      const u = (tF - r.delay - RING_FROM_S) / RING_S;
+      if (!(u > 0 && u < 1)) {
+        r.mesh.visible = false; // outside its run (NaN and the infinities too): nothing to work out
+        continue;
+      }
       const { radius, width, level } = ringAt(tF - r.delay);
       const a = level * r.level;
       r.mesh.visible = a > 0;
