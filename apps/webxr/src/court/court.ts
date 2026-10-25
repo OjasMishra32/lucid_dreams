@@ -242,8 +242,11 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   scene.add(resetVeil.mesh);
   const stepGlow = new StepGlow();
   // demo mode (`?demo=0` is the plain show): Step into the court warps from the screen into the court (warp.ts)
-  const warp = screen && params.get("demo") !== "0" ? new Warp(screen) : null;
-  if (warp) scene.add(warp.group);
+  const warp = screen && demoMode ? new Warp(screen, video.regions.live) : null;
+  if (warp) {
+    world.add(warp.object);
+    warp.prewarm(renderer, camera, scene);
+  }
   // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
@@ -674,8 +677,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     const charge = ease ? (tF + ease.seconds) / Math.max(1e-3, ease.seconds - SCREEN_EASE_S) : null;
     const { glow, wave } = stepGlow.update(dt, charge);
     screen?.glow(glow, wave);
-    // the warp rides the ease's last seconds into F and is gone the instant F lands; off in every other phase
-    warp?.update(phase === "easing" ? tF : null, head.room);
+    // the warp rides the ease into F and lands on F's own picture; off in every other phase
+    warp?.update(phase === "easing" || phase === "handoff" ? tF : null, head);
   };
 
   // the bounds in court space for the freeze (See my room keeps the extras whose feet are inside them, P34), sent again
