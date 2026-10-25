@@ -40,8 +40,9 @@ const config: NextConfig = {
     return {
       beforeFiles: [],
       afterFiles: [],
+      // (in the cloud the static host answers the folder itself and sends index.html back to it)
       fallback: [
-        { source: "/xr", destination: `${XR}/xr/index.html` },
+        { source: "/xr", destination: process.env.LUCID_CLOUD ? `${XR}/xr/` : `${XR}/xr/index.html` },
         { source: "/xr/:path+", destination: `${XR}/xr/:path+` },
       ],
     };
