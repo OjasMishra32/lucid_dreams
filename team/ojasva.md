@@ -34,6 +34,9 @@ going public. Today it runs on Vishal's Mac behind a quick tunnel; that link onl
        screen, then it steps into 3D by itself. On a laptop add `&emulate` (dev build only); in the Quest use the link
        as is.
    - **Tell Vishal** when it's live.
+3. **READY (08:20 Sun):** `origin/court-on-site` is pushed (bbec4c5 or newer). It has the demo mode: a short clip loops
+   on a big screen; Step into the court gives a warp into the 3D; floor arrows guide the walk; no room boundaries. Use
+   the newest `court-on-site` (a bolder-arrows commit may follow); `?demo=0` gives the old full show.
 
 ## Unblock right now (only a human can do these)
 
