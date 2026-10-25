@@ -767,6 +767,44 @@ class Bundle(unittest.TestCase):
         errs, _, _ = A.validate(out, A.WEBXR)
         self.assertEqual(errs, [])
 
+    def test_a_surround_comes_from_the_config(self):
+        """surround: a mosaic as camera F's far picture (its alpha, sized as declared), tiles of its crowd on the stands'
+        wall, the pieces in assembly.json, and the bundle validates (every file there, every size as declared)."""
+        import cv2
+
+        S = json.loads((STANDIN / "court.json").read_text())
+        frames = json.loads((STANDIN / S["video"]["frames"]).read_text())
+        fr = frames[S["video"]["segments"]["eases"][0]["frames"][1]]
+        R = g.quat_to_matrix(fr["q"]).T  # camera-from-world: the layers' layout
+        f_half = fr["f"] / 2
+        (self.tmp / "canvas.json").write_text(json.dumps({"K": [[f_half, 0, 800], [0, f_half, 600], [0, 0, 1]], "R": R.tolist()}))
+        (self.tmp / "cams.json").write_text(json.dumps({"k1": 0.0, "size": [1920, 1080], "cx": 959.5, "cy": 539.5,
+                                                        "frames": {str(S["video"]["freezeSource"]): {"R": R.tolist(), "f": f_half}}}))
+        rng = np.random.default_rng(4)
+        mosaic = cv2.GaussianBlur(rng.integers(0, 255, (1200, 1600, 3), dtype=np.uint8), (0, 0), 2.0)
+        cv2.imwrite(str(self.tmp / "mosaic.png"), mosaic)
+        cv2.imwrite(str(self.tmp / "cover.png"), np.ones((1200, 1600), np.uint16))
+        surround = {"canvas": str(self.tmp / "canvas.json"), "cams": str(self.tmp / "cams.json"), "mosaic": str(self.tmp / "mosaic.png"),
+                    "cover": str(self.tmp / "cover.png"), "crowd": {"pxPerM": 100, "tiles": [[100, 100, 400, 300], [500, 400, 900, 700]]}}
+        code, out = self.assemble_with("surround", surround=surround)
+        self.assertEqual(code, 0)
+        court = json.loads((out / "court.json").read_text())
+        self.assertEqual(sorted(court["surround"]), ["crowd", "far"])
+        self.assertEqual(court["surround"]["far"]["frame"], S["video"]["segments"]["eases"][0]["frames"][1])
+        self.assertEqual(len(court["surround"]["crowd"]["tiles"]), 2)
+        asm = json.loads((out / "assembly.json").read_text())
+        self.assertEqual(asm["pieces"]["surround:far"]["source"], "real")
+        self.assertEqual(asm["pieces"]["surround:crowd"]["source"], "imagined")
+        self.assertTrue(any(n.startswith("surround.far vs freezeClean") for n in asm["notes"]))
+        errs, pending, _ = A.validate(out, A.WEBXR)
+        self.assertEqual(errs, [])
+        self.assertFalse(any("surround" in p for p in pending))  # imagined is by design, not pending
+        gone = self.tmp / "no-atlas"
+        shutil.copytree(out, gone)
+        (gone / court["surround"]["crowd"]["atlas"]).unlink()
+        errs, _, _ = A.validate(gone, A.WEBXR)
+        self.assertTrue(any("crowd.jpg" in e for e in errs), errs)
+
     def test_the_roar_is_set_over_the_bed(self):
         """audio.swellOverBedDb: the make's one-shot plays that many dB (integrated loudness) over the bed; the step-in
         echo stays 12 dB under it."""
