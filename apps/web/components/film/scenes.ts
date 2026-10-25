@@ -735,7 +735,7 @@ const SOURCES: Scene[] = [
       .map((f) => `sources/photos/bobby-fischer-suit/${f}.jpg`),
     line: "6 photos.",
     credit: "1966 and 1972 · AP, Nationaal Archief · colorized",
-    shots: [{ src: "selects/bobby-shake.mp4", dur: 4.2 }],
+    shots: [{ src: "selects/bobby-face.mp4", dur: 3.3 }],
     label: "Stockfish at Fischer's peak rating. Not affiliated.",
   }),
   sourceCard({
@@ -744,8 +744,15 @@ const SOURCES: Scene[] = [
       .map((f) => `sources/photos/magnus-carlsen-360/${f}.jpg`),
     line: "14 photos.",
     credit: "2015 to 2017 · Wikimedia Commons",
-    shots: [{ src: "selects/magnus-board.mp4", dur: 4.6 }],
+    shots: [{ src: "selects/magnus-wide.mp4", dur: 2.0 }, { src: "selects/magnus-look.mp4", dur: 2.0 }],
     label: "Stockfish at Carlsen's peak rating. Not affiliated.",
+  }),
+  sourceCard({
+    key: "source-golf",
+    video: { src: "sources/golf-01.mp4", in: 3.0 },
+    line: "One video.",
+    credit: "Be The Observer · Pexels",
+    shots: [{ src: "selects/golf-swing.mp4", dur: 1.7 }, { src: "selects/golf-you.mp4", dur: 2.6 }, { src: "selects/golf-match.mp4", dur: 2.2 }],
   }),
   sourceCard({
     key: "source-grandma",

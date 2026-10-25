@@ -21,5 +21,11 @@
  {"name": "vishal-ask", "src": "quest/vishal-1.mp4", "in": 14.6, "out": 18.7, "smooth": 0.1, "zoom": 1.05},
  {"name": "bobby-shake", "src": "quest/chess-a.mp4", "in": 8.0, "out": 12.2, "smooth": 0.12, "zoom": 1.05},
  {"name": "magnus-board", "src": "quest/chess-b.mp4", "in": 1.5, "out": 7.0, "smooth": 0.12, "zoom": 1.05},
- {"name": "grandma-appear", "src": "quest/grandma-1.mp4", "in": 3.4, "out": 6.0, "smooth": 0.12, "zoom": 1.05}
+ {"name": "grandma-appear", "src": "quest/grandma-1.mp4", "in": 3.4, "out": 6.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "bobby-face", "src": "quest/chess-a.mp4", "in": 9.0, "out": 12.3, "smooth": 0.12, "zoom": 1.05},
+ {"name": "magnus-wide", "src": "quest/chess-b.mp4", "in": 54.0, "out": 56.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "magnus-look", "src": "quest/chess-b.mp4", "in": 61.3, "out": 63.3, "smooth": 0.12, "zoom": 1.05},
+ {"name": "golf-swing", "src": "quest/golf-1.mp4", "in": 12.4, "out": 14.1, "smooth": 0.12, "zoom": 1.05},
+ {"name": "golf-you", "src": "quest/golf-1.mp4", "in": 26.5, "out": 29.1, "smooth": 0.08, "zoom": 1.06},
+ {"name": "golf-match", "src": "quest/golf-1.mp4", "in": 31.9, "out": 34.1, "smooth": 0.12, "zoom": 1.05}
 ]
