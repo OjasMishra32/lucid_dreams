@@ -4,6 +4,35 @@ You own what the judges see and read, and the footage everything is built from. 
 judgment and writing, not heavy AI use, so it fits a small Codex plan: use Codex for the README and Devpost polish,
 not for long coding sessions. Read `AGENTS.md` first.
 
+## NOW (Sat 10:45 PM): four product jobs, no video
+
+1. **Make Gemini real.** No Gemini step has ever run: there's no `GEMINI_API_KEY` on the bridge Mac, so every lesson
+   plan was written by hand, and the realism check, Watch me try and the lesson coach are off. The MLH Gemini prize
+   depends on this.
+   - Make a key at aistudio.google.com (free) and hand it to Ojasva in person or by AirDrop, never in git or a chat.
+     He adds it to `apps/web/.env.local` and restarts the site.
+   - Then try each step through the public link from your laptop: (a) Make one at the bottom of
+     https://getluciddreams.vercel.app with a short clip of yourself (head to toe, phone still, 5+ s) and a
+     sentence; time it from upload to ready, and check the plan fits the sentence (it's written when the dream
+     lands); (b) a dream page's Realism check; (c) Watch me try on a lesson, with your laptop camera; (d) Ask in a
+     lesson at https://getluciddreams.vercel.app/xr/?dream=dance-01 (Lesson on first).
+   - Run `GEMINI_API_KEY=... npm --prefix apps/web test` on your own machine (the 40-sentence intent check).
+   - Write what worked, what it said and how long it took in `docs/gemini-qa.md` and push it. The Devpost only
+     claims Gemini once that file shows it working. If (a) fails at submit, HiPerGator's login on Ojasva's Mac has
+     lapsed: Vishal logs in again.
+2. **Real-phone check of the website** (iPhone Safari, plus Android if anyone has one) at
+   https://getluciddreams.vercel.app, top to bottom: the opening dancer, the Quest 3S, the scene tabs and their
+   videos, How it works (Vishal's six steps), the Technology chapters (drag each one) and Make one. Safari broke
+   every preview video tonight until a 10:15 PM fix, so make sure every video plays. Issues with screenshots, worst
+   first, in `docs/web-qa.md`.
+3. **Your branch** `atina/demo-readiness-accessibility` (the bundle validator and caption presets) never reached
+   main: rebase it, run `pipeline/` tests, run the validator over every dream in `dreams/` on Ojasva's Mac, put its
+   report in `docs/bundle-check.md`, and open a PR (or ask Ojasva to merge).
+4. **Judge Q&A** (`demo/judges.md`) is from Friday: it still says DiGS-Avatar and has `[verified value]` blanks.
+   Rewrite it from what's true now (AGENTS.md Status log; numbers from team/ian.md's SUBMISSION table): how a dream
+   is made, LHM++ and UIKA for avatars, Talk and its 3.1 s, real vs imagined, why public figures, what runs where,
+   and how long a dream takes (your timing from 1a). Short answers someone can say out loud.
+
 ## ADDED (Fri 11:40 PM): the showcase is set
 
 `demo/showcase.md` has the five demo moments (piano lesson side by side, LeBron in your driveway, chess with the

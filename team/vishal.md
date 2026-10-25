@@ -7,6 +7,29 @@ HiPerGator is your account, but Ojasva runs the batch GPU jobs. For development 
 session on your own login (one GPU, `--account=iruchkin --qos=iruchkin`), and hand finished scripts to Ojasva.
 
 
+## NOW (Sat 10:45 PM): land Court Side on main, then put it on the site
+
+Court Side lives on about ten branches (`court-side`, `court-e`, `court-g`, `court-d`, `court-c`, `court-faces`,
+`court-side-geo`, `court-bake`, `court-qa`) and none of it is on main, so the website, the one link and the judges
+can't see it. Feature freeze is Sun 10 AM.
+
+1. **Onto main by Sun 8 AM**, at https://getluciddreams.vercel.app/xr/?mode=court. Before you merge:
+   - nothing over 5 MB in git and no Luka/NBA footage, frames or bundles (they stay out of the repo, as your status
+     file says); `court-side` adds about 46,000 lines in 202 files, so read `git diff --stat` for generated files
+   - "Not affiliated" on screen, nobody speaks, the source credited in demo/credits.md
+   - it loads through the one link (base `/xr/`, your d3950f0 fix) with its bundle from the bridge
+   - `npm --prefix apps/webxr run build` passes and chess, tennis and the replays still load
+   Then get Ojasva's final yes (your ask 8) and add a Status log line with what landed and the Quest number (ask 7)
+   if you have it. The live /xr/ is a stable build: after the merge, `~/LucidDreams-held/rebuild-stable.sh` on
+   Ojasva's Mac rebuilds it from main.
+2. **On the website:** a Court Side card in the home page's scene gallery (`apps/web/lib/scenes.ts`,
+   `components/home/SceneGallery.tsx`, Play or Moments tab) with a real capture from the headset and its label.
+   Another session is editing the Technology section right now (Compositing, FillRate, Trajectories, tech.css):
+   stay out of those files.
+3. **Only if 1 and 2 are done:** Make one with 8-16 photos or a turnaround video runs the chain that built `vishal`
+   (video_frames -> lhmpp-avatar -> uika-head -> head-distill -> blink) as one runner job Ojasva's Claude can submit.
+   If you get halfway, the exact commands in order in avatars/README.md are still worth having.
+
 ## HEADS-UP (Sat 5:10 AM): hands are locked in the headset
 
 Ojasva tried everything on the Quest with hands only: gestures fired by accident ("a person will do a lot with

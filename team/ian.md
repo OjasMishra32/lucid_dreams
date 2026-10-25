@@ -4,6 +4,31 @@ You own what people actually see: photoreal people standing on the real floor in
 moving smoothly at full frame rate. Read `AGENTS.md` first.
 
 
+## NOW (Sat 10:50 PM): three laptop jobs (no headset), in order
+
+1. **Protect Talk on the public link.** The relay in `apps/webxr/vite.config.ts` adds the Talk token for anyone who
+   opens https://getluciddreams.vercel.app/xr/?dream=vishal, and `apps/talk/server.mjs` has no limits, so anyone with
+   the link (judges, the Devpost page, a bot) can keep spending our OpenAI and ElevenLabs credits.
+   - In the Talk server: a per-visitor limit (say 20 turns an hour, keyed on the visitor's address; ask Ojasva to have
+     the relay pass `x-forwarded-for`), a daily cap for everyone, a cap on recording length (about 20 s), and a log
+     line per turn.
+   - In the viewer (`apps/webxr/src/talk.ts`): when a limit hits, the caption says so plainly ("Talk is resting, try
+     again in a few minutes") and nothing hangs.
+   - Test it from the laptop viewer (Talk works there without a headset). Push it and add one Status log line.
+2. **Talk's replies from Gemini.** The replies are written by `gpt-4o-mini` today, so Gemini isn't in the feature
+   judges try most. Once Atina's Gemini key is in place, have Gemini Flash write the replies for Vishal and your
+   grandma, with the same rules: short, in their own words, never invents memories, labelled AI voice, her Vietnamese
+   with the English line. Keep Whisper and ElevenLabs, and fall back to `gpt-4o-mini` if Gemini fails or runs slow.
+   Measure the round trip over 10 tries each (today's median is 3.1 s: heard 1.5, reply 1.0, spoken 0.5) and put
+   the numbers in the Status log. Keys stay in `apps/talk/.env`, never in git.
+3. **The public README** (MLH Best Open Source reads it) is from Saturday 1 AM: DiGS-era, Raami's app, the retired
+   site. Rewrite it from what's true now (AGENTS.md Status log; numbers from the SUBMISSION table below):
+   - one line of what it is and the one link (website, `/xr/` for the headset)
+   - what you can do: learn, play, talk, moments
+   - how it works: the replay pipeline and the avatar chain (LHM++, UIKA)
+   - the measured table, honesty and consent, how to run each app, the repo map (apps/site is gone), credits, team
+   Add 3 or 4 real stills from the laptop viewer at the top. Short and plain.
+
 ## IAN (Sat 5:05 PM): grandma is public, with the family's yes
 
 My family agreed to her being shown and heard: in the library, on the home page's Talk with them, in the showcase,
