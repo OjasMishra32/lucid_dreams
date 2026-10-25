@@ -1,8 +1,9 @@
 import HomeStory from "@/components/home/HomeStory";
 import HomeMotion from "@/components/home/HomeMotion";
 import PlayReel from "@/components/home/PlayReel";
+import Pipeline from "@/components/home/Pipeline";
 import SceneGallery, { type GroupCopy } from "@/components/home/SceneGallery";
-import { heroFrames, measured, playClips, rigCameras, scenes } from "@/lib/scenes";
+import { heroFrames, pipelineData, playClips, rigCameras, scenes } from "@/lib/scenes";
 import type { RigCamera } from "@/lib/three/story";
 import TechnologySection from "@/components/tech/TechnologySection";
 import HeadsetStage from "@/components/tech/HeadsetStage";
@@ -21,10 +22,9 @@ const GROUPS: GroupCopy[] = [
 export default function Home() {
   const hero = heroFrames();
   const cards = scenes();
-  const rows = measured();
   const cams = rigCameras() as RigCamera[];
   const clips = playClips();
-  const lead = rows.find((r) => r.id === "dance-01") ?? rows[0];
+  const pipe = pipelineData();
 
   return (
     <div className="home">
@@ -52,36 +52,7 @@ export default function Home() {
         <SceneGallery groups={GROUPS} cards={cards} />
       </div>
 
-      {/* one video becomes 48: pinned while you scroll, the clip steps aside and the wall of views assembles */}
-      <section id="how" className="pipe-story" data-scrub="track" aria-labelledby="how-title">
-        <div className="pipe-sticky">
-          <h2 id="how-title" className="section-head">How it works</h2>
-          <div className="pipe-stage">
-            <div className="pipe-wall">
-              <video src="/media/wall-dance.mp4" poster="/media/wall-dance.jpg" muted loop playsInline autoPlay preload="none" aria-hidden="true" />
-              <div className="pipe-cells" aria-hidden="true">
-                {Array.from({ length: 48 }, (_, i) => (
-                  <i key={i} style={{ ["--s" as string]: (0.36 + (((i % 16) * 3 + Math.floor(i / 16)) / 48) * 0.36).toFixed(3) }} />
-                ))}
-              </div>
-            </div>
-            <div className="pipe-input">
-              <video src="/media/input-dance.mp4" poster="/media/input-dance.jpg" muted loop playsInline autoPlay preload="none" aria-hidden="true" />
-            </div>
-          </div>
-          <p className="pipe-cap cap-1"><b>One video.</b> Five seconds, one person, one camera. A phone works.</p>
-          <p className="pipe-cap cap-2"><b>48 views.</b> 4DAnyone generates the other angles, synced frame by frame.</p>
-        </div>
-      </section>
-
-      <section className="how">
-        <ul className="stats">
-          <li className="reveal"><b data-count="1">1</b><span>video in</span></li>
-          <li className="reveal"><b data-count={hero?.views ?? 48}>{hero?.views ?? 48}</b><span>generated views</span></li>
-          <li className="reveal"><b data-count={lead?.gaussians ?? 289466}>{(lead?.gaussians ?? 289466).toLocaleString("en-US")}</b><span>Gaussians per frame</span></li>
-          <li className="reveal"><b data-count={lead?.frames ?? 121}>{lead?.frames ?? 121}</b><span>frames, ~1 min each on a B200</span></li>
-        </ul>
-      </section>
+      <Pipeline data={pipe} />
 
       <TechnologySection />
 

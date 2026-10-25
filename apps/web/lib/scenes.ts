@@ -167,3 +167,50 @@ export function heroJoints(frame = 0): number[][] | null {
     return null;
   }
 }
+
+/** The pipeline section's real data: the dancer's clip, her 48 views, her sentence, her plan and her bundle's numbers. */
+export interface PipelineData {
+  clip: string;
+  clipPoster: string;
+  wall: string;
+  wallPoster: string;
+  frame: string | null;
+  preview: string | null;
+  intent: string;
+  plan: { title: string; steps: { title: string; start: number; end: number; speed: number; repeat: number }[] };
+  facts: { width: number; height: number; fps: number; frames: number; views: number; gaussians: number; mb: number };
+}
+export function pipelineData(): PipelineData {
+  const d = readDream("dance-01");
+  const hero = heroFrames();
+  let plan: PipelineData["plan"] = { title: "", steps: [] };
+  try {
+    const e = JSON.parse(readFileSync(join(DREAMS_DIR, "dance-01", "experience.json"), "utf8")) as {
+      title?: string;
+      steps?: { title: string; start: number; end: number; speed?: number; repeat?: number }[];
+    };
+    plan = { title: e.title ?? "", steps: (e.steps ?? []).map((s) => ({ title: s.title, start: s.start, end: s.end, speed: s.speed ?? 0.5, repeat: s.repeat ?? 1 })) };
+  } catch {
+    // no plan: the step shows the sentence alone
+  }
+  const src = (d as unknown as { source?: { width?: number; height?: number } } | null)?.source;
+  return {
+    clip: "/media/input-dance.mp4",
+    clipPoster: "/media/input-dance.jpg",
+    wall: "/media/wall-dance.mp4",
+    wallPoster: "/media/wall-dance.jpg",
+    frame: hero?.frame ?? null,
+    preview: d ? mediaUrl(d, d.preview) : null,
+    intent: d?.intent ?? "teach me this routine step by step",
+    plan,
+    facts: {
+      width: src?.width ?? 2160,
+      height: src?.height ?? 4096,
+      fps: d?.fps ?? 25,
+      frames: d?.frameCount ?? 121,
+      views: d?.metrics?.views ?? 48,
+      gaussians: d?.frames?.gaussiansPerFrame ?? 289466,
+      mb: Math.round((d?.frames?.spzBytesTotal ?? 517547439) / 1e6),
+    },
+  };
+}
