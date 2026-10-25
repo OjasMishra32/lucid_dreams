@@ -29,8 +29,8 @@ matters, open source.
 | 13 | 1:27.6 | Your moves against both | Now I play him, and Magnus, each rebuilt from a few photos. |
 | | 1:32 - 1:40 | Both games | *(nothing: let them play)* |
 | 14 | 1:41.2 | Federer's photos warping into the court | Rally with Federer, with real ball physics and every rule of tennis. |
-| 15 | 1:51.9 | LeBron's video warping into the room, you dribbling beside him | Run drills with LeBron. |
-| | 1:58 - 2:00 | Your layup, through the net | *(nothing: the ball)* |
+| 15 | 1:51.9 | LeBron's video warping into the room, you dribbling beside him, your shot | Run drills with LeBron. Hit your shot, then pass, and he takes his. |
+| | 1:56.7 - 2:00 | Your pass; he catches, shoots, scores | *(nothing: the ball)* |
 | 16 | 2:00.5 | The real play, then the court | Or step inside a real NBA play, and walk around it, frozen in time. |
 | 17 | 2:13.3 | Vishal's video warping into the hall | And talk with someone, in their own voice, with their permission. |
 | | 2:20 - 2:29 | You ask Vishal; he answers | *(nothing: the conversation)* |

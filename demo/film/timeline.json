@@ -354,12 +354,23 @@
    "grade": false,
    "speed": 1.0,
    "fit": "cover",
-   "end": 118.097
+   "end": 114.526
   },
   {
-   "src": "selects/lebron-layup.mp4",
-   "in": 0.1,
-   "start": 118.097,
+   "src": "selects/lebron2-shot.mp4",
+   "in": 0.35,
+   "start": 114.526,
+   "x": "cut",
+   "xd": 0.0,
+   "grade": true,
+   "speed": 1.0,
+   "fit": "cover",
+   "end": 116.669
+  },
+  {
+   "src": "selects/lebron2-pass.mp4",
+   "in": 0.25,
+   "start": 116.669,
    "x": "cut",
    "xd": 0.0,
    "grade": true,
@@ -650,8 +661,8 @@
   },
   {
    "text": "His likeness, from his footage. Not affiliated.",
-   "at": 118.297,
-   "dur": 1.7430000000000008,
+   "at": 114.726,
+   "dur": 5.313999999999998,
    "pos": "lower-right",
    "size": 20,
    "color": "#d2d2d7",
@@ -846,24 +857,34 @@
    "fadeout": 0.3
   },
   {
-   "src": "selects/lebron-catch.mp4",
+   "src": "selects/lebron2-drill.mp4",
    "in": 0.1,
-   "at": 116.119,
-   "dur": 2.0,
+   "at": 113.019,
+   "dur": 1.5069999999999992,
+   "gain": -9,
+   "bus": "bed",
+   "fadein": 0.2,
+   "fadeout": 0.0
+  },
+  {
+   "src": "selects/lebron2-shot.mp4",
+   "in": 0.35,
+   "at": 114.526,
+   "dur": 2.1430000000000007,
    "gain": -9,
    "bus": "bed",
    "fadein": 0.0,
    "fadeout": 0.0
   },
   {
-   "src": "selects/lebron-layup.mp4",
-   "in": 0.1,
-   "at": 118.097,
-   "dur": 2.1430000000000007,
+   "src": "selects/lebron2-pass.mp4",
+   "in": 0.25,
+   "at": 116.669,
+   "dur": 3.770999999999998,
    "gain": -9,
    "bus": "bed",
    "fadein": 0.0,
-   "fadeout": 0.2
+   "fadeout": 0.3
   }
  ],
  "letterbox": {

@@ -108,9 +108,10 @@ shot("motion/warp-federer.mp4", bar(33.5), "dissolve", 0.5)                     
 shot("selects/tennis-serve.mp4", bar(35.75), "cut")                                     # your serve
 shot("selects/tennis-rally.mp4", bar(36.25), "cut", inp=2.6)                            # his return, your forehand
 say("Roger Federer's likeness. AI opponent, not affiliated.", bar(35.75) + 0.2, bar(37.25) - bar(35.75) - 0.4, **LEGEND)
-shot("motion/warp-lebron.mp4", bar(37.25), "dissolve", 0.4)                            # his video -> you dribble beside him
-shot("selects/lebron-layup.mp4", bar(39.5), "cut", inp=0.1)                             # your layup, through the net
-say("His likeness, from his footage. Not affiliated.", bar(39.5) + 0.2, bar(40.25) - bar(39.5) - 0.4, **LEGEND)
+shot("motion/warp-lebron.mp4", bar(37.25), "dissolve", 0.4)                            # his video -> the drill, beside him
+shot("selects/lebron2-shot.mp4", bar(38.25), "cut", inp=0.35)                           # your shot, through the net
+shot("selects/lebron2-pass.mp4", bar(39), "cut", inp=0.25)                              # you pass; he catches, shoots, scores
+say("His likeness, from his footage. Not affiliated.", bar(38.25) + 0.2, bar(40.25) - bar(38.25) - 0.4, **LEGEND)
 shot("selects/court-game.mp4", bar(40.25), "dissolve", 0.4)                             # the real play, on the screen
 shot("selects/court-walk.mp4", bar(41.25), "cut")                                       # step in, walk around it
 shot("selects/court-gobert.mp4", bar(43), "cut")                                        # round Gobert, frozen
@@ -151,8 +152,9 @@ sound("selects/guitar-lesson.mp4", bar(23.75), bar(24.5) - bar(23.75), inp=0.8, 
 sound("selects/golf-you.mp4", bar(24.5) + 1.35 + 1.7, 2.6, gain=-4, fadeout=0.2)                   # your swing, the hit
 sound("selects/tennis-serve.mp4", bar(35.75), bar(36.25) - bar(35.75), gain=-5, fadeout=0.1)
 sound("selects/tennis-rally.mp4", bar(36.25), bar(37.25) - bar(36.25), inp=2.6, gain=-5, fadeout=0.3)
-sound("selects/lebron-catch.mp4", bar(37.25) + 1.35 + 3.1, 2.0, inp=0.1, gain=-9)
-sound("selects/lebron-layup.mp4", bar(39.5), bar(40.25) - bar(39.5), inp=0.1, gain=-9, fadeout=0.2)
+sound("selects/lebron2-drill.mp4", bar(37.25) + 1.35, bar(38.25) - bar(37.25) - 1.35, inp=0.1, gain=-9, fadein=0.2)
+sound("selects/lebron2-shot.mp4", bar(38.25), bar(39) - bar(38.25), inp=0.35, gain=-9)
+sound("selects/lebron2-pass.mp4", bar(39), bar(40.25) - bar(39) + 0.2, inp=0.25, gain=-9, fadeout=0.3)
 
 out = {"fps": 60, "length": LENGTH, "video": V, "text": T, "audio": A, "letterbox": LETTERBOX}
 for k, v in enumerate(V):

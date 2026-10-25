@@ -884,7 +884,7 @@ const WARPS: Scene[] = [
   warpCard({ key: "warp-golf", video: { src: "sources/golf-01.mp4", in: 3.0 }, line: "One video.", credit: "Be The Observer · Pexels",
     shots: [{ src: "selects/golf-swing.mp4", dur: 1.7 }, { src: "selects/golf-you.mp4", dur: 2.6 }] }),
   warpCard({ key: "warp-lebron", video: { src: "sources/lebron-shot.mp4", in: 3.0 }, line: "One video.", credit: "His training footage · demo use only",
-    shots: [{ src: "selects/lebron-dribble.mp4", dur: 3.1 }, { src: "selects/lebron-catch.mp4", in: 0.1, dur: 2.1 }],
+    shots: [{ src: "selects/lebron2-drill.mp4", in: 0.1, dur: 1.6 }],
     label: "His likeness, from his footage. Not affiliated." }),
   warpCard({ key: "warp-federer", photos: ["rf-wimbledon09-js-02", "rf-wimbledon09-js-03", "rf-wimbledon09-js-05", "rf-wimbledon09-js-06",
       "rf-wimbledon09-js-07", "rf-wimbledon09-sk", "rf-wimbledon09-sk-2", "rf-wimbledon09-js-10"].map((f) => `sources/photos/roger-federer-src/${f}.jpg`),
