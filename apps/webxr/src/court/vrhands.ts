@@ -46,11 +46,13 @@ function matcap(): THREE.Texture {
   return tex;
 }
 
-// A soft cool rim (fresnel): the edges glow a little, so the hands read against the dark arena without being flat
-// white; scaled by the arena's light like the rest (diffuseColor is light(level)).
+// A cool glass rim (fresnel), as the headset's own hands: the edges glow and stay solid while the middle of the hand
+// lets a little of the arena through, so the hands read against the dark arena without being flat white; scaled by
+// the arena's light like the rest (diffuseColor is light(level)).
 LOOKS.push({
-  fragment: `float rim = pow(1.0 - saturate(dot(normal, viewDir)), 2.5);
-outgoingLight += diffuseColor.rgb * vec3(0.80, 0.88, 1.0) * (0.55 * rim);`,
+  fragment: `float rim = pow(1.0 - saturate(dot(normal, viewDir)), 2.2);
+outgoingLight += diffuseColor.rgb * vec3(0.76, 0.87, 1.0) * (0.9 * rim);
+diffuseColor.a *= mix(0.84, 1.0, rim);`,
 });
 
 /** A skinned hand mesh in its bind pose: vertex `i` and a joint's position, in the same space. */
@@ -224,8 +226,8 @@ export class VrHands {
 /** How bright the right index fingertip glows, 0-1 (eased; shared by the hands' one material). */
 const PRESS = { value: 0 };
 
-// Press feedback: the right index fingertip brightens softly while it's on a button (the weight is the right hand's
-// fingertip, 0 everywhere on the left).
+// Press feedback: the right index fingertip lights up in a cool glow, a little as it nears a button and fully while
+// it's on one (the weight is the right hand's fingertip, 0 everywhere on the left).
 LOOKS.push({
   attribute: {
     name: "handTip",
@@ -235,7 +237,7 @@ LOOKS.push({
       if (!pose.right || !tip) return w;
       const v = new THREE.Vector3();
       for (let i = 0; i < pose.count; i++) {
-        const x = Math.min(1, Math.max(0, (0.02 - pose.at(i, v).distanceTo(tip)) / 0.014)); // full within 6 mm, none past 2 cm
+        const x = Math.min(1, Math.max(0, (0.026 - pose.at(i, v).distanceTo(tip)) / 0.018)); // full within 8 mm, none past 2.6 cm
         w[i] = x * x * (3 - 2 * x);
       }
       return w;
@@ -243,11 +245,13 @@ LOOKS.push({
   },
   uniforms: { handPress: PRESS },
   fragmentPars: "uniform float handPress;",
-  fragment: "outgoingLight = mix(outgoingLight, vec3(0.86, 0.93, 1.0) * 1.2, 0.75 * v_handTip * handPress);",
+  fragment: `float glow = v_handTip * handPress;
+outgoingLight = mix(outgoingLight, vec3(0.62, 0.84, 1.0) * 1.5, 0.9 * glow);
+diffuseColor.a = mix(diffuseColor.a, 1.0, glow);`,
 });
 
 /**
- * Whether the right index fingertip is on one of the palm menu's buttons (ui.ts draws them as planes over the hands, at
+ * How close the right index fingertip is to pressing one of the palm menu's buttons (ui.ts draws them as planes over the hands, at
  * a renderOrder above HANDS_ORDER; found in the scene once a second), easing PRESS toward it.
  */
 class PressGlow {
@@ -269,7 +273,7 @@ class PressGlow {
         if (m.isMesh && m.geometry.type === "PlaneGeometry" && m.renderOrder > HANDS_ORDER) this.buttons.push(m);
       });
     }
-    let on = false;
+    let on = 0;
     hands.forEach((hand, i) => {
       if (!models[i].visible || (models[i] as { xrInputSource?: { handedness?: string } }).xrInputSource?.handedness !== "right") return;
       const tip = liveJoints(hand)["index-finger-tip"];
@@ -277,16 +281,23 @@ class PressGlow {
     });
     const dt = this.at < 0 ? 0 : now - this.at;
     this.at = now;
-    PRESS.value += ((on ? 1 : 0) - PRESS.value) * (1 - Math.exp(-dt / 60));
+    PRESS.value += (on - PRESS.value) * (1 - Math.exp(-dt / 60));
   }
 
-  /** On a shown button's face: over it, from just in front (8 mm) to pushed 3 cm in. */
-  private touching(tip: THREE.Vector3): boolean {
-    return this.buttons.some((b) => {
-      for (let o: THREE.Object3D | null = b; o; o = o.parent) if (!o.visible) return false;
+  /** Over a shown button: 1 on its face (from 8 mm in front to pushed 3 cm in), 0.35 nearing it (up to 4 cm in front), else 0. */
+  private touching(tip: THREE.Vector3): number {
+    let best = 0;
+    for (const b of this.buttons) {
+      let shown = true;
+      for (let o: THREE.Object3D | null = b; o; o = o.parent) shown &&= o.visible;
+      if (!shown) continue;
       const { width, height } = (b.geometry as THREE.PlaneGeometry).parameters;
       b.worldToLocal(this.local.copy(tip));
-      return Math.abs(this.local.x) < width / 2 && Math.abs(this.local.y) < height / 2 && this.local.z < 0.008 && this.local.z > -0.03;
-    });
+      if (Math.abs(this.local.x) >= width / 2 || Math.abs(this.local.y) >= height / 2) continue;
+      const z = this.local.z;
+      if (z < 0.008 && z > -0.03) return 1;
+      if (z >= 0.008 && z < 0.04) best = 0.35;
+    }
+    return best;
   }
 }
