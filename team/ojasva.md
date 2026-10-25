@@ -5,6 +5,8 @@ who submits GPU jobs. Read `AGENTS.md` first.
 
 ## FIRST, Sun Oct 25 (Vishal): put Court Side on the website
 
+**Done Sun 6:25 AM:** live at https://getluciddreams.vercel.app/xr/?mode=court, with a Court Side card on the site (Status log).
+
 Vishal wants Court Side (his feature, `?mode=court`) live on **https://getluciddreams.vercel.app/xr/?mode=court**.
 The site and `/xr/` run on your Mac and your Vercel, so only you (or your Claude) can do this. He has approved it
 going public. Today it runs on Vishal's Mac behind a quick tunnel; that link only works while his Mac is up.
