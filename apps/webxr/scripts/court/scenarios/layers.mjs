@@ -52,10 +52,11 @@ const smooth = (e, x) => {
 /**
  * Where a person's card shows at full strength: per pixel of the view crop r, whether the ray through it meets the
  * person's card plane (upright through their foot, square to the broadcast camera's horizontal ray: proxies.ts
- * cardPlane) inside the show frame's picture clear of its feathered edge. A body the frame's edge cuts (the camera
- * tilting up after the ball) fades there by design: those pixels aren't the plate showing through.
+ * cardPlane) inside the show frame's picture clear of its feathered edge (the edge's strength above `min`). A body
+ * the frame's edge cuts (the camera tilting up after the ball) fades there by design: those pixels aren't the plate
+ * showing through.
  */
-function fullyInPicture(view, r, foot, centre, camK) {
+function fullyInPicture(view, r, foot, centre, camK, min = 0.999) {
   const d = [foot[0] - centre[0], 0, foot[2] - centre[2]];
   const n = Math.hypot(d[0], d[2]);
   const normal = [d[0] / n, 0, d[2] / n];
@@ -73,7 +74,7 @@ function fullyInPicture(view, r, foot, centre, camK) {
       if (!at) continue;
       const u = (at[0] + 0.5) / camK.width;
       const v = (at[1] + 0.5) / camK.height;
-      out[(y - r[1]) * w + (x - r[0])] = smooth(FEATHER, Math.min(u, 1 - u)) * smooth(FEATHER, Math.min(v, 1 - v)) > 0.999 ? 1 : 0;
+      out[(y - r[1]) * w + (x - r[0])] = smooth(FEATHER, Math.min(u, 1 - u)) * smooth(FEATHER, Math.min(v, 1 - v)) > min ? 1 : 0;
     }
   return out;
 }
@@ -210,6 +211,9 @@ export default async function layers(ctx) {
       const lm = toLuma(moved(c, s.dx, s.dy)); // the person aligned to the truth's
       const lc = toLuma(c); // the plate where it is
       const pic = fullyInPicture(p.cropped, r, people[kind - PERSON].foot, ctx.court.camera.centre, camK);
+      // the plate is what shows round a person only inside the picture (at least half strength): outside it is the
+      // cinema mask's dark, or with a surround (court.surround) the arena round the picture, never the plate
+      const plate = fullyInPicture(p.cropped, r, people[kind - PERSON].foot, ctx.court.camera.centre, camK, 0.5);
       // the person's own pixels, 2 px in from their edge (a tear shows the plate there), and a ring round them, 5 px
       // clear (a double shows the person again on the plate there)
       const at = (x, y) => p.kind[(r[1] + y) * img.width + r[0] + x];
@@ -232,8 +236,8 @@ export default async function layers(ctx) {
             }
             inside++;
             if (Math.abs(lm[i] - la[i]) > OFF) torn++;
-          } else if (!near && lc[i] >= 0.5 * la[i]) {
-            // (a pixel the window's feathered edge or the cinema mask darkens isn't the plate: not judged)
+          } else if (!near && plate[i] && lc[i] >= 0.5 * la[i]) {
+            // (a pixel the window's feathered edge or the cinema mask darkens, or outside the picture, isn't the plate: not judged)
             ring++;
             if (Math.abs(lc[i] - la[i]) > OFF) ghosts++;
           }
