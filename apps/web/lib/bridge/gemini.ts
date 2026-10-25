@@ -1,15 +1,24 @@
 import "server-only";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { FileState, GoogleGenAI, type File as GeminiFile } from "@google/genai";
 import {
   DEFECT_KINDS, ENVIRONMENTS, STRENGTHS, type Environment, type Experience, type ExperienceMode, type Feedback, type FeedbackNote, type Realism, type RealismDefect,
   type RealismView, type Strength,
 } from "../dream";
 
-// Gemini, the brain of the main goal: one sentence of intent plus the person's clip (or photo) in, experience.json out.
+// Gemini still runs realism, Watch me try, and the Live coach. Gemma writes the lesson plan: it sees local stills
+// inline rather than an uploaded video, because Gemma instruction-tuned models do not accept Gemini's video/system prompt path.
 // Models are tried in order, so a renamed or unavailable model never takes the step down.
 const MODELS = (process.env.GEMINI_MODEL ?? "gemini-3.8-flash,gemini-3.6-flash,gemini-3-flash-preview").split(",");
 const FPS = 15; // frames per second Gemini sees: enough for a jump shot's release (the default is 1)
 const TEACH_REQUEST = /\b(teach me|show me how|help me learn|break it down|coach me)\b/;
+const run = promisify(execFile);
+const GEMMA_FRAME_COUNT = 8;
+let discoveredPlanModels: Promise<string[]> | null = null;
 
 let client: GoogleGenAI | null = null;
 function ai(): GoogleGenAI {
@@ -127,36 +136,25 @@ const SCHEMA = {
 };
 
 /**
- * Ask Gemini for the plan and hold it to the contract. Everything it was shown is deleted from Google afterwards.
+ * Ask Gemma for the plan and hold it to the contract. A clip becomes eight small local JPEGs sent inline with the
+ * request; Google Files is never used for planning, so there is no uploaded video to delete afterwards.
  * `debug.raw` sees the model's own JSON before clean(), so the intent tests can tell the prompt's work from the rules'.
  */
 export async function writeExperience(
   p: Plan,
   debug: { raw?: (json: Record<string, unknown>) => void } = {},
 ): Promise<Omit<Experience, "createdAt">> {
-  const files: GeminiFile[] = [];
-  try {
-    const d = p.durationS.toFixed(2);
-    const parts: object[] = [];
-    let source: Experience["source"] = "intent";
-    if (p.video) {
-      const f = await upload(p.video.path, "video/mp4", files);
-      parts.push({
-        fileData: { fileUri: f.uri!, mimeType: f.mimeType ?? "video/mp4" },
-        videoMetadata: {
-          fps: FPS,
-          ...(p.video.offsetS > 0
-            ? { startOffset: `${p.video.offsetS.toFixed(2)}s`, endOffset: `${(p.video.offsetS + p.durationS).toFixed(2)}s` }
-            : {}),
-        },
-      });
-      source = p.video.orbit ? "preview" : "clip";
-    } else if (p.photo) {
-      const f = await upload(p.photo.path, p.photo.mime, files);
-      parts.push({ fileData: { fileUri: f.uri!, mimeType: f.mimeType ?? p.photo.mime } });
-      source = "photo";
-    }
-    const media = p.video
+  const d = p.durationS.toFixed(2);
+  const parts: object[] = [];
+  let source: Experience["source"] = "intent";
+  if (p.video) {
+    parts.push(...(await videoFrames(p.video.path, p.video.offsetS, p.durationS)));
+    source = p.video.orbit ? "preview" : "clip";
+  } else if (p.photo) {
+    parts.push(await imagePart(p.photo.path, p.photo.mime));
+    source = "photo";
+  }
+  const media = p.video
       ? p.video.orbit
         ? `The video is a 3D render of the person on black: a virtual camera circles them while their ${d}-second motion plays (looping if the video is longer). Times are seconds into the motion, 0 to ${d}.`
         : `The video is the ${d} seconds the person was rebuilt from. Time 0 is its first frame; step times run from 0 to ${d}.`
@@ -165,46 +163,112 @@ export async function writeExperience(
         : p.intentOnly && p.kind === "replay"
           ? `The ${d}-second video they were rebuilt from isn't attached: plan from the sentence alone, and split a lesson evenly across 0 to ${d} seconds.`
           : `There is no picture to look at: plan from the sentence alone. They can't perform a move, so no steps.`;
-    const who =
-      p.kind === "avatar"
-        ? "They are an avatar built from a photo: they can keep the user company, be watched, or sit across a chess board."
-        : "They are a replay of a video: they do exactly what the video shows, and can't play chess.";
-    const want = p.intent
-      ? `What the user wants to do with this person: "${p.intent}".`
-      : `The user didn't say what they want: choose teach if the clip shows a move someone could learn, otherwise watch.`;
-    parts.push({ text: `The user calls this dream "${p.name}". ${want}\n${who}\n${media}` });
+  const who =
+    p.kind === "avatar"
+      ? "They are an avatar built from a photo: they can keep the user company, be watched, or sit across a chess board."
+      : "They are a replay of a video: they do exactly what the video shows, and can't play chess.";
+  const want = p.intent
+    ? `What the user wants to do with this person: "${p.intent}".`
+    : `The user didn't say what they want: choose teach if the clip shows a move someone could learn, otherwise watch.`;
 
-    const generate = async (repair = false) =>
-      firstModel(MODELS, (model) =>
-        retry(2, () =>
-          ai().models.generateContent({
-            model,
-            contents: [{ role: "user", parts }],
-            config: {
-              systemInstruction: repair
-                ? `${SYSTEM}\n\nThe user explicitly asked for a lesson. Recheck the video and return a complete, runnable teach plan only if it visibly supports a learnable move: mode \"teach\" with 2 to 6 ordered steps inside the clip, each with a title and tip. If the video cannot support that, return an honest watch plan. Never invent a move or step.`
-                : SYSTEM,
-              responseMimeType: "application/json",
-              responseJsonSchema: SCHEMA,
-              httpOptions: { timeout: 180_000 },
-            },
-          }),
-        ).then((r) => ({ text: r.text ?? "", model })),
-      );
-    let result = await generate();
-    let raw = JSON.parse(result.text) as Record<string, unknown>;
-    let experience = clean(raw, p);
-    // A model can recognize an explicit lesson but omit enough valid steps for a player to run it.
-    // Ask it once to repair from the actual media; never synthesize steps in this service.
-    if (shouldRepairTeachPlan(p, experience)) {
-      result = await generate(true);
-      raw = JSON.parse(result.text) as Record<string, unknown>;
-      experience = clean(raw, p);
-    }
-    debug.raw?.(raw);
-    return { ...experience, source, model: result.model };
+  const generate = async (repair = false) =>
+    firstModel(await planModels(), (model) =>
+      retry(2, () =>
+        ai().models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [...parts, { text: gemmaPrompt(`${p.name}\n${want}\n${who}\n${media}`, repair) }] }],
+          config: { httpOptions: { timeout: 180_000 } },
+        }),
+      ).then((r) => ({ text: r.text ?? "", model })),
+    );
+  let result = await generate();
+  let raw = parseGemmaJson(result.text);
+  let experience = clean(raw, p);
+  // A model can recognize an explicit lesson but omit enough valid steps for a player to run it.
+  // Ask it once to repair from the same frames; never synthesize steps in this service.
+  if (shouldRepairTeachPlan(p, experience)) {
+    result = await generate(true);
+    raw = parseGemmaJson(result.text);
+    experience = clean(raw, p);
+  }
+  debug.raw?.(raw);
+  return { ...experience, source, model: result.model };
+}
+
+/** A direct env override is useful for QA; otherwise choose the newest instruction-tuned Gemma the key can list. */
+async function planModels(): Promise<string[]> {
+  const configured = process.env.GEMINI_MODEL?.split(",").map((m) => m.trim()).filter(Boolean) ?? [];
+  if (configured.length) return configured;
+  discoveredPlanModels ??= discoverGemmaModels(process.env.GEMINI_API_KEY);
+  return discoveredPlanModels;
+}
+
+interface ListedModel { name?: string; supportedGenerationMethods?: string[] }
+
+/** Exported for deterministic tests; model names may be returned as `models/gemma-…`. */
+export function newestGemmaModels(models: ListedModel[]): string[] {
+  return models
+    .filter((m) => m.name && /^models\/gemma-[\w.-]+-it$/i.test(m.name) && (!m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent")))
+    .map((m) => m.name!.replace(/^models\//, ""))
+    .sort((a, b) => gemmaRank(b) - gemmaRank(a) || b.localeCompare(a));
+}
+
+function gemmaRank(model: string): number {
+  const major = Number(/gemma-(\d+)/i.exec(model)?.[1] ?? 0);
+  const parameters = Number(/-(\d+(?:\.\d+)?)b-it$/i.exec(model)?.[1] ?? 0);
+  // A later `n` family comes after its same-generation base family; parameter count settles model variants.
+  const n = /gemma-\d+n-/i.test(model) ? 0.5 : 0;
+  return major * 1_000_000 + n * 100_000 + parameters;
+}
+
+async function discoverGemmaModels(key: string | undefined): Promise<string[]> {
+  if (!key) throw new Error("Gemma planning is off: set GEMINI_API_KEY on the bridge.");
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+  if (!response.ok) throw new Error(`Gemma model list failed (${response.status}). Set GEMINI_MODEL to an available gemma-…-it model.`);
+  const models = newestGemmaModels(((await response.json()) as { models?: ListedModel[] }).models ?? []);
+  if (!models.length) throw new Error("This API key has no instruction-tuned Gemma model. Set GEMINI_MODEL after listing its available models.");
+  return models;
+}
+
+/** Gemma has no Gemini system-instruction or response-schema path, so the rules and JSON shape travel in user text. */
+export function gemmaPrompt(context: string, repair = false): string {
+  const repairText = repair
+    ? "\nThe user explicitly asked for a lesson. Recheck the images and return a complete, runnable teach plan only if they visibly support a learnable move: 2 to 6 ordered steps inside the clip, each with a title and tip. Otherwise return an honest watch plan. Never invent a move or step."
+    : "";
+  return `${SYSTEM}\n\n${context}${repairText}\n\nReturn only one JSON object. No Markdown, no code fence, no explanation. Its required fields are mode, title, summary, and place. It may include category, steps, environment, objects, and strength. For a teach plan, every step must have numeric start and end times in the clip, plus title and tip. Do not add fields outside that shape.`;
+}
+
+/** Gemma sometimes wraps an otherwise valid object in a Markdown fence; accept that presentation without altering words. */
+export function parseGemmaJson(text: string): Record<string, unknown> {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start < 0 || end < start) throw new Error("Gemma did not return a JSON lesson plan.");
+  const value = JSON.parse(trimmed.slice(start, end + 1));
+  if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("Gemma returned a non-object lesson plan.");
+  return value as Record<string, unknown>;
+}
+
+async function imagePart(path: string, mime: string): Promise<object> {
+  const bytes = await readFile(path);
+  if (!bytes.length) throw new Error("Gemma planning image is empty.");
+  return { inlineData: { mimeType: mime, data: bytes.toString("base64") } };
+}
+
+/** Extract eight evenly spaced, metadata-free stills from only the bundle's clip window. */
+export async function videoFrames(path: string, offsetS: number, durationS: number): Promise<object[]> {
+  const dir = await mkdtemp(join(tmpdir(), "lucid-gemma-"));
+  try {
+    const rate = Math.max(GEMMA_FRAME_COUNT / Math.max(durationS, 0.1), 0.1).toFixed(5);
+    await run("ffmpeg", ["-v", "error", "-ss", Math.max(offsetS, 0).toFixed(3), "-t", Math.max(durationS, 0.1).toFixed(3), "-i", path,
+      "-vf", `fps=${rate},scale='min(768,iw)':-2`, "-frames:v", String(GEMMA_FRAME_COUNT), "-q:v", "4", join(dir, "frame-%02d.jpg")], { timeout: 60_000 });
+    const frames = (await readdir(dir)).filter((f) => /^frame-\d+\.jpg$/.test(f)).sort().slice(0, GEMMA_FRAME_COUNT);
+    if (frames.length < 6) throw new Error(`Gemma planning needs 6 to ${GEMMA_FRAME_COUNT} readable frames; ffmpeg extracted ${frames.length}.`);
+    return Promise.all(frames.map((f) => imagePart(join(dir, f), "image/jpeg")));
+  } catch (e) {
+    throw new Error(`Gemma couldn't prepare clip frames: ${String((e as Error).message ?? e)}`);
   } finally {
-    for (const f of files) ai().files.delete({ name: f.name! }).catch(() => {}); // don't leave people's clips on Google's side
+    await rm(dir, { recursive: true, force: true });
   }
 }
 

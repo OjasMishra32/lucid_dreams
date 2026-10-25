@@ -28,27 +28,27 @@ dream page has its Places (the viewer with `?place=`) and an "Open on Quest" add
 Bundles live in `<repo>/dreams/` (git-ignored), shared with the runner and the WebXR viewer. For mock mode on your
 own laptop, start from the committed sample: `cp -R samples/synthetic-test dreams/`.
 
-## The experience step (Gemini)
+## The experience step (Gemma)
 
 The main goal is one sentence: any photo or video, plus what you want to do with that person, and they're in your
 room doing it with you. Make a dream asks "What do you want to do with them?" (the `intent`); it goes to the runner as
-`--intent` and lands in `dream.json`. When the dream arrives, the bridge asks Gemini to turn intent + person into
+`--intent` and lands in `dream.json`. When the dream arrives, the bridge asks Gemma to turn intent + person into
 `experience.json` (AGENTS.md, Contracts, "Experience"): `teach` (steps with times, speed, repeats and a tip each),
 `companion`, `watch` or `play` (chess, at a strength), and where they stand (`facing`, `beside`, `ahead`). The WebXR
 viewer and the Quest app run it; the dream page shows the plan and names the main action by it.
 
-- Gemini watches the clip window the person was built from: the upload cut on the Mac to `[startS, startS + durationS]`
-  (location metadata stripped). Step times are seconds in the bundle's clip time. Clips that only live on HiPerGator
-  come back as the run's `prepped.mp4` (runner mode); `preview.mp4` is used only when there's no clip at all. Avatars
-  send their photo; with no picture, the plan comes from the sentence alone.
+- Gemma sees 6–8 evenly spaced JPEG frames from the clip window the person was built from: the upload cut on the Mac
+  to `[startS, startS + durationS]` (location metadata stripped). Step times are seconds in the bundle's clip time.
+  Clips that only live on HiPerGator come back as the run's `prepped.mp4` (runner mode); `preview.mp4` is used only
+  when there's no clip at all. Avatars send their photo; with no picture, the plan comes from the sentence alone.
 - Once per dream and intent: a copy is cached in `.data/experiences/`, so a re-fetched bundle never asks again.
-- Uploads are deleted from Gemini as soon as the plan is written. Gemini never names the person or speaks as them;
+- The planning request uses inline frames rather than Google Files. Gemma never names the person or speaks as them;
   tips are read by the device's own voice.
 - Needs a key from https://aistudio.google.com/apikey in `apps/web/.env.local` (git-ignored):
 
 ```bash
 GEMINI_API_KEY=...
-# optional: GEMINI_MODEL (comma-separated fallbacks)
+# optional: GEMINI_MODEL=gemma-4-31b-it (otherwise the newest available gemma-...-it is selected)
 ```
 
 `GET /api/dreams/<id>/experience` says where a plan stands (`ready`, `working`, `failed` with the reason, or `off`);
@@ -63,7 +63,7 @@ strength) it should become.
 ```bash
 npm --prefix apps/web test                         # both of the below
 npm --prefix apps/web run test:plan                # clean()'s rules against canned model answers: no key, no network
-npm --prefix apps/web run test:intents             # all forty through Gemini (needs GEMINI_API_KEY); without one, checks the file
+npm --prefix apps/web run test:intents             # all forty through Gemma (needs GEMINI_API_KEY); without one, checks the file
 npm --prefix apps/web run test:intents -- play     # one mode, or any words from a case id
 ```
 

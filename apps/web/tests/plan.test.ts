@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { describe, test } from "node:test";
-import { clean, shouldRepairTeachPlan, type Plan } from "../lib/bridge/gemini";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { clean, gemmaPrompt, newestGemmaModels, parseGemmaJson, shouldRepairTeachPlan, videoFrames, type Plan } from "../lib/bridge/gemini";
 import { compare, fromExperience, loadCases, type IntentCase } from "./intents";
 
 // clean() with canned model outputs: no key, no network. npm run test:plan
@@ -52,6 +56,53 @@ describe("the forty sentences", () => {
     for (const c of cases.filter((c) => /chess/.test(c.sentence))) {
       const e = clean(answer({ mode: "companion", place: "facing" }), plan(c));
       assert.deepEqual(compare(c.expect, fromExperience(e)), [], `${c.id}: "${c.sentence}"`);
+    }
+  });
+});
+
+describe("Gemma lesson planning", () => {
+  test("chooses instruction-tuned Gemma generation models newest first", () => {
+    assert.deepEqual(newestGemmaModels([
+      { name: "models/gemma-2-9b-it", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemma-3-4b-it", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemma-3-27b-it", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemma-3-27b-pt", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemma-3-27b-it", supportedGenerationMethods: ["embedContent"] },
+      { name: "models/gemini-3.8-flash", supportedGenerationMethods: ["generateContent"] },
+    ]), ["gemma-3-27b-it", "gemma-3-4b-it", "gemma-2-9b-it"]);
+  });
+
+  test("keeps all planning rules in the Gemma user prompt and requests JSON without a system instruction", () => {
+    const prompt = gemmaPrompt("A dance lesson", true);
+    assert.match(prompt, /A dance lesson/);
+    assert.match(prompt, /Return only one JSON object/);
+    assert.match(prompt, /explicitly asked for a lesson/);
+  });
+
+  test("reads a fenced Gemma object without changing its transcript fields", () => {
+    assert.deepEqual(parseGemmaJson("```json\n{\"mode\":\"watch\",\"title\":\"A move\"}\n```"), { mode: "watch", title: "A move" });
+    assert.throws(() => parseGemmaJson("not JSON"), /JSON lesson plan/);
+  });
+
+  test("turns a short synthetic clip into eight inline JPEG frames", async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "lucid-gemma-test-"));
+    const clip = join(dir, "clip.mp4");
+    try {
+      try {
+        execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=128x72:rate=24", "-t", "1", "-an", "-y", clip]);
+      } catch {
+        t.skip("ffmpeg is unavailable for the local frame-extraction check");
+        return;
+      }
+      const parts = await videoFrames(clip, 0, 1);
+      assert.equal(parts.length, 8);
+      for (const part of parts as { inlineData: { mimeType: string; data: string } }[]) {
+        assert.equal(part.inlineData.mimeType, "image/jpeg");
+        const image = Buffer.from(part.inlineData.data, "base64");
+        assert.deepEqual([...image.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
