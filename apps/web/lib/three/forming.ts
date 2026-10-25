@@ -49,10 +49,23 @@ export async function mountForming(host: HTMLElement, frame: string, hooks: Form
   }
   if (gone) return () => {};
   person.add(mesh);
-  const box = mesh.getBoundingBox(true);
-  const h = Math.max(1.2, box.max.y - box.min.y);
-  // feet on y = 0, centred: a replay frame already is, an avatar's rest pose hangs from its pelvis
-  mesh.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+  // feet on y = 0, centred (a replay frame already is; an avatar's rest pose hangs from its pelvis), from robust
+  // bounds: a few stray Gaussians below the feet or above the head mustn't move the person or the framing
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  mesh.forEachSplat((_i, c) => {
+    xs.push(c.x);
+    ys.push(c.y);
+    zs.push(c.z);
+  });
+  const q = (v: number[], f: number) => {
+    v.sort((a, b) => a - b);
+    return v[Math.min(v.length - 1, Math.max(0, Math.floor(v.length * f)))] ?? 0;
+  };
+  const lo = q(ys, 0.002);
+  const h = Math.max(1.2, q(ys, 0.998) - lo);
+  mesh.position.set(-(q(xs, 0.002) + q(xs, 0.998)) / 2, -lo, -(q(zs, 0.002) + q(zs, 0.998)) / 2);
 
   let w = 0;
   let hh = 0;

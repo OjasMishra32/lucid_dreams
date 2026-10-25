@@ -103,6 +103,33 @@ function round(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
 
 const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
 
+/** The fit's loss, typeset by hand: italic letters in a serif, norms as bars, subscripts small and low. */
+function math(g: CanvasRenderingContext2D, x0: number, y: number, k: number) {
+  if (k <= 0.001) return;
+  const size = 36;
+  type Run = { s: string; italic?: boolean; sub?: boolean; serif?: boolean; gap?: number };
+  const runs: Run[] = [
+    { s: "L", italic: true, serif: true }, { s: " = 0.8 " }, { s: "‖" }, { s: "Î", italic: true, serif: true }, { s: " − " },
+    { s: "I", italic: true, serif: true }, { s: "‖" }, { s: "1", sub: true }, { s: " + 0.2 (1 − SSIM) + 0.1 " }, { s: "‖" },
+    { s: "Â", italic: true, serif: true }, { s: " − " }, { s: "A", italic: true, serif: true }, { s: "‖" }, { s: "1", sub: true },
+    { s: " + " }, { s: "L", italic: true, serif: true }, { s: "reg", sub: true },
+  ];
+  g.save();
+  g.globalAlpha = k;
+  g.filter = k < 0.999 ? `blur(${((1 - k) * 10).toFixed(2)}px)` : "none";
+  g.fillStyle = INK;
+  g.textBaseline = "alphabetic";
+  let x = x0;
+  const dy = (1 - k) * 18;
+  for (const r of runs) {
+    const sz = r.sub ? size * 0.62 : size;
+    g.font = `${r.italic ? "italic " : ""}400 ${sz}px ${r.serif ? SERIF : FONT}`;
+    g.fillText(r.s, x, y + dy + (r.sub ? size * 0.22 : 0));
+    x += g.measureText(r.s).width + (r.sub ? 2 : 0);
+  }
+  g.restore();
+}
+
 // ---------------------------------------------------------------------------------------------------------------- scenes
 
 const title: Scene = {
@@ -215,7 +242,8 @@ const fit: Scene = {
     const k = ramp(t, 1.2, 1.8);
     text(g, "frames", 120, 640, { size: 26, weight: 500, color: INK3, alpha: k });
     text(g, `${f}`, 120, 730, { size: 96, weight: 700, track: -3, alpha: k });
-    text(g, "of 121", 120 + g.measureText(`${f}`).width * 1.9 + 24, 730, { size: 30, weight: 500, color: INK2, alpha: k });
+    g.font = `700 96px ${FONT}`;
+    text(g, "of 121", 120 + g.measureText(`${f}`).width - 3 * `${f}`.length + 16, 730, { size: 30, weight: 500, color: INK2, alpha: k });
     const n = (s.data.count ?? 289466) * ramp(t, 1.4, 9.4);
     text(g, "Gaussians in this frame", 520, 640, { size: 26, weight: 500, color: INK3, alpha: k });
     text(g, fmt(n), 520, 730, { size: 96, weight: 700, track: -3, alpha: k });
@@ -224,13 +252,7 @@ const fit: Scene = {
       weight: 500,
       color: INK2,
     });
-    rise(g, "L = 0.8 ‖Î − I‖₁ + 0.2 (1 − SSIM) + 0.1 ‖Â − A‖₁ + L_reg", 120, 950, ramp(t, 3.4, 4.2), {
-      size: 34,
-      weight: 400,
-      color: INK,
-      serif: true,
-      italic: true,
-    });
+    math(g, 120, 950, ramp(t, 3.4, 4.2));
   },
 };
 
