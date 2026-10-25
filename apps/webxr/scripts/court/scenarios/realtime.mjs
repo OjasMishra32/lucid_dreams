@@ -19,7 +19,10 @@ export default async function realtime(ctx) {
   if (!new URL(ctx.page.url()).searchParams.has("solo")) ctx.skip("run with --query solo");
   const r = rig(ctx);
   const { segments } = ctx.court.video;
+  // every ease ends on F's source frame at its own show frame (a later press takes a later ease): any of them is F
+  const ENDS = new Set(segments.eases.map((e) => e.frames[1]));
   const F = segments.eases[0].frames[1];
+  const isF = (k) => ENDS.has(k);
   // one atomic read: the clock, the frame on screen and whether any 3D player is drawn
   const now = () => ctx.page.evaluate(() => {
     const s = window.__court.snapshot();
@@ -72,25 +75,25 @@ export default async function realtime(ctx) {
     await ctx.nextFrame();
     const x = await now();
     ease.push(x);
-    if (!savedBefore && x.frame >= F - 1) {
+    if (!savedBefore && segments.eases.some((e) => x.frame >= e.frames[1] - 1 && x.frame <= e.frames[1])) {
       savedBefore = true;
       await ctx.save("rt-03-F-minus-1");
     }
-    if (!savedF && x.frame === F && x.onScreen === F) {
+    if (!savedF && isF(x.frame) && x.onScreen === x.frame) {
       savedF = true;
       await ctx.save("rt-04-F");
     }
     if (x.phase === "open" || x.phase === "walking") break;
   }
   const firstFreeze = ease.find((x) => x.freeze && x.video < 1);
-  const beforeF = ease.filter((x) => x.frame < F);
-  const heldF = ease.find((x) => x.frame === F && x.onScreen === F);
+  const beforeF = ease.filter((x) => !isF(x.frame) && x.segment !== "freeze");
+  const heldF = ease.find((x) => isF(x.frame) && x.onScreen === x.frame);
   report.ease = { samples: ease.length, firstFreeze, heldF: !!heldF, last: ease.at(-1) };
   const seenBeforeF = beforeF.filter((x) => x.freeze && x.video < 1);
   ctx.check("realtime: the ease plays the footage into F (no 3D seen before F)", !seenBeforeF.length, `${beforeF.length} samples before F, ${beforeF.filter((x) => x.freeze).length} with the 3D drawn under the picture, ${seenBeforeF.length} with the picture below full opacity`);
   ctx.check("realtime: the picture lands on F and holds F's own pixels", !!heldF, heldF ? `on screen ${heldF.onScreen} = F at clock ${heldF.frame}` : `never (last: clock ${ease.at(-1)?.frame}, on screen ${ease.at(-1)?.onScreen})`);
-  ctx.check("realtime: the 3D takes over only once F is on screen (the picture starts fading on F)", !!firstFreeze && firstFreeze.onScreen === F && firstFreeze.frame === F,
-    firstFreeze ? `picture at ${firstFreeze.video.toFixed(3)} over the 3D first at clock ${firstFreeze.frame}, on screen ${firstFreeze.onScreen} (F ${F}), phase ${firstFreeze.phase}` : "the 3D never appeared");
+  ctx.check("realtime: the 3D takes over only once F is on screen (the picture starts fading on F)", !!firstFreeze && isF(firstFreeze.frame) && firstFreeze.onScreen === firstFreeze.frame,
+    firstFreeze ? `picture at ${firstFreeze.video.toFixed(3)} over the 3D first at clock ${firstFreeze.frame}, on screen ${firstFreeze.onScreen} (F's show frames ${[...ENDS].join("/")}), phase ${firstFreeze.phase}` : "the 3D never appeared");
   await watchFor(1);
   await ctx.save("rt-05-F-plus-1s");
 
