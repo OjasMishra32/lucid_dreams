@@ -240,6 +240,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const ui = new Ui(scene, hands, sideOf, bundle);
   const seatLock = new PersistentLock(renderer, world); // persistent anchors, and the session's bounded-floor for Seat
   const seat = new Seat(court, frames, world, seatLock, params.has("seat") ? Number(params.get("seat")) : undefined);
+  if (demoMode) seat.drawChair(false); // the demo walks nowhere back to a seat: no chair drawn on the court
   world.add(proxies.group);
   // the view: the cinema screen for the watch (default), or ?view=courtside, the footage projected into the arena (V1.2)
   const screen = viewMode(params.get("view")) === "screen" ? new CinemaScreen(bundle, video.regions.live, seat.spot) : null;

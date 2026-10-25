@@ -87,6 +87,16 @@ test("P24: Seat here is a fade-jump: the world moves once, at full black, and th
   assert.equal(scene.getObjectByName("court-veil")?.visible, false);
 });
 
+test("the demo draws no chair: drawChair(false) keeps it hidden through Seat here, and true brings it back", () => {
+  const { seat, scene } = setup();
+  const h = head([0.3, 1.15, -0.4], 0.6);
+  seat.drawChair(false);
+  seat.place(h, h.yaw);
+  assert.equal(scene.getObjectByName("court-chair")?.visible, false);
+  seat.drawChair(true);
+  assert.ok(scene.getObjectByName("court-chair")?.visible);
+});
+
 test("?seat= clamps D' to the bundle's range", () => {
   assert.equal(setup(9).seat.distance, 7);
   assert.equal(setup(4.5).seat.distance, 4.5);

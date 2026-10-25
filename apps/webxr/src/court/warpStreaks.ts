@@ -119,20 +119,27 @@ const FRAG = /* glsl */ `
     float u = vUV.x;
     float v = vUV.y;
     float seed = vLook.z;
-    // glints: a bright bead slides along some streaks now and then, its colours split a little more
-    float twinkle = pow(max(0.0, sin(seed * 57.0 + uT * 6.0)), 6.0);
-    float b = (v - fract(seed * 3.7 + uT * 2.2)) * 9.0;
-    float bead = exp(-b * b) * twinkle;
-    float s = uSplit * (1.0 + 1.5 * twinkle);
-    vec3 core = vec3(along(v - s), along(v), along(v + s)) * exp(-u * u * 4.0);
-    vec3 fringe = vec3(exp(-u * u * 2.6), exp(-u * u * 4.0), exp(-u * u * 6.0)); // red a touch wider than blue
-    vec3 tint = mix(vec3(0.70, 0.83, 1.0), vec3(1.0, 0.85, 0.64), vLook.y);
-    vec3 col = core * fringe * tint + bead * along(v) * vec3(along(v - 2.0 * s), along(v), along(v + 2.0 * s)) * 0.9;
     // out of the picture softly, the stream's front pouring toward the seat, dimmer as they pass the eye, gone behind it
+    // (first: a faded fragment skips the rest)
     float fromScreen = uZfar - vZ;
     float k = smoothstep(0.0, 0.9, fromScreen) * (1.0 - smoothstep(uFront - 1.4, uFront, fromScreen));
     k *= mix(0.35, 1.0, smoothstep(0.0, 3.0, vZ)) * smoothstep(-1.4, 0.0, vZ);
-    gl_FragColor = vec4(col * (k * vLook.x * vThin * uOpacity), 1.0);
+    float gain = k * vLook.x * vThin * uOpacity;
+    if (gain < 0.0005) discard;
+    // glints: a bright bead slides along some streaks now and then, its colours split a little more
+    float twinkle = pow(max(0.0, sin(seed * 57.0 + uT * 6.0)), 6.0);
+    float s = uSplit * (1.0 + 1.5 * twinkle);
+    float a0 = along(v);
+    vec3 core = vec3(along(v - s), a0, along(v + s)) * exp(-u * u * 4.0);
+    vec3 fringe = vec3(exp(-u * u * 2.6), exp(-u * u * 4.0), exp(-u * u * 6.0)); // red a touch wider than blue
+    vec3 tint = mix(vec3(0.70, 0.83, 1.0), vec3(1.0, 0.85, 0.64), vLook.y);
+    vec3 col = core * fringe * tint;
+    if (twinkle > 0.002) {
+      float b = (v - fract(seed * 3.7 + uT * 2.2)) * 9.0;
+      float bead = exp(-b * b) * twinkle;
+      col += bead * a0 * vec3(along(v - 2.0 * s), a0, along(v + 2.0 * s)) * 0.9;
+    }
+    gl_FragColor = vec4(col * gain, 1.0);
   }`;
 
 /** The warp's light streaks: add `object` to the scene (world space); update once a frame through the ease. */
