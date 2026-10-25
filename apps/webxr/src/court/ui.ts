@@ -610,6 +610,8 @@ class CardCanvas {
   readonly g: CanvasRenderingContext2D;
   /** The panel's top edge, design px from the canvas top, once drawn. */
   top = 0;
+  /** Broadcast's animated accent: the rule a glint sweeps along, design px [x, y, w, h] (null in the other looks). */
+  accent: [number, number, number, number] | null = null;
 
   constructor(
     readonly h: number,
@@ -672,6 +674,7 @@ function lines(g: CanvasRenderingContext2D, b: { style: TextStyle; lines: string
 function drawCard(c: CardCanvas, k: number, caption: string, label: string, credit: string): void {
   if (look === "broadcast") return drawBroadcastCard(c, k, caption, label, credit);
   const g = c.begin();
+  c.accent = null;
   const set = look === "vision" ? VISION_CARD : MINIMAL_CARD;
   const max = DESIGN[0] - 2 * (CARD.side + CARD.pad[1]);
   const blocks = [set.caption, set.label, set.credit].map((s, i) => {
@@ -724,6 +727,19 @@ function drawCard(c: CardCanvas, k: number, caption: string, label: string, cred
   c.tex.needsUpdate = true;
 }
 
+/** Broadcast's glint: `h` design px tall round the rule between the tiers, sweeping its length every `period` s with a `width` (share of the rule) hot core. */
+const ACCENT = { h: 8, period: 2.4, width: 0.12 };
+const ACCENT_VERT = `varying vec2 vUv;
+void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const ACCENT_FRAG = `uniform float uX; uniform float uW; uniform float opacity;
+varying vec2 vUv;
+void main() {
+  float d = (vUv.x - uX) / uW;
+  float core = exp(-d * d * 4.0);
+  float band = 1.0 - smoothstep(0.15, 0.5, abs(vUv.y - 0.5));
+  gl_FragColor = vec4(mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.97, 0.9), core), core * band * opacity);
+}`;
+
 /** Broadcast's lower third (see BROADCAST_CARD); its top is the tab's. */
 function drawBroadcastCard(c: CardCanvas, k: number, caption: string, label: string, credit: string): void {
   const g = c.begin();
@@ -757,9 +773,10 @@ function drawBroadcastCard(c: CardCanvas, k: number, caption: string, label: str
   g.fillRect(x0, plateY, bar, topH + stripH);
   g.fillStyle = "rgba(255,255,255,0.18)";
   g.fillRect(x0, plateY, w, 1.5);
-  g.fillStyle = ORANGE; // a thin orange rule between the tiers
+  g.fillStyle = ORANGE; // a thin orange rule between the tiers (a glint sweeps along it: ACCENT)
   g.fillRect(x0, plateY + topH - 3, w, 3);
   g.restore();
+  c.accent = [x0, plateY + topH - 1.5 - ACCENT.h / 2, w, ACCENT.h];
   // the tab: COURT SIDE on orange, sitting on the plate's left
   const ts = bigger(B.tab.text, k);
   setFont(g, ts, ts.px);
@@ -892,6 +909,10 @@ class CaptionPanel {
   private text: string[] = [];
   /** The Reality plane's resting height in the card's plane, metres. */
   private realityY = 0;
+  /** Broadcast's glint along its accent rule (ACCENT), a child of the card, and how far through its sweep, s. */
+  private readonly accent: THREE.Mesh;
+  private readonly accentU = { uX: { value: 0 }, uW: { value: ACCENT.width }, opacity: { value: 0 } };
+  private accentT = 0;
 
   constructor() {
     this.material = new THREE.MeshBasicMaterial({ map: this.cards.front.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
@@ -905,6 +926,22 @@ class CaptionPanel {
     this.reality.renderOrder = 101;
     this.reality.visible = false;
     this.mesh.add(this.reality);
+    const am = new THREE.ShaderMaterial({ uniforms: this.accentU, vertexShader: ACCENT_VERT, fragmentShader: ACCENT_FRAG, transparent: true, depthTest: false, depthWrite: false });
+    this.accent = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), am);
+    this.accent.name = "court-caption-accent";
+    this.accent.renderOrder = 102;
+    this.accent.visible = false;
+    this.mesh.add(this.accent);
+  }
+
+  /** The glint's plane over its rule on the current placement's card (hidden where the look has none). */
+  private placeAccent(): void {
+    const a = this.cards[this.placement].accent;
+    this.accent.userData.on = !!a;
+    if (!a) return;
+    const [x, y, w, h] = a;
+    this.accent.position.set(((x + w / 2) / DESIGN[0] - 0.5) * CAPTION_W, (0.5 - (y + h / 2) / DESIGN[1]) * CAPTION_H, 0.0003);
+    this.accent.scale.set(w * M_PER_PX, h * M_PER_PX, 1);
   }
 
   set opacity(v: number) {
@@ -938,12 +975,16 @@ class CaptionPanel {
     this.material.map = this.cards[placement].tex; // one map for another: the same program, no recompile
     this.realityMaterial.map = this.realities[placement].tex;
     this.restReality();
+    this.placeAccent();
   }
 
   /** Once a frame: the Reality panel's fade (ease-out in, ease-in out) and its rise into place. */
   step(dt: number): void {
     this.realityT = Math.min(1, Math.max(0, this.realityT + (this.realityOn ? dt : -dt) / REALITY_FADE.s));
     this.reality.position.set(0, this.realityY - (1 - this.realityShown) * REALITY_FADE.rise, 0.0005);
+    this.accentT = (this.accentT + dt) % ACCENT.period;
+    // the core runs in from off the left end and out past the right
+    this.accentU.uX.value = -ACCENT.width + (this.accentT / ACCENT.period) * (1 + 2 * ACCENT.width);
     this.apply();
   }
 
@@ -952,6 +993,8 @@ class CaptionPanel {
     this.mesh.visible = this.material.opacity > 0.001;
     this.realityMaterial.opacity = this.material.opacity * this.realityShown;
     this.reality.visible = this.realityMaterial.opacity > 0.001;
+    this.accentU.opacity.value = this.material.opacity;
+    this.accent.visible = !!this.accent.userData.on && this.material.opacity > 0.001;
   }
 
   /** The Reality plane's foot `gap` above the card's top edge (the panel's own shadow overlaps the card a little). */
@@ -971,6 +1014,7 @@ class CaptionPanel {
     }
     this.text = [caption, label, credit];
     this.restReality();
+    this.placeAccent();
     this.lines.splice(0, this.lines.length, ...(this.realityOn ? this.realityLines : []), ...this.text);
   }
 
