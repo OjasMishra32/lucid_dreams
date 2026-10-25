@@ -21,7 +21,7 @@ import { loadCourt, type CourtBundle, type StreamFallback } from "./format";
 import { BUILT as FREEZE_BUILT, Freeze } from "./freeze";
 import { BACK_BEATS, BEATS, BUILT as HANDOFF_BUILT, HANDBACK_END, HANDOFF_END, handback, handoff, type HandoffParts } from "./handoff";
 import { ARRIVAL_S, BUILT as LIGHT_BUILT, LightField, PART } from "./lightfield";
-import { loads, megabytes } from "./loading";
+import { expectedFiles, loads, megabytes } from "./loading";
 import { Probe, viewOf } from "./probe";
 import { judgeRate, wantRate, type XrRate } from "./rate";
 import { BUILT as PROXIES_BUILT, Proxies, layerVisibility } from "./proxies";
@@ -184,6 +184,9 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     return;
   }
   const { court, frames } = bundle;
+  // the loading bar's total from the start (loading.ts): every big file this page will wait for (the Reality check's
+  // splats where they are waited for), sized by a HEAD before any of them streams in, so the bar never runs backwards
+  void loads.expect(expectedFiles(bundle, { reality: !!probe || params.has("splats"), element: params.get("video") === "element" }));
   const hz = court.video.displayHz;
   xr.showHz = hz;
   if (params.has("stats") || params.get("probe") === "timing" || params.get("probe") === "headset") stats = new FrameStats(gl, hz);
