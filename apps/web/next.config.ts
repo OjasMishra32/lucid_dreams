@@ -14,10 +14,14 @@ const config: NextConfig = {
   // Uploads stream straight to disk; never let the framework buffer a 4K clip.
   serverExternalPackages: ["busboy"],
   // Posters are 1080x1920 renders; pages ask for them sized to the card (with ?v= for a rebuilt bundle).
-  images: { localPatterns: [{ pathname: "/dreams/**" }], formats: ["image/webp"] },
+  // (in the cloud the posters are redirects to the static host: served as they are)
+  images: { localPatterns: [{ pathname: "/dreams/**" }], formats: ["image/webp"], unoptimized: !!process.env.LUCID_CLOUD },
   // Next 16 writes an AGENTS.md here by default; the bridge finds the repo root by the first AGENTS.md above it,
   // so that file made it read apps/web/dreams (empty) instead of the repo's dreams/.
   agentRules: false,
+  // In the cloud (~/LucidDreams-held/cloud-web.sh) the server reads a slim copy of the bundles (their dream.json and
+  // plans, empty stand-ins for the rest) from cloud-dreams/: ship it with every server function
+  ...(process.env.LUCID_CLOUD ? { outputFileTracingIncludes: { "/**": ["./cloud-dreams/**/*"] } } : {}),
   // One website: the home page shows every scene, so the old showcase page sends you there
   async redirects() {
     // one page, one scroll: the old separate pages send you to their section of it
@@ -32,10 +36,15 @@ const config: NextConfig = {
   skipTrailingSlashRedirect: true,
   async rewrites() {
     // (its page by name: the WebXR server only answers under "/xr/", and a rewrite of the bare folder loses the slash)
-    return [
-      { source: "/xr", destination: `${XR}/xr/index.html` },
-      { source: "/xr/:path+", destination: `${XR}/xr/:path+` },
-    ];
+    // (a fallback, so this site's own /xr/talk/ route answers first: app/xr/talk)
+    return {
+      beforeFiles: [],
+      afterFiles: [],
+      fallback: [
+        { source: "/xr", destination: `${XR}/xr/index.html` },
+        { source: "/xr/:path+", destination: `${XR}/xr/:path+` },
+      ],
+    };
   },
 };
 

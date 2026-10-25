@@ -7,3 +7,9 @@ next-env.d.ts
 # These two are the bridge's routes, not bundles: keep them.
 !/app/dreams/
 !/app/api/dreams/
+
+# the cloud build's slim copy of the bundles (~/LucidDreams-held/cloud-web.sh) and its Vercel link
+/cloud-dreams/
+/.vercel/
+.vercel
+.env*

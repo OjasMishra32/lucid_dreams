@@ -44,6 +44,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
     return json(listReady(undefined, { withPrivate: false })); // for players
   }
   if (privateId(path[0] ?? "")) return new Response("Not found", { status: 404, headers: CORS });
+  // in the cloud the bundles' files live on a static host (LUCID_DREAMS_REMOTE, e.g. https://x.pages.dev/xr/dreams);
+  // only their dream.json and plans are deployed with the site
+  const remote = process.env.LUCID_DREAMS_REMOTE;
+  if (remote && !/\.json$/.test(path[path.length - 1] ?? "")) {
+    return new Response(null, {
+      status: 302,
+      headers: { ...CORS, Location: `${remote}/${path.map(encodeURIComponent).join("/")}${new URL(req.url).search}` },
+    });
+  }
 
   const file = resolve(DREAMS_DIR, ...path);
   if (!file.startsWith(DREAMS_DIR + sep) || !existsSync(file) || !statSync(file).isFile()) {

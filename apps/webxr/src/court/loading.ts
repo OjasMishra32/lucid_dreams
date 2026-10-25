@@ -121,6 +121,8 @@ export class LoadProgress {
     this.progress(key, 0, 0);
     try {
       const res = await fetcher(url);
+      // too big for a static host's per-file limit: split as <file>.part0, .part1, ... (~/LucidDreams-held/cloud)
+      if (res.status === 404) return await this.parts(url, key, fetcher);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const length = Number(res.headers.get("Content-Length")) || 0;
       this.progress(key, 0, length);
@@ -153,6 +155,31 @@ export class LoadProgress {
       this.failed(key, e);
       throw e;
     }
+  }
+
+  /** A file stored in parts (<file>.part0, .part1, ... until one is missing), joined back into one. */
+  private async parts(url: string, key: string, fetcher: typeof fetch): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    let got = 0;
+    for (let i = 0; ; i++) {
+      const res = await fetcher(`${url}.part${i}`);
+      if (!res.ok) {
+        if (i === 0) throw new Error(`HTTP ${res.status}`);
+        break;
+      }
+      const part = new Uint8Array(await res.arrayBuffer());
+      chunks.push(part);
+      got += part.length;
+      this.progress(key, got, 0);
+    }
+    const all = new Uint8Array(got);
+    let at = 0;
+    for (const c of chunks) {
+      all.set(c, at);
+      at += c.length;
+    }
+    this.finished(key);
+    return all;
   }
 }
 
