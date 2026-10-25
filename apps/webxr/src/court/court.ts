@@ -135,6 +135,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   let phase: Phase = "arrival";
   let setup = true; // until Seat here
   let lightsUp = -1;
+  let titleT = 0; // the opening title's clock (opening.ts): from Seat here with ?solo, from the lights-up otherwise
   let tF = 0; // seconds from F (the hand-off's clock)
   let tLight = 0; // seconds from F in real time: the light's, which a rushed fade never rushes (handoff's lightT, P44)
   let fed = -1; // the show frame this display frame handed the video and the proxies (-1 none)
@@ -231,7 +232,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
   const resetVeil = new ResetVeil();
   scene.add(resetVeil.mesh);
   const stepGlow = new StepGlow();
-  // the opening title, where the screen will be, over the arrival's lights-up (opening.ts)
+  // the opening title, where the screen will be, in the arrival (opening.ts)
   const opening = new Opening(bundle, seat.spot);
   world.add(opening.group);
   /** The Screen view's watch: the screen at `level`, nothing of the footage on the 3D. */
@@ -340,6 +341,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     seatedEyeY = head.room[1];
     setup = false;
     lightsUp = -1; // seat.place re-arms seat.arrival: dark until the next hand-over
+    titleT = 0;
     light.set("dark", 0);
     go("arrival");
   });
@@ -454,7 +456,7 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
     screen?.room(roomP);
     sound.room(roomP);
     vrHands.fade(roomP);
-    opening.hide(); // drawn only in the arrival's lights-up (below)
+    opening.hide(); // drawn only in the arrival (below)
     courtWorld.edge(seat.boundsDistance(head));
     // the drawn hands take the arena's light where the judge is: dark through the arrival's hold, up with the lights-up
     const arrive = setup ? 1 : phase === "arrival" ? (lightsUp < 0 ? 0 : Math.min(1, lightsUp / LIGHTS_UP_S)) : 1;
@@ -465,7 +467,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
       case "arrival": {
         // the hand-over, then a seated head still for 1 s (seat.arrival, P27, P38)
         if (lightsUp < 0) {
-          if (seat.arrival.update(dt, head.room)) lightsUp = 0;
+          // with ?solo the opening title plays on the dark screen first (opening.ts EARLY_STAGE_S): the lights wait for it
+          if (seat.arrival.update(dt, head.room) && opening.ready(titleT, params.has("solo"))) lightsUp = 0;
         } else lightsUp += dt;
         const p = Math.max(0, Math.min(1, lightsUp / LIGHTS_UP_S));
         light.set(lightsUp < 0 ? "dark" : "arrival", Math.max(0, lightsUp));
@@ -475,7 +478,8 @@ export async function renderCourt(root: HTMLElement): Promise<void> {
         feed(first);
         video.wipe(1 - p);
         screenWatch(p);
-        opening.update(lightsUp, roomP);
+        if (lightsUp >= 0 || params.has("solo")) titleT += dt;
+        opening.update(titleT, lightsUp, params.has("solo"), roomP);
         if (lightsUp >= LIGHTS_UP_S) {
           light.set("watch", 0);
           video.wipe(0);
