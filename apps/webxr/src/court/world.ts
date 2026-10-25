@@ -40,8 +40,9 @@ const LANE_PAINT = new THREE.Color().setRGB(0.014, 0.03, 0.095);
 const APRON_STAIN = 0.62;
 const ARENA_FLOOR = new THREE.Color().setRGB(0.004, 0.004, 0.005);
 const ARENA_DARK = new THREE.Vector3(ARENA_FLOOR.r, ARENA_FLOOR.g, ARENA_FLOOR.b);
-/** With a surround: the house lights' spill on the floor, a share of the crowd's light. */
-const HOUSE_FLOOR = 0.35;
+/** With a surround: the house lights' spill on the floor, a share of the crowd's light (an arena lit like the footage's,
+ * not a dark stage round the pool; under the pool's own 1 at F, so F's floor is untouched). */
+const HOUSE_FLOOR = 0.55;
 /** With a surround the apron and the courtside floor are the court's own hardwood (floortone's), this much darker. */
 const SURROUND_APRON = 0.88;
 const SURROUND_COURTSIDE = 0.72;
