@@ -487,12 +487,12 @@ const COURT_LABEL = "Real footage, rebuilt in 3D. Not affiliated with the NBA or
 const court: Scene = {
   key: "court",
   dur: 9,
-  gl: { x: 760, y: 0, w: 1160, h: 1080 },
   async mount(host, s) {
     const { mountCourt } = await import("@/lib/three/court");
     return mountCourt(host, COURT_PLAYERS, BROADCAST, {
       reveal: () => ramp(s.t, 0.5, 2.8),
       yaw: () => lerp(-0.35, 0.65, s.t / 9),
+      shift: 0.17, // full frame, so their floor fades into the black instead of stopping at a box's edge
       failed: () => {},
     });
   },

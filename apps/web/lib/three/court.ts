@@ -14,21 +14,22 @@ export interface CourtHooks {
   reveal: () => number; // 0 -> 1: the players scan in from the floor up
   yaw: () => number; // radians, turning away from the broadcast camera's side
   dist?: () => number; // metres from the pair's centre (default 5.6)
+  shift?: number; // move them right by this share of the width (a lens shift, so type can sit on the left)
   failed: () => void;
 }
 
 /** A floor map's alpha as a black contact shadow (the bundle bakes it in straight alpha). */
-function shadowQuad(map: THREE.Texture, [x0, z0, x1, z1]: [number, number, number, number]): THREE.Mesh {
+function shadowQuad(map: THREE.Texture, [x0, z0, x1, z1]: [number, number, number, number], fade: { value: number }): THREE.Mesh {
   const g = new THREE.PlaneGeometry(x1 - x0, z1 - z0);
   g.rotateX(-Math.PI / 2); // the image's top row at minZ, as Court Side lays it
   g.translate((x0 + x1) / 2, 0.003, (z0 + z1) / 2);
   const m = new THREE.Mesh(
     g,
     new THREE.ShaderMaterial({
-      uniforms: { uMap: { value: map } },
+      uniforms: { uMap: { value: map }, uK: fade },
       vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
       fragmentShader:
-        "uniform sampler2D uMap; varying vec2 vUv; void main() { float a = 1.0 - pow(1.0 - texture2D(uMap, vUv).a, 1.6); gl_FragColor = vec4(0.0, 0.0, 0.0, a * 0.85); }",
+        "uniform sampler2D uMap; uniform float uK; varying vec2 vUv; void main() { float a = 1.0 - pow(1.0 - texture2D(uMap, vUv).a, 1.6); gl_FragColor = vec4(0.0, 0.0, 0.0, a * 0.85 * uK); }",
       transparent: true,
       depthWrite: false,
     }),
@@ -118,12 +119,15 @@ export async function mountCourt(
   const top = q(ys, 0.998);
   world.position.set(-cx, 0, -cz);
 
-  scene.add(floorPool(3.2));
+  // the floor and the shadows come up with the scan's first moments, never before the players
+  const fade = { value: 0 };
+  const pool = floorPool(3.2);
+  scene.add(pool);
   const loader = new THREE.TextureLoader();
   for (const p of players)
     if (p.shadow)
       loader.load(p.shadow.image, (t) => {
-        if (!gone) world.add(shadowQuad(t, p.shadow!.rect));
+        if (!gone) world.add(shadowQuad(t, p.shadow!.rect, fade));
       });
 
   // the broadcast camera's direction from the pair, on the floor plane: yaw 0 looks the way the footage did
@@ -137,6 +141,7 @@ export async function mountCourt(
     hh = host.clientHeight;
     renderer.setSize(w, hh, false);
     camera.aspect = w / Math.max(1, hh);
+    if (hooks.shift) camera.setViewOffset(w, hh, -hooks.shift * w, 0, w, hh);
     camera.updateProjectionMatrix();
   };
   renderer.setAnimationLoop(() => {
@@ -145,6 +150,8 @@ export async function mountCourt(
     const k = Math.min(1, Math.max(0, hooks.reveal()));
     u.hi.value = -0.06 + k * (top + 0.2);
     u.glow.value = k < 1 ? 0.9 : 0;
+    fade.value = Math.min(1, k * 5);
+    (pool.material as THREE.MeshBasicMaterial).opacity = fade.value;
     for (const m of meshes) m.updateVersion();
     const a = hooks.yaw();
     const dist = hooks.dist?.() ?? 5.6;
