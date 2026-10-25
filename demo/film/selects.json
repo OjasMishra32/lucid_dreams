@@ -12,5 +12,10 @@
  {"name": "vishal-talk", "src": "quest/vishal-1.mp4", "in": 14.6, "out": 15.6, "smooth": 0.1, "zoom": 1.05},
  {"name": "vishal-send", "src": "quest/vishal-1.mp4", "in": 17.6, "out": 18.6, "smooth": 0.1, "zoom": 1.05},
  {"name": "vishal-reply", "src": "quest/vishal-1.mp4", "in": 23.6, "out": 28.6, "smooth": 0.15, "zoom": 1.04},
- {"name": "vishal-close", "src": "quest/vishal-1.mp4", "in": 30.5, "out": 32.0, "smooth": 0.1, "zoom": 1.05}
+ {"name": "vishal-close", "src": "quest/vishal-1.mp4", "in": 30.5, "out": 32.0, "smooth": 0.1, "zoom": 1.05},
+ {"name": "guitar-appear", "src": "quest/guitar-1.mp4", "in": 5.3, "out": 7.3, "smooth": 0.12, "zoom": 1.05},
+ {"name": "guitar-card", "src": "quest/guitar-1.mp4", "in": 13.4, "out": 14.4, "smooth": 0.12, "zoom": 1.05},
+ {"name": "guitar-follow", "src": "quest/guitar-1.mp4", "in": 20.8, "out": 25.8, "smooth": 0.1, "zoom": 1.06},
+ {"name": "guitar-lesson", "src": "quest/guitar-1.mp4", "in": 50.4, "out": 57.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "guitar-clock", "src": "quest/guitar-1.mp4", "in": 63.0, "out": 66.0, "smooth": 0.12, "zoom": 1.05}
 ]
