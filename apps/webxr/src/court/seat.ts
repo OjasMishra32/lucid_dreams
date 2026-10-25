@@ -277,6 +277,11 @@ export class Seat {
   private readonly veilMesh: THREE.Mesh;
   private readonly veilMat: THREE.MeshBasicMaterial;
 
+  /** The dolly seat (court space): its floor point on camera F's ray and F's direction along the floor. */
+  get spot(): SeatSpot {
+    return this.spotF;
+  }
+
   constructor(court: Court, frames: readonly ShowFrame[], group: THREE.Object3D, lock: AnchorLock | null, distance?: number) {
     this.court = court;
     this.group = group;
