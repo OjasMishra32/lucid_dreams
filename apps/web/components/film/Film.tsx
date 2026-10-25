@@ -77,7 +77,7 @@ export default function Film({ data }: { data: FilmData }) {
     const box = scene.gl ?? { x: 0, y: 0, w: W, h: H };
     setGl(box);
     const clock = capture ? virtualClock() : null; // before anything reads the time
-    const s: Shared = { data, t: 0, hud: { cams: 0 }, images: [], video: null, heat: null };
+    const s: Shared = { data, t: 0, hud: { cams: 0 }, images: [], video: null, heat: null, clips: [] };
     let dispose = () => {};
     let stop = false;
 
@@ -101,6 +101,10 @@ export default function Film({ data }: { data: FilmData }) {
           if (stop) return;
           s.t = ((performance.now() - t0) / 1000) % scene.dur;
           if (s.video) s.video.currentTime = Math.min(s.video.duration || 0, s.t);
+          for (const c of s.clips) {
+            const a = c.at(s.t);
+            if (a !== null) c.v.currentTime = a;
+          }
           g.clearRect(0, 0, W, H);
           scene.draw(g, s.t, s);
           requestAnimationFrame(loop);
@@ -136,6 +140,18 @@ export default function Film({ data }: { data: FilmData }) {
             await new Promise<void>((r) => {
               v.onseeked = () => r();
               v.currentTime = at;
+            });
+          }
+        }
+        for (const c of s.clips) {
+          const a = c.at(s.t);
+          if (a === null) continue;
+          // a hair past the frame's own time, so a seek never lands on the frame before
+          const at = Math.min(Math.max(0, (c.v.duration || 0) - 0.02), a + 0.004);
+          if (Math.abs(c.v.currentTime - at) > 1e-3) {
+            await new Promise<void>((r) => {
+              c.v.onseeked = () => r();
+              c.v.currentTime = at;
             });
           }
         }

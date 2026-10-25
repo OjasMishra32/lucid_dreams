@@ -17,5 +17,9 @@
  {"name": "guitar-card", "src": "quest/guitar-1.mp4", "in": 13.4, "out": 14.4, "smooth": 0.12, "zoom": 1.05},
  {"name": "guitar-follow", "src": "quest/guitar-1.mp4", "in": 20.8, "out": 25.8, "smooth": 0.1, "zoom": 1.06},
  {"name": "guitar-lesson", "src": "quest/guitar-1.mp4", "in": 50.4, "out": 57.0, "smooth": 0.12, "zoom": 1.05},
- {"name": "guitar-clock", "src": "quest/guitar-1.mp4", "in": 63.0, "out": 66.0, "smooth": 0.12, "zoom": 1.05}
+ {"name": "guitar-clock", "src": "quest/guitar-1.mp4", "in": 63.0, "out": 66.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "vishal-ask", "src": "quest/vishal-1.mp4", "in": 14.6, "out": 18.7, "smooth": 0.1, "zoom": 1.05},
+ {"name": "bobby-shake", "src": "quest/chess-a.mp4", "in": 8.0, "out": 12.2, "smooth": 0.12, "zoom": 1.05},
+ {"name": "magnus-board", "src": "quest/chess-b.mp4", "in": 1.5, "out": 7.0, "smooth": 0.12, "zoom": 1.05},
+ {"name": "grandma-appear", "src": "quest/grandma-1.mp4", "in": 3.4, "out": 6.0, "smooth": 0.12, "zoom": 1.05}
 ]

@@ -33,6 +33,9 @@ export interface Shared {
   images: HTMLImageElement[];
   video: HTMLVideoElement | null;
   heat: Uint8Array | null;
+  // videos a scene plays at times of its own (a source card's original and its headset footage): `at` is the clip's
+  // time at scene time t, or null while it's off screen (no seek)
+  clips: { v: HTMLVideoElement; at: (t: number) => number | null }[];
 }
 
 export interface Scene {
@@ -508,6 +511,251 @@ const court: Scene = {
   },
 };
 
+// ------------------------------------------------------------------------------------------------------ source cards
+// Where each person came from, before they're in the room: the original (a clip, or the photos) on black with one
+// plain line, then it glides into a small card in the corner while the headset footage comes up behind it, holds
+// with its credit, and goes. Clips and photos come from ~/Downloads/lucid-video through the dev-only media route.
+
+const media = (p: string) => `/api/film/media?p=${encodeURIComponent(p)}`;
+
+interface Shot {
+  src: string; // a polished select (demo/film/steady.py), under ~/Downloads/lucid-video
+  in?: number;
+  dur: number;
+}
+interface SourceSpec {
+  key: string;
+  video?: { src: string; in: number }; // the original clip, from `in`
+  photos?: string[]; // or the photos the person was made from, the first one in front
+  line: string; // under the original: "One video."
+  credit: string; // who made it, small
+  shots: Shot[]; // the headset footage it becomes, hard cuts between
+  label?: string; // a public figure: who they are not, over the headset footage
+}
+
+const INTRO = 1.8; // the original on its own
+const GLIDE = 1.0; // into the corner, the headset footage coming up behind
+const HOLD = 2.4; // the corner card's stay
+const smooth = (x: number) => {
+  const t = clamp(x);
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+};
+
+function videoEl(src: string): Promise<HTMLVideoElement> {
+  return new Promise((ok, no) => {
+    const v = document.createElement("video");
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "auto";
+    v.crossOrigin = "anonymous";
+    v.onloadeddata = () => ok(v);
+    v.onerror = () => no(new Error(`no video: ${src}`));
+    v.src = media(src);
+    v.load();
+  });
+}
+function imageEl(src: string): Promise<HTMLImageElement> {
+  return new Promise((ok, no) => {
+    const i = new Image();
+    i.onload = () => ok(i);
+    i.onerror = () => no(new Error(`no image: ${src}`));
+    i.src = media(src);
+  });
+}
+
+/** A picture in a rounded card: a soft shadow under it over footage, and a hairline edge. */
+function card(g: CanvasRenderingContext2D, img: CanvasImageSource, x: number, y: number, w: number, h: number, r: number, alpha: number, lift: number) {
+  if (alpha <= 0.001) return;
+  g.save();
+  g.globalAlpha = alpha;
+  if (lift > 0) {
+    g.shadowColor = `rgba(0,0,0,${0.5 * lift})`;
+    g.shadowBlur = 40 * lift;
+    g.shadowOffsetY = 10 * lift;
+  }
+  round(g, x, y, w, h, r);
+  g.fillStyle = "#000";
+  g.fill();
+  g.shadowColor = "transparent";
+  g.save();
+  round(g, x, y, w, h, r);
+  g.clip();
+  g.drawImage(img, x, y, w, h);
+  g.restore();
+  round(g, x + 0.5, y + 0.5, w - 1, h - 1, r);
+  g.strokeStyle = `rgba(255,255,255,${0.16 + 0.08 * lift})`;
+  g.lineWidth = 1.5;
+  g.stroke();
+  g.restore();
+}
+
+/** Small type over footage: a soft shadow so it reads on anything. */
+function overText(g: CanvasRenderingContext2D, s: string, x: number, y: number, o: TextOpts) {
+  g.save();
+  g.shadowColor = "rgba(0,0,0,0.55)";
+  g.shadowBlur = 14;
+  g.shadowOffsetY = 1;
+  text(g, s, x, y, o);
+  g.restore();
+}
+
+function sourceCard(spec: SourceSpec): Scene {
+  const total = spec.shots.reduce((a, b) => a + b.dur, 0);
+  const hold = Math.min(HOLD, Math.max(0.8, total - GLIDE - 0.6));
+  const out0 = INTRO + GLIDE + hold; // the corner card starts to go
+  let src: HTMLVideoElement | null = null;
+  let photos: HTMLImageElement[] = [];
+  const shots: { v: HTMLVideoElement; t0: number; in: number; dur: number }[] = [];
+  return {
+    key: spec.key,
+    dur: INTRO + total,
+    async prepare(s) {
+      if (spec.video) {
+        src = await videoEl(spec.video.src);
+        const v0 = spec.video.in;
+        s.clips.push({ v: src, at: (t) => (t <= out0 + 0.6 ? v0 + t : null) });
+      }
+      if (spec.photos) photos = await Promise.all(spec.photos.map(imageEl));
+      let t0 = INTRO;
+      for (const sh of spec.shots) {
+        const v = await videoEl(sh.src);
+        const k = { v, t0, in: sh.in ?? 0, dur: sh.dur };
+        shots.push(k);
+        // the first shot is under the glide already, from its own first frame
+        s.clips.push({ v, at: (t) => (t >= k.t0 - (k.t0 === INTRO ? GLIDE : 0) - 0.05 && t < k.t0 + k.dur ? k.in + Math.max(0, t - k.t0) : null) });
+        t0 += sh.dur;
+      }
+    },
+    draw(g, t) {
+      const glide = smooth((t - INTRO) / GLIDE);
+      const outK = 1 - ramp(t, out0, out0 + 0.5);
+
+      // the headset footage: up from black under the glide, a touch of push-in settling
+      const shot = shots.find((k) => t < k.t0 + k.dur) ?? shots[shots.length - 1];
+      if (shot && t >= INTRO - 0.02) {
+        const up = ramp(t, INTRO, INTRO + 0.7);
+        const z = lerp(1.035, 1, smooth((t - INTRO) / 1.6));
+        g.save();
+        g.globalAlpha = up;
+        g.drawImage(shot.v, (W - W * z) / 2, (H - H * z) / 2, W * z, H * z);
+        g.restore();
+      }
+
+      // the original: its picture and shape (the front photo for a set of photos)
+      const front: CanvasImageSource | null = src ?? photos[0] ?? null;
+      if (!front) return;
+      const fw = src ? src.videoWidth : photos[0].naturalWidth;
+      const fh = src ? src.videoHeight : photos[0].naturalHeight;
+      const a = fw / Math.max(1, fh);
+      // big: as large as fits above its line; small: the corner card
+      const bh = a >= 1 ? Math.min(760, 1360 / a) : 780;
+      const bw = bh * a;
+      const bx = (W - bw) / 2;
+      const by = 110 + (780 - bh) / 2;
+      const sh = a >= 1 ? 380 / a : 300;
+      const sw = sh * a;
+      const sx = 64;
+      const sy = H - 64 - 36 - sh;
+      const x = lerp(bx, sx, glide);
+      const y = lerp(by, sy, glide);
+      const w = lerp(bw, sw, glide);
+      const h = lerp(bh, sh, glide);
+      const inK = ramp(t, 0.05, 0.6);
+      const zIn = lerp(0.965, 1, smooth(t / 0.7));
+
+      if (photos.length > 1) {
+        // the rest of the photos fanned behind the front one, dealt in from below; they fold away as it glides
+        const n = photos.length;
+        const fold = ramp(t, INTRO - 0.1, INTRO + 0.35);
+        for (let i = n - 1; i >= 1; i--) {
+          const d = ramp(t, 0.08 + i * 0.09, 0.5 + i * 0.09);
+          if (d <= 0.001) continue;
+          const p = photos[i];
+          const ph = bh * 0.86;
+          const pw = ph * (p.naturalWidth / Math.max(1, p.naturalHeight));
+          const k = (i - 1) / Math.max(1, n - 2) - 0.5; // -0.5..0.5 across the fan
+          const ang = k * 0.42 * (1 - fold);
+          const cx = W / 2 + k * Math.min(980, 190 * (n - 1)) * (1 - fold);
+          const cy = by + bh / 2 + 24 + Math.abs(k) * 40 * (1 - fold) + (1 - d) * 260;
+          g.save();
+          g.translate(cx, cy);
+          g.rotate(ang);
+          card(g, p, -pw / 2, -ph / 2, pw, ph, 22, d * (1 - fold) * inK, 1);
+          g.restore();
+        }
+      }
+      g.save();
+      if (glide < 0.001) {
+        g.translate(W / 2, by + bh / 2);
+        g.scale(zIn, zIn);
+        g.translate(-W / 2, -(by + bh / 2));
+      }
+      card(g, front, x, y, w, h, lerp(26, 16, glide), inK * outK, glide);
+      g.restore();
+
+      // the line under the original, and its credit; then the credit under the corner card
+      const lineK = inK * (1 - ramp(t, INTRO - 0.05, INTRO + 0.3));
+      rise(g, spec.line, W / 2, by + bh + 92, ramp(t, 0.35, 1.0) * lineK, { size: 50, align: "center", track: -0.8 });
+      text(g, spec.credit, W / 2, by + bh + 140, { size: 26, weight: 500, color: INK3, align: "center", alpha: ramp(t, 0.6, 1.2) * lineK });
+      const capK = ramp(t, INTRO + GLIDE - 0.2, INTRO + GLIDE + 0.3) * outK;
+      if (capK > 0.001) overText(g, spec.credit, sx + 2, sy + sh + 30, { size: 21, weight: 500, color: "rgba(245,245,247,0.86)", alpha: capK });
+      if (spec.label)
+        overText(g, spec.label, W - 64, H - 64 - 6, { size: 21, weight: 500, color: "rgba(245,245,247,0.8)", align: "right", alpha: ramp(t, INTRO + 0.4, INTRO + 1.0) });
+    },
+  };
+}
+
+const SOURCES: Scene[] = [
+  sourceCard({
+    key: "source-guitar",
+    video: { src: "sources/guitar-01.mp4", in: 6.0 },
+    line: "One video.",
+    credit: "Khanh Hoang Minh 2 · Pexels",
+    shots: [{ src: "selects/guitar-appear.mp4", dur: 2.0 }, { src: "selects/guitar-follow.mp4", dur: 3.6 }],
+  }),
+  sourceCard({
+    key: "source-vishal",
+    video: { src: "sources/vishal.mp4", in: 0 },
+    line: "One phone video.",
+    credit: "Vishal, turning around once",
+    shots: [{ src: "selects/vishal-appear.mp4", in: 0.5, dur: 3.0 }, { src: "selects/vishal-around.mp4", dur: 3.3 }],
+  }),
+  sourceCard({
+    key: "source-federer",
+    photos: ["rf-wimbledon09-js-02", "rf-wimbledon09-js-03", "rf-wimbledon09-js-05", "rf-wimbledon09-js-06", "rf-wimbledon09-js-07",
+      "rf-wimbledon09-sk", "rf-wimbledon09-sk-2", "rf-wimbledon09-js-10"].map((f) => `sources/photos/roger-federer-src/${f}.jpg`),
+    line: "14 photos.",
+    credit: "Wimbledon 2009 · Wikimedia Commons",
+    shots: [{ src: "selects/tennis-walkup.mp4", dur: 0.75 }, { src: "selects/tennis-shake.mp4", dur: 3.0 }, { src: "selects/tennis-face.mp4", dur: 1.7 }],
+    label: "Roger Federer's likeness. AI opponent, not affiliated.",
+  }),
+  sourceCard({
+    key: "source-bobby",
+    photos: ["01-1966-portrait", "02-1972-verhoeff", "06-hilton-925-3515", "07-hilton-925-3516", "08-hilton-925-3513", "09-fischer-euwe-amsterdam"]
+      .map((f) => `sources/photos/bobby-fischer-suit/${f}.jpg`),
+    line: "6 photos.",
+    credit: "1966 and 1972 · AP, Nationaal Archief · colorized",
+    shots: [{ src: "selects/bobby-shake.mp4", dur: 4.2 }],
+    label: "Stockfish at Fischer's peak rating. Not affiliated.",
+  }),
+  sourceCard({
+    key: "source-magnus",
+    photos: ["n3s-2299", "x-tata2017-standing", "n3s-2307", "x-berlin2015-prize", "n3s-2314", "x-olympiad2016", "n3s-2320", "x-tata2017-profile"]
+      .map((f) => `sources/photos/magnus-carlsen-360/${f}.jpg`),
+    line: "14 photos.",
+    credit: "2015 to 2017 · Wikimedia Commons",
+    shots: [{ src: "selects/magnus-board.mp4", dur: 4.6 }],
+    label: "Stockfish at Carlsen's peak rating. Not affiliated.",
+  }),
+  sourceCard({
+    key: "source-grandma",
+    video: { src: "sources/ian-grandma.mp4", in: 0 },
+    line: "One family video.",
+    credit: "Ian's grandmother",
+    shots: [{ src: "selects/grandma-appear.mp4", dur: 2.6 }],
+  }),
+];
+
 /** The same freeze full frame, turning slowly with no type: an insert for the cut, and the website card's still. */
 const courtOrbit: Scene = {
   key: "court-orbit",
@@ -730,4 +978,4 @@ const end: Scene = {
   },
 };
 
-export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy, court, courtOrbit];
+export const SCENES: Scene[] = [title, cameras, fit, reality, avatar, bobby, magnus, headset, talk, numbers, end, apart, anatomy, court, courtOrbit, ...SOURCES];
