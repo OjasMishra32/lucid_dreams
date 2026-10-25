@@ -5,15 +5,15 @@
 // would be drawn over them: a stereo conflict); the Reality check's panel (blue = never seen, the seen % per player,
 // the interpolated share of the show: P7, P23); and the palm menu (left palm up, right index; xr/menu.ts HandMenu, 2
 // columns, first row on top):
-//   [Change seat]                      every phase after Seat here: back to the setup page after a 2 s hold (HoldButton),
-//                                      for the presenter between judges
+//   [Change seat, Look]                every phase after Seat here: Change seat goes back to the setup page after a 2 s
+//                                      hold (HoldButton), for the presenter between judges; Look cycles LookName
 //   [Walk closer] | [Next view]        while the world is open and you're not in the room: Walk closer before the walking
 //                                      anchoring, Next view after it, only where a second placement fits
 //   [Step into the court | Back to my seat, Reality check]
 //   [Reset, See my room]               nearest the palm; this row never moves (See my room flips to "Back to the arena", stays lit)
 // and the setup page, [Seat here] over [See my room], where Seat here acts only after a 2 s hold (P32: HoldButton).
-// No gesture acts by itself and there is no other control path (P21): no keys. Every surface is visionOS-style glass,
-// faked (glass(): a translucent body lit from above, a rim light, a soft shadow; no blur), drawn once per change of
+// No gesture acts by itself and there is no other control path (P21): no keys. Every surface is painted in one of three
+// looks (LookName; vision's is visionOS glass, faked: glass() a translucent body lit from above, a rim light, a soft shadow, no blur), drawn once per change of
 // content; the motion is eased (fades, the menu's spring, the watch card's glide), never a pop. Stream C (`core`); tested
 // through the e2e (`window.__courtUi`, probe pages only), not node.
 import * as THREE from "three";
@@ -26,7 +26,26 @@ import type { Head, Phase } from "./types";
 export const BUILT = true;
 
 /** Every button, by what it does. */
-export type UiAction = "step" | "back" | "reality" | "replay" | "room" | "closer" | "nextView" | "seatHere" | "changeSeat";
+export type UiAction = "step" | "back" | "reality" | "replay" | "room" | "closer" | "nextView" | "seatHere" | "changeSeat" | "look";
+
+/**
+ * The three looks of every surface here (`&ui=<name>` picks one, vision by default; the Look button beside Change seat
+ * cycles them live): what changes is paint (glass, type, accents), never the layout, the hit boxes or what's said.
+ *   vision     visionOS frosted glass: lighter glass lit from above with a specular sheen, bold display type
+ *   broadcast  NBA broadcast graphics: sharp navy plates, an orange accent bar, condensed caps; the card a lower third
+ *   minimal    almost no chrome: hairline outlines, text over a soft shadow
+ */
+export type LookName = "vision" | "broadcast" | "minimal";
+export const LOOK_NAMES: readonly LookName[] = ["vision", "broadcast", "minimal"];
+const LOOK_TITLES: Record<LookName, string> = { vision: "Vision", broadcast: "Broadcast", minimal: "Minimal" };
+function lookFromUrl(): LookName {
+  if (typeof location === "undefined") return "vision";
+  const v = new URLSearchParams(location.search).get("ui");
+  return LOOK_NAMES.includes(v as LookName) ? (v as LookName) : "vision";
+}
+let look: LookName = lookFromUrl();
+/** The Look button's label: the look now. */
+const lookLabel = (): string => `Look: ${LOOK_TITLES[look]}`;
 
 /** What the menu shows besides the phase. */
 export interface UiFlags {
@@ -90,8 +109,12 @@ const HOLD_OUT = 0.004;
 
 /** The system font (Roboto on the Quest, SF on a Mac): the SF feel comes from weight, size, tracking and spacing, not a download. */
 const FONT_STACK = `-apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, "Helvetica Neue", Arial, sans-serif`;
+/** Vision's display cut (SF Pro Display on a Mac, Roboto on the Quest). */
+const DISPLAY_STACK = `"SF Pro Display", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif`;
+/** Broadcast's condensed cut: Roboto Condensed on the Quest (Android's sans-serif-condensed), Avenir Next Condensed on a Mac. */
+const CONDENSED_STACK = `"Roboto Condensed", sans-serif-condensed, "Avenir Next Condensed", "Helvetica Neue Condensed", "Arial Narrow", Roboto, sans-serif`;
 
-/** A text style: weight, size and the smallest it may shrink to (px), line height (px), tracking (em), colour. */
+/** A text style: weight, size and the smallest it may shrink to (px), line height (px), tracking (em), colour; optionally its family and caps. */
 interface TextStyle {
   weight: number;
   px: number;
@@ -99,10 +122,12 @@ interface TextStyle {
   lead: number;
   track: number;
   color: string;
+  family?: string;
+  caps?: boolean;
 }
 
 function setFont(g: CanvasRenderingContext2D, s: TextStyle, px: number): void {
-  g.font = `${s.weight} ${px}px ${FONT_STACK}`;
+  g.font = `${s.weight} ${px}px ${s.family ?? FONT_STACK}`;
   // tracking in em, tighter as type grows (SF's optical sizes); a browser without letterSpacing draws it untracked
   if ("letterSpacing" in g) g.letterSpacing = `${(s.track * px).toFixed(2)}px`;
 }
@@ -139,6 +164,8 @@ function wrap(g: CanvasRenderingContext2D, text: string, s: TextStyle, max: numb
 /** A glass surface's recipe: its body's tint, the light from above (sheen), the rim light, the drop shadow (alpha, blur and drop in design px). */
 interface Glass {
   tint: string;
+  /** With it, the body runs from `tint` at the top to this at the foot. */
+  tint2?: string;
   sheen: number;
   rim: number;
   shadow: number;
@@ -183,7 +210,12 @@ function glass(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
   g.globalCompositeOperation = "destination-out";
   g.fill();
   g.globalCompositeOperation = "source-over";
-  g.fillStyle = o.tint;
+  if (o.tint2) {
+    const body = g.createLinearGradient(0, y, 0, y + h);
+    body.addColorStop(0, o.tint);
+    body.addColorStop(1, o.tint2);
+    g.fillStyle = body;
+  } else g.fillStyle = o.tint;
   g.fill();
   const sheen = g.createLinearGradient(0, y, 0, y + h);
   sheen.addColorStop(0, `rgba(255,255,255,${o.sheen})`);
@@ -240,30 +272,126 @@ const windowGlyph: Glyph = (g, x, y, color) => {
 
 /** The button canvas (6400 px a metre) and its face: the default pill's 0.09 x 0.028 m, inside room for its shadow. */
 const BUTTON = { canvas: [704, 256] as const, plane: [0.11, 0.04] as const, face: [576, 180] as const };
-const BUTTON_TEXT: TextStyle = { weight: 600, px: 58, min: 40, lead: 0, track: -0.012, color: "rgba(255,255,255,0.96)" };
-/** Off: mid-grey glass, light enough to read over the black arena and dark enough over the lit floor or a bright room. On: white glass with a dark label (a visionOS toggle that's on). */
-const BUTTON_OFF: Glass = { tint: "rgba(66,66,72,0.74)", sheen: 0.16, rim: 0.42, shadow: 0.5, blur: 18, drop: 5 };
-const BUTTON_ON: Glass = { tint: "rgba(250,250,252,0.94)", sheen: 0, rim: 0.7, shadow: 0.5, blur: 18, drop: 5 };
+/**
+ * Each look's buttons: the label's style off and its colour on, the face's left inset for an accent (design px), the
+ * label's shadow (alpha and blur px: it keeps light type legible over the lit floor), and the hold's fill colour.
+ */
+const BUTTON_STYLES: Record<LookName, { text: TextStyle; onColor: string; inset: number; shadow: [number, number]; fill: THREE.Color }> = {
+  vision: {
+    text: { weight: 700, px: 60, min: 42, lead: 0, track: -0.016, color: "rgba(255,255,255,0.98)", family: DISPLAY_STACK },
+    onColor: "#111114",
+    inset: 0,
+    shadow: [0.38, 8],
+    fill: new THREE.Color(0.04, 0.52, 1.0),
+  },
+  broadcast: {
+    text: { weight: 800, px: 62, min: 42, lead: 0, track: 0.03, color: "#ffffff", family: CONDENSED_STACK, caps: true },
+    onColor: "#0b1024",
+    inset: 22,
+    shadow: [0, 0],
+    fill: new THREE.Color(1.0, 0.42, 0.07),
+  },
+  minimal: {
+    text: { weight: 500, px: 60, min: 42, lead: 0, track: -0.006, color: "rgba(255,255,255,0.97)" },
+    onColor: "#111114",
+    inset: 0,
+    shadow: [0.6, 10],
+    fill: new THREE.Color(0.04, 0.52, 1.0),
+  },
+};
+/** Vision, off: frosted glass lighter at the top than the foot, over a deep shadow; on: white glass with a dark label (a visionOS toggle that's on). */
+const VISION_OFF: Glass = { tint: "rgba(132,134,150,0.66)", tint2: "rgba(64,66,80,0.80)", sheen: 0.24, rim: 0.9, shadow: 0.55, blur: 22, drop: 6, grain: true };
+const VISION_ON: Glass = { tint: "rgba(255,255,255,0.97)", tint2: "rgba(222,226,236,0.95)", sheen: 0, rim: 0.9, shadow: 0.55, blur: 22, drop: 6 };
+/** Broadcast: a navy plate (orange when on), squared off. */
+const BROADCAST_OFF: Glass = { tint: "rgba(26,34,66,0.97)", tint2: "rgba(7,10,24,0.97)", sheen: 0.08, rim: 0.32, shadow: 0.6, blur: 16, drop: 6 };
+const BROADCAST_ON: Glass = { tint: "rgba(255,138,40,0.98)", tint2: "rgba(236,84,10,0.98)", sheen: 0.1, rim: 0.5, shadow: 0.6, blur: 16, drop: 6 };
+const ORANGE = "#ff6a13";
 
-/** A button's label (and glyph) centred on its canvas: semibold, tracked tight, shrunk to fit, never cut off. */
-function paintLabel(g: CanvasRenderingContext2D, label: string, color: string, glyph?: Glyph): void {
+/** visionOS's specular: a soft white bloom along the top of a shape, clipped to it. */
+function specular(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, a: number): void {
+  g.save();
+  g.beginPath();
+  g.roundRect(x, y, w, h, r);
+  g.clip();
+  const bloom = g.createRadialGradient(x + w / 2, y - h * 0.15, 0, x + w / 2, y - h * 0.15, w * 0.55);
+  bloom.addColorStop(0, `rgba(255,255,255,${a})`);
+  bloom.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = bloom;
+  g.fillRect(x, y, w, h * 0.6);
+  g.restore();
+}
+
+/** A soft coloured glow just outside a shape (drawn first, under it): vision's lit-glass edge. */
+function halo(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, color: string, blur: number): void {
+  g.save();
+  g.beginPath();
+  g.roundRect(x, y, w, h, r);
+  g.shadowColor = color;
+  g.shadowBlur = blur;
+  g.strokeStyle = color;
+  g.lineWidth = 2;
+  g.stroke();
+  g.restore();
+}
+
+/** A button's face in the current look, at x, y (canvas px, 1:1). */
+function paintFace(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, lit: boolean): void {
+  if (look === "vision") {
+    halo(g, x, y, w, h, h / 2, lit ? "rgba(255,255,255,0.55)" : "rgba(150,190,255,0.45)", 14);
+    glass(g, x, y, w, h, h / 2, lit ? VISION_ON : VISION_OFF, 1);
+    if (!lit) specular(g, x, y, w, h, h / 2, 0.32);
+  } else if (look === "broadcast") {
+    glass(g, x, y, w, h, 10, lit ? BROADCAST_ON : BROADCAST_OFF, 1);
+    g.save();
+    g.beginPath();
+    g.roundRect(x, y, w, h, 10);
+    g.clip();
+    g.fillStyle = lit ? "#0b1024" : ORANGE; // the accent bar down the left edge
+    g.fillRect(x, y, BUTTON_STYLES.broadcast.inset - 4, h);
+    g.fillStyle = "rgba(255,255,255,0.22)"; // a hairline along the top
+    g.fillRect(x, y, w, 2);
+    g.restore();
+  } else {
+    g.save();
+    g.beginPath();
+    g.roundRect(x + 1.5, y + 1.5, w - 3, h - 3, h / 2);
+    g.fillStyle = lit ? "rgba(255,255,255,0.95)" : "rgba(0,0,0,0.34)";
+    g.fill();
+    g.strokeStyle = lit ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.72)";
+    g.lineWidth = 3;
+    g.stroke();
+    g.restore();
+  }
+}
+
+/** A button's label (and glyph) centred on its face: the look's type, tracked, shrunk to fit, never cut off. */
+function paintLabel(g: CanvasRenderingContext2D, label: string, color: string, glyph?: Glyph, lit = false): void {
   const [cw, ch] = BUTTON.canvas;
-  const text = label.trim();
+  const st = BUTTON_STYLES[look];
+  const s = st.text;
+  const text = s.caps ? label.trim().toUpperCase() : label.trim();
   const room = glyph ? GLYPH + 14 : 0;
-  let px = BUTTON_TEXT.px;
-  do setFont(g, BUTTON_TEXT, px);
-  while (g.measureText(text).width > BUTTON.face[0] - 96 - room && (px -= 2) > BUTTON_TEXT.min);
-  const left = cw / 2 - (room + g.measureText(text).width) / 2;
+  let px = s.px;
+  do setFont(g, s, px);
+  while (g.measureText(text).width > BUTTON.face[0] - 96 - st.inset - room && (px -= 2) > s.min);
+  const left = cw / 2 + st.inset / 2 - (room + g.measureText(text).width) / 2;
+  g.save();
+  if (!lit && st.shadow[0] > 0) {
+    g.shadowColor = `rgba(0,0,0,${st.shadow[0]})`;
+    g.shadowBlur = st.shadow[1];
+    g.shadowOffsetY = 2;
+  }
   g.fillStyle = color;
   g.textAlign = "left";
   g.textBaseline = "middle";
   g.fillText(text, left + room, ch / 2 + 2); // a hair under the middle: the optical centre of caps and lower case
   glyph?.(g, left, ch / 2, color);
+  g.restore();
 }
 
 /**
- * Court Side's look for the palm menu (xr/hands.ts ButtonLook): glass capsules; hover lifts the glass, a press flashes
- * it. `label` false paints the face alone (HoldButton draws its label on its own layer, over its fill).
+ * Court Side's look for the palm menu (xr/hands.ts ButtonLook), painted in the current LookName; hover lifts the
+ * face, a press flashes it. `label` false paints the face alone (HoldButton draws its label on its own layer, over its fill).
  */
 function courtLook(glyph?: Glyph, label = true): ButtonLook {
   return {
@@ -276,8 +404,8 @@ function courtLook(glyph?: Glyph, label = true): ButtonLook {
       const [cw, ch] = BUTTON.canvas;
       const [fw, fh] = BUTTON.face;
       const lit = on && label;
-      glass(g, (cw - fw) / 2, (ch - fh) / 2, fw, fh, fh / 2, lit ? BUTTON_ON : BUTTON_OFF, 1);
-      if (label) paintLabel(g, text, lit ? "#1c1c1e" : BUTTON_TEXT.color, glyph);
+      paintFace(g, (cw - fw) / 2, (ch - fh) / 2, fw, fh, lit);
+      if (label) paintLabel(g, text, lit ? BUTTON_STYLES[look].onColor : BUTTON_STYLES[look].text.color, glyph, lit);
     },
   };
 }
@@ -313,7 +441,7 @@ export class HoldButton extends XrButton {
   readonly holdMs: number;
   private readonly onHeld: () => void;
   private readonly fill: THREE.Mesh;
-  private readonly fillU: { uP: { value: number }; opacity: { value: number } };
+  private readonly fillU: { uColor: { value: THREE.Color }; uP: { value: number }; opacity: { value: number } };
   /** The label, on its own layer over the fill (the face is glass alone). */
   private readonly labelCanvas = document.createElement("canvas");
   private readonly labelTex: THREE.CanvasTexture;
@@ -371,8 +499,9 @@ export class HoldButton extends XrButton {
     // a breath of white under the text (alpha 1/255, invisible): mipmapping mixes white, not black, into the glyphs' edges, so they don't thin
     g.fillStyle = "rgba(255,255,255,0.004)";
     g.fillRect(0, 0, ...BUTTON.canvas);
-    paintLabel(g, label, BUTTON_TEXT.color);
+    paintLabel(g, label, BUTTON_STYLES[look].text.color);
     this.labelTex.needsUpdate = true;
+    this.fillU.uColor.value = BUTTON_STYLES[look].fill;
   }
 
   /** Both index fingertips in world space (null when not tracked), once a frame from the menu. */
@@ -434,8 +563,8 @@ export class HoldButton extends XrButton {
 // ---------------- the caption card ----------------
 
 /**
- * The card: the caption, then the honesty label and the credit (each in one line, or two when that keeps it large), on
- * glass at the foot of the canvas with room under it for its shadow, design px. Over the pair it is the same plane seen
+ * The card's layout in every look (each look's type and panel are VISION_CARD, BROADCAST_CARD, MINIMAL_CARD): the
+ * caption, then the honesty label and the credit (each in one line, or two when that keeps it large), at the foot of the canvas with room under it for its shadow, design px. Over the pair it is the same plane seen
  * from metres away, so its type is `pair` times larger there (its own texture, swapped in while the card is faded out).
  */
 const CARD = {
@@ -445,10 +574,6 @@ const CARD = {
   gap: 12,
   radius: 40,
   pair: 1.32,
-  caption: { weight: 600, px: 38, min: 34, lead: 47, track: -0.014, color: "rgba(255,255,255,0.97)" } as TextStyle,
-  label: { weight: 500, px: 28, min: 27, lead: 35, track: -0.004, color: "rgba(255,255,255,0.82)" } as TextStyle,
-  credit: { weight: 500, px: 24, min: 22, lead: 31, track: 0, color: "rgba(255,255,255,0.66)" } as TextStyle,
-  glass: { tint: "rgba(40,40,46,0.70)", sheen: 0.12, rim: 0.4, shadow: 0.42, blur: 26, drop: 8, grain: true } as Glass,
 };
 /**
  * The Reality panel, its own plane just above the card (its canvas DESIGN wide, `h` tall, the panel at its foot): a
@@ -465,7 +590,6 @@ const REALITY = {
   blue: "rgb(70,132,255)",
   title: { weight: 600, px: 25, min: 20, lead: 34, track: -0.006, color: "rgba(255,255,255,0.97)" } as TextStyle,
   body: { weight: 500, px: 22, min: 17, lead: 29, track: 0, color: "rgba(255,255,255,0.78)" } as TextStyle,
-  glass: { tint: "rgba(24,32,52,0.74)", sheen: 0.12, rim: 0.44, shadow: 0.34, blur: 20, drop: 6, grain: true } as Glass,
 };
 /** Metres per design px on the card's plane. */
 const M_PER_PX = CAPTION_H / DESIGN[1];
@@ -486,6 +610,8 @@ class CardCanvas {
   readonly g: CanvasRenderingContext2D;
   /** The panel's top edge, design px from the canvas top, once drawn. */
   top = 0;
+  /** Broadcast's animated accent: the rule a glint sweeps along, design px [x, y, w, h] (null in the other looks). */
+  accent: [number, number, number, number] | null = null;
 
   constructor(
     readonly h: number,
@@ -508,31 +634,200 @@ class CardCanvas {
   }
 }
 
-/** The caption, label and credit on glass, `k` times the watch's type; the panel's top, design px. */
+/** Vision's card: frosted glass a touch lighter than the buttons' foot, bold display type, a hairline under the caption. */
+const VISION_CARD = {
+  caption: { weight: 700, px: 44, min: 36, lead: 54, track: -0.016, color: "rgba(255,255,255,0.99)", family: DISPLAY_STACK } as TextStyle,
+  label: { weight: 600, px: 29, min: 27, lead: 37, track: -0.006, color: "rgba(255,255,255,0.88)", family: DISPLAY_STACK } as TextStyle,
+  credit: { weight: 500, px: 25, min: 22, lead: 32, track: 0, color: "rgba(255,255,255,0.72)" } as TextStyle,
+  glass: { tint: "rgba(112,114,132,0.62)", tint2: "rgba(44,46,58,0.78)", sheen: 0.2, rim: 0.8, shadow: 0.5, blur: 30, drop: 10, grain: true } as Glass,
+  radius: 46,
+};
+/** Broadcast's lower third: a caps headline on a navy plate behind an orange bar and a COURT SIDE tab, then a light strip with the label and credit. */
+const BROADCAST_CARD = {
+  caption: { weight: 800, px: 44, min: 34, lead: 52, track: 0.012, color: "#ffffff", family: CONDENSED_STACK, caps: true } as TextStyle,
+  label: { weight: 700, px: 28, min: 25, lead: 35, track: 0, color: "#0b1024" } as TextStyle,
+  credit: { weight: 500, px: 24, min: 21, lead: 30, track: 0, color: "rgba(11,16,36,0.78)" } as TextStyle,
+  plate: { tint: "rgba(26,34,66,0.97)", tint2: "rgba(7,10,24,0.97)", sheen: 0.08, rim: 0.3, shadow: 0.6, blur: 24, drop: 8 } as Glass,
+  bar: 18,
+  tab: { h: 34, text: { weight: 800, px: 22, min: 18, lead: 34, track: 0.08, color: "#ffffff", family: CONDENSED_STACK } as TextStyle },
+};
+/** Minimal: no panel, only a soft shadow behind the text and a short hairline. */
+const MINIMAL_CARD = {
+  caption: { weight: 600, px: 40, min: 34, lead: 50, track: -0.012, color: "rgba(255,255,255,0.99)" } as TextStyle,
+  label: { weight: 500, px: 28, min: 26, lead: 36, track: 0, color: "rgba(255,255,255,0.9)" } as TextStyle,
+  credit: { weight: 500, px: 24, min: 22, lead: 31, track: 0, color: "rgba(255,255,255,0.76)" } as TextStyle,
+};
+
+/** Lines of text centred (or from `left`), each `lead` tall from y; returns the y after them. */
+function lines(g: CanvasRenderingContext2D, b: { style: TextStyle; lines: string[]; px: number }, y: number, x: number, align: CanvasTextAlign): number {
+  setFont(g, b.style, b.px);
+  g.fillStyle = b.style.color;
+  g.textAlign = align;
+  for (const line of b.lines) {
+    g.fillText(line, x, y + b.style.lead / 2);
+    y += b.style.lead;
+  }
+  return y;
+}
+
+/** The caption, label and credit in the current look, `k` times the watch's type; the panel's top, design px. */
 function drawCard(c: CardCanvas, k: number, caption: string, label: string, credit: string): void {
+  if (look === "broadcast") return drawBroadcastCard(c, k, caption, label, credit);
   const g = c.begin();
+  c.accent = null;
+  const set = look === "vision" ? VISION_CARD : MINIMAL_CARD;
   const max = DESIGN[0] - 2 * (CARD.side + CARD.pad[1]);
-  const blocks = [CARD.caption, CARD.label, CARD.credit].map((s, i) => {
+  const blocks = [set.caption, set.label, set.credit].map((s, i) => {
     const style = bigger(s, k);
     return { style, ...wrap(g, [caption, label, credit][i], style, max) };
   });
-  const h = CARD.pad[0] + CARD.gap + CARD.pad[2] + blocks.reduce((s, b) => s + b.lines.length * b.style.lead, 0);
+  const gap = CARD.gap + 6;
+  const h = CARD.pad[0] + gap + CARD.pad[2] + blocks.reduce((s, b) => s + b.lines.length * b.style.lead, 0);
   const y0 = Math.max(4, c.h - CARD.foot - h);
-  glass(g, CARD.side, y0, DESIGN[0] - 2 * CARD.side, h, CARD.radius, CARD.glass, c.texels);
-  g.textAlign = "center";
+  const w = DESIGN[0] - 2 * CARD.side;
+  g.save();
+  if (look === "vision") {
+    halo(g, CARD.side, y0, w, h, VISION_CARD.radius, "rgba(150,190,255,0.4)", 16 * c.texels);
+    glass(g, CARD.side, y0, w, h, VISION_CARD.radius, VISION_CARD.glass, c.texels);
+    specular(g, CARD.side, y0, w, h, VISION_CARD.radius, 0.26);
+    g.shadowColor = "rgba(0,0,0,0.3)";
+    g.shadowBlur = 6 * c.texels;
+    g.shadowOffsetY = 1.5 * c.texels;
+  } else {
+    // a soft dark pool behind the text, no edge anywhere: an ellipse that fades to nothing at its own rim
+    const rx = w * 0.55;
+    g.save();
+    g.translate(DESIGN[0] / 2, y0 + h / 2);
+    g.scale(1, (h / 2 + 20) / rx);
+    const pool = g.createRadialGradient(0, 0, 0, 0, 0, rx);
+    pool.addColorStop(0, "rgba(0,0,0,0.5)");
+    pool.addColorStop(0.6, "rgba(0,0,0,0.3)");
+    pool.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = pool;
+    g.fillRect(-rx, -rx, 2 * rx, 2 * rx);
+    g.restore();
+    g.shadowColor = "rgba(0,0,0,0.75)";
+    g.shadowBlur = 10 * c.texels;
+    g.shadowOffsetY = 1.5 * c.texels;
+  }
   g.textBaseline = "middle";
   let y = y0 + CARD.pad[0];
-  blocks.forEach((b, i) => {
-    setFont(g, b.style, b.px);
-    g.fillStyle = b.style.color;
-    for (const line of b.lines) {
-      g.fillText(line, DESIGN[0] / 2, y + b.style.lead / 2);
-      y += b.style.lead;
-    }
-    if (i === 0) y += CARD.gap;
-  });
+  y = lines(g, blocks[0], y, DESIGN[0] / 2, "center");
+  g.shadowColor = "rgba(0,0,0,0)";
+  g.fillStyle = look === "vision" ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.5)";
+  const rule = look === "vision" ? w * 0.6 : 120 * k;
+  g.fillRect(DESIGN[0] / 2 - rule / 2, y + gap / 2 - 0.75, rule, 1.5);
+  if (look === "vision") g.shadowColor = "rgba(0,0,0,0.3)";
+  else g.shadowColor = "rgba(0,0,0,0.75)";
+  y += gap;
+  y = lines(g, blocks[1], y, DESIGN[0] / 2, "center");
+  lines(g, blocks[2], y, DESIGN[0] / 2, "center");
+  g.restore();
   c.top = y0;
   c.tex.needsUpdate = true;
+}
+
+/** Broadcast's glint: `h` design px tall round the rule between the tiers, sweeping its length every `period` s with a `width` (share of the rule) hot core. */
+const ACCENT = { h: 8, period: 2.4, width: 0.12 };
+const ACCENT_VERT = `varying vec2 vUv;
+void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const ACCENT_FRAG = `uniform float uX; uniform float uW; uniform float opacity;
+varying vec2 vUv;
+void main() {
+  float d = (vUv.x - uX) / uW;
+  float core = exp(-d * d * 4.0);
+  float band = 1.0 - smoothstep(0.15, 0.5, abs(vUv.y - 0.5));
+  gl_FragColor = vec4(mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.97, 0.9), core), core * band * opacity);
+}`;
+
+/** Broadcast's lower third (see BROADCAST_CARD); its top is the tab's. */
+function drawBroadcastCard(c: CardCanvas, k: number, caption: string, label: string, credit: string): void {
+  const g = c.begin();
+  const B = BROADCAST_CARD;
+  const x0 = CARD.side;
+  const w = DESIGN[0] - 2 * CARD.side;
+  const bar = B.bar * k;
+  const padX = 30;
+  const max = w - bar - 2 * padX;
+  const cap = bigger(B.caption, k);
+  const lab = bigger(B.label, k);
+  const cre = bigger(B.credit, k);
+  const head = { style: cap, ...wrap(g, caption.toUpperCase(), cap, max) };
+  const lb = { style: lab, ...wrap(g, label, lab, max) };
+  const cr = { style: cre, ...wrap(g, credit, cre, max) };
+  const tabH = B.tab.h * k;
+  const topH = 20 + head.lines.length * cap.lead + 16;
+  const stripH = 14 + lb.lines.length * lab.lead + cr.lines.length * cre.lead + 14;
+  const total = tabH + topH + stripH;
+  const y0 = Math.max(4, c.h - CARD.foot - total);
+  const plateY = y0 + tabH;
+  // the plate and strip as one shadowed block, square-cornered but for a small radius
+  glass(g, x0, plateY, w, topH + stripH, 6, B.plate, c.texels);
+  g.save();
+  g.beginPath();
+  g.roundRect(x0, plateY, w, topH + stripH, 6);
+  g.clip();
+  g.fillStyle = "rgba(244,246,250,0.97)";
+  g.fillRect(x0, plateY + topH, w, stripH);
+  g.fillStyle = ORANGE;
+  g.fillRect(x0, plateY, bar, topH + stripH);
+  g.fillStyle = "rgba(255,255,255,0.18)";
+  g.fillRect(x0, plateY, w, 1.5);
+  g.fillStyle = ORANGE; // a thin orange rule between the tiers (a glint sweeps along it: ACCENT)
+  g.fillRect(x0, plateY + topH - 3, w, 3);
+  g.restore();
+  c.accent = [x0, plateY + topH - 1.5 - ACCENT.h / 2, w, ACCENT.h];
+  // the tab: COURT SIDE on orange, sitting on the plate's left
+  const ts = bigger(B.tab.text, k);
+  setFont(g, ts, ts.px);
+  const tabText = "COURT SIDE";
+  const tabW = g.measureText(tabText).width + 36 * k;
+  g.fillStyle = ORANGE;
+  g.beginPath();
+  g.roundRect(x0, y0, tabW, tabH + 2, [6, 6, 0, 0]);
+  g.fill();
+  g.fillStyle = "#ffffff";
+  g.textAlign = "left";
+  g.textBaseline = "middle";
+  g.fillText(tabText, x0 + 18 * k, y0 + tabH / 2 + 1);
+  let y = plateY + 20;
+  y = lines(g, head, y, x0 + bar + padX, "left");
+  y = plateY + topH + 14;
+  y = lines(g, lb, y, x0 + bar + padX, "left");
+  lines(g, cr, y, x0 + bar + padX, "left");
+  c.top = y0;
+  c.tex.needsUpdate = true;
+}
+
+/** The Reality panel's body in the current look: cool frosted glass (vision), a navy plate behind an orange bar (broadcast), a soft shadow (minimal). */
+function realityPanel(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, texels: number): void {
+  if (look === "vision") {
+    halo(g, x, y, w, h, REALITY.radius, "rgba(120,160,255,0.45)", 14 * texels);
+    glass(g, x, y, w, h, REALITY.radius, { tint: "rgba(96,116,170,0.64)", tint2: "rgba(28,38,72,0.8)", sheen: 0.2, rim: 0.85, shadow: 0.45, blur: 22, drop: 7, grain: true }, texels);
+    specular(g, x, y, w, h, REALITY.radius, 0.22);
+  } else if (look === "broadcast") {
+    glass(g, x, y, w, h, 6, BROADCAST_CARD.plate, texels);
+    g.save();
+    g.beginPath();
+    g.roundRect(x, y, w, h, 6);
+    g.clip();
+    g.fillStyle = ORANGE;
+    g.fillRect(x, y, BROADCAST_CARD.bar, h);
+    g.fillStyle = "rgba(255,255,255,0.18)";
+    g.fillRect(x, y, w, 1.5);
+    g.restore();
+  } else {
+    g.save();
+    g.translate(x + w / 2, y + h / 2);
+    g.scale(1, (h / 2 + 16) / (w * 0.55));
+    const pool = g.createRadialGradient(0, 0, 0, 0, 0, w * 0.55);
+    pool.addColorStop(0, "rgba(0,0,0,0.5)");
+    pool.addColorStop(0.6, "rgba(0,0,0,0.3)");
+    pool.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = pool;
+    g.fillRect(-w * 0.55, -w * 0.55, w * 1.1, w * 1.1);
+    g.restore();
+  }
 }
 
 /** The Reality panel at the foot of its canvas, `k` times the watch's type. */
@@ -542,16 +837,22 @@ function drawReality(c: CardCanvas, k: number, lines: string[]): void {
   const w = DESIGN[0] - 2 * R.side;
   const max = w - 2 * R.pad[1];
   const [title, ...body] = lines;
-  const ts = bigger(R.title, k);
+  const cut = look === "broadcast" ? { family: CONDENSED_STACK, weight: 800, caps: true } : look === "vision" ? { family: DISPLAY_STACK, weight: 700 } : {};
+  const ts = bigger({ ...R.title, ...cut }, k);
   const bs = bigger(R.body, k);
   const swatch = R.swatch * k;
-  const head = wrap(g, title, ts, max - swatch - 12);
+  const head = wrap(g, ts.caps ? title.toUpperCase() : title, ts, max - swatch - 12);
   const rows = body.map((l) => wrap(g, l, bs, max));
   const want = R.pad[0] + R.pad[2] + head.lines.length * ts.lead + rows.reduce((s, r) => s + r.lines.length * bs.lead, 0);
   // never taller than its canvas: the line height gives way, never the type below its min
   const fit = Math.min(1, (c.h - R.foot - 4) / want);
   const y0 = c.h - R.foot - want * fit;
-  glass(g, R.side, y0, w, want * fit, R.radius, R.glass, c.texels);
+  realityPanel(g, R.side, y0, w, want * fit, c.texels);
+  g.save();
+  if (look === "minimal") {
+    g.shadowColor = "rgba(0,0,0,0.75)";
+    g.shadowBlur = 10 * c.texels;
+  }
   g.textBaseline = "middle";
   let y = y0 + R.pad[0] * fit;
   setFont(g, ts, head.px);
@@ -579,6 +880,7 @@ function drawReality(c: CardCanvas, k: number, lines: string[]): void {
       y += bs.lead * fit;
     }
   }
+  g.restore();
   c.top = y0;
   c.tex.needsUpdate = true;
 }
@@ -607,6 +909,10 @@ class CaptionPanel {
   private text: string[] = [];
   /** The Reality plane's resting height in the card's plane, metres. */
   private realityY = 0;
+  /** Broadcast's glint along its accent rule (ACCENT), a child of the card, and how far through its sweep, s. */
+  private readonly accent: THREE.Mesh;
+  private readonly accentU = { uX: { value: 0 }, uW: { value: ACCENT.width }, opacity: { value: 0 } };
+  private accentT = 0;
 
   constructor() {
     this.material = new THREE.MeshBasicMaterial({ map: this.cards.front.tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
@@ -620,6 +926,22 @@ class CaptionPanel {
     this.reality.renderOrder = 101;
     this.reality.visible = false;
     this.mesh.add(this.reality);
+    const am = new THREE.ShaderMaterial({ uniforms: this.accentU, vertexShader: ACCENT_VERT, fragmentShader: ACCENT_FRAG, transparent: true, depthTest: false, depthWrite: false });
+    this.accent = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), am);
+    this.accent.name = "court-caption-accent";
+    this.accent.renderOrder = 102;
+    this.accent.visible = false;
+    this.mesh.add(this.accent);
+  }
+
+  /** The glint's plane over its rule on the current placement's card (hidden where the look has none). */
+  private placeAccent(): void {
+    const a = this.cards[this.placement].accent;
+    this.accent.userData.on = !!a;
+    if (!a) return;
+    const [x, y, w, h] = a;
+    this.accent.position.set(((x + w / 2) / DESIGN[0] - 0.5) * CAPTION_W, (0.5 - (y + h / 2) / DESIGN[1]) * CAPTION_H, 0.0003);
+    this.accent.scale.set(w * M_PER_PX, h * M_PER_PX, 1);
   }
 
   set opacity(v: number) {
@@ -653,12 +975,16 @@ class CaptionPanel {
     this.material.map = this.cards[placement].tex; // one map for another: the same program, no recompile
     this.realityMaterial.map = this.realities[placement].tex;
     this.restReality();
+    this.placeAccent();
   }
 
   /** Once a frame: the Reality panel's fade (ease-out in, ease-in out) and its rise into place. */
   step(dt: number): void {
     this.realityT = Math.min(1, Math.max(0, this.realityT + (this.realityOn ? dt : -dt) / REALITY_FADE.s));
     this.reality.position.set(0, this.realityY - (1 - this.realityShown) * REALITY_FADE.rise, 0.0005);
+    this.accentT = (this.accentT + dt) % ACCENT.period;
+    // the core runs in from off the left end and out past the right
+    this.accentU.uX.value = -ACCENT.width + (this.accentT / ACCENT.period) * (1 + 2 * ACCENT.width);
     this.apply();
   }
 
@@ -667,6 +993,8 @@ class CaptionPanel {
     this.mesh.visible = this.material.opacity > 0.001;
     this.realityMaterial.opacity = this.material.opacity * this.realityShown;
     this.reality.visible = this.realityMaterial.opacity > 0.001;
+    this.accentU.opacity.value = this.material.opacity;
+    this.accent.visible = !!this.accent.userData.on && this.material.opacity > 0.001;
   }
 
   /** The Reality plane's foot `gap` above the card's top edge (the panel's own shadow overlaps the card a little). */
@@ -680,8 +1008,13 @@ class CaptionPanel {
   draw(caption: string, label: string, credit: string): void {
     drawCard(this.cards.front, 1, caption, label, credit);
     drawCard(this.cards.pair, CARD.pair, caption, label, credit);
+    if (this.realityLines.length) {
+      drawReality(this.realities.front, 1, this.realityLines);
+      drawReality(this.realities.pair, CARD.pair, this.realityLines);
+    }
     this.text = [caption, label, credit];
     this.restReality();
+    this.placeAccent();
     this.lines.splice(0, this.lines.length, ...(this.realityOn ? this.realityLines : []), ...this.text);
   }
 
@@ -751,6 +1084,8 @@ export interface UiProbe {
   buttons(): { id: string; label: string; on: boolean; front: number[]; inside: number[] }[];
   /** Seat here's holds (start and fired, in the frame loop's `now` ms). */
   holds(): { start: number; fired: number | null }[];
+  /** The look the surfaces are painted in. */
+  look(): LookName;
   /** The text on the caption panel now (Reality lines first, then caption, label, credit), and whether it shows. */
   text(): { lines: string[]; visible: boolean };
   /** Where the caption card is: its placement, drawn opacity and four corners (court space when the court group is in the scene). */
@@ -827,6 +1162,7 @@ export class Ui {
       nextView: button("nextView", "Next view"),
       seatHere: this.seatHere,
       changeSeat: new HoldButton("changeSeat", "Hold to change seat", () => this.press("changeSeat")),
+      look: button("look", lookLabel()),
     };
     // the menu over the footage; a button's own layers (a hold's fill, then its label) over its face
     for (const btn of Object.values(this.b)) btn.mesh.traverse((o) => (o.renderOrder = MENU_ORDER + (o === btn.mesh ? 0 : (o.userData.layer ?? 1))));
@@ -838,6 +1174,16 @@ export class Ui {
     this.drawCaption();
     this.relayout();
     if (typeof window !== "undefined" && window.__court) window.__courtUi = this.probe();
+  }
+
+  /** The next look (LookName): every button and the card repainted in it, nothing moved (court.ts's "look" handler). */
+  cycleLook(): void {
+    look = LOOK_NAMES[(LOOK_NAMES.indexOf(look) + 1) % LOOK_NAMES.length];
+    this.b.look.setLabel(lookLabel());
+    // a button repaints its face (and a hold button its label layer) on a new label: give each its own back
+    for (const btn of Object.values(this.b)) btn.setLabel((btn as unknown as { label: string }).label);
+    const c = this.bundle.court;
+    this.caption.draw(c.caption, c.label, c.credit);
   }
 
   /** Register what a button does (court.ts wires every action). */
@@ -977,7 +1323,7 @@ export class Ui {
   private rows(): XrButton[][] {
     const b = this.b;
     if (this.flags.setup) return [[b.seatHere], [b.room]];
-    const rows: XrButton[][] = [[b.changeSeat]];
+    const rows: XrButton[][] = [[b.changeSeat, b.look]];
     const open = this.phase === "open" || this.phase === "walking";
     if (this.phase === "open" && !this.flags.inRoom) rows.push([b.closer]);
     if (this.phase === "walking" && !this.flags.inRoom && this.flags.nextView) rows.push([b.nextView]);
@@ -1014,6 +1360,7 @@ export class Ui {
           };
         }),
       holds: () => this.seatHere.holds.map((h) => ({ ...h })),
+      look: () => look,
       text: () => ({ lines: [...this.caption.lines], visible: this.caption.mesh.visible }),
       caption: () => {
         const m = this.caption.mesh;

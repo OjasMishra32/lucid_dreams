@@ -23,11 +23,12 @@ import { standaloneHoop } from "../props";
 import { cameraOf, project, type PinholeCamera } from "./camera";
 import { APRON_M, DASHER, LOWER, TONE_GLSL, UPPER, bowlArrays, bowlLayout } from "./surround";
 import type { CourtBundle, Vec3 } from "./format";
-import { PART, REACH_GLSL, edgeLevel, fixtureGlow, footageSharp, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
+import { HOUSE_SPILL, PART, REACH_GLSL, edgeLevel, fixtureGlow, footageSharp, reachAtXYZ, reachPlanes, roomCurves, veil, type LightField, type LightSet } from "./lightfield";
 import { frameFeather, type Proxies } from "./proxies";
 import { TONE_DEFAULT, floorTones } from "./floortone";
 import { EDGE_FADE } from "./seatmath";
 import type { Head } from "./types";
+import { maxAniso } from "../xr/quality";
 
 /** True once stream E has built this module. */
 export const BUILT = true;
@@ -42,7 +43,7 @@ const ARENA_FLOOR = new THREE.Color().setRGB(0.004, 0.004, 0.005);
 const ARENA_DARK = new THREE.Vector3(ARENA_FLOOR.r, ARENA_FLOOR.g, ARENA_FLOOR.b);
 /** With a surround: the house lights' spill on the floor, a share of the crowd's light (an arena lit like the footage's,
  * not a dark stage round the pool; under the pool's own 1 at F, so F's floor is untouched). */
-const HOUSE_FLOOR = 0.55;
+const HOUSE_FLOOR = HOUSE_SPILL;
 /** With a surround the apron and the courtside floor are the court's own hardwood (floortone's), this much darker. */
 const SURROUND_APRON = 0.88;
 const SURROUND_COURTSIDE = 0.72;
@@ -170,7 +171,8 @@ void main() {
   // smear reads as streaks, so the clean floor
   filmed *= mix(1.0, lightSharp(vec3(p.x, 0.0, p.y), uFloorSharp.x, uFloorSharp.y), uSharpOn);
   vec3 col = mix(clean, texture2D(uFloorMap, uv).rgb, filmed);
-  col *= max(lightFloor(p, lightReach(vLightCourt)), uHouseFloor * lightCrowd());
+  // after the hand-off the arena lights the floor evenly (lightEvenFloor): no pool of light from the seat to the pair
+  col *= lightEvenFloor(max(lightFloor(p, lightReach(vLightCourt)), uHouseFloor * lightCrowd()));
   col = mix(col, uBlue * (0.04 + dot(col, vec3(0.2126, 0.7152, 0.0722))), (1.0 - filmed) * 0.75 * uReality);
   gl_FragColor = vec4(col, lightRoomFloor());
   #include <colorspace_fragment>
@@ -500,7 +502,7 @@ export class CourtWorld {
       loader.loadAsync(this.bundle.file(c.floorSeen)).catch(() => null),
     ]);
     for (const t of [floorMap, seenMap]) if (t) this.textures.push(t);
-    const aniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    const aniso = maxAniso(this.renderer);
     if (floorMap) {
       floorMap.colorSpace = THREE.SRGBColorSpace;
       floorMap.anisotropy = aniso;
@@ -765,7 +767,7 @@ export class CourtWorld {
     const atlas = crowd ? await new THREE.TextureLoader().loadAsync(this.bundle.file(crowd.atlas)).catch(() => null) : null;
     if (atlas) {
       atlas.colorSpace = THREE.SRGBColorSpace;
-      atlas.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      atlas.anisotropy = maxAniso(this.renderer);
       atlas.minFilter = THREE.LinearMipmapLinearFilter;
       atlas.generateMipmaps = true;
       this.textures.push(atlas);
