@@ -21,6 +21,8 @@ not for long coding sessions. Read `AGENTS.md` first.
    - Try Make one at the bottom of https://getluciddreams.vercel.app with a short clip of yourself (head to toe,
      phone still, 5+ s) and a sentence; time it from upload to ready and check Gemma's plan fits the sentence. If it
      fails at submit, HiPerGator's login on Ojasva's Mac has lapsed: Vishal logs in again.
+   - The prize rules say: **name the Gemma model in the README.** Add a short "Gemma" line to the root README.md with
+     the exact model id and what it writes (Ian is rewriting the README: put yours in, tell him, keep it).
    - Results in `docs/gemma-qa.md` and a Status log line. Once it works, tell Ojasva: he ticks "Best Use of Gemma
      (MLH)" on the Devpost and adds one line about it.
 2. **Real-phone check of the website** (iPhone Safari, plus Android if anyone has one) at
