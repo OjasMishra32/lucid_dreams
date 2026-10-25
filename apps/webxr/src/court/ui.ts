@@ -321,11 +321,25 @@ function specular(g: CanvasRenderingContext2D, x: number, y: number, w: number, 
   g.restore();
 }
 
+/** A soft coloured glow just outside a shape (drawn first, under it): vision's lit-glass edge. */
+function halo(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, color: string, blur: number): void {
+  g.save();
+  g.beginPath();
+  g.roundRect(x, y, w, h, r);
+  g.shadowColor = color;
+  g.shadowBlur = blur;
+  g.strokeStyle = color;
+  g.lineWidth = 2;
+  g.stroke();
+  g.restore();
+}
+
 /** A button's face in the current look, at x, y (canvas px, 1:1). */
 function paintFace(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, lit: boolean): void {
   if (look === "vision") {
+    halo(g, x, y, w, h, h / 2, lit ? "rgba(255,255,255,0.55)" : "rgba(150,190,255,0.45)", 14);
     glass(g, x, y, w, h, h / 2, lit ? VISION_ON : VISION_OFF, 1);
-    if (!lit) specular(g, x, y, w, h, h / 2, 0.22);
+    if (!lit) specular(g, x, y, w, h, h / 2, 0.32);
   } else if (look === "broadcast") {
     glass(g, x, y, w, h, 10, lit ? BROADCAST_ON : BROADCAST_OFF, 1);
     g.save();
@@ -621,7 +635,7 @@ class CardCanvas {
 
 /** Vision's card: frosted glass a touch lighter than the buttons' foot, bold display type, a hairline under the caption. */
 const VISION_CARD = {
-  caption: { weight: 700, px: 41, min: 35, lead: 51, track: -0.016, color: "rgba(255,255,255,0.99)", family: DISPLAY_STACK } as TextStyle,
+  caption: { weight: 700, px: 44, min: 36, lead: 54, track: -0.016, color: "rgba(255,255,255,0.99)", family: DISPLAY_STACK } as TextStyle,
   label: { weight: 600, px: 29, min: 27, lead: 37, track: -0.006, color: "rgba(255,255,255,0.88)", family: DISPLAY_STACK } as TextStyle,
   credit: { weight: 500, px: 25, min: 22, lead: 32, track: 0, color: "rgba(255,255,255,0.72)" } as TextStyle,
   glass: { tint: "rgba(112,114,132,0.62)", tint2: "rgba(44,46,58,0.78)", sheen: 0.2, rim: 0.8, shadow: 0.5, blur: 30, drop: 10, grain: true } as Glass,
@@ -671,8 +685,9 @@ function drawCard(c: CardCanvas, k: number, caption: string, label: string, cred
   const w = DESIGN[0] - 2 * CARD.side;
   g.save();
   if (look === "vision") {
+    halo(g, CARD.side, y0, w, h, VISION_CARD.radius, "rgba(150,190,255,0.4)", 16 * c.texels);
     glass(g, CARD.side, y0, w, h, VISION_CARD.radius, VISION_CARD.glass, c.texels);
-    specular(g, CARD.side, y0, w, h, VISION_CARD.radius, 0.16);
+    specular(g, CARD.side, y0, w, h, VISION_CARD.radius, 0.26);
     g.shadowColor = "rgba(0,0,0,0.3)";
     g.shadowBlur = 6 * c.texels;
     g.shadowOffsetY = 1.5 * c.texels;
