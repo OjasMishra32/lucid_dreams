@@ -64,6 +64,7 @@ export interface Court {
   freeze: FreezeInfo;
   audio: AudioInfo;
   metrics: Metrics;
+  surround?: SurroundInfo;
 }
 
 /** The rulebook court the footage is lined up with. */
@@ -363,6 +364,45 @@ export interface StandCard {
   image: BundlePath;
   /** Corners in court space: bottom-left, bottom-right, top-right, top-left of the image, as seen from the court. */
   quad: Quad;
+}
+
+/**
+ * The arena round the footage (optional; without it the bowl stays structured darkness). `far` is real: everything the
+ * camera's pan filmed at the far end, people removed. `crowd` is imagined: blocks of the footage's own crowd laid on
+ * the seating bowl the camera never saw, so the Reality check tints it blue (rule 6).
+ */
+export interface SurroundInfo {
+  far?: SurroundFar;
+  crowd?: SurroundCrowd;
+}
+
+/** The pan's mosaic as one pinhole image sharing camera F's centre and rotation (frames[frame].q), its own intrinsics. */
+export interface SurroundFar {
+  /** RGB (JPEG). */
+  image: BundlePath;
+  /** 8-bit, same size: 255 where the pan filmed it, 0 where it never did (feathered a few pixels). */
+  alpha: BundlePath;
+  /** The show frame whose rotation the image uses (camera F's). */
+  frame: number;
+  /** Focal length and principal point in this image's own pixels. */
+  f: number;
+  cx: number;
+  cy: number;
+  width: number;
+  height: number;
+}
+
+/** Tiles of real crowd (whole rows of seats, upright) at one scale, laid on the imagined bowl. */
+export interface SurroundCrowd {
+  /** RGB (JPEG). */
+  atlas: BundlePath;
+  /** Atlas size, pixels. */
+  width: number;
+  height: number;
+  /** Every tile is resampled to this many atlas pixels per metre of stands. */
+  pxPerM: number;
+  /** [x0, y0, x1, y1] in atlas pixels. */
+  tiles: Box[];
 }
 
 export interface AudioInfo {
@@ -728,6 +768,26 @@ export function validateCourt(json: unknown): string[] {
       if (c.has(m, k, `metrics.${k}`) && c.obj(m[k], `metrics.${k}`))
         for (const [key, x] of Object.entries(m[k] as Record<string, unknown>)) if (x !== null) c.num(x, `metrics.${k}.${key}`);
     if (c.has(m, "interpShare", "metrics.interpShare")) c.num(m.interpShare, "metrics.interpShare", { min: 0, max: 1 });
+  }
+
+  // surround (optional)
+  if (j.surround !== undefined && c.obj(j.surround, "surround")) {
+    const s = j.surround;
+    if (s.far !== undefined && c.obj(s.far, "surround.far")) {
+      const f = s.far;
+      for (const k of ["image", "alpha"]) if (c.has(f, k, `surround.far.${k}`)) c.file(f[k], `surround.far.${k}`);
+      if (c.has(f, "frame", "surround.far.frame")) c.num(f.frame, "surround.far.frame", { min: 0, int: true });
+      for (const k of ["f", "width", "height"]) if (c.has(f, k, `surround.far.${k}`)) c.num(f[k], `surround.far.${k}`, { gt: 0 });
+      for (const k of ["cx", "cy"]) if (c.has(f, k, `surround.far.${k}`)) c.num(f[k], `surround.far.${k}`);
+    }
+    if (s.crowd !== undefined && c.obj(s.crowd, "surround.crowd")) {
+      const cr = s.crowd;
+      if (c.has(cr, "atlas", "surround.crowd.atlas")) c.file(cr.atlas, "surround.crowd.atlas");
+      const size = ["width", "height"].every((k) => c.has(cr, k, `surround.crowd.${k}`) && c.num(cr[k], `surround.crowd.${k}`, { gt: 0, int: true }));
+      if (c.has(cr, "pxPerM", "surround.crowd.pxPerM")) c.num(cr.pxPerM, "surround.crowd.pxPerM", { gt: 0 });
+      if (c.has(cr, "tiles", "surround.crowd.tiles") && c.list(cr.tiles, "surround.crowd.tiles", 1, "at least one crowd tile") && size)
+        cr.tiles.forEach((t, i) => c.box(t, `surround.crowd.tiles[${i}]`, cr.width as number, cr.height as number, "atlas"));
+    }
   }
   return c.errors;
 }
