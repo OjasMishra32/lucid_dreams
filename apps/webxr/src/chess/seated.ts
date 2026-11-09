@@ -47,6 +47,7 @@ export const TABLE_HALF_X = 0.48;
 export const TABLE_THICK = 0.03;
 const BOARD_TOP = 0.0005;
 const GAP = 0.008; // meters every hand, arm and carried piece keeps above anything it passes over
+const THIGH_SLACK = 0.003; // how far trousers may press up into the table's underside (cloth gives; under 5 mm shows nothing)
 
 /** One piece a hand moves: board-local base positions, as squareToLocal gives them. */
 export interface Carry {
@@ -515,6 +516,12 @@ function softTap() {
   }
 }
 const up = (v: THREE.Vector3, h: number) => v.clone().setY(v.y + h);
+const _thT = new THREE.Vector3();
+const _thPole = new THREE.Vector3();
+const _thK = new THREE.Vector3();
+const _thP = new THREE.Vector3();
+const _thA = new THREE.Quaternion();
+const _thB = new THREE.Quaternion();
 
 export class SeatedOpponent {
   readonly chair: THREE.Group;
@@ -523,6 +530,9 @@ export class SeatedOpponent {
   private legs: THREE.Mesh[] = [];
   private rig!: Rig;
   private chairMats: THREE.MeshStandardMaterial[] = [];
+  private chairBackParts: THREE.Object3D[] = [];
+  /** Meters the chair's back (posts and rail) sits further back than built, so a deep back clears it (fitChair). */
+  chairBackShift = 0;
   private hands: [Hand, Hand] = [new Hand(0), new Hand(1)];
 
   // time and what's going on
@@ -613,6 +623,11 @@ export class SeatedOpponent {
   private restMemo = new Map<string, { wristT: THREE.Vector3; q: THREE.Quaternion }>();
   /** Meters between where a hand was asked to be and where the arm got it (0 when every reach is exact). */
   reachError = 0;
+  /** Listening to you (Talk): the head tips a little to one side, as people's do. */
+  listening = false;
+  private tilt = 0;
+  /** Anything to add to their pose after it's solved, each frame (Talk opens the jaw with the reply's loudness). */
+  onPose: ((local: THREE.Quaternion[], skeleton: Skeleton) => void) | null = null;
 
   // spaces
   private toBundle = new THREE.Matrix4(); // table-local -> bundle
@@ -804,8 +819,10 @@ export class SeatedOpponent {
       // over it goes the way asked if there's room for it there, else whichever way there is: never onto a piece
       const fall = this.roomyFall(tip.base, tip.fall, tip.height, tip.obj);
       const fr = this.body.finger[ts];
-      // they push it over with the index fingertip on the far side of its head, and it falls away from the finger
-      const t: Tip = { obj: tip.obj, base: tip.base.clone(), pivot: tip.base.clone().addScaledVector(fall, 0.0175), axis: new THREE.Vector3(0, 1, 0).cross(fall).normalize(), grip: (tip.height - 0.014) * 0.9, angle: 0, back: fall.clone().multiplyScalar(-(HEAD_R.k + fr + 0.006)) };
+      // they push it over with the index fingertip on the far side of its head, and it falls away from the finger (a
+      // thick palm pushes a little higher on the head, so the palm passes over the king as it goes)
+      const palm = Math.max(0, this.body.palm[ts] - 0.0205);
+      const t: Tip = { obj: tip.obj, base: tip.base.clone(), pivot: tip.base.clone().addScaledVector(fall, 0.0175), axis: new THREE.Vector3(0, 1, 0).cross(fall).normalize(), grip: (tip.height - 0.014) * 0.9 + 4 * palm, angle: 0, back: fall.clone().multiplyScalar(-(HEAD_R.k + fr + 0.006)) };
       const top = () => this.tipGrip(t);
       const look = () => up(this.boardToTable(t.base), 0.03);
       if (tip.shadow) tip.shadow.visible = false;
@@ -943,7 +960,10 @@ export class SeatedOpponent {
     this.seat.set(0, SEAT_HEIGHT + this.rig.hipAbove, 0);
 
     if (first) {
-      if (!this.verified) this.verifyPoses();
+      if (!this.verified) {
+        this.fitChair();
+        this.verifyPoses();
+      }
       this.switchAt = now + this.idleRng.range(1.5, 3.5);
       this.step(0, ctx, true); // puts the body somewhere first: poses that follow it (a chin, a chest) need it
     }
@@ -967,7 +987,10 @@ export class SeatedOpponent {
     this.updateGaze(now, dt, ctx);
     this.breathe(dt);
 
-    this.avatar.pose(now, (local, rootT) => this.solve(local, rootT));
+    this.avatar.pose(now, (local, rootT, skeleton) => {
+      this.solve(local, rootT);
+      this.onPose?.(local, skeleton);
+    });
 
     // a piece in hand follows the pinch point
     const mesh = this.avatar.mesh;
@@ -2111,7 +2134,7 @@ export class SeatedOpponent {
       const p2 = R[j2].clone().sub(R[j1]).applyQuaternion(q1).add(p1);
       const p3 = R[j3].clone().sub(R[j2]).applyQuaternion(q2).add(p2);
       const rf = f === 4 ? fr * 1.15 : fr;
-      const tip = R[j3].clone().sub(R[j2]).normalize().multiplyScalar(Math.max(B.tip[side] - rf, 0.004)).applyQuaternion(q3).add(p3);
+      const tip = R[j3].clone().sub(R[j2]).normalize().multiplyScalar(Math.max((f === 4 ? B.thumbTip[side] : B.tip[side]) - rf, 0.004)).applyQuaternion(q3).add(p3);
       pts.push(p1, p1.clone().multiplyScalar(0.5));
       r.push(pr, pr);
       pts.push(p1.clone().lerp(p2, 0.5), p2, p2.clone().lerp(p3, 0.5), p3, p3.clone().lerp(tip, 0.5), tip);
@@ -2678,6 +2701,15 @@ export class SeatedOpponent {
       }
     }
     rise = Math.max(rise, this.greet.lift);
+    // and never so far forward or so high that the thighs go up into the table's underside (long or thick legs under
+    // it): slide and rise only as far as they allow, and lean no further than the chest then clears
+    if ((rise > 0 || slide > 0) && this.thighsInTable(local, rootT, lean, rise, slide) > 0) {
+      if (this.thighsInTable(local, rootT, lean, 0, slide) > 0) {
+        slide = this.most(slide, (v) => this.thighsInTable(local, rootT, lean, 0, v) <= 0);
+        rise = 0;
+      } else rise = this.most(rise, (v) => this.thighsInTable(local, rootT, lean, v, slide) <= 0);
+      if (lean > 0.25 && this.chestInTable(local, rootT, lean, rise, slide) > 0) lean = this.most(lean, (v) => this.chestInTable(local, rootT, v, rise, slide) <= 0);
+    }
     const steps = Math.ceil(this.dt / 0.02);
     for (let i = 0; i < steps; i++) {
       const h = this.dt / steps;
@@ -2703,6 +2735,19 @@ export class SeatedOpponent {
       this.riseS = hi;
       this.riseV = Math.max(this.riseV, 0);
     }
+    // (the thighs again, for the body as it is right now: what the springs left it)
+    if ((this.riseS > 0 || this.slideS > 0) && this.thighsInTable(local, rootT, this.leanS, this.riseS, this.slideS) > 0) {
+      if (this.thighsInTable(local, rootT, this.leanS, 0, this.slideS) > 0) {
+        this.slideS = this.most(this.slideS, (v) => this.thighsInTable(local, rootT, this.leanS, 0, v) <= 0);
+        this.riseS = 0;
+      } else this.riseS = this.most(this.riseS, (v) => this.thighsInTable(local, rootT, this.leanS, v, this.slideS) <= 0);
+      this.riseV = Math.min(this.riseV, 0);
+      this.slideV = Math.min(this.slideV, 0);
+      if (this.leanS > 0.25 && this.chestInTable(local, rootT, this.leanS, this.riseS, this.slideS) > 0) {
+        this.leanS = this.most(this.leanS, (v) => this.chestInTable(local, rootT, v, this.riseS, this.slideS) <= 0);
+        this.leanV = Math.min(this.leanV, 0);
+      }
+    }
     this.torso(local, rootT, this.leanS);
 
     // head and neck turn toward what the eyes are on; a head resting on a hand turns less (the eyes do the rest)
@@ -2726,6 +2771,11 @@ export class SeatedOpponent {
     const shake = (this.now - this.shakeAt) / 1.4; // a slight shake of the head: hm, no
     if (shake >= 0 && shake < 1) {
       local[HEAD].multiply(rot(0, 0.07 * Math.sin(2 * Math.PI * 1.5 * shake) * Math.sin(Math.PI * shake), 0));
+      G[HEAD].multiplyQuaternions(G[NECK], local[HEAD]);
+    }
+    this.tilt += ((this.listening ? 1 : 0) - this.tilt) * Math.min(1, this.dt * 3); // listening: a slight tilt, chin down a touch
+    if (this.tilt > 0.002) {
+      local[HEAD].multiply(rot(0.05 * this.tilt, 0, 0.1 * this.tilt));
       G[HEAD].multiplyQuaternions(G[NECK], local[HEAD]);
     }
     // nor turns more than about 57 degrees from the chest all told: past that the neck's skin twists
@@ -2753,12 +2803,12 @@ export class SeatedOpponent {
     const wl = new THREE.Quaternion();
 
     // legs: feet flat on the floor a little ahead of the knees (further out when sitting back), knees slightly apart
-    for (const side of [0, 1]) {
+    for (const side of [0, 1] as const) {
       const s = side === 0 ? 1 : -1;
       const L = r.legs[side];
-      const target = P[L.a].clone().addScaledVector(FWD, 0.53 * (L.v1.length() + L.v2.length()) + this.idleOut.feet - this.slideS).addScaledVector(LEFT, s * 0.04);
-      target.y = r.ankleHeight;
-      const pole = FWD.clone().addScaledVector(UP, 0.4).addScaledVector(LEFT, s * 0.15);
+      const target = new THREE.Vector3();
+      const pole = new THREE.Vector3();
+      this.legTarget(side, P[L.a], target, pole);
       solveLimb(L, P[L.a], target, pole, gA, lB);
       local[L.a].copy(inv.copy(G[PELVIS]).invert().multiply(gA));
       local[L.b].copy(lB);
@@ -2896,6 +2946,84 @@ export class SeatedOpponent {
       }
     }
     return worst;
+  }
+
+  /**
+   * The chair's back far enough back that theirs clears it when they sit back as far as any pose does (a deep back, a
+   * jacket's): the trunk's measured blocks, leant back all the way, against the rail; the posts and rail move by that.
+   */
+  private fitChair() {
+    const local = Array.from({ length: 55 }, () => new THREE.Quaternion());
+    const rootT = new THREE.Vector3();
+    const lean = this.idleOut.lean;
+    this.idleOut.lean = -0.27; // (leanBack's furthest: -0.22, less up to 0.05)
+    this.torso(local, rootT, 0, 0, 0);
+    this.idleOut.lean = lean;
+    // the rail as buildChair makes it: centre, turned back by its tilt; its front face 1 cm in front of the centre
+    const tilt = 0.08;
+    const postH = 0.42;
+    const rc = new THREE.Vector3(0, SEAT_HEIGHT + postH - 0.08, 0.12 - 0.01 + Math.sin(tilt) * (postH - 0.07));
+    const toRail = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -tilt);
+    const p = new THREE.Vector3();
+    let need = 0;
+    for (const b of this.body.boxes) {
+      if (b.head) continue;
+      for (const fx of [-0.6, 0, 0.6])
+        for (const fy of [-0.9, -0.45, 0, 0.45, 0.9]) {
+          p.set(b.c.x + fx * b.r.x, b.c.y + fy * b.r.y, b.c.z - 0.92 * b.r.z).applyQuaternion(this.G[b.j]).add(this.P[b.j]);
+          p.sub(rc).applyQuaternion(toRail);
+          if (Math.abs(p.x) < 0.21 && Math.abs(p.y) < 0.075) need = Math.max(need, p.z + 0.01 + 0.006);
+        }
+    }
+    this.chairBackShift = clamp(need, 0, 0.08);
+    for (const o of this.chairBackParts) o.position.z += this.chairBackShift;
+  }
+
+  /** The most of [0, hi] for which ok holds (bisected; ok(0) is taken to hold). */
+  private most(hi: number, ok: (v: number) => boolean) {
+    let lo = 0;
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2;
+      if (ok(mid)) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * How far the thighs (hip to knee, as thick as measured) go up into the table's underside, less THIGH_SLACK (> 0: in), at this
+   * lean, rise and slide, with the legs where the pose puts them (feet on the floor ahead of the knees). Long or thick
+   * legs under the table leave less room to half rise in.
+   */
+  private thighsInTable(local: THREE.Quaternion[], rootT: THREE.Vector3, lean: number, rise: number, slide: number) {
+    this.torso(local, rootT, lean, rise, slide);
+    const under = TABLE_TOP - TABLE_THICK;
+    let worst = -Infinity;
+    for (const side of [0, 1] as const) {
+      const L = this.rig.legs[side];
+      const hip = this.P[L.a];
+      this.legTarget(side, hip, _thT, _thPole);
+      solveLimb(L, hip, _thT, _thPole, _thA, _thB);
+      _thK.copy(L.v1).applyQuaternion(_thA).add(hip);
+      const r = this.body.thigh[side];
+      for (let k = 0; k <= 8; k++) {
+        // a ball of the thigh's radius against the table's top slab
+        const p = _thP.lerpVectors(hip, _thK, k / 8).applyMatrix4(this.fromBundle);
+        const d = Math.hypot(Math.max(0, Math.abs(p.x) - TABLE_HALF_X), Math.max(0, under - p.y, p.y - TABLE_TOP), Math.max(0, -TABLE_EDGE - p.z, p.z - TABLE_NEAR));
+        worst = Math.max(worst, r - d - THIGH_SLACK);
+      }
+    }
+    return worst;
+  }
+
+  /** Where a foot goes (the ankle; bundle space) and which way its knee points, for a hip at `hip`. */
+  private legTarget(side: 0 | 1, hip: THREE.Vector3, target: THREE.Vector3, pole: THREE.Vector3) {
+    const s = side === 0 ? 1 : -1;
+    const L = this.rig.legs[side];
+    // (sliding forward on the seat, the feet go forward with them: the knees don't come up into the table)
+    target.copy(hip).addScaledVector(FWD, 0.53 * (L.v1.length() + L.v2.length()) + this.idleOut.feet).addScaledVector(LEFT, s * 0.04);
+    target.y = this.rig.ankleHeight;
+    pole.copy(FWD).addScaledVector(UP, 0.4).addScaledVector(LEFT, s * 0.15);
   }
 
   /** One arm's two-bone IK to its wrist target, with the forearm's twist and the wrist's limits (writes G, P, lB, wl). */
@@ -3135,6 +3263,7 @@ export class SeatedOpponent {
     const post = new THREE.CylinderGeometry(0.011, 0.011, postH, 14);
     for (const x of [-0.19, 0.19]) add(post, x, SEAT_HEIGHT + postH / 2 - 0.01, seatBack - 0.02 + Math.sin(tilt) * postH / 2, tilt);
     add(new RoundedBoxGeometry(0.42, 0.12, 0.02, 3, 0.008), 0, SEAT_HEIGHT + postH - 0.08, seatBack - 0.01 + Math.sin(tilt) * (postH - 0.07), tilt);
+    this.chairBackParts = g.children.slice(-3); // the posts and the rail: fitChair moves them back for a deeper back
     return g;
   }
 }

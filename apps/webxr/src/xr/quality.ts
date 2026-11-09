@@ -1,5 +1,6 @@
 import type * as THREE from "three";
 import type { SparkRenderer } from "@sparkjsdev/spark";
+import { META } from "../event";
 
 // How sharp the headset draws, and how it stays at the headset's frame rate. Tunable from the URL on a slow device
 // without a rebuild: ?res=0.8 (framebuffer scale), ?fov=0.3 (0 = none, 1 = most foveation), ?budget=150000
@@ -45,6 +46,21 @@ export function crisp(tex: THREE.Texture, renderer?: THREE.WebGLRenderer): THREE
   return tex;
 }
 
+/**
+ * In the competition (event.ts) the headset runs at 72 Hz, the rate a Quest 3 / 3S holds with people this size in
+ * view (its other rates, 80/90/120, read as dropped frames when they can't be held). The governor follows whatever
+ * rate the session really has.
+ */
+export function settleFrameRate(session: XRSession | null) {
+  if (!META || !session) return;
+  try {
+    const s = session as XRSession & { supportedFrameRates?: Float32Array; updateTargetFrameRate?: (rate: number) => Promise<void> };
+    if (s.updateTargetFrameRate && s.supportedFrameRates && Array.from(s.supportedFrameRates).includes(72)) void s.updateTargetFrameRate(72).catch(() => {});
+  } catch {
+    // a browser without frame-rate control: it keeps its own
+  }
+}
+
 // From sharpest to cheapest. Each step trims the fill rate the splats need: a Gaussian drawn out to 2.0 standard
 // deviations instead of 2.83 covers half the pixels and loses only its faintest rim; the faintest Gaussians (minAlpha,
 // culled before they're drawn: below 0.03 they are a fifth of a replay's splat area and ~1% of what you see) go
@@ -68,7 +84,8 @@ export class QualityGovernor {
   private slow = 0; // seconds running late
   private fast = 0; // seconds with room to spare
   private hold = 0; // seconds before the next change
-  private target = 72;
+  /** The display rate the headset asked for (72, 90 or 120). */
+  target = 72;
   onChange: ((level: number) => void) | null = null;
 
   /** `start`: the level a session begins at (a heavy replay starts a step down: 2.5 deviations look the same). */

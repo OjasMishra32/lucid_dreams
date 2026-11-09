@@ -9,7 +9,10 @@ import { createHash } from "node:crypto";
 // own server, which relays to apps/talk as before.
 //   GET  /xr/talk/<who>/health          { ok, voice }
 //   POST /xr/talk/<who>?session=<id>    the recording -> { heard, reply, english, audio, ms }
+//   POST /xr/talk/<who>/react?session=  { event, context } -> a word of their own about what just happened (no recording)
 //   POST /xr/talk/<who>/reset           forget the conversation
+// A turn may carry x-talk-context (URI-encoded JSON: the chess board in the headset), added to the reply's instructions
+// as plain facts; without it a turn is exactly as before.
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -135,7 +138,41 @@ async function transcribe(audio: Buffer, type: string, person: Person): Promise<
   return (((await r.json()) as { text?: string }).text ?? "").trim();
 }
 
-async function write(person: Person, history: { role: string; content: string }[], said: string) {
+// What's going on where they are, from the app, as plain lines of fact (only these fields, short, in our own words)
+const BOARD = "\n\nRight now (facts from the app, all true: talk about them when it fits, and never add to them; no moves, games or results that aren't here):\n";
+function facts(raw: unknown): string {
+  let c = raw as Record<string, unknown> | null;
+  if (typeof raw === "string") {
+    try {
+      c = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      return "";
+    }
+  }
+  if (!c || typeof c !== "object") return "";
+  const s = (v: unknown, n: number) => String(v ?? "").replace(/[\r\n]+/g, " ").slice(0, n);
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
+  const out: string[] = [];
+  if (c.game) out.push(`What's happening: ${s(c.game, 120)}.`);
+  if (c.userPlays) out.push(`The user plays ${s(c.userPlays, 8)}; you play the other side.`);
+  if (c.position) out.push(`Position (FEN): ${s(c.position, 100)}`);
+  if (Array.isArray(c.lastMoves) && c.lastMoves.length) out.push(`Last moves: ${c.lastMoves.slice(-2).map((m) => s(m, 16)).join(", ")}`);
+  if (c.moveNumber) out.push(`Move number: ${n(c.moveNumber)}`);
+  if (c.toMove) out.push(`To move: ${s(c.toMove, 40)}`);
+  if (c.result) out.push(`The game is over: ${s(c.result, 80)}`);
+  if (c.evalForSideToMove) out.push(`The engine's evaluation for the side to move: ${s(c.evalForSideToMove, 40)}`);
+  if (c.yourStrength) out.push(`You play as: ${s(c.yourStrength, 40)}`);
+  const r = c.record as Record<string, unknown> | null;
+  if (r && typeof r === "object") out.push(`Record at this board: the user has won ${n(r.userWins)}, you have won ${n(r.yourWins)}, ${n(r.draws)} drawn.`);
+  for (const g of Array.isArray(c.lastGames) ? (c.lastGames as Record<string, unknown>[]).slice(-2) : []) {
+    if (!g || typeof g !== "object") continue;
+    const result = ({ win: "won", loss: "lost", draw: "drew" } as Record<string, string>)[String(g.result)] ?? "played";
+    out.push(`An earlier game (${s(g.date, 10)}): the user ${result} as ${s(g.color, 5)} in ${n(g.moves)} moves${g.mistake ? `; the user's biggest mistake by the engine was ${s(g.mistake, 16)}` : ""}.`);
+  }
+  return out.join("\n").slice(0, 1500);
+}
+
+async function write(person: Person, history: { role: string; content: string }[], said: string, now = "") {
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
@@ -144,7 +181,7 @@ async function write(person: Person, history: { role: string; content: string }[
       temperature: 0.7,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: person.rules + (person.notes ? `\n\nNotes (true, from the person or their family):\n${person.notes}` : "") },
+        { role: "system", content: person.rules + (person.notes ? `\n\nNotes (true, from the person or their family):\n${person.notes}` : "") + (now ? BOARD + now : "") },
         ...history,
         { role: "user", content: said },
       ],
@@ -172,7 +209,11 @@ async function passThrough(req: Request, path: string[]): Promise<Response> {
   try {
     const r = await fetch(`${XR}/xr/talk/${path.map(encodeURIComponent).join("/")}${url.search}`, {
       method: req.method,
-      headers: { "Content-Type": req.headers.get("content-type") ?? "application/octet-stream", "x-forwarded-for": visitorOf(req) },
+      headers: {
+        "Content-Type": req.headers.get("content-type") ?? "application/octet-stream",
+        "x-forwarded-for": visitorOf(req),
+        ...(req.headers.get("x-talk-context") ? { "x-talk-context": req.headers.get("x-talk-context")!.slice(0, 8000) } : {}),
+      },
       body: req.method === "POST" ? Buffer.from(await req.arrayBuffer()) : undefined,
     });
     return new Response(r.body, { status: r.status, headers: { "Content-Type": r.headers.get("content-type") ?? "application/json", "Cache-Control": "no-store" } });
@@ -182,6 +223,44 @@ async function passThrough(req: Request, path: string[]): Promise<Response> {
 }
 
 const here = () => !!(env.OPENAI_API_KEY && env.ELEVENLABS_API_KEY);
+
+/** A word of their own about what just happened at the board (a big swing, a rematch): no recording, the same limits. */
+async function react(req: Request, who: string, person: Person, session: string): Promise<Response> {
+  const t0 = Date.now();
+  const ms: Record<string, number> = {};
+  const visitor = visitorOf(req);
+  const tag = tagOf(visitor);
+  let admitted = false;
+  try {
+    const raw = await req.text();
+    if (raw.length > 16 * 1024) return json(413, { error: "too much" });
+    let asked: { event?: unknown; context?: unknown } = {};
+    try {
+      asked = JSON.parse(raw);
+    } catch {
+      return json(400, { error: "send JSON: { event, context }" });
+    }
+    const event = String(asked.event ?? "").replace(/[\r\n]+/g, " ").slice(0, 300);
+    if (!event) return json(400, { error: "what happened?" });
+    const no = admit(visitor);
+    if (no) return json(429, { error: no.error, resting: true, retryAfter: no.retryAfter }, { "Retry-After": String(no.retryAfter) });
+    admitted = true;
+    const history = sessions.get(session) ?? [];
+    const cue = `(Nobody spoke just now. ${event} Say one short line to the user about it, out loud, as yourself.)`;
+    const { reply, english } = await write(person, history, cue, facts(asked.context));
+    ms.wrote = Date.now() - t0;
+    const wavBytes = person.voice ? await speak(person, reply) : null;
+    ms.spoke = Date.now() - t0;
+    sessions.set(session, [...history, { role: "user", content: `(At the board: ${event})` }, { role: "assistant", content: JSON.stringify({ reply, english }) }].slice(-12));
+    console.log(`[talk] ${who} ${tag} react ${ms.spoke} ms`);
+    return json(200, { heard: "", reply, english, audio: wavBytes ? `data:audio/wav;base64,${wavBytes.toString("base64")}` : null, ms });
+  } catch (e) {
+    console.error(`[talk] ${who} ${tag} react failed:`, (e as Error).message);
+    return json(502, { error: (e as Error).message, ms });
+  } finally {
+    if (admitted) busy.delete(visitor);
+  }
+}
 
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
@@ -203,6 +282,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
     sessions.delete(session);
     return json(200, { ok: true });
   }
+  if (path[1] === "react" && path.length === 2) return react(req, who, person, session);
   if (path.length !== 1) return json(404, { error: "not found" });
 
   const t0 = Date.now();
@@ -224,7 +304,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
     ms.heard = Date.now() - t0;
     if (!said) return json(200, { heard: "", reply: "", english: "", audio: null, ms });
     const history = sessions.get(session) ?? [];
-    const { reply, english } = await write(person, history, said);
+    const { reply, english } = await write(person, history, said, facts(req.headers.get("x-talk-context")));
     ms.wrote = Date.now() - t0;
     // no cloned voice: the words alone, never someone else's voice
     const wavBytes = person.voice ? await speak(person, reply) : null;

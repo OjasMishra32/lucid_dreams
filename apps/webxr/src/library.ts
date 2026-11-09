@@ -1,4 +1,5 @@
 import { dreamUrl, formatCount, listDreams } from "./dream";
+import { showable } from "./event";
 
 export async function renderLibrary(root: HTMLElement) {
   root.innerHTML = `
@@ -12,7 +13,8 @@ export async function renderLibrary(root: HTMLElement) {
     <h2 class="section-title" id="grid-title" hidden>Dreams</h2>
     <main class="grid" id="grid"></main>`;
   const grid = root.querySelector<HTMLElement>("#grid")!;
-  const dreams = await listDreams().catch(() => []);
+  // (in the competition, only the entrants' own bundles: event.ts)
+  const dreams = (await listDreams().catch(() => [])).filter((d) => showable(d.id));
   if (!dreams.length) {
     grid.outerHTML = `<p class="empty">The first dreams are being made.</p>`;
     return;

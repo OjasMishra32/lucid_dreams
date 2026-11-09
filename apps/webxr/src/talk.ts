@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Skeleton } from "./avatar";
+import { META } from "./event";
 
 // Talk with them, in the viewer: press Talk (the palm menu in your room, the button on a laptop), say something, press
 // again to send. Their reply comes back in their own cloned voice (apps/talk), from where their mouth is, the words
@@ -12,8 +13,14 @@ export type TalkState = "idle" | "listening" | "thinking" | "speaking";
 
 export const TALK_LABEL: Record<TalkState, string> = { idle: "Talk", listening: "Send", thinking: "Thinking…", speaking: "Stop" };
 
+/** Whether Talk may be offered for them at all: in the competition (event.ts) only for Vishal, an entrant. */
+export function talkAllowed(who: string): boolean {
+  return !META || who === "vishal";
+}
+
 /** Whether this person can be talked to here (the relay and the Talk server answer), and whether their voice is in. */
 export async function talkAvailable(who: string): Promise<{ on: boolean; voice: boolean }> {
+  if (!talkAllowed(who)) return { on: false, voice: false };
   try {
     const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(who)}/health`, { cache: "no-store" });
     if (!r.ok) return { on: false, voice: false };
@@ -36,6 +43,11 @@ export class Talk {
   english = "";
   reply = false;
   onState: (s: TalkState) => void = () => {};
+  /**
+   * What's going on where you are, sent with what you say as plain facts they can talk about (the chess board: the
+   * position, the last moves, the engine's view, your record and your last games). null: nothing (as before).
+   */
+  context: (() => Record<string, unknown> | null) | null = null;
   private rec: MediaRecorder | null = null;
   private stream: MediaStream | null = null;
   private chunks: Blob[] = [];
@@ -158,7 +170,35 @@ export class Talk {
     rec.stop();
   }
 
-  private async ask(blob: Blob) {
+  /** They say one short line of their own about what just happened (no recording): `event` says what, in plain words. */
+  react(event: string) {
+    if (this.state !== "idle" || this.sound.isPlaying) return;
+    this.set("thinking");
+    void this.answer("/react", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, context: this.context?.() ?? null }) }, true);
+  }
+
+  /** Gone (their bundle left): quiet, and out of the scene. */
+  dispose() {
+    this.stop();
+    this.sound.removeFromParent();
+  }
+
+  private contextHeader(): Record<string, string> {
+    try {
+      const c = this.context?.();
+      const v = c ? encodeURIComponent(JSON.stringify(c)) : "";
+      return v && v.length < 6000 ? { "x-talk-context": v } : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private ask(blob: Blob) {
+    return this.answer("", { method: "POST", headers: { "Content-Type": blob.type || "audio/webm", ...this.contextHeader() }, body: blob });
+  }
+
+  /** One exchange with the Talk server, its reply shown and played. quiet: nothing said if there's no reply. */
+  private async answer(path: string, init: RequestInit, quiet = false) {
     this.abort = new AbortController();
     const signal = this.abort.signal;
     // never left thinking: a reply that hasn't come back in 30 s is given up on
@@ -168,8 +208,9 @@ export class Talk {
       this.abort?.abort();
     }, 30_000);
     try {
-      const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(this.who)}?session=${this.session}`, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob, signal });
+      const r = await fetch(`${import.meta.env.BASE_URL}talk/${encodeURIComponent(this.who)}${path}?session=${this.session}`, { ...init, signal });
       const j = (await r.json().catch(() => ({}))) as { heard?: string; reply?: string; english?: string; audio?: string | null; error?: string };
+      if (quiet && (!r.ok || !j.reply)) return this.set("idle"); // an aside that didn't come: nothing to say about it
       // the Talk server's limits (each visitor's turns an hour, everyone's for the day, 20 s recordings): said plainly
       if (r.status === 429) return this.say(j.error || "Talk is resting, try again in a few minutes.");
       if (r.status === 413) return this.say(j.error || "That was too long: keep it under 20 seconds.");
@@ -196,6 +237,7 @@ export class Talk {
         this.set("speaking");
       }
     } catch (e) {
+      if (quiet) return this.set("idle");
       if (late) return this.say("Talk took too long. Press Talk to try again.");
       if ((e as Error).name === "AbortError") return;
       this.say(`Talk didn't work: ${(e as Error).message}`);

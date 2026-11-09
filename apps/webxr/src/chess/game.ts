@@ -15,10 +15,15 @@ import { board, localToSquare, pieceGeometries, pieceHeight, pieceMaterials, typ
 import { ChessClock } from "./clock";
 import { hashSeed } from "./person";
 import { FloatingNote } from "./room";
-import { type Carry, SEAT_DISTANCE, SeatedOpponent } from "./seated";
+import { type Carry, SEAT_DISTANCE, SeatedOpponent, TABLE_EDGE, TABLE_TOP } from "./seated";
 import { TableSounds } from "./sound";
 import { FamousMoves } from "./famous";
-import { QualityGovernor, XR_QUALITY } from "../xr/quality";
+import { QualityGovernor, settleFrameRate, XR_QUALITY } from "../xr/quality";
+import { fits, floorLevel, type Flat, type Footprint, type Spot, surfaceOccluder, tableSpot, upFacing } from "../xr/planes";
+import { FpsReadout, PalmHint, SHOW_FPS } from "../xr/hud";
+import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAllowed, talkAvailable } from "../talk";
+import { addGame, type GameNote, tally, tallyLine } from "./record";
+import { isEntrant, LIBRARY, META } from "../event";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
 // you at the strength you choose, with a real clock (10 + 0) at your right. Hands only, and nothing moves unless you
@@ -27,7 +32,8 @@ import { QualityGovernor, XR_QUALITY } from "../xr/quality";
 // it's the same game with a mouse. Someone sits across the table (seated.ts): a legend's strength brings their avatar, otherwise ?opponent=<avatar
 // dream id>, otherwise nobody. They think, move their own pieces with either hand, press their clock, set captured
 // pieces aside, and shake your hand at the end. They never speak: a legend is always labelled as Stockfish at that
-// player's rating.
+// player's rating. In the competition (?event=meta, event.ts) only entrants appear: Vishal sits across the table, every
+// level is just its rating (the legends' too, without their likeness, openings or famous games), and nobody is named.
 
 const PINCH_ON = 0.018; // meters between thumb and index tips
 const PINCH_OFF = 0.03;
@@ -35,18 +41,22 @@ const PINCH_LET_GO_MS = 70; // fingers apart this long before a pinch ends: trac
 const PINCH_LOST_MS = 300; // a hand lost to tracking keeps hold of its piece this long
 const PINCH_FIRM = 0.024; // fingers opening past this: what they hold stays where it is (it lands where you let go)
 const GRAB_RADIUS = 0.055;
+// the levels offered; in the competition each is only its rating: no legend's name, likeness or opening book
+const LEVELS: Strength[] = META ? STRENGTHS.map(({ id, elo }) => ({ id, elo, label: elo ? String(elo) : "Full strength" })) : STRENGTHS;
 
 export async function renderChess(root: HTMLElement) {
   document.title = "Chess · Lucid Dreams";
   root.innerHTML = `
     <div class="stage" id="stage"></div>
-    <div class="topbar"><a class="back" href="./">${`<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`}Dreams</a>
+    <div class="topbar"><a class="back" href="${LIBRARY}">${`<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`}Dreams</a>
       <div class="title"><div>Chess</div><div class="subtitle" id="status">Your move</div></div><div></div></div>
     <div class="controls chess-controls">
-      <div class="segmented" id="strengths">${STRENGTHS.map((s) => `<button data-id="${s.id}">${s.label}</button>`).join("")}</div>
+      <div class="segmented" id="strengths">${LEVELS.map((s) => `<button data-id="${s.id}">${s.label}</button>`).join("")}</div>
       <div class="segmented" id="sides"><button data-side="w" class="on">White</button><button data-side="b">Black</button></div>
       <button class="pill" id="undo">Undo</button>
       <button class="pill" id="new">New game</button>
+      <button class="pill" id="continue" hidden>Continue your game</button>
+      <button class="pill" id="talk" hidden aria-pressed="false" title="Talk with them: press, speak, press again to send">Talk</button>
       <button class="cta" id="room" hidden>Play in your room</button>
     </div>
     <p class="legend-note" id="legend-note"></p>`;
@@ -103,7 +113,7 @@ export async function renderChess(root: HTMLElement) {
   boardGroup.add(hints);
   const taken = new THREE.Group(); // captured pieces, standing beside the board
   boardGroup.add(taken);
-  const clock = new ChessClock(600); // 10 + 0
+  const clock = new ChessClock(META ? 300 : 600); // 10 + 0 (the competition: 5 + 0, a whole game in about ten minutes)
   clock.group.position.set(SQUARE * 4 + 0.13, 0, 0); // at your right, beside the board
   table.add(clock.group);
   const sounds = new TableSounds(camera, scene);
@@ -112,8 +122,9 @@ export async function renderChess(root: HTMLElement) {
 
   // someone across the table: an avatar bundle, seated on a chair on the far side, facing you. A legend's strength
   // brings their avatar (the first of its ids that exists); otherwise ?opponent=<id>; otherwise nobody (the board
-  // alone). Nothing is picked from the library on its own.
+  // alone). Nothing is picked from the library on its own. In the competition: an entrant's ?opponent=, else Vishal.
   const opponentId = new URLSearchParams(location.search).get("opponent");
+  const seatId = META ? (opponentId && isEntrant(opponentId) ? opponentId : "vishal") : null; // the competition's opponent
   let opponent: SkinnedAvatar | null = null;
   let seated: SeatedOpponent | null = null;
   let reaching = false; // their hand is moving a piece: the board is theirs until it lets go
@@ -130,6 +141,7 @@ export async function renderChess(root: HTMLElement) {
     opponentGroup.remove(opponent.mesh);
     opponent.mesh.dispose();
     opponent = null;
+    opponentGroup.remove(chairShadow);
     if (seated) {
       opponentGroup.remove(seated.chair);
       seated.dispose();
@@ -141,6 +153,7 @@ export async function renderChess(root: HTMLElement) {
     }
     opponentName = "";
     opponentShownId = null;
+    setTalk(null, null);
   };
   // the current opponent stays until the new one has loaded, so switching never flickers; ids are tried in order
   const setOpponent = (ids: string[]) => {
@@ -168,10 +181,13 @@ export async function renderChess(root: HTMLElement) {
         opponentSince = performance.now();
         opponentGroup.add(opponent.mesh);
         seated = new SeatedOpponent(a, table, boardGroup);
+        seated.desk.visible = !realTable; // on your real table, theirs is put away
         seated.reseed(hashSeed(id, gameNumber));
         seated.setClock(() => clock.buttonTop("far"));
         seated.setOpacity(0);
         opponentGroup.add(seated.chair);
+        opponentGroup.add(chairShadow);
+        setTalk(d.talk?.who && talkAllowed(d.talk.who) ? d.talk.who : null, a);
         // on a laptop: from a seated player's eyes, the board in front and them behind it, facing you (in the
         // headset you just look up)
         baseFov = 44;
@@ -187,6 +203,23 @@ export async function renderChess(root: HTMLElement) {
         setOpponent(rest);
       });
   };
+  // a soft contact shadow on the floor under their chair and feet, so they sit in the room rather than float in it
+  const chairShadow = (() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 256;
+    const g = c.getContext("2d")!;
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, "rgba(0,0,0,0.4)");
+    grad.addColorStop(0.5, "rgba(0,0,0,0.16)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 256);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.05), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(0, 0.002, -0.12); // (their front is -Z: the chair and, ahead of it, their feet)
+    m.renderOrder = -1;
+    return m;
+  })();
   const farSide = new THREE.Vector3();
   const placeOpponent = () => {
     table.updateMatrixWorld();
@@ -205,7 +238,8 @@ export async function renderChess(root: HTMLElement) {
   const chess = new Chess();
   const engine = new Engine();
   const askedStrength = new URLSearchParams(location.search).get("strength");
-  let strength: Strength = STRENGTHS.find((s) => s.id === askedStrength) ?? STRENGTHS.find((s) => s.id === "gm")!;
+  // (in the competition: the level your record against them says, else Club, so a first game can be won)
+  let strength: Strength = LEVELS.find((s) => s.id === askedStrength) ?? LEVELS.find((s) => s.id === (seatId ? tally(seatId).level ?? "club" : "gm")) ?? LEVELS[0];
   let side: "w" | "b" = "w";
   let thinking = false;
   const meshes = new Map<string, THREE.Object3D>(); // square -> piece
@@ -221,6 +255,16 @@ export async function renderChess(root: HTMLElement) {
   const isOver = () => chess.isGameOver() || !!clock.flagged;
   const worldAt = (boardLocal: THREE.Vector3) => boardGroup.localToWorld(boardLocal.clone());
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+  let worstMistake = { cp: 99, label: "" }; // your move that cost you most this game, by the engine (over a pawn)
+  let reactedAt = -99; // the ply they last spoke up about a swing
+  let levelNote = ""; // the competition: their level for the next game, after a result
+  let rematch = false; // a game was finished in this visit: the next one's a rematch
+  let counted = -1; // the game (gameNumber) already on your record
+  let talk: Talk | null = null; // talking with them (setTalk)
+  let talkOn = false; // and the Talk server answers for them
+  let realTable: Flat | null = null; // your real table the board is on (null: the board's own table)
+  let tableNote = "";
+  let tableNoteUntil = 0;
 
   // pieces taken off the board stand beside it in neat rows, each player's on their own end of the table, at your
   // left (the clock is at your right)
@@ -308,16 +352,28 @@ export async function renderChess(root: HTMLElement) {
   const clockHint = () => (renderer.xr.isPresenting ? "Tap your clock" : "Tap your clock (click it, or press Space)");
   const updateStatus = () => {
     if (famous.active) return setStatus(famous.status); // their famous moves (famous.ts)
+    const now = performance.now();
+    // no table of yours found: said once, plainly, for a few seconds
+    if (renderer.xr.isPresenting && tableNoteUntil > now) return setStatus(tableNote);
     const who = strength.legend ? `${strength.legend} (engine, ${strength.elo})` : opponentName ? `${opponentName} (${strength.label})` : strength.label;
     if (reaching) return setStatus(`${who} is moving…`);
-    if (clock.flagged) return setStatus(clock.flagged === "near" ? "Out of time. Well played, engine." : "Out of time. You win.");
-    if (chess.isCheckmate()) return setStatus(chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.");
-    if (chess.isDraw()) return setStatus("Draw");
+    const next = levelNote ? `  ·  ${levelNote}` : ""; // (the competition: their level for the next game, after a result)
+    if (clock.flagged) return setStatus((clock.flagged === "near" ? "Out of time. Well played, engine." : "Out of time. You win.") + next);
+    if (chess.isCheckmate()) return setStatus((chess.turn() === side ? "Checkmate. Well played, engine." : "Checkmate. You win.") + next);
+    if (chess.isDraw()) return setStatus("Draw" + next);
     if (thinking) return setStatus(`${who} is thinking…`);
     if (awaitingPress) return setStatus(pressedOnce ? "Your clock is running" : clockHint());
-    const line = opening ? `  ·  ${opening}` : "";
+    // your record against them, through the first moves of a game (the competition: event.ts)
+    const record = seatId && opponentShownId && chess.history().length < 2 ? tally(opponentShownId) : null;
+    const line = opening
+      ? `  ·  ${opening}`
+      : saved && !chess.history().length
+        ? "  ·  Your last game is saved: Continue it from the menu"
+        : record && record.w + record.d + record.l
+          ? `  ·  ${tallyLine(record, opponentName || "Them")}`
+          : "";
     // new to the room: how it works, until it's been a moment or you've used it
-    if (renderer.xr.isPresenting && hintUntil > performance.now() && chess.turn() === side) return setStatus("Pinch a piece to move it  ·  Left palm up for the menu");
+    if (renderer.xr.isPresenting && hintUntil > now && chess.turn() === side) return setStatus("Pinch a piece to move it  ·  Left palm up for the menu");
     setStatus((chess.turn() === side ? (chess.inCheck() ? "Check. Your move" : "Your move") : `${who} to move`) + line);
   };
 
@@ -358,6 +414,22 @@ export async function renderChess(root: HTMLElement) {
     });
     if (id !== gameId) return; // a new game meanwhile
     if (!judged && deepest.depth) judge(deepest.cp);
+    // what your last move did to the engine's view (its gain is your mistake): the game's biggest goes in its note, and
+    // a big swing (two pawns or more, at most once every four moves) gets a word from them when they can talk
+    const yours = chess.history({ verbose: true }).at(-1);
+    if (lastEval !== null && deepest.depth && yours?.color === side) {
+      const gain = deepest.cp - lastEval;
+      const ply = chess.history().length - 1;
+      const label = `${Math.floor(ply / 2) + 1}${ply % 2 ? "..." : "."}${yours.san}`;
+      if (gain > worstMistake.cp) worstMistake = { cp: gain, label };
+      if (talk && talkOn && Math.abs(gain) >= 200 && ply - reactedAt >= 8) {
+        reactedAt = ply;
+        const mate = Math.abs(deepest.cp) >= 9000 ? (deepest.cp > 0 ? " You now have a forced mate." : " They now have a forced mate against you.") : "";
+        talk.react(gain > 0
+          ? `The user just played ${label}, a mistake: the engine's view swung about ${(Math.min(gain, 2000) / 100).toFixed(1)} pawns your way.${mate}`
+          : `The user just played ${label}, a strong move: the engine's view swung about ${(Math.min(-gain, 2000) / 100).toFixed(1)} pawns their way.${mate}`);
+      }
+    }
     const swing = lastEval !== null && deepest.depth ? lastEval - deepest.cp : 0;
     if (deepest.depth) lastEval = deepest.cp;
     let hardness = 0.3;
@@ -453,6 +525,7 @@ export async function renderChess(root: HTMLElement) {
 
   // the game is over: if they lost they tip their king over, then (win, lose or draw) they offer a handshake
   const ending = () => {
+    countGame();
     if (!seated) return;
     const theyLost = (chess.isCheckmate() && chess.turn() !== side) || clock.flagged === "far";
     let king: THREE.Object3D | undefined;
@@ -546,6 +619,11 @@ export async function renderChess(root: HTMLElement) {
     if (seated && opponentShownId) seated.reseed(hashSeed(opponentShownId, gameNumber));
     engine.newGame();
     opening = "";
+    worstMistake = { cp: 99, label: "" };
+    reactedAt = -99;
+    levelNote = "";
+    if (rematch && talk && talkOn) setTimeout(() => talk?.react("A rematch is starting. Say one short line about your last game together, only from the facts you have."), 2500);
+    rematch = false;
     await engine.setStrength(strength);
     boardGroup.rotation.y = side === "w" ? 0 : Math.PI;
     sync();
@@ -709,7 +787,7 @@ export async function renderChess(root: HTMLElement) {
   // the board is pinned to your real room where it's placed (an anchor: no recenter or drift slides it). It moves only
   // by its handle: a bar on your side, like the one under a Quest window. Pinch it, drag the board anywhere (onto your
   // real table), let go and it's pinned there
-  const lock = new WorldLock(renderer, table);
+  const lock = new WorldLock(renderer, table, "lucid.chess.board"); // kept between sessions where the headset can
   let boardDrag: { hand: number; offset: THREE.Vector3 } | null = null;
   const HANDLE_Z = SQUARE * 4 + 0.058;
   const handleMat = new THREE.MeshBasicMaterial({ color: 0xf5f5f7, transparent: true, opacity: 0.55, depthWrite: false });
@@ -882,12 +960,12 @@ export async function renderChess(root: HTMLElement) {
   };
   const sideButton = new XrButton("side", "Play black", () => setSide(other(side)));
   const strengthButton = new XrButton("strength", `Level · ${strength.label}`, () => {
-    const i = STRENGTHS.findIndex((s) => s.id === strength.id);
-    selectStrength(STRENGTHS[(i + 1) % STRENGTHS.length].id);
+    const i = LEVELS.findIndex((s) => s.id === strength.id);
+    selectStrength(LEVELS[(i + 1) % LEVELS.length].id);
     void newGame();
   });
   // the legends, one button each: the chosen one takes the seat
-  const legendButtons = STRENGTHS.filter((st) => st.legend).map(
+  const legendButtons = LEVELS.filter((st) => st.legend).map(
     (st) =>
       new XrButton(st.id, st.legend!, () => {
         if (famous.active) return famous.start(st.id); // their famous moves, his games
@@ -929,23 +1007,279 @@ export async function renderChess(root: HTMLElement) {
       if (id) selectStrength(id);
       void newGame();
     },
+    off: META,
   });
+
+  // ---------------- your record against them (the competition: event.ts, record.ts) ----------------
+  // a finished game goes on your record with a note about it; they step up a level after you beat them and down after
+  // two losses in a row; a rematch starts with a word from them about the last one
+  const countGame = () => {
+    if (!seatId || !opponentShownId || counted === gameNumber || famous.active) return;
+    const won = (chess.isCheckmate() && chess.turn() !== side) || clock.flagged === "far";
+    const lost = (chess.isCheckmate() && chess.turn() === side) || clock.flagged === "near";
+    if (!won && !lost && !chess.isDraw()) return;
+    counted = gameNumber;
+    rematch = true;
+    const note: GameNote = {
+      date: new Date().toISOString().slice(0, 10),
+      result: won ? "win" : lost ? "loss" : "draw",
+      moves: Math.ceil(chess.history().length / 2),
+      color: side === "w" ? "white" : "black",
+      mistake: worstMistake.label || null,
+    };
+    const was = LEVELS.findIndex((l) => l.id === strength.id);
+    const t = addGame(opponentShownId, note, LEVELS.map((l) => l.id), strength.id);
+    if (t.level && t.level !== strength.id) {
+      selectStrength(t.level);
+      levelNote = `${opponentName || "They"} ${LEVELS.findIndex((l) => l.id === t.level) > was ? "steps up" : "steps down"} to ${strength.label} next`;
+    }
+    updateStatus();
+  };
+
+  // ---------------- a game left unfinished (the competition) ----------------
+  // when you leave the room (or the page) mid-game against them, it's kept in this browser: the moves, both clocks,
+  // your colour and their level; next time it's offered (the palm menu, the laptop's button, the status line) and picks
+  // up where it stood, still on your table
+  const SAVED = "lucid.chess.saved";
+  type Saved = { id: string; moves: string[]; side: "w" | "b"; strength: string; near: number; far: number };
+  let saved: Saved | null = null;
+  try {
+    const s = JSON.parse(localStorage.getItem(SAVED) ?? "null") as Saved | null;
+    if (seatId && s?.id === seatId && Array.isArray(s.moves) && s.moves.length) saved = s;
+  } catch {
+    saved = null;
+  }
+  const saveGame = () => {
+    if (!seatId || !opponentShownId || famous.active || isOver() || !chess.history().length) return;
+    const s: Saved = { id: opponentShownId, moves: chess.history(), side, strength: strength.id, near: clock.time.near, far: clock.time.far };
+    try {
+      localStorage.setItem(SAVED, JSON.stringify(s));
+    } catch {
+      // no storage: not kept
+    }
+  };
+  const continueBtn = $<HTMLButtonElement>("#continue");
+  const xrContinue = new XrButton("continue", "Continue your game", () => void continueGame());
+  const continueGame = async () => {
+    const g = saved;
+    if (!g) return;
+    saved = null;
+    try {
+      localStorage.removeItem(SAVED);
+    } catch {
+      // (nothing kept anyway)
+    }
+    menu.remove(xrContinue);
+    continueBtn.hidden = true;
+    famous.stop();
+    gameId++;
+    gameNumber++;
+    thinking = awaitingPress = false;
+    lastEval = null;
+    inHand = null;
+    takenSpots.clear();
+    worstMistake = { cp: 99, label: "" };
+    levelNote = "";
+    seated?.cancel();
+    if (seated && opponentShownId) seated.reseed(hashSeed(opponentShownId, gameNumber));
+    side = g.side;
+    root.querySelectorAll<HTMLButtonElement>("#sides button").forEach((x) => x.classList.toggle("on", x.dataset.side === side));
+    sideButton.setLabel(side === "w" ? "Play black" : "Play white");
+    boardGroup.rotation.y = side === "w" ? 0 : Math.PI;
+    if (LEVELS.some((l) => l.id === g.strength)) selectStrength(g.strength);
+    chess.reset();
+    for (const san of g.moves) {
+      try {
+        chess.move(san);
+      } catch {
+        break;
+      }
+    }
+    engine.newGame();
+    await engine.setStrength(strength);
+    clock.reset();
+    clock.time.near = g.near;
+    clock.time.far = g.far;
+    sync();
+    // your move: your clock runs; theirs: they think
+    if (chess.turn() === side) clock.run("near");
+    else {
+      clock.run("far");
+      void engineMove();
+    }
+  };
+  continueBtn.addEventListener("click", () => void continueGame());
+  if (saved) {
+    continueBtn.hidden = false;
+    menu.add(xrContinue);
+  }
+  addEventListener("pagehide", saveGame);
+
+  // ---------------- Talk with them, from their chair (talk.ts) ----------------
+  // Someone whose consent covers it (their bundle's talk.who; in the competition only Vishal): Talk on the palm menu or
+  // the laptop's button, say something, press again to send. The answer comes in their cloned voice from where they sit,
+  // their jaw moving with it, the words beside them labelled AI voice; they tip their head a little while they listen.
+  // They know the game: the position, the last moves, the engine's view, your record and your last games go along as
+  // plain facts (never anything that didn't happen at this board).
+  const talkCaption = new TalkCaption();
+  talkCaption.mesh.rotation.y = Math.PI; // (their front is -Z: turned to you)
+  const talkBtn = $<HTMLButtonElement>("#talk");
+  const pressTalk = () => {
+    void sounds.listener.context.resume().catch(() => {});
+    talk?.press();
+  };
+  const xrTalk = new XrButton("talk", "Talk", pressTalk);
+  talkBtn.addEventListener("click", pressTalk);
+  const boardContext = (): Record<string, unknown> => {
+    const hist = chess.history();
+    const n = hist.length;
+    const label = (i: number) => `${Math.floor(i / 2) + 1}${i % 2 ? "..." : "."}${hist[i]}`;
+    const t = seatId && opponentShownId ? tally(opponentShownId) : null;
+    const yourTurn = chess.turn() === side;
+    const over = isOver();
+    const mate = lastEval !== null && Math.abs(lastEval) >= 9000;
+    return {
+      game: "chess: the user against you, across a real-size board on a table",
+      userPlays: side === "w" ? "white" : "black",
+      position: chess.fen(),
+      lastMoves: hist.slice(-2).map((_, k) => label(n - Math.min(2, n) + k)),
+      moveNumber: Math.floor(n / 2) + 1,
+      toMove: over ? "nobody: the game is over" : yourTurn ? "the user" : "you",
+      result: over ? $("#status").textContent : null,
+      // (the engine's view of the position after its own last move, when it's the user's turn)
+      evalForSideToMove: over || !yourTurn || lastEval === null ? null : mate ? (lastEval > 0 ? "you have a forced mate" : "the user has a forced mate") : `${(-lastEval / 100).toFixed(1)} pawns`,
+      yourStrength: `engine at ${strength.label}`,
+      record: t ? { userWins: t.w, yourWins: t.l, draws: t.d } : null,
+      lastGames: t ? t.games.slice(-2) : [],
+    };
+  };
+  function setTalk(who: string | null, avatar: SkinnedAvatar | null) {
+    talk?.dispose();
+    talk = null;
+    talkOn = false;
+    menu.remove(xrTalk);
+    talkBtn.hidden = true;
+    talkCaption.mesh.removeFromParent();
+    if (!who || !avatar) return;
+    // their mouth, sitting: the hips on the seat, the trunk leaning in a little
+    const rest = avatar.skeleton.rest;
+    const mouthY = 0.46 + 0.09 + ((rest[22] ?? rest[15])[1] - (rest[1][1] + rest[2][1]) / 2) * 0.97 - 0.02;
+    const mine = new Talk(who, sounds.listener, opponentGroup, new THREE.Vector3(0, mouthY, -0.14));
+    talk = mine;
+    mine.context = boardContext;
+    mine.onState = (st) => {
+      xrTalk.setLabel(TALK_LABEL[st]);
+      xrTalk.setOn(st !== "idle");
+      talkBtn.textContent = TALK_LABEL[st];
+      talkBtn.classList.toggle("on", st !== "idle");
+      talkBtn.setAttribute("aria-pressed", String(st !== "idle"));
+      if (st !== "idle") seated?.glance(0, st === "speaking" ? 6 : 3); // eyes on you while you talk and they answer
+    };
+    // beside their face on their left (your right), turned to you
+    talkCaption.mesh.position.set(-0.5, mouthY + 0.02, -0.2);
+    opponentGroup.add(talkCaption.mesh);
+    void talkAvailable(who).then(({ on }) => {
+      if (!on || talk !== mine) return console.info("Talk is off at the board: the Talk server isn't answering.");
+      talkOn = true;
+      talkBtn.hidden = false;
+      menu.add(xrTalk);
+    });
+  }
+
+  // ---------------- your real table (WebXR plane detection) ----------------
+  // On a Quest whose Space Setup has your table, the board goes onto it: its surface on yours, squared to the edge you
+  // face, the board's own table put away, and whoever plays you seated across it, beyond its far edge (an invisible
+  // stand-in for your table keeps their legs under it, as in the room). A table that's too small, too deep or too far
+  // away, or none in the first seconds: the board on its own table, as before, and a line saying so. The board still
+  // moves by its handle; let go of it over a table and it settles on it. Where you leave it is kept for next time
+  // (Quest's persistent anchors), chair and all.
+  const FOOTPRINT: Footprint = {
+    left: SQUARE * 4 + 0.09, // your captures, at your left
+    right: SQUARE * 4 + 0.14, // the clock, at your right
+    near: SQUARE * 4 + 0.018,
+    far: TABLE_EDGE - 0.04, // where their hands rest
+    farMax: TABLE_EDGE + 0.06, // a table reaching further is in their lap
+    span: 0.22,
+  };
+  const PLANE_WAIT_MS = 700; // the first look for a table, before the board appears
+  const TABLE_LOOK_MS = 5000; // how long a table can still turn up and take the board
+  let occluder: THREE.Mesh | null = null;
+  const useTable = (flat: Flat | null) => {
+    realTable = flat;
+    if (occluder) {
+      scene.remove(occluder);
+      occluder.geometry.dispose();
+      occluder = null;
+    }
+    if (flat) scene.add((occluder = surfaceOccluder(flat)));
+    if (seated) seated.desk.visible = !flat;
+  };
+  const findTable = (head: THREE.Vector3, cam: THREE.Camera) => {
+    const flats = upFacing(renderer.xr.getFrame(), renderer.xr.getReferenceSpace());
+    return tableSpot(flats, head, cam.getWorldDirection(new THREE.Vector3()).setY(0), FOOTPRINT, { floor: floorLevel(flats) ?? 0 });
+  };
+  /** The board where it stands now: on a real table under it (true when that moved it), else on its own. */
+  const snapToTable = (): boolean => {
+    const flats = upFacing(renderer.xr.getFrame(), renderer.xr.getReferenceSpace());
+    const yaw = new THREE.Euler().setFromQuaternion(table.quaternion, "YXZ").y;
+    const surface = table.position.y + TABLE_TOP;
+    const flat = flats.find((f) => Math.abs(f.y - surface) < 0.08 && fits(f, table.position.x, table.position.z, yaw, FOOTPRINT)) ?? null;
+    useTable(flat);
+    if (!flat || Math.abs(flat.y - surface) < 0.0005) return false;
+    table.position.y = flat.y - TABLE_TOP;
+    return true;
+  };
+
+  const placeOnTable = (spot: Spot) => {
+    lock.release();
+    table.position.set(spot.x, spot.y - TABLE_TOP, spot.z); // the board's surface 1 mm over yours, as on its own table
+    table.rotation.set(0, spot.yaw, 0);
+    useTable(spot.flat);
+    sawTable = true;
+    lock.lock();
+  };
+
+  const palmHint = META ? new PalmHint(scene) : null; // the competition: how the controls work, the first time in
+  const fpsCard = SHOW_FPS ? new FpsReadout(scene) : null;
 
   // ---------------- XR session ----------------
   let placed = false;
   let hintUntil = 0; // how to play, on the status panel for your first moments in the room
+  let enteredAt = 0;
+  let planesOn = false; // the session finds real surfaces (plane detection)
+  let movedByHand = false; // you've placed the board yourself (by its handle, or last session): no table takes it
+  let sawTable = false;
+  let tableNoted = false;
+  let nextLook = 0;
+  let waitPlanes = false; // the browser says plane detection is on: the board waits a moment for a table
   if (navigator.xr && (await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))) $("#room").hidden = false;
   $("#room").addEventListener("click", async () => {
-    const session = await navigator.xr!.requestSession("immersive-ar", { requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "anchors"] });
+    const session = await navigator.xr!.requestSession("immersive-ar", { requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "anchors", "plane-detection"] });
     renderer.xr.setFramebufferScaleFactor(XR_QUALITY.res);
     renderer.xr.setFoveation(XR_QUALITY.fov); // three's default is full foveation: the clock, the menu and the edges blurred
     await renderer.xr.setSession(session);
+    settleFrameRate(session);
     governor.reset();
     placed = false;
+    enteredAt = performance.now();
+    const feats = (session as XRSession & { enabledFeatures?: readonly string[] }).enabledFeatures;
+    planesOn = feats ? feats.includes("plane-detection") : true; // (a browser that doesn't say: looked for anyway)
+    waitPlanes = !!feats?.includes("plane-detection");
+    movedByHand = sawTable = tableNoted = false;
+    tableNoteUntil = 0;
+    // nothing shows until it's placed: on your table, where you left it last time, or in front of you
+    table.visible = opponentGroup.visible = false;
+    void lock.restore().then((ok) => ok && (movedByHand = true));
     panel.visible = true;
     hintUntil = performance.now() + 20000;
+    palmHint?.start(performance.now());
     updateStatus();
     session.addEventListener("end", () => {
+      saveGame();
+      useTable(null);
+      table.visible = opponentGroup.visible = true;
+      palmHint?.stop();
+      talk?.stop();
       panel.visible = false;
       menu.group.visible = menu.open = false;
       lock.release();
@@ -965,13 +1299,13 @@ export async function renderChess(root: HTMLElement) {
 
   // ---------------- UI ----------------
   const selectStrength = (id: string) => {
-    strength = STRENGTHS.find((s) => s.id === id)!;
+    strength = LEVELS.find((s) => s.id === id)!;
     $("#legend-note").textContent = strength.legend ? `Stockfish at ${strength.legend}'s peak rating (${strength.elo}). Not affiliated.` : "";
     strengthButton.setLabel(`Level · ${strength.label}`);
     legendButtons.forEach((b) => b.setOn(b.id === id));
     root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
     void engine.setStrength(strength);
-    setOpponent([...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
+    setOpponent(seatId ? [...new Set([seatId, "vishal"])] : [...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
     updateStatus();
   };
   root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => (famous.active ? famous.choose(b.dataset.id!) : selectStrength(b.dataset.id!))));
@@ -1010,15 +1344,51 @@ export async function renderChess(root: HTMLElement) {
     if (renderer.xr.isPresenting) {
       const cam = renderer.xr.getCamera();
       const head = cam.getWorldPosition(headPos);
+      const now = performance.now();
       if (!placed) {
-        const fwd = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
-        placeBoardAt(new THREE.Vector3(head.x + fwd.x * 0.5, Math.min(1.0, Math.max(0.62, head.y - 0.5)), head.z + fwd.z * 0.5));
-        placed = true;
-        lock.lock();
+        const look = planesOn && !lock.restoring && !lock.anchored && now > nextLook;
+        if (look) nextLook = now + 100;
+        const spot = look ? findTable(head, cam) : null;
+        if (lock.update()) {
+          // where you left it last time (a kept anchor), on your real table again if that's where it was
+          placed = movedByHand = true;
+          if (snapToTable()) lock.lock();
+        } else if ((lock.restoring || lock.anchored) && now - enteredAt < 2500) {
+          // still finding it in the room
+        } else if (spot) {
+          placeOnTable(spot);
+          placed = true;
+        } else if (!waitPlanes || now - enteredAt > PLANE_WAIT_MS) {
+          const fwd = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+          placeBoardAt(new THREE.Vector3(head.x + fwd.x * 0.5, Math.min(1.0, Math.max(0.62, head.y - 0.5)), head.z + fwd.z * 0.5));
+          placed = true;
+          lock.lock();
+        }
+        if (placed) table.visible = opponentGroup.visible = true;
+      } else if (planesOn && !realTable && now < enteredAt + TABLE_LOOK_MS && now > nextLook) {
+        // a table that turns up in the first seconds takes the board, unless you've moved it or are holding a piece
+        nextLook = now + 250;
+        const spot = findTable(head, cam);
+        sawTable ||= !!spot;
+        if (spot && !movedByHand && !boardDrag && !inHand && !handHold.some(Boolean)) placeOnTable(spot);
+      }
+      if (placed && !realTable && !tableNoted && (!planesOn || now > enteredAt + TABLE_LOOK_MS)) {
+        // none: the board's own table, and a line saying why
+        tableNoted = true;
+        if (!sawTable) {
+          tableNote = `No table found, so we brought one. Space Setup on your Quest lets ${opponentName || "you"} use yours.`;
+          tableNoteUntil = now + 9000;
+          updateStatus();
+        }
+      }
+      if (tableNoteUntil && now > tableNoteUntil) {
+        tableNoteUntil = 0;
+        updateStatus();
       }
       if (!boardDrag) lock.update();
       occluders.forEach((o) => o());
       const menuOpen = menu.update(head, time, dt);
+      palmHint?.update(cam, menu, performance.now(), dt);
       const menuHand = handIndex(sideOf, "left");
       fillClockPoints();
       if (clock.touch(clockPoints, time)) pressClock();
@@ -1051,6 +1421,7 @@ export async function renderChess(root: HTMLElement) {
             if (p.down && p.firm) placeBoardAt(p.point.clone().add(boardDrag.offset));
             else {
               boardDrag = null;
+              snapToTable();
               lock.lock();
               sounds.clack(table.getWorldPosition(new THREE.Vector3()), true);
             }
@@ -1071,6 +1442,8 @@ export async function renderChess(root: HTMLElement) {
           if (hit) handHold[i] = grab(hit.sq, p.point, hit.victim);
           else if (nearHandle(p.point)) {
             lock.release();
+            movedByHand = true;
+            useTable(null); // in your hand it's on its own table again; let go over a real one and it settles there
             boardDrag = { hand: i, offset: table.position.clone().sub(p.point) };
             if (hintUntil) hintUntil = 1; // you've found it: the hint can go
           }
@@ -1124,6 +1497,7 @@ export async function renderChess(root: HTMLElement) {
       const o = Math.min(1, (performance.now() - opponentSince) / 1400); // they arrive, not pop in
       opponent.mesh.opacity = o;
       seated.setOpacity(o);
+      (chairShadow.material as THREE.MeshBasicMaterial).opacity = o;
       // a hand held out: your hand (or the mouse) within about 12 cm of it, and you shake
       if (seated.offering) {
         const theirs = seated.handWorld;
@@ -1142,6 +1516,18 @@ export async function renderChess(root: HTMLElement) {
         if (met) seated.shake();
       }
     }
+    // Talk: their words beside them, their jaw with the reply, and their head tipped while they listen
+    if (talk) {
+      talk.update(dt);
+      talkCaption.set(talk.text, talk.reply ? "AI voice" : "", talk.reply ? talk.english : "");
+      talkCaption.fade(!!talk.text, dt);
+    }
+    if (seated) {
+      seated.listening = talk?.state === "listening" || talk?.state === "thinking";
+      const level = talk?.level ?? 0;
+      seated.onPose = level > 0.002 ? (local, skeleton) => openJaw(local, skeleton, level) : null;
+    }
+    fpsCard?.frame(performance.now(), governor, renderer.xr.getSession(), renderer.xr.getCamera(), dt, renderer.xr.isPresenting);
     // a legend is always labelled: it's Stockfish at their rating, not them
     legendNote.setText(strength.legend ? `Stockfish at ${strength.legend}'s peak rating (${strength.elo}). Not affiliated.` : "");
     if (legendNote.mesh.visible) {
@@ -1164,7 +1550,7 @@ export async function renderChess(root: HTMLElement) {
   };
   resilientLoop(renderer, scene, camera, frame);
   if (import.meta.env.DEV)
-    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame(), hands, jointsOf, handHold, inHand: () => inHand, sync: () => sync(), awaiting: (on: boolean) => (awaitingPress = on), menu, handle, lock, pressed: () => !awaitingPress, famous };
+    (window as unknown as Record<string, unknown>).__chess = { chess, meshes, tryMove, camera, pieces, ray, renderer, scene, opponentGroup, table, boardGroup, frame, seated: () => seated, busy: () => reaching || thinking, clock, sounds, taken, undo, newGame: () => newGame(), hands, jointsOf, handHold, inHand: () => inHand, sync: () => sync(), awaiting: (on: boolean) => (awaitingPress = on), menu, handle, lock, pressed: () => !awaitingPress, famous, talk: () => talk, context: boardContext, useTable, realTable: () => realTable };
 }
 
 function contactShadowTexture(): THREE.Texture {

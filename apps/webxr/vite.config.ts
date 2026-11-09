@@ -70,7 +70,7 @@ async function relayTalk(req: any, res: any) {
       const r = await fetch(`${TALK}/api/talk/audio/${audio[1]}.wav`, { headers });
       return send(r.status, Buffer.from(await r.arrayBuffer()), r.headers.get("content-type") ?? "audio/wav");
     }
-    const m = url.pathname.match(/^\/([\w-]+)(\/health|\/reset)?$/);
+    const m = url.pathname.match(/^\/([\w-]+)(\/health|\/reset|\/react)?$/);
     if (!m || !TALK_HERE.has(m[1])) return send(404, JSON.stringify({ error: "nobody to talk to by that name here" }));
     const who = m[1];
     if (m[2] === "/health") {
@@ -87,10 +87,12 @@ async function relayTalk(req: any, res: any) {
       parts.push(c);
     }
     const session = encodeURIComponent((url.searchParams.get("session") ?? "default").slice(0, 64));
-    const path = m[2] === "/reset" ? "/api/talk/reset" : "/api/talk";
+    const path = m[2] === "/reset" ? "/api/talk/reset" : m[2] === "/react" ? "/api/talk/react" : "/api/talk";
+    // (what's going on where they are, e.g. the chess board: plain facts the reply can use)
+    const context = String(req.headers["x-talk-context"] ?? "").slice(0, 8000);
     const r = await fetch(`${TALK}${path}?who=${who}&session=${session}`, {
       method: "POST",
-      headers: { ...headers, "Content-Type": req.headers["content-type"] ?? "audio/webm" },
+      headers: { ...headers, ...(context ? { "x-talk-context": context } : {}), "Content-Type": req.headers["content-type"] ?? "audio/webm" },
       body: Buffer.concat(parts),
     });
     const j = (await r.json()) as { audio?: string | null };

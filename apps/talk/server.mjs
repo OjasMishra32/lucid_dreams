@@ -134,6 +134,41 @@ function seconds(audio, type) {
   return audio.length / 32000;
 }
 
+// What's going on where they are, from the app (the chess board in the headset: x-talk-context, URI-encoded JSON),
+// turned into plain lines of fact for the reply. Only these fields, short, in our own words: whatever else is sent is
+// dropped. Without it a turn is exactly as before.
+const BOARD = "\n\nRight now (facts from the app, all true: talk about them when it fits, and never add to them; no moves, games or results that aren't here):\n";
+function facts(raw) {
+  let c = raw;
+  if (typeof raw === "string") {
+    try {
+      c = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      return "";
+    }
+  }
+  if (!c || typeof c !== "object") return "";
+  const s = (v, n) => String(v ?? "").replace(/[\r\n]+/g, " ").slice(0, n);
+  const n = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
+  const out = [];
+  if (c.game) out.push(`What's happening: ${s(c.game, 120)}.`);
+  if (c.userPlays) out.push(`The user plays ${s(c.userPlays, 8)}; you play the other side.`);
+  if (c.position) out.push(`Position (FEN): ${s(c.position, 100)}`);
+  if (Array.isArray(c.lastMoves) && c.lastMoves.length) out.push(`Last moves: ${c.lastMoves.slice(-2).map((m) => s(m, 16)).join(", ")}`);
+  if (c.moveNumber) out.push(`Move number: ${n(c.moveNumber)}`);
+  if (c.toMove) out.push(`To move: ${s(c.toMove, 40)}`);
+  if (c.result) out.push(`The game is over: ${s(c.result, 80)}`);
+  if (c.evalForSideToMove) out.push(`The engine's evaluation for the side to move: ${s(c.evalForSideToMove, 40)}`);
+  if (c.yourStrength) out.push(`You play as: ${s(c.yourStrength, 40)}`);
+  if (c.record && typeof c.record === "object") out.push(`Record at this board: the user has won ${n(c.record.userWins)}, you have won ${n(c.record.yourWins)}, ${n(c.record.draws)} drawn.`);
+  for (const g of Array.isArray(c.lastGames) ? c.lastGames.slice(-2) : []) {
+    if (!g || typeof g !== "object") continue;
+    const result = { win: "won", loss: "lost", draw: "drew" }[g.result] ?? "played";
+    out.push(`An earlier game (${s(g.date, 10)}): the user ${result} as ${s(g.color, 5)} in ${n(g.moves)} moves${g.mistake ? `; the user's biggest mistake by the engine was ${s(g.mistake, 16)}` : ""}.`);
+  }
+  return out.join("\n").slice(0, 1500);
+}
+
 const sessions = new Map(); // session id -> the last turns, so she remembers the conversation
 const replies = new Map(); // reply id -> WAV bytes, kept for a few minutes
 
@@ -169,7 +204,7 @@ async function transcribe(audio, type, person) {
   return ((await r.json()).text ?? "").trim();
 }
 
-async function write(person, history, said) {
+async function write(person, history, said, now = "") {
   const notes = persona(person.notes);
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -179,7 +214,7 @@ async function write(person, history, said) {
       temperature: 0.7,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: person.rules + (notes ? `\n\nNotes (true, from the person or their family):\n${notes}` : "") },
+        { role: "system", content: person.rules + (notes ? `\n\nNotes (true, from the person or their family):\n${notes}` : "") + (now ? BOARD + now : "") },
         ...history,
         { role: "user", content: said },
       ],
@@ -226,7 +261,7 @@ const json = (res, code, data) => {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://talk");
   if (req.method === "OPTIONS") {
-    res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type, x-talk-token" });
+    res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type, x-talk-token, x-talk-context" });
     return res.end();
   }
   if (url.pathname === "/" && req.method === "GET") {
@@ -281,7 +316,7 @@ const server = createServer(async (req, res) => {
       ms.heard = Date.now() - t0;
       if (!said) return json(res, 200, { heard: "", reply: "", english: "", audio: null, ms });
       const history = sessions.get(session) ?? [];
-      const { reply, english } = await write(person, history, said);
+      const { reply, english } = await write(person, history, said, facts(req.headers["x-talk-context"]));
       ms.wrote = Date.now() - t0;
       // no cloned voice yet (his recording hasn't come in): the words alone, never someone else's voice
       const wavBytes = person.voice ? await speak(person, reply) : null;
@@ -297,6 +332,54 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { heard: said, reply, english, audio: wavBytes ? `/api/talk/audio/${id}.wav` : null, ms });
     } catch (e) {
       console.error(`[talk] ${clock()} ${who} ${tag} failed:`, e.message);
+      return json(res, 502, { error: e.message, ms });
+    } finally {
+      if (admitted) busy.delete(visitor);
+    }
+  }
+
+  // a word of their own about what just happened at the board (a big swing, a rematch): no recording, the same limits
+  //   POST /api/talk/react?who=&session=   { event, context } -> { heard: "", reply, english, audio, ms }
+  if (url.pathname === "/api/talk/react" && req.method === "POST") {
+    const t0 = Date.now();
+    const ms = {};
+    const visitor = visitorOf(req);
+    const tag = tagOf(visitor);
+    let admitted = false;
+    try {
+      const session = `${who}:${(url.searchParams.get("session") ?? "default").slice(0, 64)}`;
+      const raw = await body(req);
+      if (raw.length > 16 * 1024) return json(res, 413, { error: "too much" });
+      let asked = {};
+      try {
+        asked = JSON.parse(raw.toString("utf8"));
+      } catch {
+        return json(res, 400, { error: "send JSON: { event, context }" });
+      }
+      const event = String(asked.event ?? "").replace(/[\r\n]+/g, " ").slice(0, 300);
+      if (!event) return json(res, 400, { error: "what happened?" });
+      const no = admit(visitor);
+      if (no) {
+        res.setHeader("Retry-After", String(no.retryAfter));
+        return json(res, 429, { error: no.error, resting: true, retryAfter: no.retryAfter });
+      }
+      admitted = true;
+      const history = sessions.get(session) ?? [];
+      const cue = `(Nobody spoke just now. ${event} Say one short line to the user about it, out loud, as yourself.)`;
+      const { reply, english } = await write(person, history, cue, facts(asked.context));
+      ms.wrote = Date.now() - t0;
+      const wavBytes = person.voice ? await speak(person, reply) : null;
+      ms.spoke = Date.now() - t0;
+      const id = randomUUID();
+      if (wavBytes) {
+        replies.set(id, wavBytes);
+        setTimeout(() => replies.delete(id), 10 * 60 * 1000);
+      }
+      sessions.set(session, [...history, { role: "user", content: `(At the board: ${event})` }, { role: "assistant", content: JSON.stringify({ reply, english }) }].slice(-12));
+      console.log(`[talk] ${clock()} ${who} ${tag} react: ${ms.spoke} ms`);
+      return json(res, 200, { heard: "", reply, english, audio: wavBytes ? `/api/talk/audio/${id}.wav` : null, ms });
+    } catch (e) {
+      console.error(`[talk] ${clock()} ${who} ${tag} react failed:`, e.message);
       return json(res, 502, { error: e.message, ms });
     } finally {
       if (admitted) busy.delete(visitor);

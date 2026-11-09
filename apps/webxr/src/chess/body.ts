@@ -12,6 +12,7 @@ const NECK = 12;
 const HEAD = 15;
 const FACE = [22, 23, 24]; // jaw, eyes: counted with the head
 const L_ELBOW = 18, R_ELBOW = 19, L_WRIST = 20, R_WRIST = 21;
+const L_HIP = 1, R_HIP = 2, L_KNEE = 4, R_KNEE = 5;
 const FINGERS = [Array.from({ length: 15 }, (_, i) => 25 + i), Array.from({ length: 15 }, (_, i) => 40 + i)];
 const SPLAT = 0.012; // a Gaussian reaches about this far past its centre
 const ROUND = 2.5; // the blocks' roundness: 2 an ellipsoid, higher boxier (a jacket's front is rounded, about this)
@@ -40,8 +41,10 @@ export class BodyShape {
   finger: [number, number] = [0.0085, 0.0085]; // a finger's radius about its bones
   palm: [number, number] = [0.015, 0.015]; // half the palm's thickness, about the wrist -> knuckles line
   tip: [number, number] = [0.02, 0.02]; // how far a fingertip reaches past its last joint
+  thumbTip: [number, number] = [0.02, 0.02]; // and the thumb's (often longer: it's what meets a piece first)
   cuff: [number, number] = [0.03, 0.03]; // the forearm's radius at the wrist end (sleeve and all)
   upper: [number, number] = [0.05, 0.05]; // the upper arm's radius
+  thigh: [number, number] = [0.08, 0.08]; // the thigh's radius about the hip -> knee line (trousers and all)
   /** Points on the front of the trunk (belly, chest, jacket), each on its joint: offset from that joint's rest position. */
   frontPts: { j: number; o: THREE.Vector3 }[] = [];
 
@@ -158,6 +161,12 @@ export class BodyShape {
       }
       if (radii.length > 40) body.finger[side] = THREE.MathUtils.clamp(pct(radii, 0.8), 0.006, 0.014);
       if (reach.length > 20) body.tip[side] = THREE.MathUtils.clamp(pct(reach, 0.95), 0.012, 0.03);
+      {
+        const [j2, j3] = [FINGERS[side][13], FINGERS[side][14]];
+        const dir = rest[j3].clone().sub(rest[j2]).normalize();
+        const along = (byBone.get(j3) ?? []).map((p) => _l.copy(p).sub(rest[j3]).dot(dir));
+        body.thumbTip[side] = along.length > 20 ? THREE.MathUtils.clamp(pct(along, 0.95), 0.012, 0.032) : body.tip[side];
+      }
       const axis = rest[mid].clone().sub(rest[wr]);
       const len = axis.length();
       axis.divideScalar(len);
@@ -166,6 +175,16 @@ export class BodyShape {
         return t > 0.2 * len && t < len ? [Math.abs(p.y - (rest[wr].y + axis.y * t))] : [];
       });
       if (thick.length > 40) body.palm[side] = THREE.MathUtils.clamp(pct(thick, 0.85), 0.01, 0.022);
+      // the thigh, as thick as nearly all of it is about its bone: what keeps it under a table's underside
+      const [hip, knee] = side === 0 ? [L_HIP, L_KNEE] : [R_HIP, R_KNEE];
+      const ta = rest[hip];
+      const tb = rest[knee].clone().sub(ta);
+      const tl = tb.lengthSq();
+      const td = (byBone.get(hip) ?? []).map((p) => {
+        const t = THREE.MathUtils.clamp(_l.copy(p).sub(ta).dot(tb) / tl, 0, 1);
+        return _l.copy(p).sub(ta).addScaledVector(tb, -t).length();
+      });
+      if (td.length > 20) body.thigh[side] = THREE.MathUtils.clamp(pct(td, 0.95), 0.05, 0.14);
     }
     return body;
   }

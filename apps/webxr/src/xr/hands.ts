@@ -118,6 +118,8 @@ export interface ButtonLook {
 /** A soft, glassy button floating over the table. Pressed by pushing an index fingertip through it. */
 export class XrButton {
   mesh: THREE.Mesh;
+  /** When it was last pressed (performance.now ms; 0: never). */
+  pressedAt = 0;
   private canvas = document.createElement("canvas");
   private tex: THREE.CanvasTexture;
   private pressedUntil = 0;
@@ -197,6 +199,7 @@ export class XrButton {
         this.armed[h] = false;
         this.cooldownUntil = now + 200; // a fresh push from in front is needed anyway; this only stops a bounce
         this.pressedUntil = now + 180;
+        this.pressedAt = performance.now();
         if (!this.look) this.draw(true);
         this.onPress();
       }

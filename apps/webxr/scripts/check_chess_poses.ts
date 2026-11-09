@@ -720,7 +720,7 @@ function runAvatar(id: string): Result {
         const all = new Set([...touching[0], ...touching[1]]);
         const obs = scn.obstacles(new Set());
         // the chair, in bundle space -> table-local
-        const chairObs = chairObstacles(toTable);
+        const chairObs = chairObstacles(toTable, (S.chairBackShift as number | undefined) ?? 0);
         const caps = armCapsules(av.G, av.P, toTable, radii, rest);
         for (const c of caps) {
           const side = c.part[0] === "L" ? 0 : 1;
@@ -911,8 +911,9 @@ function runAvatar(id: string): Result {
 
   const smoothW = (u: number) => u * u * (3 - 2 * u);
 
-  // the chair, as seated.ts builds it (front faces -Z, in the opponent's group: bundle space), to table-local
-  const chairObstacles = (toT: THREE.Matrix4): Obstacle[] => {
+  // the chair, as seated.ts builds it (front faces -Z, in the opponent's group: bundle space), to table-local; its back
+  // (posts and rail) moved back by `back` for a deep back (seated.ts's fitChair)
+  const chairObstacles = (toT: THREE.Matrix4, back = 0): Obstacle[] => {
     const SEAT = 0.46;
     const out: Obstacle[] = [];
     const inv = toT.clone().invert();
@@ -925,11 +926,11 @@ function runAvatar(id: string): Result {
     const tilt = 0.08;
     const postH = 0.42;
     for (const x of [-0.19, 0.19]) {
-      const a = v3(x, SEAT - 0.01, 0.1);
-      const b = v3(x, SEAT + postH - 0.01, 0.1 + Math.sin(tilt) * postH);
-      out.push(local((p) => sdSeg(p, a, b, 0.011), v3(x - 0.011, SEAT - 0.02, 0.09), v3(x + 0.011, SEAT + postH, 0.15), "chair post"));
+      const a = v3(x, SEAT - 0.01, 0.1 + back);
+      const b = v3(x, SEAT + postH - 0.01, 0.1 + back + Math.sin(tilt) * postH);
+      out.push(local((p) => sdSeg(p, a, b, 0.011), v3(x - 0.011, SEAT - 0.02, 0.09 + back), v3(x + 0.011, SEAT + postH, 0.15 + back), "chair post"));
     }
-    const rc = v3(0, SEAT + postH - 0.08, 0.11 + Math.sin(tilt) * (postH - 0.07));
+    const rc = v3(0, SEAT + postH - 0.08, 0.11 + back + Math.sin(tilt) * (postH - 0.07));
     const rq = new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), -tilt);
     const rr = v3();
     out.push(local((p) => sdBox(rr.copy(p).sub(rc).applyQuaternion(rq), v3(), v3(0.21, 0.06, 0.01)), rc.clone().sub(v3(0.21, 0.07, 0.02)), rc.clone().add(v3(0.21, 0.07, 0.02)), "chair back"));
@@ -950,7 +951,7 @@ function runAvatar(id: string): Result {
   const chosen = new Set<string>();
   for (const m of ["think", "wait", "over"]) for (let i = 0; i < 400; i++) chosen.add(person.pickIdle(new person.Rng(i + 7), m as never, null, (k: string) => SI.allows(k)));
   console.log(`  idles this avatar can be given: ${[...chosen].join(", ")} (+ ready)`);
-  console.log(`  seat ${SI.seatDistance.toFixed(3)} m behind the board's centre (body front ${body.front.toFixed(3)}); hand ${body.handLen.map((x: number) => x.toFixed(3))} m`);
+  console.log(`  seat ${SI.seatDistance.toFixed(3)} m behind the board's centre (body front ${body.front.toFixed(3)}); hand ${body.handLen.map((x: number) => x.toFixed(3))} m; thigh ${(body.thigh ?? []).map((x: number) => x.toFixed(3))} m; palm ${body.palm.map((x: number) => x.toFixed(3))} m; chair back +${(((SI.chairBackShift as number | undefined) ?? 0) * 1000).toFixed(0)} mm`);
   if (flag("--pose")) {
     // where the joints are in the calm rest pose, table-local, and what the guard did
     SI.startIdle({ kind: "still", side: 1, r: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] }, SI.now);

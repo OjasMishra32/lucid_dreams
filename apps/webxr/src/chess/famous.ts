@@ -43,6 +43,8 @@ export interface FamousHost {
   refresh: () => void;
   /** Back to a game against the engine, at this strength if given. */
   leave: (strength?: string) => void;
+  /** Not offered at all (the competition, event.ts: no legend's games): no toggle, no menu entry, never starts. */
+  off?: boolean;
 }
 
 type State = "off" | "setup" | "find" | "playing" | "done";
@@ -128,7 +130,7 @@ export class FamousMoves {
     this.toggle.textContent = "Their famous moves";
     this.toggle.addEventListener("click", () => (this.active ? this.leave() : this.start()));
     const controls = host.root.querySelector(".chess-controls");
-    controls?.insertBefore(this.toggle, controls.querySelector("#undo"));
+    if (!host.off) controls?.insertBefore(this.toggle, controls.querySelector("#undo"));
     this.dom = document.createElement("aside");
     this.dom.className = "famous-card";
     this.dom.hidden = true;
@@ -137,12 +139,12 @@ export class FamousMoves {
       <p class="famous-status"></p><div class="famous-foot"><span class="famous-score"></span><button class="pill" type="button">Next position</button></div>
       <p class="famous-fine">Moves from the real game. A likeness, not affiliated.</p>`;
     this.dom.querySelector("button")!.addEventListener("click", () => this.next());
-    host.root.appendChild(this.dom);
+    if (!host.off) host.root.appendChild(this.dom);
 
     // the headset: one entry on the palm menu, and Next while it's on
     this.menuButton = new XrButton("famous", "Famous moves", () => (this.active ? this.leave() : this.start()));
     this.nextButton = new XrButton("famous-next", "Next position", () => this.next());
-    host.menu.add(this.menuButton);
+    if (!host.off) host.menu.add(this.menuButton);
   }
 
   get active() {
@@ -170,6 +172,7 @@ export class FamousMoves {
 
   /** On, for a legend (the one picked, else Fischer), at its first position not yet found (or `at`). */
   start(legend?: string, at?: number) {
+    if (this.host.off) return;
     const id = legend ?? (SURNAME[this.host.strength()] ? this.host.strength() : "fischer");
     const was = this.active;
     this.legend = id;

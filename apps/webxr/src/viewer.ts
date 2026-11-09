@@ -6,7 +6,7 @@ import { SkinnedAvatar } from "./avatar";
 import { HeadLook } from "./look";
 import { cueAt, type Cue, parseVtt, SpatialCaption } from "./captions";
 import { Coach, coachAvailable, type CoachState } from "./coach";
-import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAvailable } from "./talk";
+import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAllowed, talkAvailable } from "./talk";
 import { type Dream, dreamUrl, framePath, loadDream } from "./dream";
 import { fallbackExperience, Lesson, loadExperience, say, StepCard } from "./experience";
 import { nextPlace, type Place, Places, startingPlace } from "./places";
@@ -24,8 +24,11 @@ import { BeatRing, COUNT_IN, loadBeats } from "./beats";
 import { WorldLock } from "./xr/anchor";
 import { handOccluder, XrButton } from "./xr/hands";
 import { HandMenu, handSides } from "./xr/menu";
-import { QualityGovernor, XR_QUALITY } from "./xr/quality";
+import { QualityGovernor, settleFrameRate, XR_QUALITY } from "./xr/quality";
+import { floorLevel, upFacing } from "./xr/planes";
+import { FpsReadout, PalmHint, SHOW_FPS } from "./xr/hud";
 import { trimSplats } from "./xr/budget";
+import { LIBRARY, META } from "./event";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
 // "local-floor" space, so y = 0 is the real floor and nothing is ever scaled: the person is exactly their real size.
@@ -43,6 +46,7 @@ const ASK: Record<CoachState, [string, string]> = {
   answering: ["Answering…", "Answering…"],
 };
 const PLACE_DISTANCE = 1.8; // meters in front of you when you enter the room
+const DEPTH = new URLSearchParams(location.search).get("depth") !== "0"; // occlusion by the real room (depth sensing)
 const LOAD_CONCURRENCY = 6; // frames fetched at once (more hides a slow link's latency)
 const SPEEDS = [1, 0.5, 0.25];
 type Place3 = "facing" | "beside" | "ahead";
@@ -53,7 +57,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   root.innerHTML = `
     <div class="stage" id="stage"></div>
     <div id="place-scrim" style="position: fixed; inset: 0 0 auto 0; height: 120px; z-index: 9; pointer-events: none; opacity: 0; transition: opacity 0.6s ease; background: linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0))"></div>
-    <div class="topbar"><a class="back" href="./">${BACK}Dreams</a><div class="title"><div id="title"></div><div class="subtitle" id="subtitle"></div></div><div></div></div>
+    <div class="topbar"><a class="back" href="${LIBRARY}">${BACK}Dreams</a><div class="title"><div id="title"></div><div class="subtitle" id="subtitle"></div></div><div></div></div>
     <div class="loader" id="loader"><div class="loader-inner">
       <svg class="ring" viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="19"/><circle class="bar" id="ring" cx="22" cy="22" r="19"/></svg>
       <h2 id="loading-title">Bringing them in</h2><p id="loading-pct">0%</p></div></div>
@@ -252,9 +256,16 @@ export async function renderViewer(root: HTMLElement, id: string) {
   const look = avatar && (experience?.mode === "companion" || experience?.mode === "play") ? new HeadLook() : null;
   const eye = new THREE.Vector3();
   if (experience?.title) $("#subtitle").textContent = experience.title;
-  if (experience?.mode === "play" && experience.play?.game === "chess") {
+  // in the competition (event.ts) any entrant's avatar can sit down across your table from here
+  const chessHref =
+    experience?.mode === "play" && experience.play?.game === "chess"
+      ? `?mode=chess&opponent=${encodeURIComponent(dream.id)}&strength=${encodeURIComponent(experience.play.strength ?? "gm")}`
+      : META && avatar
+        ? `?mode=chess&opponent=${encodeURIComponent(dream.id)}`
+        : null;
+  if (chessHref) {
     const a = $<HTMLAnchorElement>("#play-chess");
-    a.href = `?mode=chess&opponent=${encodeURIComponent(dream.id)}&strength=${encodeURIComponent(experience.play.strength ?? "gm")}`;
+    a.href = chessHref;
     a.textContent = `Play chess with ${dream.name}`;
     a.hidden = false;
   }
@@ -530,7 +541,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
       .catch(() => {});
   // ---------------- Talk: say something, they answer in their own cloned voice (talk.ts) ----------------
   // Only someone who agreed to it and whose talk may go through this server (the relay in vite.config.ts says so).
-  const talkWho = dream.talk?.who ?? (avatar && /^vishal(-|$)/.test(dream.id) ? "vishal" : null); // a replay talks too (no jaw)
+  const asked = dream.talk?.who ?? (avatar && /^vishal(-|$)/.test(dream.id) ? "vishal" : null); // a replay talks too (no jaw)
+  const talkWho = asked && talkAllowed(asked) ? asked : null;
   // their mouth: under the jaw joint of their rig, standing (an avatar's bounds are its T-pose, hair included)
   const jawRest = avatar?.skeleton.rest[22];
   const mouthY = avatar && jawRest ? jawRest[1] + avatar.motion.frames[0].root_t[1] - 0.05 : dream.bounds ? dream.bounds.max[1] - 0.13 : 1.6;
@@ -608,6 +620,16 @@ export async function renderViewer(root: HTMLElement, id: string) {
     menu.add(xrReality);
   }
   menu.add(new XrButton("here", "Bring here", () => (placeNextFrame = true)));
+  // the chess table is its own page: leaving the room is the way there (press View in your room again at the board)
+  if (chessHref) {
+    menu.add(
+      new XrButton("chess", "Play chess", () => {
+        const session = renderer.xr.getSession();
+        if (session) void session.end().finally(() => location.assign(chessHref));
+        else location.assign(chessHref);
+      }),
+    );
+  }
   // follow along: flip them like a mirror, and stand them facing you, beside you or ahead of you
   const said = [dream.intent, dream.name, experience?.intent, experience?.title].join(" ");
   if (lessonPlan || /danc|tai ?chi|yoga|routine|choreo|kata|workout|exercise|stretch/i.test(said)) {
@@ -808,6 +830,12 @@ export async function renderViewer(root: HTMLElement, id: string) {
   person.add(caption);
   let captionUntil = 0;
   let placeNextFrame = false;
+  // the floor they stand on: the room's own (local-floor), unless the headset has found the real floor (plane
+  // detection, a Quest's Space Setup) more than 3 cm off it
+  let standY = 0;
+  let nextFloorLook = 0;
+  const palmHint = META ? new PalmHint(scene) : null; // the competition: how the controls work, the first time in
+  const fpsCard = SHOW_FPS ? new FpsReadout(scene) : null;
   let xrFrames = 0; // frames shown in the room: the headset's pose reaches the camera only once one has rendered
   const xr = new SparkXr({
     renderer,
@@ -820,9 +848,17 @@ export async function renderViewer(root: HTMLElement, id: string) {
     enableHands: true,
     frameBufferScaleFactor: dream.kind === "replay" ? XR_QUALITY.resReplay : XR_QUALITY.res, // Spark's default is half resolution: people and text came out soft
     fixedFoveation: XR_QUALITY.fov, // no blur toward the edges, where the step card and the palm menu sit
-    sessionInit: { optionalFeatures: ["anchors"] },
+    // depth occlusion where the headset can (a Quest 3's depth sensor; not a 3S): real things and your hands in front
+    // of them hide them, as in the room. three.js writes the room's depth before anything is drawn (gpu-optimized).
+    // Without it, or with ?depth=0, they're drawn over everything as before.
+    sessionInit: DEPTH
+      ? { optionalFeatures: ["anchors", "plane-detection", "depth-sensing"], depthSensing: { usagePreference: ["gpu-optimized", "cpu-optimized"], dataFormatPreference: ["luminance-alpha", "float32"] } }
+      : { optionalFeatures: ["anchors", "plane-detection"] },
     onEnterXr: () => {
+      settleFrameRate(renderer.xr.getSession());
       governor.reset();
+      standY = 0;
+      palmHint?.start(performance.now());
       scene.background = null;
       placeNextFrame = true;
       xrFrames = 0;
@@ -840,6 +876,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       ghost?.setActive(!!lesson);
     },
     onExitXr: () => {
+      palmHint?.stop();
       coach?.stop(); // leaving the room ends the question: the mic is released
       releaseLocks();
       menu.group.visible = menu.open = false;
@@ -886,14 +923,14 @@ export async function renderViewer(root: HTMLElement, id: string) {
     // x = z = 180 degrees, which a lone .y would leave in and turn them round)
     if (place === "beside") {
       // at your side, facing the way you face: copy them like the person next to you in a class
-      person.position.set(head.x + right.x * 0.8 + forward.x * 0.5, 0, head.z + right.z * 0.8 + forward.z * 0.5);
+      person.position.set(head.x + right.x * 0.8 + forward.x * 0.5, standY, head.z + right.z * 0.8 + forward.z * 0.5);
       person.rotation.set(0, Math.atan2(forward.x, forward.z) + Math.PI, 0);
     } else if (place === "ahead") {
       // in front of you, facing away: follow them like the teacher at the front of the room
-      person.position.set(head.x + forward.x * 1.5, 0, head.z + forward.z * 1.5);
+      person.position.set(head.x + forward.x * 1.5, standY, head.z + forward.z * 1.5);
       person.rotation.set(0, Math.atan2(forward.x, forward.z) + Math.PI, 0);
     } else {
-      person.position.set(head.x + forward.x * PLACE_DISTANCE, 0, head.z + forward.z * PLACE_DISTANCE);
+      person.position.set(head.x + forward.x * PLACE_DISTANCE, standY, head.z + forward.z * PLACE_DISTANCE);
       person.rotation.set(0, Math.atan2(forward.x, forward.z), 0); // front (-Z) turned to face you
     }
     // the step card: at eye level, off to the right so it never hides them
@@ -929,12 +966,27 @@ export async function renderViewer(root: HTMLElement, id: string) {
         if (hoopBall?.hoopInRoom) hoopLock?.lock();
         placeNextFrame = false;
       }
+      // the real floor, once the headset has it: they stand on it (re-pinned there) when it's more than 3 cm off
+      if (performance.now() > nextFloorLook) {
+        nextFloorLook = performance.now() + 500;
+        const floor = floorLevel(upFacing(renderer.xr.getFrame(), renderer.xr.getReferenceSpace()));
+        const y = floor !== null && Math.abs(floor) > 0.03 && Math.abs(floor) < 0.3 ? floor : 0;
+        if (Math.abs(y - standY) > 0.005) {
+          standY = y;
+          if (!placeNextFrame && xrFrames > 1) {
+            locks[0].release();
+            person.position.y = standY;
+            locks[0].lock();
+          }
+        }
+      }
       locks.forEach((l) => l.update());
       hoopLock?.update();
       occluders.forEach((o) => o());
       renderer.xr.getCamera().getWorldPosition(eyes);
       menu.locked = lesson?.phase === "turn"; // your turn: both hands are dancing, so the menu stays shut
       const open = menu.update(eyes, performance.now(), dt);
+      palmHint?.update(renderer.xr.getCamera(), menu, performance.now(), dt);
       golf?.update(dt, open);
       tempo?.update(dt, performance.now(), eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn), placeMode, mirrored);
       hoopBall?.update(dt, open, eyes, flatForward(ahead));
@@ -1010,6 +1062,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     }
     props?.update(t, dt, reveal);
     places.update(dt);
+    fpsCard?.frame(performance.now(), governor, renderer.xr.getSession(), renderer.xr.getCamera(), dt, renderer.xr.isPresenting);
     if (coach?.state === "listening") askBtn.style.setProperty("--level", coach.level.toFixed(2));
     if (document.activeElement !== scrub) scrub.value = String(t / duration);
     timeLabel.textContent = `${t.toFixed(1)} / ${duration.toFixed(1)} s`;
