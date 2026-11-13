@@ -14,11 +14,11 @@ Lucid Dreams
 
 ## Elevator pitch (140 characters)
 
-Play a phone video in your room and the person steps out of it, life size. Talk with them, learn their moves, play them at your table.
+Turn any video or photo of someone into them, standing life size in your room. Relive a moment with them, or just be with them again.
 
 ## About the project
 
-Ian hasn't been home to Vietnam in four years, and his grandmother lives in his camera roll, six inches tall. Lucid Dreams turns one phone video of a person into them, photoreal and life size in your room. You can walk around them, talk with them, learn their moves and play them at chess, with your hands only, in the Quest browser, from one link. In the build you'll judge, our teammate Vishal's phone video plays life size in your room, and then he steps out of it. Talk with him, then sit at your own table: the board lands on it, he takes the chair across from you and shakes your hand. Tomorrow the board is still there.
+Ian hasn't been home to Vietnam in four years, and his grandmother lives in his camera roll, six inches tall. Lucid Dreams turns one phone video or a few photos of a person into them, photoreal and life size in your room, so you can relive a moment with them: walk around them, hear them, talk with them, learn from them, with your hands only, in the Quest browser, from one link. In the build you'll judge, our teammate Vishal's phone video plays life size in your room, and then he steps out of it and looks at you. Talk with him, and when you sit down at your own table he sits across from you for a game of chess. Tomorrow he's still there.
 
 ## Inspiration
 
@@ -110,7 +110,7 @@ Faster turnaround from upload to your room, sharper faces up close, more than on
 
 ## Built with
 
-webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame, smpl-x, gvhmr, pytorch, python, typescript, vite, meta-quest, hand-tracking, passthrough, plane-detection, webxr-anchors, stockfish, whisper, openai, elevenlabs, hipergator
+webxr, three.js, sparkjs, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame, smpl-x, gvhmr, pytorch, python, typescript, vite, meta-quest, hand-tracking, passthrough, plane-detection, webxr-anchors, stockfish, whisper, openai, elevenlabs, hipergator
 
 ## Try it out
 
