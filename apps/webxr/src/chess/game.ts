@@ -24,6 +24,7 @@ import { FpsReadout, PalmHint, SHOW_FPS } from "../xr/hud";
 import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAllowed, talkAvailable } from "../talk";
 import { addGame, type GameNote, tally, tallyLine } from "./record";
 import { LIBRARY, META } from "../event";
+import { LookBack } from "../xr/lookback";
 import { leaveTo } from "../xr/leave";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
@@ -1243,6 +1244,8 @@ export async function renderChess(root: HTMLElement) {
   };
 
   const palmHint = META ? new PalmHint(scene) : null; // the competition: how the controls work, the first time in
+  const lookBack = new LookBack(scene); // field of view: the way back to the board when it's been out of view a while
+  const boardAt = new THREE.Vector3();
   const fpsCard = SHOW_FPS ? new FpsReadout(scene) : null;
 
   // ---------------- XR session ----------------
@@ -1282,6 +1285,7 @@ export async function renderChess(root: HTMLElement) {
       useTable(null);
       table.visible = opponentGroup.visible = true;
       palmHint?.stop();
+      lookBack.hide();
       talk?.stop();
       panel.visible = false;
       menu.group.visible = menu.open = false;
@@ -1392,6 +1396,7 @@ export async function renderChess(root: HTMLElement) {
       occluders.forEach((o) => o());
       const menuOpen = menu.update(head, time, dt);
       palmHint?.update(cam, menu, performance.now(), dt);
+      lookBack.update(cam, boardDrag ? null : boardGroup.getWorldPosition(boardAt), dt);
       const menuHand = handIndex(sideOf, "left");
       fillClockPoints();
       if (clock.touch(clockPoints, time)) pressClock();

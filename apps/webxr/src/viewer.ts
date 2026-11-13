@@ -31,6 +31,7 @@ import { trimSplats } from "./xr/budget";
 import { LIBRARY, META } from "./event";
 import { leaveTo } from "./xr/leave";
 import { StepOut } from "./xr/intro";
+import { LookBack } from "./xr/lookback";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
 // "local-floor" space, so y = 0 is the real floor and nothing is ever scaled: the person is exactly their real size.
@@ -840,6 +841,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
   let standY = 0;
   let nextFloorLook = 0;
   const palmHint = META ? new PalmHint(scene) : null; // the competition: how the controls work, the first time in
+  const lookBack = new LookBack(scene); // field of view: the way back to them when they've been out of view a while
+  const lookAt = new THREE.Vector3();
   const fpsCard = SHOW_FPS ? new FpsReadout(scene) : null;
   let xrFrames = 0; // frames shown in the room: the headset's pose reaches the camera only once one has rendered
   const xr = new SparkXr({
@@ -885,6 +888,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       ghost?.setActive(!!lesson);
     },
     onExitXr: () => {
+      lookBack.hide();
       if (intro?.state === "playing") intro.reset(); // left before it finished: it plays again next time in
       palmHint?.stop();
       coach?.stop(); // leaving the room ends the question: the mic is released
@@ -997,6 +1001,8 @@ export async function renderViewer(root: HTMLElement, id: string) {
       menu.locked = lesson?.phase === "turn"; // your turn: both hands are dancing, so the menu stays shut
       const open = menu.update(eyes, performance.now(), dt);
       palmHint?.update(renderer.xr.getCamera(), menu, performance.now(), dt);
+      // turned away from them for a while: a chevron near the middle of your view points back
+      lookBack.update(renderer.xr.getCamera(), xrFrames > 1 && !intro?.holding ? person.localToWorld(lookAt.set(0, height * 0.6, 0)) : null, dt);
       golf?.update(dt, open);
       tempo?.update(dt, performance.now(), eyes, renderer.xr.getCamera().getWorldQuaternion(headTurn), placeMode, mirrored);
       hoopBall?.update(dt, open, eyes, flatForward(ahead));
