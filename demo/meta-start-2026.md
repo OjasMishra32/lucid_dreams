@@ -18,11 +18,11 @@ Turn any video or photo of someone into them, standing life size in your room. R
 
 ## About the project
 
-Ian hasn't been home to Vietnam in four years, and his grandmother lives in his camera roll, six inches tall. Lucid Dreams turns one phone video or a few photos of a person into them, photoreal and life size in your room, so you can relive a moment with them: walk around them, hear them, talk with them, learn from them, with your hands only, in the Quest browser, from one link. In the build you'll judge, our teammate Vishal's phone video plays life size in your room, and then he steps out of it and looks at you. Talk with him, and when you sit down at your own table he sits across from you for a game of chess. Tomorrow he's still there.
+Most of the people we love live in our phones now: a parent laughing at dinner, a friend's jump shot, a teacher showing a guitar strum, a grandparent telling the story they always tell. Lucid Dreams turns any of those videos, or a few photos, into the person themselves, photoreal and standing life size in your room on a Meta Quest. You can walk all the way around them, hear them, talk with them, learn a move from them or sit across a table from them, with your hands only, from one link in the Quest browser. One clip you already have is enough. When you open the build, our teammate Vishal's phone video plays life size in front of you, and then he steps out of it and looks at you.
 
 ## Inspiration
 
-You can't sit across a table from a video, and everyone has videos like his: a friend's jump shot, a teacher's guitar lesson, someone you love telling a story. We wanted any of them to step out of the phone and stand in the room with you, at their real height, close enough to walk around.
+Ian hasn't been home to Vietnam in four years. His grandmother lives in his camera roll, six inches tall, and you can't sit across a table from a video. We wanted the people in those videos to step out of the phone and stand in the room with you, at their real height, close enough to walk around.
 
 So we started with his grandmother. One video of her became her, standing on his floor at her real height. When he talks to her in Vietnamese she answers in her own voice, cloned with her family's consent and labelled as AI. Then we kept going: a guitar teacher who sits beside you, Bobby Fischer and Magnus Carlsen across a chessboard on your own table, Roger Federer on the far baseline.
 
@@ -32,7 +32,7 @@ It's interactive video: the clips on your phone become people you can watch, tal
 
 There are two kinds of people. A replay is the clip itself rebuilt in 3D, frame by frame: you can walk around them, freeze them mid-air and see them from angles the camera never had. An avatar is a rigged body built from photos or a few frames, so it can do things the footage never showed: sit at your table, look you in the eye, shake your hand.
 
-Your first five minutes. Open the link on a Quest 3 or 3S and step into your room. One card shows the only gesture you need: turn your left palm up, press with your right index finger. His phone video plays a couple of meters away, life size: seven seconds of him turning around in a hallway, the clip he was made from. As he turns to face you, the video wipes away from his feet up and he's standing there instead, on your floor at his real height, breathing. From your chair, lean in and look at his face; his head turns to follow you. (You can stand and walk around him. You never have to.) Press Talk and ask him anything; he answers in his own voice. Then sit at your table: the board lands on it, he takes the chair across from you, holds out his hand, and the game begins with a handshake.
+Your first five minutes. Open the link on a Quest 3 or 3S and step into your room. One card shows the only gesture you need: turn your left palm up, press with your right index finger. Vishal's phone video plays a couple of meters away, life size: seven seconds of him turning around in a hallway, the clip he was made from. As he turns to face you, the video wipes away from his feet up and he's standing there instead, on your floor at his real height, breathing. From your chair, lean in and look at his face; his head turns to follow you. (You can stand and walk around him. You never have to.) Press Talk and ask him anything; he answers in his own voice. Then sit at your table: the board lands on it, he takes the chair across from you, holds out his hand, and the game begins with a handshake.
 
 What happens next depends on your sentence.
 
@@ -121,7 +121,7 @@ webxr, three.js, sparkjs, gaussian-splatting, gsplat, 4danyone, lhm++, uika, fla
 - Submitter type: Team of Individuals
 - Country of residence: United States
 - Meta VR Start email: ojasvamishra32@gmail.com (check this is the address on the Start membership)
-- Team: Ojasva Mishra, ojasvamishra32@gmail.com, representative: reconstruction pipeline and GPU runs, the WebXR headset app, chess, rendering performance. Vishal Naveen, vishalnaveen.03@gmail.com: avatars (LHM++ bodies, UIKA faces, blinks, cloned voice), the website. Ian Hoang (on the Devpost team): native Quest app, hand interactions, eye contact, the Talk server.
+- Team: Ojasva Mishra, ojasvamishra32@gmail.com, representative: reconstruction pipeline and GPU runs, the WebXR headset app, chess, rendering performance. Vishal Naveen, vishalnaveen.03@gmail.com: avatars (LHM++ bodies, UIKA faces, blinks, cloned voice), the website. Ian Hoang, ianhoang.dev@email.com: native Quest app, hand interactions, eye contact, the Talk server.
 - Team or organization name: Lucid Dreams
 - Track: Entertainment
 - Division: New (conceived and built from Oct 23, 2026)
