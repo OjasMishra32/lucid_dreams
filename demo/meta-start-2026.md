@@ -78,7 +78,7 @@ Splats cost screen area, not triangles. Per eye, per frame,
 
 $$N_{\text{px}} = \sum_i 4k^2\,\sigma_{1i}\,\sigma_{2i}\left(\frac{f}{z_i}\right)^2$$
 
-for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ in meters, drawn out to $k$ standard deviations, at depth $z_i$, with focal length $f$ in pixels. A full replay at 1.8 m is 116 million shaded pixels per eye. The headset keeps the 160,000 Gaussians that add most to the image (82 million), the session asks the Quest for 72 Hz, and a governor watches frame times the way a game's dynamic resolution does. After 0.4 s below 85% of the display rate it steps down through five levels of splat extent ($k$ from 2.83 to 1.9), faint-Gaussian culling and foveation; after 5 s above 95% it tries one level sharper. A try that doesn't hold is undone within a second and doubles the wait before the next one, up to a minute, so a scene that only just fits never stutters every few seconds probing. Simulated on a scene whose sharpest level draws at 55 fps (`scripts/check_governor.ts`), it tries again at 7, 18, 38, 79 and 140 s, and 1.9% of frames run late over three minutes. With Vishal at the board it holds 72 fps, and he loads as 18 MB. Add `?fps=1` to the link to see the frame rate, the p95 frame time and the governor's level live in the headset.
+for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ in meters, drawn out to $k$ standard deviations, at depth $z_i$, with focal length $f$ in pixels. A full replay at 1.8 m is 116 million shaded pixels per eye. The headset keeps the 160,000 Gaussians that add most to the image (82 million), the session asks the Quest for 72 Hz, and a governor watches frame times the way a game's dynamic resolution does. After 0.4 s below 85% of the display rate it steps down through five levels of splat extent ($k$ from 2.83 to 1.9), faint-Gaussian culling and foveation; after 5 s above 95% it tries one level sharper. A try that doesn't hold is undone within a second and doubles the wait before the next one, up to a minute, so a scene that only just fits never stutters every few seconds probing. Simulated on a scene whose sharpest level draws at 55 fps (`scripts/check_governor.ts`), it tries again at 7, 18, 38, 79 and 140 s, and 1.9% of frames run late over three minutes. Measured on our Quest 3S with the `?fps=1` readout, every scene holds a steady 75 fps: the opening, Vishal at the chess board, the replays, tennis and Court Side. Vishal loads as 18 MB. Add `?fps=1` to the link to see the frame rate, the p95 frame time and the governor's level live in the headset.
 
 ### Voice, hands and sound
 
@@ -163,8 +163,10 @@ a life-size person made of points). The Gator Hack film as it is, by Ojasva's ca
 person is made (the Quest 3S, 48 views, the fit, the Gaussians, Reality check), the guitar and golf lessons, chess
 against Fischer and Carlsen, tennis against Federer, LeBron's pass, Court Side, Vishal's Talk, the frame budget, the
 headsets coming off, everyone side by side. Known risks: Rule 4 (people who aren't entrants), the soundtrack is a
-commercial song, the end card names Atina and Gator Hack, and 3:00.05 is 0.05 s past "less than three (3) minutes"
-(a YouTube Studio trim of the end card's last half second keeps the link).
+commercial song (a Content ID claim, no effect on viewing), and 3:00.05 is 0.05 s past "less than three (3) minutes"
+(judges needn't watch past 3:00; it falls on the end card). Nov 13: a fixed blur in YouTube Studio covers the end card's
+grey lines (the names with Atina, "Gator Hack V · University of Florida", the disclaimer) from 2:53:00 to the end, same
+link; the title, the line under it and getluciddreams.vercel.app stay sharp.
 
 ### Entrants-only cut (not used)
 
