@@ -14,7 +14,7 @@ Lucid Dreams
 
 ## Elevator pitch (140 characters)
 
-Bring someone from your phone's videos into your room, life size on a Quest. Walk around them, talk with them, or just be with them again.
+Anyone from any video, standing in your room.
 
 ## About the project
 
