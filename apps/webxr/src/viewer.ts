@@ -673,10 +673,20 @@ export async function renderViewer(root: HTMLElement, id: string) {
       if (!on) return console.info("Talk is off: the Talk server (apps/talk, :5175) isn't answering.");
       talkBtn.hidden = false;
       menu.add(xrTalk!);
+      talkReady = true;
     });
   }
+  // someone you're with (a companion) is someone you come back to: they wait where you left them in your room (a
+  // persistent anchor, where the headset keeps one), and Talk knows how many times you've been and when, so they can say so
+  const companion = !!avatar && experience?.mode === "companion";
+  const keepKey = companion ? `lucid.person.${dream.id}` : undefined;
+  const visit = { n: 0, ago: "" };
+  let talkReady = false;
+  let greetPending = false;
+  let returning = false;
+  if (talk && companion) talk.context = () => ({ visit: visit.n, lastVisit: visit.ago || undefined });
   // what you placed stays where you put it in your real room (WebXR anchors), even through a recenter
-  const locks = [new WorldLock(renderer, person), new WorldLock(renderer, stepCardGroup)];
+  const locks = [new WorldLock(renderer, person, keepKey), new WorldLock(renderer, stepCardGroup)];
   // golf: a real 7-iron in your hands and a ball on a tee in front of you, to swing along with them
   const golf = wantsClub(dream, experience) ? new Golf(scene, renderer, hands, sideOf, listener) : null;
   if (golf) locks.push(new WorldLock(renderer, golf.range));
@@ -871,7 +881,25 @@ export async function renderViewer(root: HTMLElement, id: string) {
       placeNextFrame = true;
       xrFrames = 0;
       reveal = 0; // they arrive in your room, rather than already standing there
-      if (intro?.state === "idle") {
+      returning = false;
+      if (companion) {
+        Object.assign(visit, countVisit(dream.id));
+        greetPending = true; // once they're here: a word from them (Talk's react)
+      }
+      // a companion you've met before: back where you left them, no video this time
+      const finding = keepKey ? locks[0].restore() : null;
+      if (finding && locks[0].restoring) {
+        void finding.then((ok) => {
+          if (ok) {
+            placeNextFrame = false;
+            xrFrames = 2;
+            returning = true;
+          } else if (intro?.state === "idle") {
+            intro.start();
+            hintAfterIntro = true;
+          }
+        });
+      } else if (intro?.state === "idle") {
         intro.start(); // the first time in: the video they were made from, then them
         hintAfterIntro = true;
       }
@@ -972,7 +1000,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
     const dt = Math.min(clock.getDelta(), 0.1);
     if (renderer.xr.isPresenting) {
       // (not on the very first frame: the camera is still at the floor's origin then, and the step card went to the floor)
-      if (placeNextFrame && xrFrames++ > 0) {
+      if (placeNextFrame && !locks[0].restoring && xrFrames++ > 0) {
         releaseLocks();
         hoopLock?.release();
         placeInFrontOfYou();
@@ -1037,7 +1065,16 @@ export async function renderViewer(root: HTMLElement, id: string) {
     }
     if (intro?.holding) t = 0; // a replay waits at its first frame while its clip plays, then dances from the top
     intro?.update(dt);
-    reveal = intro?.holding ? 0 : Math.min(1, reveal + dt / 1.4);
+    reveal = intro?.holding || locks[0].restoring ? 0 : Math.min(1, reveal + dt / 1.4);
+    // they've arrived (out of their video, or back where you left them): they say hello first
+    if (greetPending && talkReady && talk && reveal >= 1 && renderer.xr.isPresenting && !intro?.holding) {
+      greetPending = false;
+      talk.react(
+        returning || visit.n > 1
+          ? "The user has come back to see you, and you were waiting where they left you in their room. Greet them like a friend you remember, in one short line."
+          : "The user just watched your own seven-second phone video play life size in their room, and then you stepped out of it and are standing there in 3D. Say hi in one short line: who you are, that a minute ago you were a video on a phone, and that they can ask you anything or find a table for a game of chess.",
+      );
+    }
     if (hintAfterIntro && intro && !intro.holding && renderer.xr.isPresenting) {
       // they're stepping out: now their name and how the controls work
       hintAfterIntro = false;
@@ -1199,4 +1236,32 @@ function spatialCaption(title: string, hint: string): THREE.Mesh {
   mesh.position.set(-0.62, 1.25, -0.15);
   mesh.rotation.y = Math.PI;
   return mesh;
+}
+
+/** One more visit to someone: which one this is, and how long since the last (for Talk), kept in this browser. */
+function countVisit(id: string): { n: number; ago: string } {
+  const key = `lucid.visits.${id}`;
+  let last = { n: 0, at: 0 };
+  try {
+    last = { ...last, ...JSON.parse(localStorage.getItem(key) ?? "{}") };
+  } catch {
+    // no storage: every visit is the first
+  }
+  const now = Date.now();
+  try {
+    localStorage.setItem(key, JSON.stringify({ n: last.n + 1, at: now }));
+  } catch {
+    // not kept
+  }
+  const mins = last.at ? (now - last.at) / 60000 : 0;
+  const ago = !last.at
+    ? ""
+    : mins < 10
+      ? "a few minutes ago"
+      : mins < 90
+        ? "about an hour ago"
+        : mins < 60 * 30
+          ? `${Math.round(mins / 60)} hours ago`
+          : `${Math.round(mins / 1440)} days ago`;
+  return { n: last.n + 1, ago };
 }

@@ -158,6 +158,7 @@ function facts(raw) {
   const n = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
   const out = [];
   if (c.game) out.push(`What's happening: ${s(c.game, 120)}.`);
+  if (n(c.visit) > 1) out.push(`This is the user's visit number ${n(c.visit)} with you${c.lastVisit ? `; the last one was ${s(c.lastVisit, 30)}` : ""}.`);
   if (c.userPlays) out.push(`The user plays ${s(c.userPlays, 8)}; you play the other side.`);
   if (c.position) out.push(`Position (FEN): ${s(c.position, 100)}`);
   if (Array.isArray(c.lastMoves) && c.lastMoves.length) out.push(`Last moves: ${c.lastMoves.slice(-2).map((m) => s(m, 16)).join(", ")}`);
