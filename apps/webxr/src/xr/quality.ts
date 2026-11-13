@@ -74,8 +74,11 @@ const LEVELS = [
 ];
 
 /**
- * Keeps a headset at its display rate the way games do: when frames run late it steps the splat quality down a
- * level, and when there's room for a few seconds it steps back up. Call `frame()` once per rendered frame.
+ * Keeps a headset at its display rate the way games do: when frames run late (the smoothed rate under 85% of the
+ * display's for 0.4 s) it steps the splat quality down a level; after 5 s with room to spare (over 95%) it tries a level
+ * sharper. A step up that doesn't hold (late again within 3 s) doubles the wait before the next try, up to a minute,
+ * so a scene that only just fits doesn't stutter every few seconds probing; a step up that holds for 10 s resets it.
+ * Call `frame()` once per rendered frame.
  */
 export class QualityGovernor {
   level = 0;
@@ -83,7 +86,11 @@ export class QualityGovernor {
   private last = 0;
   private slow = 0; // seconds running late
   private fast = 0; // seconds with room to spare
-  private hold = 0; // seconds before the next change
+  private hold = 0; // seconds before the next step up
+  private holdDown = 0; // seconds before the next step down (short after a step up, so a try that fails is undone fast)
+  private upWait = 5; // seconds with room to spare before trying a sharper level (doubles when a try fails)
+  private sinceUp = Infinity; // seconds since the last step up
+  private probing = false; // a step up that hasn't yet proved it holds
   /** The display rate the headset asked for (72, 90 or 120). */
   target = 72;
   onChange: ((level: number) => void) | null = null;
@@ -106,7 +113,10 @@ export class QualityGovernor {
   reset() {
     this.level = this.start;
     this.slow = this.fast = 0;
-    this.hold = 1.5; // the first frames of a session are always slow
+    this.upWait = 5;
+    this.sinceUp = Infinity;
+    this.probing = false;
+    this.hold = this.holdDown = 1.5; // the first frames of a session are always slow
     this.last = 0;
     this.apply(false);
   }
@@ -129,6 +139,12 @@ export class QualityGovernor {
     if (rate && rate > 30) this.target = rate;
     if (!XR_QUALITY.auto) return;
     this.hold = Math.max(0, this.hold - dt);
+    this.holdDown = Math.max(0, this.holdDown - dt);
+    this.sinceUp += dt;
+    if (this.probing && this.sinceUp > 10) {
+      this.probing = false; // the last step up held: the next try comes at the usual pace
+      this.upWait = 5;
+    }
     if (this.fps < this.target * 0.85) {
       this.slow += dt;
       this.fast = 0;
@@ -139,19 +155,23 @@ export class QualityGovernor {
       this.slow = Math.max(0, this.slow - dt);
       this.fast = 0;
     }
-    if (this.hold > 0) return;
-    if (this.slow > 0.4 && this.level < LEVELS.length - 1) {
+    if (this.slow > 0.4 && this.holdDown <= 0 && this.level < LEVELS.length - 1) {
+      if (this.probing) this.upWait = Math.min(60, this.upWait * 2); // that sharper level didn't hold
+      this.probing = false;
       this.level++;
-      this.changed(0.8);
-    } else if (this.fast > 5 && this.level > 0) {
+      this.changed(0.8, 0.8);
+    } else if (this.fast > this.upWait && this.hold <= 0 && this.level > 0) {
       this.level--;
-      this.changed(3);
+      this.sinceUp = 0;
+      this.probing = true;
+      this.changed(3, 0.2);
     }
   }
 
-  private changed(hold: number) {
+  private changed(hold: number, holdDown: number) {
     this.slow = this.fast = 0;
     this.hold = hold;
+    this.holdDown = holdDown;
     this.apply(true);
     this.onChange?.(this.level);
   }

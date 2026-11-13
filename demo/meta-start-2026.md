@@ -18,6 +18,8 @@ Any photo or video of a person becomes them, photoreal and life-size in your roo
 
 ## About the project
 
+One phone video of a person becomes them, photoreal and life size in your room. You can walk around them, talk with them, learn their moves and play them at chess, with your hands only, in the Quest browser, from one link. In the build you'll judge, our teammate Vishal's phone video plays life size in your room, and then he steps out of it. Talk with him, then sit at your own table: the board lands on it, he takes the chair across from you and shakes your hand. Tomorrow the board is still there.
+
 ## Inspiration
 
 Ian hasn't been home in four years. The people he misses live in his camera roll, six inches tall, and you can't sit across a table from a video. Everyone has those videos: a friend's jump shot, a teacher's guitar lesson, someone you love telling a story. We wanted any of them to step out of the phone and stand in the room with you, at their real height, close enough to walk around.
@@ -30,19 +32,19 @@ It's interactive video: the clips on your phone become people you can watch, tal
 
 There are two kinds of people. A replay is the clip itself rebuilt in 3D, frame by frame: you can walk around them, freeze them mid-air and see them from angles the camera never had. An avatar is a rigged body built from photos or a few frames, so it can do things the footage never showed: sit at your table, look you in the eye, shake your hand.
 
-Your first five minutes. Open the link on a Quest 3 or 3S and step into your room. One card shows the only gesture you need: turn your left palm up, press with your right index finger. Vishal fades in a couple of meters away, standing on your floor at his real height, breathing. From your chair, lean in and look at his face; his head turns to follow you. (You can stand and walk around him. You never have to.) Press Talk and ask him anything; he answers in his own voice. Then sit at your table: the board lands on it, he takes the chair across from you, holds out his hand, and the game begins with a handshake.
+Your first five minutes. Open the link on a Quest 3 or 3S and step into your room. One card shows the only gesture you need: turn your left palm up, press with your right index finger. His phone video plays a couple of meters away, life size: seven seconds of him turning around in a hallway, the clip he was made from. As he turns to face you, the video wipes away from his feet up and he's standing there instead, on your floor at his real height, breathing. From your chair, lean in and look at his face; his head turns to follow you. (You can stand and walk around him. You never have to.) Press Talk and ask him anything; he answers in his own voice. Then sit at your table: the board lands on it, he takes the chair across from you, holds out his hand, and the game begins with a handshake.
 
 What happens next depends on your sentence.
 
 - Learn. Lesson mode splits the move into steps, slows each one down, repeats it, then waits for your turn. Follow along puts glowing targets where your head and hands should be right now, taken from the clip's own 22 body joints and scaled to your height. Your attempt replays as a ghost beside them, with the biggest gap called out in plain words ("left hand 18 cm low at the drop"), and a card gives every step its stars.
 - Talk. A person who agreed to it answers out loud in their own cloned voice, captioned and labelled AI voice, a median 3.1 s after you stop speaking.
-- Play. Chess lands on your real table with them in the chair across from you. They hold out a hand before the first move, think, reach over, move their own pieces and hit the clock, and they remember how your last game went. Pick Fischer's or Carlsen's level and their avatar sits down (labelled "Stockfish at Fischer's peak rating. Not affiliated."), or sit down at a position from one of their real games and find the move they're remembered for. Tennis puts Roger Federer's avatar on the far baseline of a full-size grass court: serves, faults, lets, deuce, tiebreaks, and a ball that dips with topspin and skids on the grass. In the driveway, LeBron plays his own jump shot until your pass reaches him, then catches it and shoots.
+- Play. Chess lands on your real table with them in the chair across from you. They hold out a hand before the first move, think, reach over, move their own pieces and hit the clock, and they remember how your last game went. Pick Fischer's or Carlsen's level and their avatar sits down (labelled "Stockfish at Fischer's peak rating. Not affiliated."), or sit down at a position from one of their real games and find the move they're remembered for. Tennis puts Roger Federer's avatar on the far baseline of a full-size grass court: serves, faults, lets, deuce, tiebreaks, and a ball that dips with topspin and skids on the grass. In your room, LeBron plays his own jump shot until your pass reaches him, then catches it and shoots.
 - Court Side. A real NBA moment, Luka Dončić's step-back three over Rudy Gobert, plays as courtside video around you. Step into the court and that one frame becomes 3D: every player frozen mid-air at real size, and you walk between them before the ball leaves his hand.
 - Reality check. One tap turns everything the camera never saw blue and tells you how much of the person was real.
 
 Why you'd come back: the people you add stay in your library, the board and the chair stay where you put them in your room, an unfinished game is still on the table tomorrow, he plays one level stronger every time you beat him, and he remembers how the last game went because that memory is a real record of it.
 
-The build you'll judge opens on our teammate Vishal, rebuilt from a short phone video of him turning around; he agreed to his likeness and his cloned voice, and 75% of him was really seen by the camera. Everyone else is in the library: Ian's grandmother, six replays you can learn from (guitar, golf, tai chi, a dance routine, two jump shots), the chess legends, Federer and Court Side. Every public figure is labelled not affiliated, and none of them ever speaks.
+The build you'll judge opens on our teammate Vishal, rebuilt from a short phone video of him turning around; he agreed to his likeness and his cloned voice, and 75% of his Gaussians were seen in his own frames (Reality check paints the rest blue). Everyone else is one press away, under Library on the palm menu: Ian's grandmother, six replays you can learn from (guitar, golf, tai chi, a dance routine, two jump shots), the chess legends, Federer and Court Side. Every public figure is labelled not affiliated, and none of them ever speaks.
 
 ## How we built it
 
@@ -52,19 +54,19 @@ A camera only ever sees one side of a person, so rebuilding a moving person in 3
 
 $$\mathcal{L} = 0.8\,\lVert \hat I - I \rVert_1 + 0.2\,\big(1-\mathrm{SSIM}(\hat I, I)\big) + 0.1\,\lVert \hat A - A \rVert_1 + 0.3\,\mathcal{L}_{\text{VGG}} + \mathcal{L}_{\text{reg}}$$
 
-where $\hat I$ and $I$ are our render and the target view, $\hat A$ and $A$ the rendered and true silhouettes, $\mathcal{L}_{\text{VGG}}$ a perceptual loss, and $\mathcal{L}_{\text{reg}}$ small penalties on opacity, scale and stretched Gaussians. Every frame ships as SPZ (about a tenth of a PLY), with GVHMR's 22 body joints for the lessons. A Gaussian counts as seen when a camera facing the real clip finds it in front of everything else, $z_i \le D(u_i) + 4\,\text{cm}$ with accumulated opacity above 0.5; the rest is what Reality check paints blue. Against the generated views our replays reach 26.0 to 31.9 dB PSNR and 0.963 to 0.982 SSIM. Reconstruction runs at about a minute per frame per GPU once warm, so a 121-frame clip split across 12 GPUs takes roughly a quarter of an hour after the views are generated.
+where $\hat I$ and $I$ are our render and the target view, $\hat A$ and $A$ the rendered and true silhouettes, $\mathcal{L}_{\text{VGG}}$ a perceptual loss, and $\mathcal{L}_{\text{reg}}$ small penalties on opacity, scale and stretched Gaussians. Every frame ships as SPZ (about a tenth of a PLY), with GVHMR's 22 body joints for the lessons. A Gaussian counts as seen when a camera facing the real clip finds it in front of everything else, $z_i \le D(u_i) + 4\,\text{cm}$ with accumulated opacity above 0.5; the rest is what Reality check paints blue. Against 4DAnyone's views the fit trained on (every 8th of the 48 cameras, median over 121 frames; none held out, so read it as how well the fit converged, not accuracy from unseen angles), our replays reach 26.0 to 31.9 dB PSNR and 0.963 to 0.982 SSIM. Reconstruction runs at about a minute per frame per GPU once warm, so a 121-frame clip split across 12 GPUs takes roughly a quarter of an hour after the views are generated.
 
 ### A few photos in: the avatar pipeline
 
-LHM++ (photos in, a rigged 3D body out) built Vishal's 190,815-Gaussian body on the SMPL-X skeleton from 14 frames of his video. UIKA, which rebuilds a head from a set of photos, made his face; we rendered that head from 91 viewpoints and fit fresh, opaque Gaussians to the renders directly on the body's own head, so nothing is pasted on. On held-out views the distilled head scores 29.0 dB PSNR against UIKA, up from 18.7 dB for the head LHM++ guessed. Blinks are fitted to his own eyelids through FLAME; a 20-second idle adds 2-3 mm of breathing at 0.25 Hz and small glances; eye contact turns his head 70% and neck 30%, up to 35 degrees to either side and 20 up or down, settling in about 300 ms. The browser poses every Gaussian each frame with dual-quaternion skinning.
+LHM++ (photos in, a rigged 3D body out) built Vishal's 190,815-Gaussian body on the SMPL-X skeleton from 14 frames of his video. UIKA, which rebuilds a head from a set of photos, made his face; we rendered that head from 91 viewpoints and fit fresh, opaque Gaussians to the renders directly on the body's own head, so nothing is pasted on. On viewpoints held out of the fit, the distilled head matches UIKA's own renders at 29.0 dB PSNR, up from 18.7 dB for the head LHM++ guessed (a measure of how faithfully the head was carried over, not a likeness score). Blinks are fitted to his own eyelids through FLAME; a 20-second idle adds 2-3 mm of breathing at 0.25 Hz and small glances; eye contact turns his head 70% and neck 30%, up to 35 degrees to either side and 20 up or down, settling in about 300 ms. The browser poses every Gaussian each frame with dual-quaternion skinning.
 
 ### Your room
 
-The app is WebXR in the Quest browser, three.js with the Spark splat renderer, hands only, from one link with no install. People stand on your real floor through a local-floor reference space. WebXR plane detection reads the planes from the Quest's Space Setup: the chessboard goes on the plane labelled table (or any horizontal plane 55 to 95 cm high) with the chair on its far side, and with no table in five seconds we bring our own and say so. WebXR anchors pin people and the board through recenters and drift, and a persistent anchor brings the board back to the same spot next session.
+The app is WebXR in the Quest browser, three.js with the Spark splat renderer, hands only, from one link with no install. People stand on your real floor through a local-floor reference space. WebXR plane detection reads the planes from the Quest's Space Setup: the chessboard goes on the plane labelled table (or any horizontal plane 55 to 95 cm high) with the chair on its far side, and with no table in five seconds we bring our own and say so. WebXR anchors pin people and the board through recenters and drift, and a persistent anchor brings the board back to the same spot next session. Your tracked hands and the detected table are drawn depth-only, so your fingers pass in front of him and his legs stay hidden under your real table; on a Quest 3, the depth sensor hides people behind real furniture too.
 
 ### Games
 
-Chess runs Stockfish 19 in a web worker at seven levels: 1400, 2000, 2400, 2700, Fischer's peak rating (2785), Carlsen's (2882) and full strength. Tennis is our own physics at a fixed 240 Hz step, shared by live play, the opponent's predictions and the shot solver, so what the AI predicts is what happens. The 57 g, 6.7 cm ball follows
+Chess runs Stockfish 19 (single-threaded WASM) in a web worker at seven levels: 1400, 2000, 2400, 2700, Fischer's peak rating (2785), Carlsen's (2882) and full strength. The ratings are Stockfish's own UCI_Elo scale, calibrated at desktop speed, so they're a level, not a claim about the man. Tennis is our own physics at a fixed 240 Hz step, shared by live play, the opponent's predictions and the shot solver, so what the AI predicts is what happens. The 57 g, 6.7 cm ball follows
 
 $$\dot{\mathbf v} = \mathbf g - k_D\,\lvert\mathbf v\rvert\,\mathbf v + k_L\,C_L\,\lvert\mathbf v\rvert^2\,\frac{\boldsymbol\omega\times\mathbf v}{\lvert\boldsymbol\omega\rvert\,\lvert\mathbf v\rvert},\qquad k_D=\frac{\rho\,C_D A}{2m},\quad k_L=\frac{\rho A}{2m},\quad C_L=\min\!\left(0.32,\ \frac{1}{2+\lvert\mathbf v\rvert/(r\lvert\boldsymbol\omega\rvert)}\right)$$
 
@@ -76,7 +78,7 @@ Splats cost screen area, not triangles. Per eye, per frame,
 
 $$N_{\text{px}} = \sum_i 4k^2\,\sigma_{1i}\,\sigma_{2i}\left(\frac{f}{z_i}\right)^2$$
 
-for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ in meters, drawn out to $k$ standard deviations, at depth $z_i$, with focal length $f$ in pixels. A full replay at 1.8 m is 116 million shaded pixels per eye. The headset keeps the 160,000 Gaussians that add most to the image (82 million), the session asks the Quest for 72 Hz, and a governor watches frame times the way a game's dynamic resolution does: below 85% of the display rate it steps down through five levels of splat extent ($k$ from 2.83 to 1.9), faint-Gaussian culling and foveation, and above 95% it steps back up. With Vishal at the board it holds 72 fps, and he loads as 18 MB. Add `?fps=1` to the link to see the frame rate, the p95 frame time and the governor's level live in the headset.
+for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ in meters, drawn out to $k$ standard deviations, at depth $z_i$, with focal length $f$ in pixels. A full replay at 1.8 m is 116 million shaded pixels per eye. The headset keeps the 160,000 Gaussians that add most to the image (82 million), the session asks the Quest for 72 Hz, and a governor watches frame times the way a game's dynamic resolution does. After 0.4 s below 85% of the display rate it steps down through five levels of splat extent ($k$ from 2.83 to 1.9), faint-Gaussian culling and foveation; after 5 s above 95% it tries one level sharper. A try that doesn't hold is undone within a second and doubles the wait before the next one, up to a minute, so a scene that only just fits never stutters every few seconds probing. Simulated on a scene whose sharpest level draws at 55 fps (`scripts/check_governor.ts`), it tries again at 7, 18, 38, 79 and 140 s, and 1.9% of frames run late over three minutes. With Vishal at the board it holds 72 fps, and he loads as 18 MB. Add `?fps=1` to the link to see the frame rate, the p95 frame time and the governor's level live in the headset.
 
 ### Voice, hands and sound
 
@@ -104,7 +106,7 @@ Realism comes from data that agrees more than from a better optimizer. Speed in 
 
 ## What's next
 
-Faster turnaround from upload to your room, sharper faces up close, more than one person at a time, and a Meta Horizon Store release in spring 2027.
+Faster turnaround from upload to your room, sharper faces up close, more than one person at a time, and a Meta Horizon Store release in spring 2027. Before that release we'll swap the research-only parts (SMPL-X, GVHMR and LHM++'s weights are licensed for non-commercial use) for commercially licensed ones.
 
 ## Built with
 
@@ -121,7 +123,7 @@ webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame
 - Meta VR Start email: ojasvamishra32@gmail.com (check this is the address on the Start membership)
 - Team: Ojasva Mishra, ojasvamishra32@gmail.com, representative: reconstruction pipeline and GPU runs, the WebXR headset app, chess, rendering performance. Vishal Naveen, vishalnaveen.03@gmail.com: avatars (LHM++ bodies, UIKA faces, blinks, cloned voice), the website. Ian Hoang, [email needed]: native Quest app, hand interactions, eye contact, the Talk server.
 - Team or organization name: Lucid Dreams
-- Track: Entertainment (interactive video of real people; the judges picked Gaming only for the chess-first draft)
+- Track: Entertainment
 - Division: New (conceived and built from Oct 23, 2026)
 - Build path: Other (WebXR: three.js and Spark, not IWSDK)
 - Release link: https://getluciddreams.vercel.app/xr/?event=meta
@@ -134,7 +136,8 @@ webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame
 - Hand tracking: WebXR Hand Input, all 25 joints of both hands, drives the palm menu, piece grabs, captures, the clock and the handshake. No controller is ever needed.
 - Head pose: he keeps eye contact (head 70%, neck 30%, up to 35 degrees left or right and 20 up or down, settling in about 300 ms).
 - FoV-aware layout: the menu opens 6 cm above your palm, captions sit beside his face and the status panel stands at the edge of the board, so everything you need is in front of you and nothing depends on the edges of a narrower field of view.
-- Performance controls: the session asks for 72 Hz (updateTargetFrameRate), and framebuffer scale and fixed foveation are stepped live by our frame-time governor to hold it.
+- Performance controls: the session asks for 72 Hz (updateTargetFrameRate), the framebuffer scale is set per scene when the session starts (0.8, or 0.7 for replays), and fixed foveation, splat extent and faint-Gaussian culling are stepped live by our frame-time governor to hold the rate.
+- Occlusion: your tracked hands and the detected table are drawn depth-only, so your fingers cover him and his legs stay under your real table; on a Quest 3 the session asks for depth sensing, so real furniture hides people too.
 - Spatial audio: his voice comes from his mouth, and every synthesized piece clack, clock click and handshake tap plays from where it happened.
 
 ### How are hand interactions implemented?
@@ -143,7 +146,7 @@ There are no controllers anywhere, from the first screen to the last move. The f
 
 Pieces are taken with a pinch. Before your fingers close, a blue ring shows the piece the pinch would take and the landing square lights; a pinch only takes hold as it starts, and it rides out tracking jitter and one-frame finger flicker, so a piece doesn't drop by accident. A capture goes into your hand: hit the clock with that hand, then set the piece down beside the board. You can also lift his piece with one hand and take with the other.
 
-Before the game Vishal holds his hand out across the table. Hold yours out, palm sideways with your fingers straight (a fist, a pinch or a piece in your hand never counts), and within 12 cm he takes it, follows your hand through two or three shakes by arm IK and lets go with a nod. Talk is press, speak, press. The board moves only by the handle on your side, then locks to the room again.
+Before the game Vishal holds his hand out across the table. Hold yours out, palm sideways with your fingers straight (a fist, a pinch or a piece in your hand never counts), and within 12 cm he takes it, follows your hand through two or three shakes by arm IK and lets go with a nod. Talk is press and speak: when you pause it sends itself (or press again). The first turn says that your words go to OpenAI and ElevenLabs to answer. The board moves only by the handle on your side, then locks to the room again.
 
 ### What makes you excited about the future of VR? (150 words)
 

@@ -24,6 +24,7 @@ import { FpsReadout, PalmHint, SHOW_FPS } from "../xr/hud";
 import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAllowed, talkAvailable } from "../talk";
 import { addGame, type GameNote, tally, tallyLine } from "./record";
 import { LIBRARY, META } from "../event";
+import { leaveTo } from "../xr/leave";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
 // you at the strength you choose, with a real clock (10 + 0) at your right. Hands only, and nothing moves unless you
@@ -977,6 +978,7 @@ export async function renderChess(root: HTMLElement) {
   menu.add(
     new XrButton("new", "New game", () => void newGame()),
     new XrButton("undo", "Undo", () => undo()),
+    new XrButton("library", "Library", () => leaveTo(renderer, LIBRARY)),
     ...legendButtons,
     strengthButton,
     sideButton,

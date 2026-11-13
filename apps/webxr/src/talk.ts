@@ -51,6 +51,9 @@ export class Talk {
   private stream: MediaStream | null = null;
   private chunks: Blob[] = [];
   private stopTimer = 0;
+  // hands-free end of a turn: once you've spoken, a pause sends it (no second press); the press still works
+  private vad: { src: MediaStreamAudioSourceNode; an: AnalyserNode; buf: Uint8Array<ArrayBuffer>; voice: number; quiet: number; heard: boolean } | null = null;
+  private static told = false; // the first turn says where your words go
   private session = Math.random().toString(36).slice(2, 10);
   private sound: THREE.PositionalAudio;
   private analyser: THREE.AudioAnalyser;
@@ -116,6 +119,19 @@ export class Talk {
       this.textUntil = now + 2500;
       this.set("idle");
     }
+    if (this.state === "listening" && this.vad) {
+      const v = this.vad;
+      v.an.getByteTimeDomainData(v.buf);
+      let sum = 0;
+      for (const x of v.buf) sum += ((x - 128) / 128) ** 2;
+      const rms = Math.sqrt(sum / v.buf.length);
+      if (rms > 0.035) {
+        v.voice += dt;
+        v.quiet = 0;
+        if (v.voice > 0.25) v.heard = true;
+      } else if (rms < 0.02) v.quiet += dt;
+      if (v.heard && v.quiet > 1.2) this.send(); // you've said it and stopped
+    }
     const rate = target > this.level ? 28 : 12;
     this.level += (target - this.level) * Math.min(1, dt * rate);
     if (this.state === "idle" && this.text && now > this.textUntil) this.text = "";
@@ -128,6 +144,12 @@ export class Talk {
 
   private release() {
     clearTimeout(this.stopTimer);
+    try {
+      this.vad?.src.disconnect();
+    } catch {
+      // already gone with the stream
+    }
+    this.vad = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.rec = null;
@@ -148,7 +170,19 @@ export class Talk {
     this.rec = new MediaRecorder(this.stream, type ? { mimeType: type } : undefined);
     this.rec.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
     this.rec.start(250);
-    this.text = "Listening… press Talk again to send";
+    try {
+      const ctx = this.sound.context;
+      if (ctx.state !== "running") void ctx.resume().catch(() => {});
+      const src = ctx.createMediaStreamSource(this.stream);
+      const an = ctx.createAnalyser();
+      an.fftSize = 1024;
+      src.connect(an);
+      this.vad = { src, an, buf: new Uint8Array(new ArrayBuffer(an.fftSize)), voice: 0, quiet: 0, heard: false };
+    } catch {
+      this.vad = null; // no level to read: the press sends it, as before
+    }
+    this.text = Talk.told ? "Listening… pause to send" : "Listening… pause to send. Your words go to OpenAI and ElevenLabs to answer.";
+    Talk.told = true;
     this.reply = false;
     this.textUntil = Infinity;
     this.set("listening");

@@ -6,6 +6,8 @@ import { SkinnedAvatar } from "../avatar";
 import { loadDream } from "../dream";
 import { XrButton, liveJoints, openness } from "../xr/hands";
 import { HandMenu, handIndex, handSides } from "../xr/menu";
+import { leaveTo } from "../xr/leave";
+import { LIBRARY } from "../event";
 import { WorldLock } from "../xr/anchor";
 import { QualityGovernor, XR_QUALITY } from "../xr/quality";
 import { hashSeed } from "../chess/person";
@@ -51,7 +53,7 @@ export async function renderTennis(root: HTMLElement) {
       @media (max-width: 640px) { .tennis-keys { display: none; } }
     </style>
     <div class="stage" id="stage"></div>
-    <div class="topbar"><a class="back" href="./"><svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Dreams</a>
+    <div class="topbar"><a class="back" href="${LIBRARY}"><svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Dreams</a>
       <div class="title"><div>Tennis</div><div class="subtitle" id="status">Loading the court…</div></div><div></div></div>
     <p class="tennis-keys">Space or click: swing (serve: toss, then swing) · Q lob · E drop shot · A / D move · R replay</p>
     <div class="controls chess-controls">
@@ -1022,6 +1024,7 @@ export async function renderTennis(root: HTMLElement) {
       placed = false;
     }),
     new XrButton("replay", "Replay", () => startReplay()),
+    new XrButton("library", "Library", () => leaveTo(renderer, LIBRARY)),
   );
   const setLevel = (id: string) => {
     level = LEVELS.find((l) => l.id === id) ?? level;

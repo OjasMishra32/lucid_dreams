@@ -29,6 +29,8 @@ import { floorLevel, upFacing } from "./xr/planes";
 import { FpsReadout, PalmHint, SHOW_FPS } from "./xr/hud";
 import { trimSplats } from "./xr/budget";
 import { LIBRARY, META } from "./event";
+import { leaveTo } from "./xr/leave";
+import { StepOut } from "./xr/intro";
 
 // Bundle coordinates: meters, +Y up, feet on y = 0, the person's front faces -Z. In the room we use the WebXR
 // "local-floor" space, so y = 0 is the real floor and nothing is ever scaled: the person is exactly their real size.
@@ -130,6 +132,9 @@ export async function renderViewer(root: HTMLElement, id: string) {
 
   // The person: a group placed on the floor. Front faces -Z in the bundle, so turn it to face the viewer.
   const person = new THREE.Group();
+  // their own phone video, life size where they'll stand, plays as you enter the room; then they step out of it
+  const intro = dream.intro ? new StepOut(dream, dream.intro, `${dream.name}'s phone video`) : null;
+  if (intro) person.add(intro.group);
   person.rotation.y = Math.PI;
   scene.add(person);
   person.add(floorShadow(dream));
@@ -623,13 +628,11 @@ export async function renderViewer(root: HTMLElement, id: string) {
   // the chess table is its own page: leaving the room is the way there (press View in your room again at the board)
   if (chessHref) {
     menu.add(
-      new XrButton("chess", "Play chess", () => {
-        const session = renderer.xr.getSession();
-        if (session) void session.end().finally(() => location.assign(chessHref));
-        else location.assign(chessHref);
-      }),
+      new XrButton("chess", "Play chess", () => leaveTo(renderer, chessHref)),
     );
   }
+  // everyone else: the library (pick a person, then View in your room again)
+  menu.add(new XrButton("library", "Library", () => leaveTo(renderer, LIBRARY)));
   // follow along: flip them like a mirror, and stand them facing you, beside you or ahead of you
   const said = [dream.intent, dream.name, experience?.intent, experience?.title].join(" ");
   if (lessonPlan || /danc|tai ?chi|yoga|routine|choreo|kata|workout|exercise|stretch/i.test(said)) {
@@ -829,6 +832,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
   caption.visible = false;
   person.add(caption);
   let captionUntil = 0;
+  let hintAfterIntro = false;
   let placeNextFrame = false;
   // the floor they stand on: the room's own (local-floor), unless the headset has found the real floor (plane
   // detection, a Quest's Space Setup) more than 3 cm off it
@@ -858,11 +862,15 @@ export async function renderViewer(root: HTMLElement, id: string) {
       settleFrameRate(renderer.xr.getSession());
       governor.reset();
       standY = 0;
-      palmHint?.start(performance.now());
+      if (!(intro?.state === "idle")) palmHint?.start(performance.now()); // (with a video first: once they're out of it)
       scene.background = null;
       placeNextFrame = true;
       xrFrames = 0;
       reveal = 0; // they arrive in your room, rather than already standing there
+      if (intro?.state === "idle") {
+        intro.start(); // the first time in: the video they were made from, then them
+        hintAfterIntro = true;
+      }
       stepCardGroup.visible = !!lesson || !!tempo;
       stepCard.mesh.visible = !!lesson;
       caption.visible = true;
@@ -876,6 +884,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       ghost?.setActive(!!lesson);
     },
     onExitXr: () => {
+      if (intro?.state === "playing") intro.reset(); // left before it finished: it plays again next time in
       palmHint?.stop();
       coach?.stop(); // leaving the room ends the question: the mic is released
       releaseLocks();
@@ -1019,7 +1028,14 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const have = avatar ? count : ready(); // frames still arriving: hold at the last one here, then go on
       t = have >= count ? (t + dt * speed) % duration : Math.min(t + dt * speed, Math.max(0, (have - 1) / dream.fps));
     }
-    reveal = Math.min(1, reveal + dt / 1.4);
+    intro?.update(dt);
+    reveal = intro?.holding ? 0 : Math.min(1, reveal + dt / 1.4);
+    if (hintAfterIntro && intro && !intro.holding && renderer.xr.isPresenting) {
+      // they're stepping out: now their name and how the controls work
+      hintAfterIntro = false;
+      palmHint?.start(performance.now());
+      captionUntil = performance.now() + 7000;
+    }
     // the play-along lane follows the clip's clock as this frame shows it (the lesson's speed, repeats and your turn)
     if (lane && renderer.xr.isPresenting) {
       const now = performance.now();
@@ -1032,7 +1048,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       beatRing.update(dt, playing ? clock : NaN, t, turn && clock < lesson!.step.start);
     }
     if (renderer.xr.isPresenting) {
-      const target = !playing || performance.now() < captionUntil ? 1 : 0;
+      const target = intro?.holding ? 0 : !playing || performance.now() < captionUntil ? 1 : 0;
       const m = caption.material as THREE.MeshBasicMaterial;
       m.opacity += (target - m.opacity) * Math.min(1, dt * 4);
     }
