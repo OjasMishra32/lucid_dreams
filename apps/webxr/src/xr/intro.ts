@@ -6,14 +6,19 @@ import { dreamUrl, type Dream } from "../dream";
  * they step out of it. The video wipes away from the feet up behind a thin blue edge while their Gaussians fade in
  * (the viewer's reveal), so the first thing you see is the clip they were made from turning into them.
  *
- * dream.json `intro` (optional): { video, height, below } — the clip's height in metres shown at the person's real
- * size, and how far its bottom edge sits under their soles. A child of the person's group, so it's placed, turned and
- * anchored with them; their front faces -Z, and so does the video.
+ * dream.json `intro` (optional): { video, height, below, x?, z?, label? } — the clip's height in metres shown at the
+ * person's real size, how far its bottom edge sits under their soles, where its centre stands in the bundle's space
+ * (x, z, metres; a replay that doesn't stand at the origin), and the line over it. A child of the person's group, so
+ * it's placed, turned and anchored with them; their front faces -Z, and so does the video. A replay holds its first
+ * frame until it has stepped out, then plays from the top.
  */
 export interface IntroSpec {
   video: string;
   height: number;
   below?: number;
+  x?: number;
+  z?: number;
+  label?: string;
 }
 
 const LEAVE_S = 1.4; // the same time the viewer's reveal takes
@@ -74,7 +79,7 @@ export class StepOut {
     g.fillStyle = "rgba(245,245,247,0.92)";
     g.textAlign = "center";
     g.textBaseline = "middle";
-    g.fillText(labelText, 512, 48);
+    g.fillText(spec.label ?? labelText, 512, 48);
     const ltex = new THREE.CanvasTexture(canvas);
     ltex.colorSpace = THREE.SRGBColorSpace;
     this.label = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.075), new THREE.MeshBasicMaterial({ map: ltex, transparent: true, depthWrite: false, opacity: 0 }));
@@ -82,6 +87,7 @@ export class StepOut {
     this.group.add(this.label);
     // both face the person's front (-Z), towards you
     this.group.rotation.y = Math.PI;
+    this.group.position.set(spec.x ?? 0, 0, spec.z ?? 0);
     this.group.visible = false;
   }
 

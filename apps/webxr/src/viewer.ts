@@ -1035,6 +1035,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       const have = avatar ? count : ready(); // frames still arriving: hold at the last one here, then go on
       t = have >= count ? (t + dt * speed) % duration : Math.min(t + dt * speed, Math.max(0, (have - 1) / dream.fps));
     }
+    if (intro?.holding) t = 0; // a replay waits at its first frame while its clip plays, then dances from the top
     intro?.update(dt);
     reveal = intro?.holding ? 0 : Math.min(1, reveal + dt / 1.4);
     if (hintAfterIntro && intro && !intro.holding && renderer.xr.isPresenting) {
