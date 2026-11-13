@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import type { Skeleton } from "./avatar";
-import { META } from "./event";
 
 // Talk with them, in the viewer: press Talk (the palm menu in your room, the button on a laptop), say something, press
 // again to send. Their reply comes back in their own cloned voice (apps/talk), from where their mouth is, the words
@@ -13,9 +12,9 @@ export type TalkState = "idle" | "listening" | "thinking" | "speaking";
 
 export const TALK_LABEL: Record<TalkState, string> = { idle: "Talk", listening: "Send", thinking: "Thinking…", speaking: "Stop" };
 
-/** Whether Talk may be offered for them at all: in the competition (event.ts) only for Vishal, an entrant. */
-export function talkAllowed(who: string): boolean {
-  return !META || who === "vishal";
+/** Whether Talk may be offered for them at all: everyone the Talk server knows (it answers only those who agreed). */
+export function talkAllowed(_who: string): boolean {
+  return true;
 }
 
 /** Whether this person can be talked to here (the relay and the Talk server answer), and whether their voice is in. */

@@ -3,8 +3,10 @@
 Draft answers for https://start-developer-competition-26.devpost.com (deadline Nov 18 2026, 12:00 PM PT).
 Entertainment track, New Experience division, team: Ojasva (representative), Vishal, Ian.
 
-Rule 4: the project may not mention or depict any identifiable person other than the entrants, so everything below
-shows or names only Ojasva, Vishal and Ian. The judged build is `https://getluciddreams.vercel.app/xr/?event=meta`.
+Ojasva's call (Nov 13): the judged build and the film show everyone we built, each public figure labelled "not
+affiliated", knowing Rule 4 ("Projects may not mention or depict any identifiable person other than Entrants") lets
+Meta disqualify for it. The judged build is `https://getluciddreams.vercel.app/xr/?event=meta`: it opens on Vishal,
+and the library, chess with the legends, tennis, Court Side and every replay are one tap away.
 
 ## Project name
 
@@ -12,7 +14,7 @@ Lucid Dreams
 
 ## Elevator pitch (140 characters)
 
-Any photo or video of a person becomes them, photoreal and life-size in your room. Talk with them, learn their moves, play them at chess.
+Any photo or video of a person becomes them, photoreal and life-size in your room. Talk with them, learn their moves, play against them.
 
 ## About the project
 
@@ -20,24 +22,27 @@ Any photo or video of a person becomes them, photoreal and life-size in your roo
 
 Ian hasn't been home in four years. The people he misses live in his camera roll, six inches tall, and you can't sit across a table from a video. Everyone has those videos: a friend's jump shot, a teacher's guitar lesson, someone you love telling a story. We wanted any of them to step out of the phone and stand in the room with you, at their real height, close enough to walk around.
 
+So we started with his grandmother. One video of her became her, standing on his floor at her real height. When he talks to her in Vietnamese she answers in her own voice, cloned with her family's consent and labelled as AI. Then we kept going: a guitar teacher who sits beside you, Bobby Fischer and Magnus Carlsen across a chessboard on your own table, Roger Federer on the far baseline.
+
 ## What it does
 
-You give Lucid Dreams a short video of a person, or a few photos, plus one sentence about what you want to do with them: "teach me this strum", "play chess with me", "just hang out". It rebuilds the person as hundreds of thousands of tiny 3D Gaussians and puts them in your Quest's passthrough, standing on your real floor at real scale.
+It's interactive video: the clips on your phone become people you can watch, talk with and play, life size in your room. You give Lucid Dreams a short video of a person, or a few photos, plus one sentence about what you want to do with them: "teach me this strum", "play chess with me", "just hang out". It rebuilds the person as hundreds of thousands of tiny 3D Gaussians and puts them in your Quest's passthrough, standing on your real floor at real scale.
 
 There are two kinds of people. A replay is the clip itself rebuilt in 3D, frame by frame: you can walk around them, freeze them mid-air and see them from angles the camera never had. An avatar is a rigged body built from photos or a few frames, so it can do things the footage never showed: sit at your table, look you in the eye, shake your hand.
 
-Your first five minutes. Open the link on a Quest 3 or 3S and step into your room. One card shows the only gesture you need: turn your left palm up, press with your right index finger. Vishal fades in a couple of meters away, standing on your floor at his real height, breathing, and his head turns to follow you when you lean. Lean in, look at his face, walk around him. Press Talk and ask him anything; he answers in his own voice. Then sit at your table: the board lands on it, he takes the chair across from you, holds out his hand, and the game begins with a handshake.
+Your first five minutes. Open the link on a Quest 3 or 3S and step into your room. One card shows the only gesture you need: turn your left palm up, press with your right index finger. Vishal fades in a couple of meters away, standing on your floor at his real height, breathing. From your chair, lean in and look at his face; his head turns to follow you. (You can stand and walk around him. You never have to.) Press Talk and ask him anything; he answers in his own voice. Then sit at your table: the board lands on it, he takes the chair across from you, holds out his hand, and the game begins with a handshake.
 
 What happens next depends on your sentence.
 
 - Learn. Lesson mode splits the move into steps, slows each one down, repeats it, then waits for your turn. Follow along puts glowing targets where your head and hands should be right now, taken from the clip's own 22 body joints and scaled to your height. Your attempt replays as a ghost beside them, with the biggest gap called out in plain words ("left hand 18 cm low at the drop"), and a card gives every step its stars.
 - Talk. A person who agreed to it answers out loud in their own cloned voice, captioned and labelled AI voice, a median 3.1 s after you stop speaking.
-- Play. Chess lands on your real table with them in the chair across from you. They hold out a hand before the first move, think, reach over, move their own pieces and hit the clock, and they remember how your last game went.
+- Play. Chess lands on your real table with them in the chair across from you. They hold out a hand before the first move, think, reach over, move their own pieces and hit the clock, and they remember how your last game went. Pick Fischer's or Carlsen's level and their avatar sits down (labelled "Stockfish at Fischer's peak rating. Not affiliated."), or sit down at a position from one of their real games and find the move they're remembered for. Tennis puts Roger Federer's avatar on the far baseline of a full-size grass court: serves, faults, lets, deuce, tiebreaks, and a ball that dips with topspin and skids on the grass. In the driveway, LeBron plays his own jump shot until your pass reaches him, then catches it and shoots.
+- Court Side. A real NBA moment, Luka Dončić's step-back three over Rudy Gobert, plays as courtside video around you. Step into the court and that one frame becomes 3D: every player frozen mid-air at real size, and you walk between them before the ball leaves his hand.
 - Reality check. One tap turns everything the camera never saw blue and tells you how much of the person was real.
 
 Why you'd come back: the people you add stay in your library, the board and the chair stay where you put them in your room, an unfinished game is still on the table tomorrow, he plays one level stronger every time you beat him, and he remembers how the last game went because that memory is a real record of it.
 
-The build you'll judge follows the competition's rule that only entrants appear, so the person waiting in it is our teammate Vishal, rebuilt from a short phone video of him turning around. Vishal and Ian are on this team, and Vishal agreed to his likeness and his cloned voice. 75% of him was really seen by the camera.
+The build you'll judge opens on our teammate Vishal, rebuilt from a short phone video of him turning around; he agreed to his likeness and his cloned voice, and 75% of him was really seen by the camera. Everyone else is in the library: Ian's grandmother, six replays you can learn from (guitar, golf, tai chi, a dance routine, two jump shots), the chess legends, Federer and Court Side. Every public figure is labelled not affiliated, and none of them ever speaks.
 
 ## How we built it
 
@@ -57,13 +62,21 @@ LHM++ (photos in, a rigged 3D body out) built Vishal's 190,815-Gaussian body on 
 
 The app is WebXR in the Quest browser, three.js with the Spark splat renderer, hands only, from one link with no install. People stand on your real floor through a local-floor reference space. WebXR plane detection reads the planes from the Quest's Space Setup: the chessboard goes on the plane labelled table (or any horizontal plane 55 to 95 cm high) with the chair on its far side, and with no table in five seconds we bring our own and say so. WebXR anchors pin people and the board through recenters and drift, and a persistent anchor brings the board back to the same spot next session.
 
+### Games
+
+Chess runs Stockfish 19 in a web worker at seven levels: 1400, 2000, 2400, 2700, Fischer's peak rating (2785), Carlsen's (2882) and full strength. Tennis is our own physics at a fixed 240 Hz step, shared by live play, the opponent's predictions and the shot solver, so what the AI predicts is what happens. The 57 g, 6.7 cm ball follows
+
+$$\dot{\mathbf v} = \mathbf g - k_D\,\lvert\mathbf v\rvert\,\mathbf v + k_L\,C_L\,\lvert\mathbf v\rvert^2\,\frac{\boldsymbol\omega\times\mathbf v}{\lvert\boldsymbol\omega\rvert\,\lvert\mathbf v\rvert},\qquad k_D=\frac{\rho\,C_D A}{2m},\quad k_L=\frac{\rho A}{2m},\quad C_L=\min\!\left(0.32,\ \frac{1}{2+\lvert\mathbf v\rvert/(r\lvert\boldsymbol\omega\rvert)}\right)$$
+
+with $C_D = 0.55$ and $\rho = 1.21\,\text{kg/m}^3$, so topspin dips and slice floats. Spin decays by a seventh each second in the air, and the grass bounce trades pace for spin through friction at the contact patch ($\mu = 0.42$, low and skiddy). Federer's avatar moves with real tennis motion we captured from clips with GVHMR (ready, split step, shuffles, sprints, forehand, backhand, three serves), foot-locked so his shoes don't slide.
+
 ### Speed
 
 Splats cost screen area, not triangles. Per eye, per frame,
 
 $$N_{\text{px}} = \sum_i 4k^2\,\sigma_{1i}\,\sigma_{2i}\left(\frac{f}{z_i}\right)^2$$
 
-for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ in meters, drawn out to $k$ standard deviations, at depth $z_i$, with focal length $f$ in pixels. A full replay at 1.8 m is 116 million shaded pixels per eye. The headset keeps the 160,000 Gaussians that add most to the image (82 million), the session asks the Quest for 72 Hz, and a governor watches frame times the way a game's dynamic resolution does: below 85% of the display rate it steps down through five levels of splat extent ($k$ from 2.83 to 1.9), faint-Gaussian culling and foveation, and above 95% it steps back up. With Vishal at the board it holds 72 fps, and he loads as 18 MB.
+for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ in meters, drawn out to $k$ standard deviations, at depth $z_i$, with focal length $f$ in pixels. A full replay at 1.8 m is 116 million shaded pixels per eye. The headset keeps the 160,000 Gaussians that add most to the image (82 million), the session asks the Quest for 72 Hz, and a governor watches frame times the way a game's dynamic resolution does: below 85% of the display rate it steps down through five levels of splat extent ($k$ from 2.83 to 1.9), faint-Gaussian culling and foveation, and above 95% it steps back up. With Vishal at the board it holds 72 fps, and he loads as 18 MB. Add `?fps=1` to the link to see the frame rate, the p95 frame time and the governor's level live in the headset.
 
 ### Voice, hands and sound
 
@@ -95,7 +108,7 @@ Faster turnaround from upload to your room, sharper faces up close, more than on
 
 ## Built with
 
-webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame, smpl-x, gvhmr, pytorch, python, typescript, vite, meta-quest, hand-tracking, passthrough, plane-detection, webxr-anchors, stockfish, whisper, openai, elevenlabs, hipergator
+webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame, smpl-x, gvhmr, pytorch, python, typescript, vite, meta-quest, hand-tracking, passthrough, plane-detection, webxr-anchors, stockfish, whisper, openai, elevenlabs, hipergator, sam-2, ddcolor, gemini
 
 ## Try it out
 
@@ -140,7 +153,17 @@ Most of our lives with the people we love are on video now, and none of it lets 
 
 Spring 2027, Meta Horizon Store (the WebXR build is live now).
 
-## Video: what has to change (under 3:00, public on YouTube, only Ojasva, Vishal and Ian on screen)
+## Video
+
+https://youtu.be/oM1dQDXVtBE ("Lucid Dreams - Meta Dev 2026", public, 3:00.05, thumbnail: a phone's video streaming into
+a life-size person made of points). The Gator Hack film as it is, by Ojasva's call: Ian and his grandmother, how a
+person is made (the Quest 3S, 48 views, the fit, the Gaussians, Reality check), the guitar and golf lessons, chess
+against Fischer and Carlsen, tennis against Federer, LeBron's pass, Court Side, Vishal's Talk, the frame budget, the
+headsets coming off, everyone side by side. Known risks: Rule 4 (people who aren't entrants), the soundtrack is a
+commercial song, the end card names Atina and Gator Hack, and 3:00.05 is 0.05 s past "less than three (3) minutes"
+(a YouTube Studio trim of the end card's last half second keeps the link).
+
+### Entrants-only cut (not used)
 
 The Gator Hack film (`~/Downloads/luciddreamssubmission.mov`, 3:00.0) can't go in as it is. Rule 4 bars any identifiable
 person who isn't an entrant (Fischer, Carlsen, Federer, LeBron, Ian's grandma, the Pexels performers), the NBA play

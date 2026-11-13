@@ -23,7 +23,7 @@ import { fits, floorLevel, type Flat, type Footprint, type Spot, surfaceOccluder
 import { FpsReadout, PalmHint, SHOW_FPS } from "../xr/hud";
 import { openJaw, Talk, TalkCaption, TALK_LABEL, talkAllowed, talkAvailable } from "../talk";
 import { addGame, type GameNote, tally, tallyLine } from "./record";
-import { isEntrant, LIBRARY, META } from "../event";
+import { LIBRARY, META } from "../event";
 
 // Chess in your room: a real-size board on your table, pieces you pick up with a pinch, and Stockfish across from
 // you at the strength you choose, with a real clock (10 + 0) at your right. Hands only, and nothing moves unless you
@@ -32,8 +32,8 @@ import { isEntrant, LIBRARY, META } from "../event";
 // it's the same game with a mouse. Someone sits across the table (seated.ts): a legend's strength brings their avatar, otherwise ?opponent=<avatar
 // dream id>, otherwise nobody. They think, move their own pieces with either hand, press their clock, set captured
 // pieces aside, and shake your hand at the end. They never speak: a legend is always labelled as Stockfish at that
-// player's rating. In the competition (?event=meta, event.ts) only entrants appear: Vishal sits across the table, every
-// level is just its rating (the legends' too, without their likeness, openings or famous games), and nobody is named.
+// player's rating. In the competition (?event=meta, event.ts) Vishal sits across the table unless a legend's level
+// brings the legend, games are 5 + 0, and your record against each opponent is kept.
 
 const PINCH_ON = 0.018; // meters between thumb and index tips
 const PINCH_OFF = 0.03;
@@ -41,8 +41,8 @@ const PINCH_LET_GO_MS = 70; // fingers apart this long before a pinch ends: trac
 const PINCH_LOST_MS = 300; // a hand lost to tracking keeps hold of its piece this long
 const PINCH_FIRM = 0.024; // fingers opening past this: what they hold stays where it is (it lands where you let go)
 const GRAB_RADIUS = 0.055;
-// the levels offered; in the competition each is only its rating: no legend's name, likeness or opening book
-const LEVELS: Strength[] = META ? STRENGTHS.map(({ id, elo }) => ({ id, elo, label: elo ? String(elo) : "Full strength" })) : STRENGTHS;
+// the levels offered (a legend's brings their avatar, labelled not affiliated)
+const LEVELS: Strength[] = STRENGTHS;
 
 export async function renderChess(root: HTMLElement) {
   document.title = "Chess · Lucid Dreams";
@@ -124,7 +124,7 @@ export async function renderChess(root: HTMLElement) {
   // brings their avatar (the first of its ids that exists); otherwise ?opponent=<id>; otherwise nobody (the board
   // alone). Nothing is picked from the library on its own. In the competition: an entrant's ?opponent=, else Vishal.
   const opponentId = new URLSearchParams(location.search).get("opponent");
-  const seatId = META ? (opponentId && isEntrant(opponentId) ? opponentId : "vishal") : null; // the competition's opponent
+  const seatId = META ? (opponentId ?? "vishal") : null; // the competition's opponent (a legend's level brings the legend)
   let opponent: SkinnedAvatar | null = null;
   let seated: SeatedOpponent | null = null;
   let reaching = false; // their hand is moving a piece: the board is theirs until it lets go
@@ -1007,7 +1007,7 @@ export async function renderChess(root: HTMLElement) {
       if (id) selectStrength(id);
       void newGame();
     },
-    off: META,
+    off: false,
   });
 
   // ---------------- your record against them (the competition: event.ts, record.ts) ----------------
@@ -1305,7 +1305,7 @@ export async function renderChess(root: HTMLElement) {
     legendButtons.forEach((b) => b.setOn(b.id === id));
     root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
     void engine.setStrength(strength);
-    setOpponent(seatId ? [...new Set([seatId, "vishal"])] : [...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
+    setOpponent(seatId && !strength.avatar?.length ? [...new Set([seatId, "vishal"])] : [...(strength.avatar ?? []), ...(opponentId ? [opponentId] : [])]);
     updateStatus();
   };
   root.querySelectorAll<HTMLButtonElement>("#strengths button").forEach((b) => b.addEventListener("click", () => (famous.active ? famous.choose(b.dataset.id!) : selectStrength(b.dataset.id!))));

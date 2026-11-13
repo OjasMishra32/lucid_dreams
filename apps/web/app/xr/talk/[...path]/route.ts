@@ -193,6 +193,18 @@ async function write(person: Person, history: { role: string; content: string }[
   return { reply, english: String(out.english ?? reply).trim() };
 }
 
+/** Their voice, or null when the voice service refuses (a lapsed plan, a limit): the reply still comes back as words,
+ * never in someone else's voice. */
+async function voiceOf(person: Person, text: string, who: string): Promise<Buffer | null> {
+  if (!person.voice) return null;
+  try {
+    return await speak(person, text);
+  } catch (e) {
+    console.error(`[talk] ${who} voice unavailable, words only:`, (e as Error).message);
+    return null;
+  }
+}
+
 async function speak(person: Person, text: string): Promise<Buffer> {
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${person.voice}?output_format=pcm_${RATE}`, {
     method: "POST",
@@ -249,7 +261,7 @@ async function react(req: Request, who: string, person: Person, session: string)
     const cue = `(Nobody spoke just now. ${event} Say one short line to the user about it, out loud, as yourself.)`;
     const { reply, english } = await write(person, history, cue, facts(asked.context));
     ms.wrote = Date.now() - t0;
-    const wavBytes = person.voice ? await speak(person, reply) : null;
+    const wavBytes = await voiceOf(person, reply, who);
     ms.spoke = Date.now() - t0;
     sessions.set(session, [...history, { role: "user", content: `(At the board: ${event})` }, { role: "assistant", content: JSON.stringify({ reply, english }) }].slice(-12));
     console.log(`[talk] ${who} ${tag} react ${ms.spoke} ms`);
@@ -307,7 +319,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
     const { reply, english } = await write(person, history, said, facts(req.headers.get("x-talk-context")));
     ms.wrote = Date.now() - t0;
     // no cloned voice: the words alone, never someone else's voice
-    const wavBytes = person.voice ? await speak(person, reply) : null;
+    const wavBytes = await voiceOf(person, reply, who);
     ms.spoke = Date.now() - t0;
     sessions.set(session, [...history, { role: "user", content: said }, { role: "assistant", content: JSON.stringify({ reply, english }) }].slice(-12));
     console.log(`[talk] ${who} ${tag} ${ms.spoke} ms (heard ${ms.heard}, wrote ${ms.wrote - ms.heard}, spoke ${ms.spoke - ms.wrote})`);

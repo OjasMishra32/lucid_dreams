@@ -1,6 +1,6 @@
 import { renderLibrary } from "./library";
 import { renderViewer } from "./viewer";
-import { META, showable } from "./event";
+import { META } from "./event";
 import "./xr/report"; // errors from the headset reach the Mac's log
 
 const app = document.getElementById("app")!;
@@ -48,13 +48,7 @@ const emulate = import.meta.env.DEV && params.has("emulate")
 
 void emulate.then(() => {
   const mode = params.get("mode");
-  // the competition (event.ts): tennis and Court Side show people who aren't entrants, so they go to the library, and so
-  // does a link to anyone else's dream
-  if (META && (mode === "tennis" || mode === "court" || (!mode && id && !showable(id)))) {
-    history.replaceState(null, "", `${location.pathname}?library`);
-    return renderLibrary(app);
-  }
-  // and its front door is Vishal himself, standing in your room (Talk, Reality check, then Play chess from his palm
+  // the competition (event.ts): its front door is Vishal himself, standing in your room (Talk, Reality check, then Play chess from his palm
   // menu); the library is ?library
   if (mode === "chess") import("./chess/game").then((m) => m.renderChess(app));
   else if (mode === "tennis") import("./tennis/game").then((m) => m.renderTennis(app));

@@ -1,7 +1,8 @@
-// Competition mode (?event=meta, for Meta's VR Start competition): its rules allow no identifiable person but the
-// entrants (Ojasva, Vishal, Ian), so the app shows only their own bundles. The flag is remembered for the tab's session
-// (sessionStorage), so every link inside the app keeps it; ?event=off ends it. Nothing changes without it. A build made
-// with VITE_EVENT=meta (a deploy for the judges) is always in it, whatever the URL says.
+// Competition mode (?event=meta, for Meta's VR Start competition): everything the app has, opened the way a judge
+// should meet it. The front door is Vishal standing in your room (Talk, Reality check, then Play chess from his palm
+// menu), the library is ?library, chess plays a 5 + 0 game and keeps your record against each opponent, and the headset
+// asks for 72 Hz. The flag is remembered for the tab's session (sessionStorage), so every link inside the app keeps it;
+// ?event=off ends it. Nothing changes without it. A build made with VITE_EVENT=meta is always in it.
 
 const KEY = "lucid.event";
 const BUILT = (import.meta.env?.VITE_EVENT as string | undefined) || null;
@@ -22,15 +23,10 @@ function read(): string | null {
 export const EVENT = read();
 export const META = EVENT === "meta";
 
-/** An entrant's own bundle: Vishal's avatar, anything of Ojasva's or Ian's (never Ian's grandma: not an entrant). */
-export function isEntrant(id: string): boolean {
-  return id === "vishal" || id.startsWith("ojasva") || (id.startsWith("ian-") && !id.startsWith("ian-grandma"));
+/** Whether a bundle may be shown: every public one, in the competition too. */
+export function showable(_id: string): boolean {
+  return true;
 }
 
-/** Whether a bundle may be shown: always, outside the event. */
-export function showable(id: string): boolean {
-  return !META || isEntrant(id);
-}
-
-/** Where "back to the dreams" goes: the library (in the competition the app's own front door is the chess table). */
+/** Where "back to the dreams" goes: the library (in the competition the app's own front door is Vishal). */
 export const LIBRARY = META ? "./?library" : "./";
