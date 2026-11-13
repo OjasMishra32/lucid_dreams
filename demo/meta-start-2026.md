@@ -121,7 +121,7 @@ webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame
 - Submitter type: Team of Individuals
 - Country of residence: United States
 - Meta VR Start email: ojasvamishra32@gmail.com (check this is the address on the Start membership)
-- Team: Ojasva Mishra, ojasvamishra32@gmail.com, representative: reconstruction pipeline and GPU runs, the WebXR headset app, chess, rendering performance. Vishal Naveen, vishalnaveen.03@gmail.com: avatars (LHM++ bodies, UIKA faces, blinks, cloned voice), the website. Ian Hoang, [email needed]: native Quest app, hand interactions, eye contact, the Talk server.
+- Team: Ojasva Mishra, ojasvamishra32@gmail.com, representative: reconstruction pipeline and GPU runs, the WebXR headset app, chess, rendering performance. Vishal Naveen, vishalnaveen.03@gmail.com: avatars (LHM++ bodies, UIKA faces, blinks, cloned voice), the website. Ian Hoang (on the Devpost team): native Quest app, hand interactions, eye contact, the Talk server.
 - Team or organization name: Lucid Dreams
 - Track: Entertainment
 - Division: New (conceived and built from Oct 23, 2026)
