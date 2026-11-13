@@ -14,15 +14,15 @@ Lucid Dreams
 
 ## Elevator pitch (140 characters)
 
-Any photo or video of a person becomes them, photoreal and life-size in your room. Talk with them, learn their moves, play against them.
+Play a phone video in your room and the person steps out of it, life size. Talk with them, learn their moves, play them at your table.
 
 ## About the project
 
-One phone video of a person becomes them, photoreal and life size in your room. You can walk around them, talk with them, learn their moves and play them at chess, with your hands only, in the Quest browser, from one link. In the build you'll judge, our teammate Vishal's phone video plays life size in your room, and then he steps out of it. Talk with him, then sit at your own table: the board lands on it, he takes the chair across from you and shakes your hand. Tomorrow the board is still there.
+Ian hasn't been home to Vietnam in four years, and his grandmother lives in his camera roll, six inches tall. Lucid Dreams turns one phone video of a person into them, photoreal and life size in your room. You can walk around them, talk with them, learn their moves and play them at chess, with your hands only, in the Quest browser, from one link. In the build you'll judge, our teammate Vishal's phone video plays life size in your room, and then he steps out of it. Talk with him, then sit at your own table: the board lands on it, he takes the chair across from you and shakes your hand. Tomorrow the board is still there.
 
 ## Inspiration
 
-Ian hasn't been home in four years. The people he misses live in his camera roll, six inches tall, and you can't sit across a table from a video. Everyone has those videos: a friend's jump shot, a teacher's guitar lesson, someone you love telling a story. We wanted any of them to step out of the phone and stand in the room with you, at their real height, close enough to walk around.
+You can't sit across a table from a video, and everyone has videos like his: a friend's jump shot, a teacher's guitar lesson, someone you love telling a story. We wanted any of them to step out of the phone and stand in the room with you, at their real height, close enough to walk around.
 
 So we started with his grandmother. One video of her became her, standing on his floor at her real height. When he talks to her in Vietnamese she answers in her own voice, cloned with her family's consent and labelled as AI. Then we kept going: a guitar teacher who sits beside you, Bobby Fischer and Magnus Carlsen across a chessboard on your own table, Roger Federer on the far baseline.
 
@@ -36,7 +36,7 @@ Your first five minutes. Open the link on a Quest 3 or 3S and step into your roo
 
 What happens next depends on your sentence.
 
-- Learn. Lesson mode splits the move into steps, slows each one down, repeats it, then waits for your turn. Follow along puts glowing targets where your head and hands should be right now, taken from the clip's own 22 body joints and scaled to your height. Your attempt replays as a ghost beside them, with the biggest gap called out in plain words ("left hand 18 cm low at the drop"), and a card gives every step its stars.
+- Learn. The guitar teacher sits beside you and scores every strum against the clip's own beat ("Early 102 ms", "On beat", a streak); the golfer tees up a ball at your feet and your swing sends it flying (Library, Guitar and Golf). Lesson mode splits the move into steps, slows each one down, repeats it, then waits for your turn. Follow along puts glowing targets where your head and hands should be right now, taken from the clip's own 22 body joints and scaled to your height. Your attempt replays as a ghost beside them, with the biggest gap called out in plain words ("left hand 18 cm low at the drop"), and a card gives every step its stars.
 - Talk. A person who agreed to it answers out loud in their own cloned voice, captioned and labelled AI voice, a median 3.1 s after you stop speaking.
 - Play. Chess lands on your real table with them in the chair across from you. They hold out a hand before the first move, think, reach over, move their own pieces and hit the clock, and they remember how your last game went. Pick Fischer's or Carlsen's level and their avatar sits down (labelled "Stockfish at Fischer's peak rating. Not affiliated."), or sit down at a position from one of their real games and find the move they're remembered for. Tennis puts Roger Federer's avatar on the far baseline of a full-size grass court: serves, faults, lets, deuce, tiebreaks, and a ball that dips with topspin and skids on the grass. In your room, LeBron plays his own jump shot until your pass reaches him, then catches it and shoots.
 - Court Side. A real NBA moment, Luka Dončić's step-back three over Rudy Gobert, plays as courtside video around you. Step into the court and that one frame becomes 3D: every player frozen mid-air at real size, and you walk between them before the ball leaves his hand.
@@ -44,7 +44,7 @@ What happens next depends on your sentence.
 
 Why you'd come back: the people you add stay in your library, the board and the chair stay where you put them in your room, an unfinished game is still on the table tomorrow, he plays one level stronger every time you beat him, and he remembers how the last game went because that memory is a real record of it.
 
-The build you'll judge opens on our teammate Vishal, rebuilt from a short phone video of him turning around; he agreed to his likeness and his cloned voice, and 75% of his Gaussians were seen in his own frames (Reality check paints the rest blue). Everyone else is one press away, under Library on the palm menu: Ian's grandmother, six replays you can learn from (guitar, golf, tai chi, a dance routine, two jump shots), the chess legends, Federer and Court Side. Every public figure is labelled not affiliated, and none of them ever speaks.
+The build you'll judge opens on our teammate Vishal, rebuilt from a short phone video of him turning around; he agreed to his likeness and his cloned voice, and 75% of his Gaussians were seen in his own frames (Reality check paints the rest blue). Everyone else is one press away, under Library on the palm menu: Ian's grandmother, six replays you can learn from (guitar, golf, tai chi, a dance routine, two jump shots), the chess legends, Federer and Court Side. Every public figure is labelled not affiliated, and none of them ever speaks. Tennis and Court Side are played standing (Court Side switches to full immersion); everything else works from a chair.
 
 ## How we built it
 
@@ -62,7 +62,7 @@ LHM++ (photos in, a rigged 3D body out) built Vishal's 190,815-Gaussian body on 
 
 ### Your room
 
-The app is WebXR in the Quest browser, three.js with the Spark splat renderer, hands only, from one link with no install. People stand on your real floor through a local-floor reference space. WebXR plane detection reads the planes from the Quest's Space Setup: the chessboard goes on the plane labelled table (or any horizontal plane 55 to 95 cm high) with the chair on its far side, and with no table in five seconds we bring our own and say so. WebXR anchors pin people and the board through recenters and drift, and a persistent anchor brings the board back to the same spot next session. Your tracked hands and the detected table are drawn depth-only, so your fingers pass in front of him and his legs stay hidden under your real table; on a Quest 3, the depth sensor hides people behind real furniture too.
+The app is WebXR in the Quest browser, three.js with the Spark splat renderer, hands only, from one link with no install. People stand on your real floor through a local-floor reference space. WebXR plane detection reads the planes from the Quest's Space Setup: the chessboard goes on the plane labelled table (or any horizontal plane 55 to 95 cm high) with the chair on its far side, and with no table in five seconds we bring our own and say so. WebXR anchors pin people and the board through recenters and drift, and a persistent anchor brings the board back to the same spot next session. Your tracked hands and the detected table are drawn depth-only, so your fingers pass in front of him and his legs stay hidden under your real table; on a Quest 3 the session asks for depth sensing, so real furniture can hide people too.
 
 ### Games
 
@@ -82,7 +82,7 @@ for Gaussian $i$ with on-screen standard deviations $\sigma_{1i}, \sigma_{2i}$ i
 
 ### Voice, hands and sound
 
-Talk: Whisper transcribes you, gpt-4o-mini writes a short reply from notes the person wrote about themselves (at the chess table, plus the position, the last moves, the evaluation and your last game), and ElevenLabs Flash speaks it in their cloned voice, 1.5 s to hear, 1.0 s to write and 0.5 s to speak. It can't invent memories and never runs past 320 characters. Take the services away and the person still moves, blinks, looks at you and plays.
+Talk: Whisper transcribes you, gpt-4o-mini writes a short reply from notes the person wrote about themselves (at the chess table, plus the position, the last moves, the evaluation and your last game), and ElevenLabs Flash speaks it in their cloned voice, 1.5 s to hear, 1.0 s to write and 0.5 s to speak. Its instructions forbid inventing memories, and replies are capped at 320 characters. If the voice service is ever down, the reply still arrives as captions beside them, never in a stand-in voice. Take the services away and the person still moves, blinks, looks at you and plays.
 
 Hands: no controller anywhere. The menu appears on your left palm and you press it with your right index finger. At the board, a blue ring shows which piece your pinch will take; captures go into your hand until you hit the clock. Every reach and handshake is arm IK on the avatar's own skeleton, and a checker replays about 75,000 frames of reaches to all 64 squares, clock presses and whole games: no finger goes more than 5 mm into the board, a piece, the clock or the body.
 
@@ -110,7 +110,7 @@ Faster turnaround from upload to your room, sharper faces up close, more than on
 
 ## Built with
 
-webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame, smpl-x, gvhmr, pytorch, python, typescript, vite, meta-quest, hand-tracking, passthrough, plane-detection, webxr-anchors, stockfish, whisper, openai, elevenlabs, hipergator, sam-2, ddcolor, gemini
+webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame, smpl-x, gvhmr, pytorch, python, typescript, vite, meta-quest, hand-tracking, passthrough, plane-detection, webxr-anchors, stockfish, whisper, openai, elevenlabs, hipergator
 
 ## Try it out
 
@@ -130,7 +130,7 @@ webxr, three.js, spark, gaussian-splatting, gsplat, 4danyone, lhm++, uika, flame
 
 ### What Meta VR capabilities did you use?
 
-- Passthrough: an immersive-ar session on a local-floor reference space, so Vishal and the board sit at real scale on your real floor and table.
+- Passthrough: an immersive-ar session on a local-floor reference space, so Vishal and the board sit at real scale on your real floor and table. His own phone video plays life size in your room first, and he steps out of it onto your floor.
 - Scene understanding: WebXR plane detection reads the planes from the Quest's Space Setup. The board goes on the plane labelled table, or any horizontal plane 55 to 95 cm high, and Vishal's chair goes on its far side. With no table found in five seconds, the app brings its own and says so.
 - Spatial anchors: WebXR anchors pin the board and his chair through recenters and drift; a persistent anchor brings them back to the same place next session.
 - Hand tracking: WebXR Hand Input, all 25 joints of both hands, drives the palm menu, piece grabs, captures, the clock and the handshake. No controller is ever needed.

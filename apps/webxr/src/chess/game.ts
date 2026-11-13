@@ -1176,6 +1176,7 @@ export async function renderChess(root: HTMLElement) {
       talkBtn.classList.toggle("on", st !== "idle");
       talkBtn.setAttribute("aria-pressed", String(st !== "idle"));
       if (st !== "idle") seated?.glance(0, st === "speaking" ? 6 : 3); // eyes on you while you talk and they answer
+      if (st === "thinking") seated?.nod(); // heard you: a nod while the reply is written
     };
     // beside their face on their left (your right), turned to you
     talkCaption.mesh.position.set(-0.5, mouthY + 0.02, -0.2);

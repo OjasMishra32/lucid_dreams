@@ -42,6 +42,8 @@ a { color: var(--link); text-decoration: none; }
   display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 28px;
   max-width: 1120px; margin: 0 auto; padding: 8px 22px 120px;
 }
+.grid.play-row { width: 100%; box-sizing: border-box; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); padding-bottom: 64px; }
+.grid.play-row .thumb { aspect-ratio: 6 / 5; }
 .card { display: block; color: var(--text); transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .card:hover { transform: translateY(-4px); }
 .thumb {

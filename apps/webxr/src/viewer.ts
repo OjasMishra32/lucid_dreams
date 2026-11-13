@@ -566,6 +566,7 @@ export async function renderViewer(root: HTMLElement, id: string) {
       talkBtn.setAttribute("aria-pressed", String(s !== "idle"));
       xrTalk?.setLabel(TALK_LABEL[s]);
       xrTalk?.setOn(s !== "idle");
+      if (s === "thinking") look?.nod(); // heard you: a nod while the reply is written, so the wait never reads as a hang
     };
     talkBtn.addEventListener("click", () => {
       void listener.context.resume().catch(() => {});

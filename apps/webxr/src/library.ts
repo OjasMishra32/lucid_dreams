@@ -1,15 +1,28 @@
 import { dreamUrl, formatCount, listDreams } from "./dream";
 import { showable } from "./event";
 
+// the games: each brings its own people (the legends and Vishal at the board, Federer's likeness on the court, the
+// players of one real NBA moment)
+const PLAY = [
+  { href: "?mode=chess", img: "chess.jpg", name: "Chess at your table", meta: "Vishal, or Fischer and Carlsen at their peak ratings · not affiliated" },
+  { href: "?mode=tennis", img: "tennis.jpg", name: "Tennis", meta: "Against Roger Federer's likeness · AI opponent, not affiliated · standing" },
+  { href: "?mode=court", img: "court.jpg", name: "Court Side", meta: "A real NBA moment, frozen mid-air, to walk through · standing" },
+];
+
 export async function renderLibrary(root: HTMLElement) {
   root.innerHTML = `
-    <nav class="nav"><div class="wordmark">Lucid Dreams</div><div class="nav-links"><a class="nav-link" href="?mode=chess">Chess</a><a class="nav-link" href="https://github.com/OjasMishra32/lucid_dreams">Source</a></div></nav>
+    <nav class="nav"><div class="wordmark">Lucid Dreams</div><div class="nav-links"><a class="nav-link" href="?mode=chess">Chess</a><a class="nav-link" href="?mode=tennis">Tennis</a><a class="nav-link" href="?mode=court">Court Side</a><a class="nav-link" href="https://github.com/OjasMishra32/lucid_dreams">Source</a></div></nav>
     <header class="hero">
       <p class="eyebrow">Lucid Dreams</p>
       <h1>Anyone from any video,<br />standing in your room.</h1>
       <p>One clip becomes a photoreal, life-size person you can walk all the way around. On any screen, or right in your room on Quest.</p>
     </header>
     <section class="feature" id="feature" hidden></section>
+    <h2 class="section-title">Play</h2>
+    <section class="grid play-row">${PLAY.map(
+      (m) => `<a class="card" href="${m.href}"><div class="thumb"><img src="${import.meta.env.BASE_URL}play/${m.img}" alt="" loading="lazy" /></div>
+        <h3>${m.name}</h3><p class="meta">${m.meta}</p></a>`,
+    ).join("")}</section>
     <h2 class="section-title" id="grid-title" hidden>Dreams</h2>
     <main class="grid" id="grid"></main>`;
   const grid = root.querySelector<HTMLElement>("#grid")!;

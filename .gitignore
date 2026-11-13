@@ -40,3 +40,4 @@ apps/webxr/dist/
 !/apps/webxr/public/court/hands/
 # Court Side's players and stills for the film and the site's card (from the broadcast: never in git)
 /apps/web/public/media/court/
+/apps/webxr/public/play/court.jpg

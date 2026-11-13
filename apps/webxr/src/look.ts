@@ -17,12 +17,21 @@ const EASE_S = 0.1; // time constant: 95% of the way in 300 ms
 
 const UP = new THREE.Vector3(0, 1, 0);
 const RIGHT = new THREE.Vector3(-1, 0, 0); // rest pose faces +Z with +Y up, so the person's right is -X
+const NOD_S = 0.6; // a nod, down and back up
+const NOD_RAD = 0.12;
 const clamp = (v: number, m: number) => Math.max(-m, Math.min(m, v));
 
 export class HeadLook {
   /** The turn applied now, in the head's own frame: yaw toward +X, pitch up. */
   yaw = 0;
   pitch = 0;
+  private nodT = -1; // seconds into a nod, or -1
+
+  /** A small nod (you've been heard): down about 7 degrees and back up in a little over half a second, on top of
+   * wherever they're looking. */
+  nod() {
+    this.nodT = 0;
+  }
 
   /**
    * For SkinnedAvatar.pose's edit: turns the neck and head toward eye (the viewer's eyes in the bundle's space, or
@@ -44,12 +53,21 @@ export class HeadLook {
     this.yaw += (yawT - this.yaw) * k;
     this.pitch += (pitchT - this.pitch) * k;
     if (!eye && Math.abs(this.yaw) < 1e-4 && Math.abs(this.pitch) < 1e-4) this.yaw = this.pitch = 0;
-    if (!this.yaw && !this.pitch) return;
+    let nod = 0;
+    if (this.nodT >= 0) {
+      this.nodT += Math.max(dt, 0);
+      if (this.nodT < NOD_S) nod = -NOD_RAD * Math.sin((Math.PI * this.nodT) / NOD_S);
+      else this.nodT = -1;
+    }
+    if (!this.yaw && !this.pitch && !nod) return;
+    const pitch = this.pitch;
+    this.pitch += nod;
     // The neck turns about the head's own axes (local'_12 = local_12 · local_15 · D · local_15⁻¹), then the head
     // takes the rest, so the head ends up turned by the whole yaw and pitch.
     const head = local[HEAD];
     local[NECK].multiply(head.clone().multiply(this.turn(NECK_SHARE)).multiply(head.clone().invert()));
     head.multiply(this.turn(1 - NECK_SHARE));
+    this.pitch = pitch;
   }
 
   private turn(share: number) {
